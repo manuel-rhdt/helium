@@ -1,0 +1,15 @@
+[package]
+name = "helium"
+version = "0.1.0"
+authors = ["Manuel Reinhardt"]
+edition = "2018"
+
+[dependencies]
+printpdf = "0.2.10"
+structopt = "0.2" 
+derive_more = "0.13"
+kuchiki = "0.7"
+
+[dev-dependencies]
+assert_cmd = "0.10"
+predicates = "1"
