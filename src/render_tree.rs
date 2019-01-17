@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Debug, Clone)]
 pub struct RenderTree(Rc<RenderTreeNode>);
@@ -7,12 +8,15 @@ impl RenderTree {
     pub fn new() -> RenderTree {
         RenderTree(Default::default())
     }
+
+    pub fn node(&self) -> &RenderTreeNode {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderTreeNode {
-    frame: Frame,
-    content: Option<Content>,
+    pub content: RefCell<Option<Content>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -26,5 +30,5 @@ pub struct Frame {
 #[derive(Debug, Clone)]
 pub enum Content {
     Text(String),
-    SubTree(RenderTree),
+    Children(Vec<RenderTree>),
 }
