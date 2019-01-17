@@ -9,6 +9,7 @@ printpdf = "0.2.10"
 structopt = "0.2" 
 derive_more = "0.13"
 kuchiki = "0.7"
+font-kit = "0.1"
 
 [dev-dependencies]
 assert_cmd = "0.10"

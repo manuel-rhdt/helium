@@ -35,7 +35,7 @@ fn main() -> Result<(), Error> {
 
     println!("{:?}", html);
 
-    pdf::write_pdf()?;
+    pdf::write_pdf(render_tree)?;
 
     Ok(())
 }
