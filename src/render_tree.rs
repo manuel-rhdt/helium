@@ -1,151 +1,48 @@
+use rctree::Node;
+
 use crate::style::{Display, Style};
 
-use std::cell::RefCell;
-use std::ops::Deref;
-use std::rc::{Rc, Weak};
-
-#[derive(Default, Debug, Clone)]
-pub struct RenderNodeRef(Rc<RenderNode>);
-
-impl RenderNodeRef {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
-    pub fn with_content(content: Option<NodeType>, style: Style) -> Self {
-        RenderNodeRef(Rc::new(RenderNode::with_content(content, style)))
-    }
-
-    pub fn append_child(&self, node_ref: RenderNodeRef) -> RenderNodeRef {
-        // text nodes cannot have children
-        assert!(!self.is_text());
-
-        *node_ref.parent.borrow_mut() = Rc::downgrade(&self.0).into();
-
-        if !self.set_content(NodeType::Element(vec![node_ref.clone()])) {
-            match &mut *self.node_type.borrow_mut() {
-                Some(NodeType::Element(children)) => children.push(node_ref.clone()),
-                _ => unreachable!(),
-            }
-        }
-
-        node_ref
-    }
-
-    /// Insert a new parent above the current node and return a reference to it.
-    pub fn insert_parent(&self) -> RenderNodeRef {
-        let parent_node = RenderNode {
-            parent: self.parent.clone(),
-            node_type: Some(NodeType::Element(vec![self.clone()])).into(),
-            ..Default::default()
-        };
-        let parent_ref = RenderNodeRef(Rc::new(parent_node));
-
-        if let Some(old_parent) = self.parent.borrow().upgrade().map(RenderNodeRef) {
-            if let Some(NodeType::Element(children)) = &mut *old_parent.node_type.borrow_mut() {
-                // look through the parent's children to find ourselves and replace us with the new parent.
-                if let Some(idx) = children
-                    .iter()
-                    .position(|child| Rc::ptr_eq(&child.0, &old_parent.0))
-                {
-                    children[idx] = parent_ref.clone();
-                } else {
-                    unreachable!()
-                }
-            } else {
-                // our parent cannot have no children
-                unreachable!()
-            }
-        }
-
-        *self.parent.borrow_mut() = Rc::downgrade(&parent_ref.0);
-
-        parent_ref
-    }
-
-    // useful for tests
-    pub(crate) fn is_well_formed(&self) -> bool {
-        match &*self.node_type.borrow() {
-            Some(NodeType::Element(children)) => {
-                for child in children {
-                    if child.parent_ref().is_none() {
-                        return false;
-                    }
-                    if !Rc::ptr_eq(&child.parent_ref().unwrap().0, &self.0) {
-                        return false;
-                    }
-                    if !child.is_well_formed() {
-                        return false;
-                    }
-                }
-                true
-            }
-            _ => true,
-        }
-    }
+pub trait InsertParent {
+    fn insert_parent(&mut self, new_parent: Self);
 }
 
-impl Deref for RenderNodeRef {
-    type Target = RenderNode;
+pub type RenderNodeRef = Node<RenderNode>;
 
-    fn deref(&self) -> &RenderNode {
-        &self.0
+impl InsertParent for RenderNodeRef {
+    fn insert_parent(&mut self, mut new_parent: Self) {
+        self.insert_after(new_parent.clone());
+        self.detach();
+        new_parent.append(self.clone());
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderNode {
-    pub parent: RefCell<Weak<RenderNode>>,
-    pub node_type: RefCell<Option<NodeType>>,
-    pub style: RefCell<Style>,
+    pub node_type: Option<NodeType>,
+    pub style: Style,
 }
 
 impl RenderNode {
     pub fn with_content(content: Option<NodeType>, style: Style) -> Self {
         RenderNode {
-            node_type: RefCell::new(content),
-            style: RefCell::new(style),
-            ..Default::default()
+            node_type: content,
+            style: style,
         }
-    }
-
-    pub fn parent_ref(&self) -> Option<RenderNodeRef> {
-        self.parent
-            .borrow()
-            .upgrade()
-            .map(|parent| RenderNodeRef(parent))
-    }
-
-    /// Tries to set the new content if the node is currently empty.
-    ///
-    /// Does nothing (and returns `false`) if the node is not empty.
-    fn set_content(&self, new: NodeType) -> bool {
-        if self.node_type.borrow().is_none() {
-            *self.node_type.borrow_mut() = Some(new);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn set_style(&self, style_setter: impl FnOnce(&Style) -> Style) {
-        let new_style = style_setter(&*self.style.borrow());
-        *self.style.borrow_mut() = new_style;
     }
 
     pub fn is_empty(&self) -> bool {
-        self.node_type.borrow().is_none()
+        self.node_type.is_none()
     }
 
     pub fn is_text(&self) -> bool {
-        match &*self.node_type.borrow() {
+        match self.node_type {
             Some(NodeType::Text(_)) => true,
             _ => false,
         }
     }
 
     pub fn formatting_context(&self) -> FormattingContext {
-        match *self.style.borrow() {
+        match self.style {
             Style {
                 display: Display::Inline,
                 ..
@@ -154,19 +51,19 @@ impl RenderNode {
         }
     }
 
-    pub fn make_page(&self) {
-        let new_node = match self.node_type.borrow_mut().take() {
+    pub fn make_page(&mut self) {
+        let new_node = match self.node_type.take() {
             Some(NodeType::Text(_)) => panic!("A text node cannot become a page"),
             Some(NodeType::Element(children)) | Some(NodeType::Page(children)) => {
                 NodeType::Page(children)
             }
             None => panic!("An empty node cannot beome a page"),
         };
-        *self.node_type.borrow_mut() = Some(new_node);
+        self.node_type = Some(new_node);
     }
 
     pub fn into_ref(self) -> RenderNodeRef {
-        RenderNodeRef(Rc::new(self))
+        RenderNodeRef::new(self)
     }
 }
 

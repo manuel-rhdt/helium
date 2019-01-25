@@ -2,7 +2,7 @@ use kuchiki::iter::NodeEdge;
 use kuchiki::parse_html;
 use kuchiki::traits::TendrilSink;
 
-use crate::render_tree::{FormattingContext, NodeType, RenderNodeRef};
+use crate::render_tree::{FormattingContext, NodeType, RenderNode, RenderNodeRef};
 use crate::style::{Display, Style};
 
 use std::cell::RefCell;
@@ -49,7 +49,7 @@ struct ParserState {
 
 impl ParserState {
     fn new() -> Self {
-        let render_tree = crate::RenderNodeRef::new();
+        let render_tree = crate::RenderNodeRef::new(Default::default());
         ParserState {
             render_tree: render_tree.clone(),
             cursor: render_tree,
@@ -57,13 +57,14 @@ impl ParserState {
     }
 
     fn element_start(&mut self, elem: &kuchiki::ElementData, style: Style) {
+        let formatting_context = self.cursor.borrow().formatting_context();
         match style.display {
             Display::Block => {
-                match self.cursor.formatting_context() {
+                match formatting_context {
                     FormattingContext::Block => {
-                        self.cursor = self
-                            .cursor
-                            .append_child(RenderNodeRef::with_content(None, style));
+                        let new_node = RenderNode::with_content(None, style).into_ref();
+                        self.cursor.append(new_node.clone());
+                        self.cursor = new_node;
                     }
                     FormattingContext::Inline => {
                         // create an anonymous box around the inline content
@@ -77,20 +78,14 @@ impl ParserState {
 
     fn element_end(&mut self, elem: &kuchiki::ElementData) {
         // put the cursor back to the parent
-        if let Some(parent) = self.cursor.parent_ref() {
+        if let Some(parent) = self.cursor.parent() {
             self.cursor = parent;
         }
     }
 
     fn text(&mut self, text: &RefCell<String>, style: Style) {
-        self.cursor.append_child(RenderNodeRef::with_content(
-            Some(NodeType::Text(text.borrow().clone())),
-            style,
-        ));
-    }
-
-    fn replace_content(&self, content: Option<NodeType>) {
-        let current = &self.cursor.node_type;
-        *current.borrow_mut() = content;
+        let new_node =
+            RenderNode::with_content(Some(NodeType::Text(text.borrow().clone())), style).into_ref();
+        self.cursor.append(new_node)
     }
 }
