@@ -5,12 +5,14 @@ use derive_more::From;
 use std::fs;
 use std::path::PathBuf;
 
+pub mod layout;
 mod parser;
 mod pdf;
 mod render_tree;
+pub mod style;
 
 use crate::parser::generate_render_tree;
-pub use crate::render_tree::RenderTree;
+pub use crate::render_tree::RenderNodeRef;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "helium")]
@@ -32,8 +34,6 @@ fn main() -> Result<(), Error> {
     let html = String::from_utf8_lossy(&file);
 
     let render_tree = generate_render_tree(&html);
-
-    println!("{:?}", html);
 
     pdf::write_pdf(render_tree)?;
 
