@@ -6,9 +6,9 @@ pub trait InsertParent {
     fn insert_parent(&mut self, new_parent: Self);
 }
 
-pub type FlowTree = Node<Flow>;
+pub type FlowRef = Node<Flow>;
 
-impl InsertParent for FlowTree {
+impl InsertParent for FlowRef {
     fn insert_parent(&mut self, mut new_parent: Self) {
         self.insert_after(new_parent.clone());
         self.detach();
@@ -51,28 +51,19 @@ impl Flow {
         }
     }
 
-    pub fn make_page(&mut self) {
-        let new_node = match self.flow_type.take() {
-            Some(FlowType::Text(_)) => panic!("A text node cannot become a page"),
-            Some(FlowType::Element(children)) | Some(FlowType::Page(children)) => {
-                FlowType::Page(children)
-            }
-            None => panic!("An empty node cannot beome a page"),
-        };
-        self.flow_type = Some(new_node);
-    }
-
-    pub fn into_ref(self) -> FlowTree {
-        FlowTree::new(self)
+    pub fn into_ref(self) -> FlowRef {
+        FlowRef::new(self)
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum FlowType {
     Text(String),
-    Element(Vec<FlowTree>),
-    Page(Vec<FlowTree>),
+    Block,
+    Inline,
 }
+
+pub enum Fragment {}
 
 // macro_rules! render_tree {
 //     (<node>{$content:expr}</node>) => {

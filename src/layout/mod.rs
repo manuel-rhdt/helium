@@ -67,7 +67,6 @@ pub fn layout(mut tree: FlowTree) -> DisplayNode<FlowTree> {
             })
             .build(),
     );
-    page.make_page();
     let page = page.into_ref();
     tree.insert_parent(page.clone());
 

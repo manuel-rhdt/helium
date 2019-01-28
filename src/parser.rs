@@ -7,51 +7,71 @@ use crate::style::{Display, Style};
 
 use std::cell::RefCell;
 
-pub fn generate_render_tree(html: &str) -> crate::FlowTree {
+pub fn generate_render_tree(html: &str) -> crate::FlowRef {
     let parser = parse_html();
 
     // this is the dom tree
     let document = parser.one(html);
 
-    let mut state = ParserState::new();
+    let mut flow_constructor = FlowConstructor::new();
 
-    for edge in document.traverse() {
-        match edge {
-            NodeEdge::Start(start) => {
-                let style = crate::style::style_for_element(start.clone());
-                if let Some(elem_data) = start.as_element() {
-                    state.element_start(elem_data, style);
-                }
-                if let Some(text) = start.as_text() {
-                    state.text(text, style);
-                }
-            }
-            NodeEdge::End(end) => {
-                if let Some(elem_data) = end.as_element() {
-                    state.element_end(elem_data);
-                }
-            }
-        }
+    document.traverse(&mut flow_constructor);
+
+    println!("{:?}", flow_constructor.root);
+    flow_constructor.root
+}
+
+pub trait Traversal<NodeRef> {
+    type Pre;
+
+    // called on top-down traversal
+    fn preorder_traverse(&mut self, node: NodeRef) -> Self::Pre;
+
+    // called on bottom-up traversal
+    fn postorder_traverse(&mut self, node: NodeRef, pre_result: Self::Pre);
+}
+
+pub trait Traverse<T> {
+    fn traverse(self, traversal: &mut T);
+}
+
+impl<T> Traverse<T> for kuchiki::NodeRef
+where
+    T: Traversal<kuchiki::NodeRef>,
+{
+    fn traverse(self, traversal: &mut T) {
+        let pre_result = traversal.preorder_traverse(self.clone());
+        self.children().for_each(|child| child.traverse(traversal));
+        traversal.postorder_traverse(self, pre_result);
+    }
+}
+
+// tracks state while traversing the html document and builds a flow tree.
+#[derive(Debug)]
+struct FlowConstructor {
+    // the root node
+    root: crate::FlowRef,
+    // a cursor into the flow tree.
+    cursor: crate::FlowRef,
+}
+
+impl Traversal<kuchiki::NodeRef> for FlowConstructor {
+    type Pre = Style;
+
+    fn preorder_traverse(&mut self, node: kuchiki::NodeRef) -> Style {
+        crate::style::style_for_element(node)
     }
 
-    println!("{:?}", state.render_tree);
-    state.render_tree
+    fn postorder_traverse(&mut self, node: kuchiki::NodeRef, pre_result: Style) {
+        unimplemented!()
+    }
 }
 
-// tracks state while traversing the html document and builds a render tree.
-#[derive(Debug)]
-struct ParserState {
-    // the root tree
-    render_tree: crate::FlowTree,
-    // a cursor into the `render_tree`.
-    cursor: crate::FlowTree,
-}
-
-impl ParserState {
+impl FlowConstructor {
     fn new() -> Self {
-        let render_tree = crate::FlowTree::new(Default::default());
-        ParserState {
-            render_tree: render_tree.clone(),
+        let render_tree = crate::FlowRef::new(Default::default());
+        FlowConstructor {
+            root: render_tree.clone(),
             cursor: render_tree,
         }
     }
