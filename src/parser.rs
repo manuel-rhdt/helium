@@ -2,12 +2,12 @@ use kuchiki::iter::NodeEdge;
 use kuchiki::parse_html;
 use kuchiki::traits::TendrilSink;
 
-use crate::render_tree::{FormattingContext, NodeType, RenderNode, RenderNodeRef};
+use crate::flow::{Flow, FlowType, FormattingContext};
 use crate::style::{Display, Style};
 
 use std::cell::RefCell;
 
-pub fn generate_render_tree(html: &str) -> crate::RenderNodeRef {
+pub fn generate_render_tree(html: &str) -> crate::FlowTree {
     let parser = parse_html();
 
     // this is the dom tree
@@ -42,27 +42,27 @@ pub fn generate_render_tree(html: &str) -> crate::RenderNodeRef {
 #[derive(Debug)]
 struct ParserState {
     // the root tree
-    render_tree: crate::RenderNodeRef,
+    render_tree: crate::FlowTree,
     // a cursor into the `render_tree`.
-    cursor: crate::RenderNodeRef,
+    cursor: crate::FlowTree,
 }
 
 impl ParserState {
     fn new() -> Self {
-        let render_tree = crate::RenderNodeRef::new(Default::default());
+        let render_tree = crate::FlowTree::new(Default::default());
         ParserState {
             render_tree: render_tree.clone(),
             cursor: render_tree,
         }
     }
 
-    fn element_start(&mut self, elem: &kuchiki::ElementData, style: Style) {
+    fn element_start(&mut self, _: &kuchiki::ElementData, style: Style) {
         let formatting_context = self.cursor.borrow().formatting_context();
         match style.display {
             Display::Block => {
                 match formatting_context {
                     FormattingContext::Block => {
-                        let new_node = RenderNode::with_content(None, style).into_ref();
+                        let new_node = Flow::with_content(None, style).into_ref();
                         self.cursor.append(new_node.clone());
                         self.cursor = new_node;
                     }
@@ -76,7 +76,7 @@ impl ParserState {
         }
     }
 
-    fn element_end(&mut self, elem: &kuchiki::ElementData) {
+    fn element_end(&mut self, _: &kuchiki::ElementData) {
         // put the cursor back to the parent
         if let Some(parent) = self.cursor.parent() {
             self.cursor = parent;
@@ -85,7 +85,7 @@ impl ParserState {
 
     fn text(&mut self, text: &RefCell<String>, style: Style) {
         let new_node =
-            RenderNode::with_content(Some(NodeType::Text(text.borrow().clone())), style).into_ref();
+            Flow::with_content(Some(FlowType::Text(text.borrow().clone())), style).into_ref();
         self.cursor.append(new_node)
     }
 }

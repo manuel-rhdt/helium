@@ -1,6 +1,6 @@
 use rctree::Node;
 
-use crate::render_tree::{InsertParent, RenderNode, RenderNodeRef};
+use crate::flow::{Flow, FlowTree, InsertParent};
 use crate::style::{Length::*, LengthSpec, PageSize, StyleBuilder};
 
 pub mod flow;
@@ -56,9 +56,9 @@ impl<T> DisplayNodeInner<T> {
 
 pub type DisplayNode<T> = Node<DisplayNodeInner<T>>;
 
-pub fn layout(mut tree: RenderNodeRef) -> DisplayNode<RenderNodeRef> {
+pub fn layout(mut tree: FlowTree) -> DisplayNode<FlowTree> {
     // create a parent page
-    let mut page = RenderNode::with_content(
+    let mut page = Flow::with_content(
         None,
         StyleBuilder::new()
             .size(PageSize::Size {
@@ -93,8 +93,8 @@ pub trait LayoutNode: Sized + Clone {
     fn children(&self) -> Self::ChildrenIter;
 }
 
-impl LayoutNode for RenderNodeRef {
-    type ChildrenIter = rctree::Children<RenderNode>;
+impl LayoutNode for FlowTree {
+    type ChildrenIter = rctree::Children<Flow>;
 
     fn width(&self) -> LengthSpec {
         self.borrow().style.width

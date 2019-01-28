@@ -8,7 +8,7 @@ use font_kit::source::SystemSource;
 use std::fs::File;
 use std::io::BufWriter;
 
-pub fn write_pdf(render_tree: crate::RenderNodeRef) -> Result<(), Error> {
+pub fn write_pdf(_: crate::FlowTree) -> Result<(), Error> {
     let (doc, page1, layer1) =
         PdfDocument::new("PDF_Document_title", Mm(210.0), Mm(297.0), "Layer 1");
     let current_layer = doc.get_page(page1).get_layer(layer1);

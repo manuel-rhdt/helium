@@ -6,9 +6,9 @@ pub trait InsertParent {
     fn insert_parent(&mut self, new_parent: Self);
 }
 
-pub type RenderNodeRef = Node<RenderNode>;
+pub type FlowTree = Node<Flow>;
 
-impl InsertParent for RenderNodeRef {
+impl InsertParent for FlowTree {
     fn insert_parent(&mut self, mut new_parent: Self) {
         self.insert_after(new_parent.clone());
         self.detach();
@@ -17,26 +17,26 @@ impl InsertParent for RenderNodeRef {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RenderNode {
-    pub node_type: Option<NodeType>,
+pub struct Flow {
+    pub flow_type: Option<FlowType>,
     pub style: Style,
 }
 
-impl RenderNode {
-    pub fn with_content(content: Option<NodeType>, style: Style) -> Self {
-        RenderNode {
-            node_type: content,
+impl Flow {
+    pub fn with_content(content: Option<FlowType>, style: Style) -> Self {
+        Flow {
+            flow_type: content,
             style: style,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.node_type.is_none()
+        self.flow_type.is_none()
     }
 
     pub fn is_text(&self) -> bool {
-        match self.node_type {
-            Some(NodeType::Text(_)) => true,
+        match self.flow_type {
+            Some(FlowType::Text(_)) => true,
             _ => false,
         }
     }
@@ -52,35 +52,35 @@ impl RenderNode {
     }
 
     pub fn make_page(&mut self) {
-        let new_node = match self.node_type.take() {
-            Some(NodeType::Text(_)) => panic!("A text node cannot become a page"),
-            Some(NodeType::Element(children)) | Some(NodeType::Page(children)) => {
-                NodeType::Page(children)
+        let new_node = match self.flow_type.take() {
+            Some(FlowType::Text(_)) => panic!("A text node cannot become a page"),
+            Some(FlowType::Element(children)) | Some(FlowType::Page(children)) => {
+                FlowType::Page(children)
             }
             None => panic!("An empty node cannot beome a page"),
         };
-        self.node_type = Some(new_node);
+        self.flow_type = Some(new_node);
     }
 
-    pub fn into_ref(self) -> RenderNodeRef {
-        RenderNodeRef::new(self)
+    pub fn into_ref(self) -> FlowTree {
+        FlowTree::new(self)
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum NodeType {
+pub enum FlowType {
     Text(String),
-    Element(Vec<RenderNodeRef>),
-    Page(Vec<RenderNodeRef>),
+    Element(Vec<FlowTree>),
+    Page(Vec<FlowTree>),
 }
 
 // macro_rules! render_tree {
 //     (<node>{$content:expr}</node>) => {
-//         RenderNode::with_content(Some(NodeType::Text(($content).into()))).into_ref()
+//         RenderNode::with_content(Some(FlowType::Text(($content).into()))).into_ref()
 //     };
 //     (<node>$(<node>{$children:tt}</node>)+</node>) => {
 //         {
-//             let node = RenderNode::with_content(Some(NodeType::Element(vec![]))).into_ref();
+//             let node = RenderNode::with_content(Some(FlowType::Element(vec![]))).into_ref();
 //             $(
 //                 let child = render_tree!(<node>{$children}</node>);
 //                 node.append_child(child);
@@ -98,8 +98,6 @@ pub enum FormattingContext {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
     // #[test]
     // fn test_insert_parent() {
     //     let render_tree = render_tree!(<node>{ "Hello" }</node>);
