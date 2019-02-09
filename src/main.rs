@@ -5,14 +5,15 @@ use derive_more::From;
 use std::fs;
 use std::path::PathBuf;
 
-mod flow;
 pub mod layout;
 mod parser;
 mod pdf;
 pub mod style;
+mod traverse;
+mod tree;
 
-pub use crate::flow::FlowTree;
 use crate::parser::generate_render_tree;
+pub use layout::flow::FlowRef;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "helium")]
@@ -33,9 +34,9 @@ fn main() -> Result<(), Error> {
     let file = fs::read(opt.input)?;
     let html = String::from_utf8_lossy(&file);
 
-    let render_tree = generate_render_tree(&html);
+    let dom = generate_render_tree(&html);
 
-    pdf::write_pdf(render_tree)?;
+    pdf::write_pdf(dom.contributed_flows.take().unwrap())?;
 
     Ok(())
 }

@@ -1,4 +1,5 @@
-use kuchiki::NodeData;
+use crate::parser::ParsedData;
+use crate::tree::{NodeData, NodeRef};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Length {
@@ -135,13 +136,13 @@ fn display_default(element_name: &str) -> Display {
     }
 }
 
-pub fn style_for_element(elem: kuchiki::NodeRef) -> Style {
-    match elem.data() {
-        NodeData::Element(element_data) => Style {
+pub fn style_for_element(elem: NodeRef<NodeData>) -> Style {
+    match &elem.html_data {
+        ParsedData::Element(element_data) => Style {
             display: display_default(&element_data.name.local),
             ..Default::default()
         },
-        NodeData::Text(_) => Style {
+        ParsedData::Text(_) => Style {
             display: Display::Inline,
             ..Default::default()
         },

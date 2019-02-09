@@ -1,10 +1,12 @@
-use rctree::Node;
-
-use crate::flow::{Flow, FlowTree, InsertParent};
+use crate::layout::flow::{Flow, FlowRef};
 use crate::style::{Length::*, LengthSpec, PageSize, StyleBuilder};
 
+pub mod construct;
 pub mod flow;
+pub mod fragment;
+pub mod inline;
 
+/*
 #[derive(Debug, Copy, Clone)]
 pub struct Frame {
     /// Is set to false if this node should not be considered during rendering.
@@ -56,7 +58,7 @@ impl<T> DisplayNodeInner<T> {
 
 pub type DisplayNode<T> = Node<DisplayNodeInner<T>>;
 
-pub fn layout(mut tree: FlowTree) -> DisplayNode<FlowTree> {
+pub fn layout(mut tree: FlowRef) -> DisplayNode<FlowRef> {
     // create a parent page
     let mut page = Flow::with_content(
         None,
@@ -92,7 +94,7 @@ pub trait LayoutNode: Sized + Clone {
     fn children(&self) -> Self::ChildrenIter;
 }
 
-impl LayoutNode for FlowTree {
+impl LayoutNode for FlowRef {
     type ChildrenIter = rctree::Children<Flow>;
 
     fn width(&self) -> LengthSpec {
@@ -157,3 +159,4 @@ fn layout_node<T: LayoutNode>(node: T, sink: &mut impl LayoutSink<T>) {
         layout_node(child, &mut child_sink);
     }
 }
+*/
