@@ -1,9 +1,14 @@
+use super::block::BlockFlow;
 use super::flow::FlowRef;
+use super::fragment::{Fragment, SpecificFragment};
+use super::inline::InlineFlow;
+use crate::parser::ParsedData;
+use crate::style::{style_for_element, Display, Style};
 use crate::traverse::Traversal;
-use crate::tree::DomRef;
+use crate::tree::{DomRef, TreeLinked};
 
 /// tracks state while traversing the html document and builds a flow tree.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct FlowConstructor {}
 
 impl Traversal<DomRef> for FlowConstructor {
@@ -12,7 +17,12 @@ impl Traversal<DomRef> for FlowConstructor {
     }
 
     fn postorder_traverse(&mut self, node: DomRef) {
-        unimplemented!()
+        let style = style_for_element(node.clone());
+        let flow = match style.display {
+            Display::Inline => self.build_fragments_for_inline(node.clone(), style),
+            Display::Block => self.build_block_flow(node.clone(), style),
+        };
+        node.set_contributed_flows(flow);
     }
 }
 
@@ -21,38 +31,25 @@ impl FlowConstructor {
         FlowConstructor {}
     }
 
-    fn build_fragments_for_inline(&self) {}
+    fn build_block_flow(&self, node: DomRef, style: Style) -> Option<FlowRef> {
+        let fragment = Fragment::default();
+        let block_flow = BlockFlow::new(Some(fragment), style).into_ref();
 
-    //     fn element_start(&mut self, _: &ElementData, style: Style) {
-    //         let formatting_context = self.cursor.borrow().formatting_context();
-    //         match style.display {
-    //             Display::Block => {
-    //                 match formatting_context {
-    //                     FormattingContext::Block => {
-    //                         let new_node = Flow::with_content(None, style).into_ref();
-    //                         self.cursor.append(new_node.clone());
-    //                         self.cursor = new_node;
-    //                     }
-    //                     FormattingContext::Inline => {
-    //                         // create an anonymous box around the inline content
-    //                         unimplemented!()
-    //                     }
-    //                 }
-    //             }
-    //             Display::Inline => {}
-    //         }
-    //     }
+        for child_flow in node.children().flat_map(|child| child.contributed_flows()) {
+            block_flow.append(child_flow);
+        }
 
-    //     fn element_end(&mut self, _: &ElementData) {
-    //         // put the cursor back to the parent
-    //         if let Some(parent) = self.cursor.parent() {
-    //             self.cursor = parent;
-    //         }
-    //     }
+        Some(block_flow)
+    }
 
-    //     fn text(&mut self, text: &RefCell<String>, style: Style) {
-    //         let new_node =
-    //             Flow::with_content(Some(FlowType::Text(text.borrow().clone())), style).into_ref();
-    //         self.cursor.append(new_node)
-    //     }
+    fn build_fragments_for_inline(&self, node: DomRef, style: Style) -> Option<FlowRef> {
+        let fragment = match &node.html_data {
+            ParsedData::Text(string) => Fragment {
+                class: SpecificFragment::Text(string.borrow().clone()),
+                ..Default::default()
+            },
+            _ => unimplemented!(),
+        };
+        Some(InlineFlow::with_fragments(vec![fragment], style).into_ref())
+    }
 }

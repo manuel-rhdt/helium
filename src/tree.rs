@@ -7,8 +7,17 @@ use crate::layout::flow::FlowRef;
 
 pub type DomRef = NodeRef<NodeData>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NodeRef<T>(Rc<T>);
+
+impl Debug for NodeRef<NodeData> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        f.debug_struct("NodeRef")
+            .field("value", &self.0)
+            .field("children", &self.children().collect::<Vec<_>>())
+            .finish()
+    }
+}
 
 impl<T> PartialEq for NodeRef<T> {
     fn eq(&self, other: &NodeRef<T>) -> bool {
@@ -18,13 +27,24 @@ impl<T> PartialEq for NodeRef<T> {
 
 impl<T> Eq for NodeRef<T> {}
 
-#[derive(Default)]
 pub struct Links<StrongLink, WeakLink> {
     parent: Cell<Option<WeakLink>>,
     next: Cell<Option<StrongLink>>,
     previous: Cell<Option<WeakLink>>,
     first_child: Cell<Option<StrongLink>>,
     last_child: Cell<Option<WeakLink>>,
+}
+
+impl<T, U> Default for Links<T, U> {
+    fn default() -> Self {
+        Links {
+            parent: None.into(),
+            next: None.into(),
+            previous: None.into(),
+            first_child: None.into(),
+            last_child: None.into(),
+        }
+    }
 }
 
 impl<T: Clone, U: Clone> Clone for Links<T, U> {
@@ -51,14 +71,14 @@ impl<T: Clone, U: Clone> Clone for Links<T, U> {
 }
 
 impl<StrongLink: Debug, WeakLink> Debug for Links<StrongLink, WeakLink> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        let first_child = self.first_child.take();
-        write!(f, "{{\n{:?}\n}}, ", first_child)?;
-        self.first_child.set(first_child);
+    fn fmt(&self, _f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        // let first_child = self.first_child.take();
+        // write!(f, "{{\n{:?}\n}}, ", first_child)?;
+        // self.first_child.set(first_child);
 
-        let next = self.next.take();
-        write!(f, "{:?},\n", next)?;
-        self.next.set(next);
+        // let next = self.next.take();
+        // write!(f, "{:?},\n", next)?;
+        // self.next.set(next);
 
         Ok(())
     }
@@ -233,7 +253,7 @@ pub struct NodeData {
 
     pub html_data: crate::parser::ParsedData,
 
-    pub contributed_flows: Cell<Option<FlowRef>>,
+    contributed_flows: Cell<Option<FlowRef>>,
 }
 
 impl Clone for NodeData {
@@ -250,10 +270,11 @@ impl Clone for NodeData {
 
 impl Debug for NodeData {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        let contributed_flows = self.contributed_flows.take();
+        self.contributed_flows.set(contributed_flows.clone());
         f.debug_struct("NodeData")
-            .field("links", &self.links)
             .field("html_data", &self.html_data)
-            //.field("contributed_flows", &self.contributed_flows.clone())
+            .field("contributed_flows", &contributed_flows)
             .finish()
     }
 }
@@ -271,6 +292,16 @@ impl NodeData {
             html_data,
             contributed_flows: None.into(),
         }
+    }
+
+    pub fn contributed_flows(&self) -> Option<FlowRef> {
+        let flow = self.contributed_flows.take();
+        self.contributed_flows.set(flow.clone());
+        flow
+    }
+
+    pub fn set_contributed_flows(&self, flow: Option<FlowRef>) {
+        self.contributed_flows.set(flow)
     }
 }
 
@@ -297,7 +328,8 @@ impl<Node: TreeLinked> Iterator for SiblingIter<Node> {
     type Item = Node;
 
     fn next(&mut self) -> Option<Node> {
+        let return_value = self.current.clone();
         self.current = self.current.as_ref().and_then(|node| node.next_sibling());
-        self.current.clone()
+        return_value
     }
 }

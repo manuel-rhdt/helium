@@ -34,9 +34,9 @@ fn main() -> Result<(), Error> {
     let file = fs::read(opt.input)?;
     let html = String::from_utf8_lossy(&file);
 
-    let dom = generate_render_tree(&html);
+    let dom = dbg!(generate_render_tree(&html));
 
-    pdf::write_pdf(dom.contributed_flows.take().unwrap())?;
+    dom.contributed_flows().map(|flow| pdf::write_pdf(flow));
 
     Ok(())
 }

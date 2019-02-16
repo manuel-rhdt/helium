@@ -1,10 +1,10 @@
-use crate::style::{Display, Style};
+use crate::style::Style;
 use crate::tree::{Links, TreeLinked};
 use std::fmt::Debug;
 use std::rc::{Rc, Weak};
 
 #[derive(Debug, Clone)]
-pub struct FlowRef(Rc<dyn Flow>);
+pub struct FlowRef(pub(super) Rc<dyn Flow + 'static>);
 
 impl PartialEq for FlowRef {
     fn eq(&self, other: &FlowRef) -> bool {
@@ -23,6 +23,15 @@ pub struct FlowBase {
     links: Links<Rc<dyn Flow>, Weak<dyn Flow>>,
 
     pub style: Style,
+}
+
+impl FlowBase {
+    pub fn new(style: Style) -> Self {
+        FlowBase {
+            links: Default::default(),
+            style,
+        }
+    }
 }
 
 impl TreeLinked for FlowRef {
