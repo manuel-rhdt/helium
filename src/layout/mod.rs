@@ -4,6 +4,7 @@ pub mod flow;
 pub mod fragment;
 pub mod inline;
 pub mod inline_size;
+pub mod block_size;
 
 /*
 #[derive(Debug, Copy, Clone)]

@@ -1,10 +1,15 @@
 use crate::style::Style;
 use crate::tree::{Links, TreeLinked};
+use super::inline_size::InlineSizeContext;
+use super::block_size::BlockSizeContext;
+
 use std::fmt::Debug;
 use std::rc::{Rc, Weak};
+use std::ops::Deref;
+use std::cell::Cell;
 
 #[derive(Debug, Clone)]
-pub struct FlowRef(pub(super) Rc<dyn Flow + 'static>);
+pub struct FlowRef(pub(super) Rc<dyn Flow>);
 
 impl PartialEq for FlowRef {
     fn eq(&self, other: &FlowRef) -> bool {
@@ -12,17 +17,47 @@ impl PartialEq for FlowRef {
     }
 }
 
+impl Deref for FlowRef {
+    type Target = dyn Flow;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
 impl Eq for FlowRef {}
 
 pub trait Flow: Debug {
     fn flow_base(&self) -> &FlowBase;
+
+    fn parent_flow(&self) -> Option<FlowRef> {
+        self.flow_base().links.parent().as_ref().and_then(FlowRef::from_weak)
+    }
+
+    /// Calculates and assigns the inline size of the flow.
+    /// 
+    /// It is assumed that the paren't inline size was already calculated.
+    fn assign_inline_sizes(&self, _context: &InlineSizeContext) {
+        unimplemented!("assign_inline_sizes")
+    }
+
+    fn assign_block_size(&self, _context: &BlockSizeContext) {
+        unimplemented!("assign_block_sizes")
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct FlowBase {
-    links: Links<Rc<dyn Flow>, Weak<dyn Flow>>,
+    pub(super) links: Links<Rc<dyn Flow>, Weak<dyn Flow>>,
 
     pub style: Style,
+    
+    /// The inline size of a flow (aka width in ltr layout).
+    /// 
+    /// This quantity is computed during the top-down layout traversal. During
+    /// this traversal children generally compute their inline metrics based on
+    /// the parent's inline size.
+    pub inline_size: Cell<f32>,
 }
 
 impl FlowBase {
@@ -30,6 +65,7 @@ impl FlowBase {
         FlowBase {
             links: Default::default(),
             style,
+            inline_size: 0.0.into(),
         }
     }
 }

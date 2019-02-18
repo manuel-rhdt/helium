@@ -1,5 +1,6 @@
 use super::flow::{Flow, FlowBase, FlowRef};
 use super::fragment::Fragment;
+use super::inline_size::InlineSizeContext;
 use crate::style::Style;
 
 use std::rc::Rc;
@@ -13,6 +14,14 @@ pub struct BlockFlow {
 impl Flow for BlockFlow {
     fn flow_base(&self) -> &FlowBase {
         &self.base
+    }
+
+    fn assign_inline_sizes(&self, context: &InlineSizeContext) {
+        let parent_size = self
+            .parent_flow()
+            .map(|parent| parent.flow_base().inline_size.get())
+            .unwrap_or(context.page_size);
+        self.base.inline_size.set(parent_size);
     }
 }
 

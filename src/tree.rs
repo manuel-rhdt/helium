@@ -27,6 +27,14 @@ impl<T> PartialEq for NodeRef<T> {
 
 impl<T> Eq for NodeRef<T> {}
 
+/// A structure that contains the necessary relationships to describe a tree structure.
+/// 
+/// `Links` contains both weak and strong links as follows
+/// * `parent` is a weak link to the parent
+/// * `next` is a strong link to the following sibling
+/// * `previous` is a weak link to the previous sibling
+/// * `first_child` is a strong link to the first child
+/// * `last_child` is a weak link to the last child
 pub struct Links<StrongLink, WeakLink> {
     parent: Cell<Option<WeakLink>>,
     next: Cell<Option<StrongLink>>,
@@ -70,6 +78,15 @@ impl<T: Clone, U: Clone> Clone for Links<T, U> {
     }
 }
 
+impl<StrongLink: Clone, WeakLink: Clone> Links<StrongLink, WeakLink> {
+    /// Returns the weak link to the parent, if any.
+    pub fn parent(&self) -> Option<WeakLink> {
+        let parent = self.parent.take();
+        self.parent.set(parent.clone());
+        parent
+    }
+}
+
 impl<StrongLink: Debug, WeakLink> Debug for Links<StrongLink, WeakLink> {
     fn fmt(&self, _f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         // let first_child = self.first_child.take();
@@ -85,10 +102,12 @@ impl<StrongLink: Debug, WeakLink> Debug for Links<StrongLink, WeakLink> {
 }
 
 pub trait TreeLinked: Sized + Clone + Eq {
-    /// A reference to another node. While a `StrongLink` pointing to a node exists, the node can't be destroyed.
+    /// A reference to another node. While a `StrongLink` pointing to a node
+    /// exists, the node will be kept alive.
     type StrongLink: Clone;
 
-    /// A reference to another node in the tree that will be broken when the referred-to node gets destroyed.
+    /// A reference to another node in the tree that will be broken when the
+    /// referred-to node gets destroyed.
     type WeakLink: Clone;
 
     fn links(&self) -> &Links<Self::StrongLink, Self::WeakLink>;
@@ -105,10 +124,7 @@ pub trait TreeLinked: Sized + Clone + Eq {
 
     /// Returns a reference to the parent node or `None` if this is a root node.
     fn parent(&self) -> Option<Self> {
-        let parent = self.links().parent.take();
-        let parent_ref = parent.as_ref().and_then(Self::from_weak);
-        self.links().parent.set(parent);
-        parent_ref
+        self.links().parent().as_ref().and_then(Self::from_weak)
     }
 
     fn next_sibling(&self) -> Option<Self> {
