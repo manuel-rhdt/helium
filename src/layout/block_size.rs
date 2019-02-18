@@ -1,6 +1,7 @@
 
 use super::flow::FlowRef;
 
+#[derive(Debug)]
 pub struct BlockSizeContext {}
 
 impl BlockSizeContext {
