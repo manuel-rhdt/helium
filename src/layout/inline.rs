@@ -25,8 +25,4 @@ impl InlineFlow {
             lines: Default::default(),
         }
     }
-
-    pub fn into_ref(self) -> FlowRef {
-        FlowRef(Rc::new(self))
-    }
 }

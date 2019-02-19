@@ -4,8 +4,8 @@ use crate::traverse::Traversal;
 
 #[derive(Debug)]
 pub struct LayoutSizeComputation {
-    inline_context: InlineSizeContext,
-    block_context: BlockSizeContext,
+    pub inline_context: InlineSizeContext,
+    pub block_context: BlockSizeContext,
 }
 
 impl Traversal<FlowRef> for LayoutSizeComputation {

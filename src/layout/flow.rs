@@ -1,15 +1,27 @@
 use crate::style::Style;
 use crate::tree::{Links, TreeLinked};
+use crate::display_list::DisplayList;
 use super::inline_size::InlineSizeContext;
 use super::block_size::BlockSizeContext;
+
+use log::warn;
 
 use std::fmt::Debug;
 use std::rc::{Rc, Weak};
 use std::ops::Deref;
 use std::cell::Cell;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FlowRef(pub(super) Rc<dyn Flow>);
+
+impl Debug for FlowRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        f.debug_struct("FlowRef")
+            .field("flow", &self.0)
+            .field("children", &self.children().collect::<Vec<_>>())
+            .finish()
+    }
+}
 
 impl PartialEq for FlowRef {
     fn eq(&self, other: &FlowRef) -> bool {
@@ -27,9 +39,21 @@ impl Deref for FlowRef {
 
 impl Eq for FlowRef {}
 
+/// This trait defines a common interface that all Flow types obey.
 pub trait Flow: Debug {
+    /// Returns a reference to the contained `FlowBase`.
+    /// 
+    /// Every flow must contain a `FlowBase`.
     fn flow_base(&self) -> &FlowBase;
 
+    /// Creates a `FlowRef` from a flow.
+    /// 
+    /// This function is useful during the construction of the flow tree.
+    fn into_ref(self) -> FlowRef where Self: 'static + Sized {
+        FlowRef(Rc::new(self))
+    }
+
+    /// A convenience method to get the parent flow.
     fn parent_flow(&self) -> Option<FlowRef> {
         self.flow_base().links.parent().as_ref().and_then(FlowRef::from_weak)
     }
@@ -38,12 +62,19 @@ pub trait Flow: Debug {
     /// 
     /// It is assumed that the paren't inline size was already calculated.
     fn assign_inline_sizes(&self, _context: &InlineSizeContext) {
-        unimplemented!("assign_inline_sizes")
+        warn!("assign_inline_sizes is not implemented for {:?}", self)
     }
 
+    /// Calculates and assigns the block size of the flow (usually the height).
+    ///
+    /// This is called during the bottom-up layout traversal and the flow can
+    /// assume that all its children already have calculated their block sizes.
     fn assign_block_size(&self, _context: &BlockSizeContext) {
-        unimplemented!("assign_block_sizes")
+        warn!("assign_block_size is not implemented for {:?}", self)
     }
+
+    /// Called before children are drawn.
+    fn build_display_list(&self, _list: &mut DisplayList) {}
 }
 
 #[derive(Debug, Clone)]
@@ -95,35 +126,7 @@ impl TreeLinked for FlowRef {
     }
 }
 
-// macro_rules! render_tree {
-//     (<node>{$content:expr}</node>) => {
-//         RenderNode::with_content(Some(FlowType::Text(($content).into()))).into_ref()
-//     };
-//     (<node>$(<node>{$children:tt}</node>)+</node>) => {
-//         {
-//             let node = RenderNode::with_content(Some(FlowType::Element(vec![]))).into_ref();
-//             $(
-//                 let child = render_tree!(<node>{$children}</node>);
-//                 node.append_child(child);
-//             )+
-//             node
-//         }
-//     };
-// }
-
 #[cfg(test)]
 mod test {
-    // #[test]
-    // fn test_insert_parent() {
-    //     let render_tree = render_tree!(<node>{ "Hello" }</node>);
-    // }
 
-    // #[test]
-    // fn test_render_tree_macro() {
-    //     let render_tree = render_tree!(<node>{ "Hello" }</node>);
-    //     assert!(render_tree.is_well_formed());
-    //     let render_tree =
-    //         render_tree!(<node><node>{ "Hello" }</node><node>{ "World!" }</node></node>);
-    //     assert!(render_tree.is_well_formed());
-    // }
 }

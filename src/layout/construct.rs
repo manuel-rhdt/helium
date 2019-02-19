@@ -1,5 +1,5 @@
 use super::block::BlockFlow;
-use super::flow::FlowRef;
+use super::flow::{FlowRef, Flow};
 use super::fragment::{Fragment, SpecificFragment};
 use super::inline::InlineFlow;
 use crate::parser::ParsedData;
