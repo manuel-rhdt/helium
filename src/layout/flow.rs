@@ -1,6 +1,6 @@
 use crate::style::Style;
-use crate::tree::{Links, TreeLinked};
-use crate::display_list::DisplayList;
+use crate::tree::{Links, TreeLinked, Link};
+use crate::display_list::{DisplayList, Point};
 use super::inline_size::InlineSizeContext;
 use super::block_size::BlockSizeContext;
 
@@ -11,17 +11,8 @@ use std::rc::{Rc, Weak};
 use std::ops::Deref;
 use std::cell::Cell;
 
-#[derive(Clone)]
-pub struct FlowRef(pub(super) Rc<dyn Flow>);
-
-impl Debug for FlowRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        f.debug_struct("FlowRef")
-            .field("flow", &self.0)
-            .field("children", &self.children().collect::<Vec<_>>())
-            .finish()
-    }
-}
+#[derive(Debug, Clone)]
+pub struct FlowRef(Rc<dyn Flow>);
 
 impl PartialEq for FlowRef {
     fn eq(&self, other: &FlowRef) -> bool {
@@ -53,15 +44,10 @@ pub trait Flow: Debug {
         FlowRef(Rc::new(self))
     }
 
-    /// A convenience method to get the parent flow.
-    fn parent_flow(&self) -> Option<FlowRef> {
-        self.flow_base().links.parent().as_ref().and_then(FlowRef::from_weak)
-    }
-
     /// Calculates and assigns the inline size of the flow.
     /// 
     /// It is assumed that the paren't inline size was already calculated.
-    fn assign_inline_sizes(&self, _context: &InlineSizeContext) {
+    fn assign_inline_sizes(&self, _self_node: FlowRef, _context: &InlineSizeContext) {
         warn!("assign_inline_sizes is not implemented for {:?}", self)
     }
 
@@ -69,7 +55,7 @@ pub trait Flow: Debug {
     ///
     /// This is called during the bottom-up layout traversal and the flow can
     /// assume that all its children already have calculated their block sizes.
-    fn assign_block_size(&self, _context: &BlockSizeContext) {
+    fn assign_block_size(&self, _self_node: FlowRef, _context: &BlockSizeContext) {
         warn!("assign_block_size is not implemented for {:?}", self)
     }
 
@@ -89,6 +75,10 @@ pub struct FlowBase {
     /// this traversal children generally compute their inline metrics based on
     /// the parent's inline size.
     pub inline_size: Cell<f32>,
+
+    pub block_size: Cell<f32>,
+
+    pub position: Cell<Point>,
 }
 
 impl FlowBase {
@@ -96,7 +86,9 @@ impl FlowBase {
         FlowBase {
             links: Default::default(),
             style,
-            inline_size: 0.0.into(),
+            inline_size: Default::default(),
+            block_size: Default::default(),
+            position: Default::default(),
         }
     }
 }
@@ -116,13 +108,21 @@ impl TreeLinked for FlowRef {
     fn weak_link(&self) -> Self::WeakLink {
         Rc::downgrade(&self.0)
     }
+}
 
-    fn from_strong(strong: &Self::StrongLink) -> Self {
-        FlowRef(strong.clone())
+impl Link for Rc<dyn Flow> {
+    type Target = FlowRef;
+
+    fn get(&self) -> Self::Target {
+        FlowRef(self.clone())
     }
+}
 
-    fn from_weak(weak: &Self::WeakLink) -> Option<Self> {
-        weak.upgrade().map(FlowRef)
+impl Link for Weak<dyn Flow> {
+    type Target = Option<FlowRef>;
+
+    fn get(&self) -> Self::Target {
+        self.upgrade().map(FlowRef)
     }
 }
 

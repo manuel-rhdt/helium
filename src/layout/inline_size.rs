@@ -26,6 +26,7 @@ pub struct InlineSizeContext {
 
 impl InlineSizeContext {
     fn calculate_inline_width(&self, node: FlowRef) {
-        node.0.assign_inline_sizes(self)
+        let node_ref = node.clone();
+        node.assign_inline_sizes(node_ref, self)
     }
 }

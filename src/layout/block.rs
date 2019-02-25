@@ -5,8 +5,8 @@ use super::block_size::BlockSizeContext;
 use crate::style::Style;
 use crate::default_cell_ext::DefaultCellExt;
 use crate::display_list::{DisplayList, DisplayItem, Point};
+use crate::tree::TreeLinked;
 
-use std::rc::Rc;
 use std::cell::Cell;
 use std::fmt;
 
@@ -26,9 +26,9 @@ impl Flow for BlockFlow {
         &self.base
     }
 
-    fn assign_inline_sizes(&self, context: &InlineSizeContext) {
-        let parent_size = self
-            .parent_flow()
+    fn assign_inline_sizes(&self, self_node: FlowRef, context: &InlineSizeContext) {
+        let parent_size = self_node
+            .parent()
             .map(|parent| parent.flow_base().inline_size.get())
             .unwrap_or(context.page_size);
         self.base.inline_size.set(parent_size);
@@ -36,7 +36,11 @@ impl Flow for BlockFlow {
         self.fragment.mutate(|fragment| { fragment.as_mut().map(|f| f.content_size.width = parent_size); });
     }
 
-    fn assign_block_size(&self, _context: &BlockSizeContext) {
+    fn assign_block_size(&self, self_node: FlowRef, _context: &BlockSizeContext) {
+        let mut block_size = 0.0;
+
+        for child_flow in self_node.children() {}
+
         self.fragment.mutate(|fragment| { fragment.as_mut().map(|f| f.content_size.height = 30.0); });
     }
 

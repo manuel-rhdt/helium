@@ -14,7 +14,6 @@ impl Debug for NodeRef<NodeData> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         f.debug_struct("NodeRef")
             .field("value", &self.0)
-            .field("children", &self.children().collect::<Vec<_>>())
             .finish()
     }
 }
@@ -28,7 +27,7 @@ impl<T> PartialEq for NodeRef<T> {
 impl<T> Eq for NodeRef<T> {}
 
 /// A structure that contains the necessary relationships to describe a tree structure.
-/// 
+///
 /// `Links` contains both weak and strong links as follows
 /// * `parent` is a weak link to the parent
 /// * `next` is a strong link to the following sibling
@@ -78,12 +77,16 @@ impl<T: Clone, U: Clone> Clone for Links<T, U> {
     }
 }
 
-impl<StrongLink: Clone, WeakLink: Clone> Links<StrongLink, WeakLink> {
-    /// Returns the weak link to the parent, if any.
-    pub fn parent(&self) -> Option<WeakLink> {
+impl<NodeRef, StrongLink, WeakLink> Links<StrongLink, WeakLink>
+where
+    StrongLink: Link<Target = NodeRef>,
+    WeakLink: Link<Target = Option<NodeRef>>,
+{
+    /// Returns the ref to the parent, if set.
+    pub fn parent(&self) -> Option<NodeRef> {
         let parent = self.parent.take();
         self.parent.set(parent.clone());
-        parent
+        parent.as_ref().and_then(WeakLink::get)
     }
 }
 
@@ -101,14 +104,19 @@ impl<StrongLink: Debug, WeakLink> Debug for Links<StrongLink, WeakLink> {
     }
 }
 
+/// A trait to describe a tree made up of nodes and so-called "links" between
+/// them.
+///
+/// This trait is implemented for nodes in the tree and provides methods to
+/// retrieve related nodes through convenient functions.
 pub trait TreeLinked: Sized + Clone + Eq {
     /// A reference to another node. While a `StrongLink` pointing to a node
     /// exists, the node will be kept alive.
-    type StrongLink: Clone;
+    type StrongLink: Link<Target = Self>;
 
     /// A reference to another node in the tree that will be broken when the
     /// referred-to node gets destroyed.
-    type WeakLink: Clone;
+    type WeakLink: Link<Target = Option<Self>>;
 
     fn links(&self) -> &Links<Self::StrongLink, Self::WeakLink>;
 
@@ -116,41 +124,35 @@ pub trait TreeLinked: Sized + Clone + Eq {
 
     fn weak_link(&self) -> Self::WeakLink;
 
-    /// Construct a node from a weak link. If the weak link is broken return None.
-    fn from_weak(weak: &Self::WeakLink) -> Option<Self>;
-
-    /// Construct a node from a strong link.
-    fn from_strong(strong: &Self::StrongLink) -> Self;
-
     /// Returns a reference to the parent node or `None` if this is a root node.
     fn parent(&self) -> Option<Self> {
-        self.links().parent().as_ref().and_then(Self::from_weak)
+        self.links().parent()
     }
 
     fn next_sibling(&self) -> Option<Self> {
         let sibling = self.links().next.take();
-        let sibling_ref = sibling.as_ref().map(Self::from_strong);
+        let sibling_ref = sibling.as_ref().map(Self::StrongLink::get);
         self.links().next.set(sibling);
         sibling_ref
     }
 
     fn previous_sibling(&self) -> Option<Self> {
         let sibling = self.links().previous.take();
-        let sibling_ref = sibling.as_ref().and_then(Self::from_weak);
+        let sibling_ref = sibling.as_ref().and_then(Self::WeakLink::get);
         self.links().previous.set(sibling);
         sibling_ref
     }
 
     fn first_child(&self) -> Option<Self> {
         let child = self.links().first_child.take();
-        let child_ref = child.as_ref().map(Self::from_strong);
+        let child_ref = child.as_ref().map(Self::StrongLink::get);
         self.links().first_child.set(child);
         child_ref
     }
 
     fn last_child(&self) -> Option<Self> {
         let child = self.links().last_child.take();
-        let child_ref = child.as_ref().and_then(Self::from_weak);
+        let child_ref = child.as_ref().and_then(Self::WeakLink::get);
         self.links().last_child.set(child);
         child_ref
     }
@@ -166,8 +168,8 @@ pub trait TreeLinked: Sized + Clone + Eq {
         let next_sibling = self.links().next.take();
         let previous_sibling = self.links().previous.take();
 
-        let next_sibling_ref = next_sibling.as_ref().map(Self::from_strong);
-        let previous_sibling_ref = previous_sibling.as_ref().and_then(Self::from_weak);
+        let next_sibling_ref = next_sibling.as_ref().map(Self::StrongLink::get);
+        let previous_sibling_ref = previous_sibling.as_ref().and_then(Self::WeakLink::get);
 
         next_sibling_ref.map(|node| node.links().previous.set(previous_sibling.clone()));
         previous_sibling_ref.map(|node| node.links().next.set(next_sibling.clone()));
@@ -177,7 +179,7 @@ pub trait TreeLinked: Sized + Clone + Eq {
             .parent
             .take()
             .as_ref()
-            .and_then(Self::from_weak)
+            .and_then(Self::WeakLink::get)
         {
             if parent.first_child().as_ref() == Some(self) {
                 parent.links().first_child.set(next_sibling);
@@ -239,20 +241,35 @@ pub trait TreeLinked: Sized + Clone + Eq {
     }
 }
 
+/// A trait to abstract over both, weak and strong links in a tree.
+pub trait Link: Clone {
+    type Target;
+
+    fn get(&self) -> Self::Target;
+}
+
+impl Link for Rc<NodeData> {
+    type Target = NodeRef<NodeData>;
+
+    fn get(&self) -> Self::Target {
+        NodeRef(self.clone())
+    }
+}
+
+impl Link for Weak<NodeData> {
+    type Target = Option<NodeRef<NodeData>>;
+
+    fn get(&self) -> Self::Target {
+        self.upgrade().map(NodeRef)
+    }
+}
+
 impl TreeLinked for NodeRef<NodeData> {
     type StrongLink = Rc<NodeData>;
     type WeakLink = Weak<NodeData>;
 
     fn links(&self) -> &Links<Self::StrongLink, Self::WeakLink> {
         &self.0.links
-    }
-
-    fn from_strong(strong: &Self::StrongLink) -> Self {
-        NodeRef(strong.clone())
-    }
-
-    fn from_weak(weak: &Self::WeakLink) -> Option<Self> {
-        weak.upgrade().map(NodeRef)
     }
 
     fn strong_link(self) -> Self::StrongLink {

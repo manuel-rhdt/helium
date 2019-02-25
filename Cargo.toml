@@ -12,6 +12,7 @@ font-kit = "0.1"
 html5ever = "*"
 log = "0.4"
 simple_logger = "1.0"
+cssparser = "0.25.2"
 
 [dev-dependencies]
 assert_cmd = "0.10"

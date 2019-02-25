@@ -6,6 +6,7 @@ pub struct BlockSizeContext {}
 
 impl BlockSizeContext {
     pub(super) fn calculate_block_size(&self, flow: FlowRef) {
-        flow.assign_block_size(self)
+        let flow_ref = flow.clone();
+        flow.assign_block_size(flow_ref, self)
     }
 }
