@@ -1,0 +1,185 @@
+use super::parse;
+use crate::tree::{ElementRef, TreeLinked};
+
+use html5ever::{local_name, namespace_url, ns, LocalName, Namespace, QualName};
+use selectors::{
+    attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint, SELECTOR_WHITESPACE},
+    matching::{ElementSelectorFlags, MatchingContext},
+};
+
+impl selectors::Element for ElementRef {
+    type Impl = parse::Selectors;
+
+    #[inline]
+    fn opaque(&self) -> selectors::OpaqueElement {
+        let node: &crate::tree::NodeData = &self.as_node();
+        selectors::OpaqueElement::new(node)
+    }
+
+    #[inline]
+    fn is_html_slot_element(&self) -> bool {
+        false
+    }
+    #[inline]
+    fn parent_node_is_shadow_root(&self) -> bool {
+        false
+    }
+    #[inline]
+    fn containing_shadow_host(&self) -> Option<Self> {
+        None
+    }
+
+    #[inline]
+    fn parent_element(&self) -> Option<Self> {
+        self.as_node()
+            .parent()
+            .and_then(|parent| parent.into_element_ref())
+    }
+    #[inline]
+    fn prev_sibling_element(&self) -> Option<Self> {
+        self.as_node()
+            .preceding_siblings()
+            .filter_map(|node| node.into_element_ref())
+            .next()
+    }
+    #[inline]
+    fn next_sibling_element(&self) -> Option<Self> {
+        self.as_node()
+            .following_siblings()
+            .filter_map(|node| node.into_element_ref())
+            .next()
+    }
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.as_node()
+            .children()
+            .all(|child| match child.html_data {
+                crate::parser::ParsedData::Element(_) => false,
+                crate::parser::ParsedData::Text(ref text) => text.borrow().is_empty(),
+                _ => true,
+            })
+    }
+    #[inline]
+    fn is_root(&self) -> bool {
+        match self.as_node().parent() {
+            None => false,
+            Some(parent) => {
+                if let crate::parser::ParsedData::Document(_) = parent.html_data {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn is_html_element_in_html_document(&self) -> bool {
+        // FIXME: Have a notion of HTML document v.s. XML document?
+        self.name.ns == ns!(html)
+    }
+
+    #[inline]
+    fn local_name<'a>(&'a self) -> &'a LocalName {
+        &self.name.local
+    }
+    #[inline]
+    fn namespace<'a>(&'a self) -> &'a Namespace {
+        &self.name.ns
+    }
+
+    #[inline]
+    fn is_link(&self) -> bool {
+        self.name.ns == ns!(html)
+            && (self.name.local == local_name!("a")
+                || self.name.local == local_name!("area")
+                || self.name.local == local_name!("link"))
+            && self.attributes.borrow().contains_key(&QualName::new(
+                None,
+                ns!(),
+                local_name!("href"),
+            ))
+    }
+
+    #[inline]
+    fn has_id(&self, id: &LocalName, case_sensitivity: CaseSensitivity) -> bool {
+        self.attributes
+            .borrow()
+            .get(&QualName::new(None, ns!(), local_name!("id")))
+            .map_or(false, |id_attr| {
+                case_sensitivity.eq(id.as_bytes(), id_attr.value.as_bytes())
+            })
+    }
+
+    #[inline]
+    fn has_class(&self, name: &LocalName, case_sensitivity: CaseSensitivity) -> bool {
+        let name = name.as_bytes();
+        !name.is_empty()
+            && if let Some(class_attr) =
+                self.attributes
+                    .borrow()
+                    .get(&QualName::new(None, ns!(), local_name!("class")))
+            {
+                class_attr
+                    .value
+                    .split(SELECTOR_WHITESPACE)
+                    .any(|class| case_sensitivity.eq(class.as_bytes(), name))
+            } else {
+                false
+            }
+    }
+
+    #[inline]
+    fn attr_matches(
+        &self,
+        ns: &NamespaceConstraint<&Namespace>,
+        local_name: &LocalName,
+        operation: &AttrSelectorOperation<&String>,
+    ) -> bool {
+        let attrs = self.attributes.borrow();
+        match *ns {
+            NamespaceConstraint::Any => attrs
+                .iter()
+                .any(|(name, attr)| name.local == *local_name && operation.eval_str(&attr.value)),
+            NamespaceConstraint::Specific(ns_url) => attrs
+                .get(&QualName::new(None, ns_url.clone(), local_name.clone()))
+                .map_or(false, |attr| operation.eval_str(&attr.value)),
+        }
+    }
+
+    fn match_pseudo_element(
+        &self,
+        pseudo: &parse::PseudoElement,
+        _context: &mut MatchingContext<parse::Selectors>,
+    ) -> bool {
+        match *pseudo {}
+    }
+
+    fn match_non_ts_pseudo_class<F>(
+        &self,
+        pseudo: &parse::PseudoClass,
+        _context: &mut MatchingContext<parse::Selectors>,
+        _flags_setter: &mut F,
+    ) -> bool
+    where
+        F: FnMut(&Self, ElementSelectorFlags),
+    {
+        use parse::PseudoClass::*;
+        match *pseudo {
+            Active | Focus | Hover | Enabled | Disabled | Checked | Indeterminate | Visited => {
+                false
+            }
+            AnyLink | Link => {
+                self.name.ns == ns!(html)
+                    && (self.name.local == local_name!("a")
+                        || self.name.local == local_name!("area")
+                        || self.name.local == local_name!("link"))
+                    && self.attributes.borrow().contains_key(&QualName::new(
+                        None,
+                        ns!(),
+                        local_name!("href"),
+                    ))
+            }
+        }
+    }
+}

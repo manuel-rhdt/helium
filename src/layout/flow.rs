@@ -1,4 +1,4 @@
-use crate::style::Style;
+use crate::style::properties::computed::ComputedValues;
 use crate::tree::{Links, TreeLinked, Link};
 use crate::display_list::{DisplayList, Point};
 use super::inline_size::InlineSizeContext;
@@ -37,6 +37,14 @@ pub trait Flow: Debug {
     /// Every flow must contain a `FlowBase`.
     fn flow_base(&self) -> &FlowBase;
 
+    /// Returns a reference to the computed style properties for this flow.
+    ///
+    /// The computed style of a flow gets assigned during construction and is
+    /// immutable thereafter.
+    fn style(&self) -> &ComputedValues {
+        self.flow_base().style()
+    }
+
     /// Creates a `FlowRef` from a flow.
     /// 
     /// This function is useful during the construction of the flow tree.
@@ -63,11 +71,14 @@ pub trait Flow: Debug {
     fn build_display_list(&self, _list: &mut DisplayList) {}
 }
 
+/// The "base class" of all flows.
+/// 
+/// This holds information common to all flow types.
 #[derive(Debug, Clone)]
 pub struct FlowBase {
     pub(super) links: Links<Rc<dyn Flow>, Weak<dyn Flow>>,
 
-    pub style: Style,
+    style: ComputedValues,
     
     /// The inline size of a flow (aka width in ltr layout).
     /// 
@@ -82,7 +93,8 @@ pub struct FlowBase {
 }
 
 impl FlowBase {
-    pub fn new(style: Style) -> Self {
+    /// Create a new `FlowBase` with a computed style.
+    pub fn new(style: ComputedValues) -> Self {
         FlowBase {
             links: Default::default(),
             style,
@@ -90,6 +102,10 @@ impl FlowBase {
             block_size: Default::default(),
             position: Default::default(),
         }
+    }
+
+    fn style(&self) -> &ComputedValues {
+        &self.style
     }
 }
 

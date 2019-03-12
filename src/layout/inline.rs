@@ -1,6 +1,6 @@
 use super::flow::{Flow, FlowBase, FlowRef};
 use super::fragment::Fragment;
-use crate::style::Style;
+use crate::style::properties::computed::ComputedValues;
 
 use std::rc::Rc;
 
@@ -18,7 +18,7 @@ impl Flow for InlineFlow {
 }
 
 impl InlineFlow {
-    pub fn with_fragments(fragments: Vec<Fragment>, style: Style) -> Self {
+    pub fn with_fragments(fragments: Vec<Fragment>, style: ComputedValues) -> Self {
         InlineFlow {
             base: FlowBase::new(style),
             fragments,

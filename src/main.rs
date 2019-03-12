@@ -13,6 +13,7 @@ mod traverse;
 mod tree;
 pub mod default_cell_ext;
 pub mod display_list;
+pub mod node_data_ref;
 
 use crate::parser::generate_render_tree;
 pub use layout::flow::FlowRef;
@@ -32,7 +33,7 @@ pub enum Error {
 }
 
 fn main() -> Result<(), Error> {
-    simple_logger::init().unwrap();
+    simple_logger::init_with_level(log::Level::Info).unwrap();
 
     let opt = Options::from_args();
 

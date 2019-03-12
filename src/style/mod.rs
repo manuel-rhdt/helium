@@ -1,5 +1,12 @@
+//! Contains most of the code related to styling with CSS.
+
 use crate::parser::ParsedData;
 use crate::tree::{NodeData, NodeRef};
+
+pub mod parse;
+pub mod select;
+pub mod properties;
+pub mod device;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Length {

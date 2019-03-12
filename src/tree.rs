@@ -4,8 +4,12 @@ use std::ops::Deref;
 use std::rc::{Rc, Weak};
 
 use crate::layout::flow::FlowRef;
+use crate::node_data_ref::NodeDataRef;
+use crate::parser::{ElementData, ParsedData};
+use crate::style::properties::computed::ComputedValues;
 
 pub type DomRef = NodeRef<NodeData>;
+pub type ElementRef = NodeDataRef<NodeData, ElementData>;
 
 #[derive(Clone)]
 pub struct NodeRef<T>(Rc<T>);
@@ -239,6 +243,18 @@ pub trait TreeLinked: Sized + Clone + Eq {
             current: self.first_child(),
         }
     }
+
+    fn following_siblings(&self) -> SiblingIter<Self> {
+        SiblingIter {
+            current: Some(self.clone())
+        }
+    }
+
+    fn preceding_siblings(&self) -> PrecedingSiblingIter<Self> {
+        PrecedingSiblingIter {
+            current: Some(self.clone())
+        }
+    }
 }
 
 /// A trait to abstract over both, weak and strong links in a tree.
@@ -286,6 +302,8 @@ pub struct NodeData {
 
     pub html_data: crate::parser::ParsedData,
 
+    computed_values: Cell<Option<ComputedValues>>,
+
     contributed_flows: Cell<Option<FlowRef>>,
 }
 
@@ -293,9 +311,14 @@ impl Clone for NodeData {
     fn clone(&self) -> Self {
         let contributed_flows = self.contributed_flows.take();
         self.contributed_flows.set(contributed_flows.clone());
+
+        let computed_values = self.computed_values.take();
+        self.computed_values.set(computed_values.clone());
+
         NodeData {
             links: self.links.clone(),
             html_data: self.html_data.clone(),
+            computed_values: Cell::new(computed_values),
             contributed_flows: Cell::new(contributed_flows),
         }
     }
@@ -323,6 +346,7 @@ impl NodeData {
                 last_child: None.into(),
             },
             html_data,
+            computed_values: None.into(),
             contributed_flows: None.into(),
         }
     }
@@ -335,6 +359,16 @@ impl NodeData {
 
     pub fn set_contributed_flows(&self, flow: Option<FlowRef>) {
         self.contributed_flows.set(flow)
+    }
+
+    pub fn style(&self) -> Option<ComputedValues> {
+        let vals = self.computed_values.take();
+        self.computed_values.set(vals.clone());
+        vals
+    }
+
+    pub fn set_style(&self, style: ComputedValues) {
+        self.computed_values.set(Some(style))
     }
 }
 
@@ -352,6 +386,16 @@ impl<Data> NodeRef<Data> {
     }
 }
 
+impl DomRef {
+    /// If this node is an element, return a strong reference to element-specific data.
+    pub fn into_element_ref(self) -> Option<ElementRef> {
+        NodeDataRef::new_opt(self, |node| match &node.html_data {
+            ParsedData::Element(element_data) => Some(element_data),
+            _ => None
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SiblingIter<Node> {
     current: Option<Node>,
@@ -366,3 +410,19 @@ impl<Node: TreeLinked> Iterator for SiblingIter<Node> {
         return_value
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct PrecedingSiblingIter<Node> {
+    current: Option<Node>,
+}
+
+impl<Node: TreeLinked> Iterator for PrecedingSiblingIter<Node> {
+    type Item = Node;
+
+    fn next(&mut self) -> Option<Node> {
+        let return_value = self.current.clone();
+        self.current = self.current.as_ref().and_then(|node| node.previous_sibling());
+        return_value
+    }
+}
+

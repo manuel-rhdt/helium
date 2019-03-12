@@ -2,7 +2,7 @@ use super::flow::{Flow, FlowBase, FlowRef};
 use super::fragment::Fragment;
 use super::inline_size::InlineSizeContext;
 use super::block_size::BlockSizeContext;
-use crate::style::Style;
+use crate::style::properties::computed::ComputedValues;
 use crate::default_cell_ext::DefaultCellExt;
 use crate::display_list::{DisplayList, DisplayItem, Point};
 use crate::tree::TreeLinked;
@@ -50,7 +50,7 @@ impl Flow for BlockFlow {
 }
 
 impl BlockFlow {
-    pub fn new(fragment: Option<Fragment>, style: Style) -> Self {
+    pub fn new(fragment: Option<Fragment>, style: ComputedValues) -> Self {
         BlockFlow {
             base: FlowBase::new(style),
             fragment: Cell::new(fragment),
