@@ -19,3 +19,21 @@ impl FromStr for Display {
         }
     }
 }
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Unit {
+    Px,
+    Cm
+}
+
+impl FromStr for Unit {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "px" => Ok(Unit::Px),
+            "cm" => Ok(Unit::Cm),
+            _ => Err(())
+        }
+    }
+}

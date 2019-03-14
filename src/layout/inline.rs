@@ -1,8 +1,6 @@
-use super::flow::{Flow, FlowBase, FlowRef};
+use super::flow::{Flow, FlowBase, FlowDescription, FlowType};
 use super::fragment::Fragment;
 use crate::style::properties::computed::ComputedValues;
-
-use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct InlineFlow {
@@ -14,6 +12,12 @@ pub struct InlineFlow {
 impl Flow for InlineFlow {
     fn flow_base(&self) -> &FlowBase {
         &self.base
+    }
+
+    fn description(&self) -> FlowDescription {
+        FlowDescription {
+            flow_type: FlowType::Inline
+        }
     }
 }
 

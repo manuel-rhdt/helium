@@ -3,8 +3,8 @@ use super::flow::{Flow, FlowRef};
 use super::fragment::{Fragment, SpecificFragment};
 use super::inline::InlineFlow;
 use crate::parser::{ElementData, ParsedData};
-use crate::style::properties::computed::{ComputedValues, StyleBuilder, Display};
-use crate::style::{parse::Styles};
+use crate::style::parse::Styles;
+use crate::style::properties::computed::{ComputedValues, Display, StyleBuilder};
 use crate::traverse::Traversal;
 use crate::tree::{DomRef, TreeLinked};
 
@@ -60,12 +60,12 @@ impl Traversal<DomRef> for FlowConstructor {
                 .rules_iter()
                 .filter(|rule| rule.matches(element_ref))
             {
-                let properties = dbg!(&matched_rule.properties);
+                let properties = &matched_rule.properties;
                 for declaration in properties.declarations() {
                     style_builder.add_declaration(declaration.clone());
                 }
             }
-            element_ref.as_node().set_style(dbg!(style_builder.build()));
+            element_ref.as_node().set_style(style_builder.build());
         } else {
             node.set_style(Default::default());
         }
@@ -98,13 +98,19 @@ impl FlowConstructor {
     }
 
     fn build_fragments_for_inline(&self, node: DomRef, style: ComputedValues) -> Option<FlowRef> {
-        let fragment = match &node.html_data {
-            ParsedData::Text(string) => Fragment {
+        let fragments = match &node.html_data {
+            ParsedData::Text(string) => vec![Fragment {
                 class: SpecificFragment::Text(string.borrow().clone()),
                 ..Default::default()
-            },
-            _ => return Some(InlineFlow::with_fragments(vec![], style).into_ref()),
+            }],
+            _ => vec![],
         };
-        Some(InlineFlow::with_fragments(vec![fragment], style).into_ref())
+        let inline_flow = InlineFlow::with_fragments(fragments, style).into_ref();
+
+        for child_flow in node.children().flat_map(|child| child.contributed_flows()) {
+            inline_flow.append(child_flow);
+        }
+
+        Some(inline_flow)
     }
 }

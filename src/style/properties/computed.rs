@@ -7,6 +7,15 @@ pub type CssFloat = f32;
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
 pub struct PixelLength(pub CssFloat);
 
+impl PixelLength {
+    pub fn from_val_unit(val: f32, unit: super::specified::Unit) -> Self {
+        match unit {
+            super::specified::Unit::Px => PixelLength(val),
+            super::specified::Unit::Cm => PixelLength(val / 2.54 * 72.0 / 0.75),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
 pub struct Percentage(pub CssFloat);
 
@@ -61,21 +70,21 @@ impl Default for GenericSize {
 
 #[derive(Debug, Clone, Default)]
 pub struct Position {
-    pub width: GenericSize
+    pub width: GenericSize,
 }
 
 /// Contains the style structs.
 #[derive(Debug, Clone, Default)]
 pub struct ComputedValues {
     pub box_: Arc<Box>,
-    pub position: Arc<Position>
+    pub position: Arc<Position>,
 }
 
 #[derive(Debug, Default)]
 pub struct StyleBuilder {
     inherited_values: ComputedValues,
     position: Option<Position>,
-    box_: Option<Box>
+    box_: Option<Box>,
 }
 
 impl StyleBuilder {
@@ -87,21 +96,33 @@ impl StyleBuilder {
     }
 
     fn mutate_position(&mut self, f: impl FnOnce(&mut Position)) {
-        let mut position = self.position.take().unwrap_or_else(|| Position::clone(&*self.inherited_values.position));
+        let mut position = self
+            .position
+            .take()
+            .unwrap_or_else(|| Position::clone(&*self.inherited_values.position));
         f(&mut position);
         self.position = Some(position);
     }
 
     fn mutate_box(&mut self, f: impl FnOnce(&mut Box)) {
-        let mut box_ = self.box_.take().unwrap_or_else(|| Box::clone(&*self.inherited_values.box_));
+        let mut box_ = self
+            .box_
+            .take()
+            .unwrap_or_else(|| Box::clone(&*self.inherited_values.box_));
         f(&mut box_);
         self.box_ = Some(box_);
     }
 
     pub fn add_declaration(&mut self, decl: PropertyDeclaration) {
         match decl {
-            PropertyDeclaration::Width(val) => self.mutate_position(|mut pos| pos.width = GenericSize::LengthPercentage(LengthPercentage::Length(PixelLength(val)))),
-            PropertyDeclaration::Display(val) => self.mutate_box(|mut box_| box_.display = val.into()),
+            PropertyDeclaration::Width { value, unit } => self.mutate_position(|mut pos| {
+                pos.width = GenericSize::LengthPercentage(LengthPercentage::Length(
+                    PixelLength::from_val_unit(value, unit),
+                ))
+            }),
+            PropertyDeclaration::Display(val) => {
+                self.mutate_box(|mut box_| box_.display = val.into())
+            }
             _ => {}
         }
     }
@@ -110,25 +131,25 @@ impl StyleBuilder {
         ComputedValues {
             position: match self.position {
                 None => self.inherited_values.position,
-                Some(pos) => Arc::new(pos)
+                Some(pos) => Arc::new(pos),
             },
             box_: match self.box_ {
                 None => self.inherited_values.box_,
-                Some(box_) => Arc::new(box_)
-            }
+                Some(box_) => Arc::new(box_),
+            },
         }
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Box {
-    pub display: Display
+    pub display: Display,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Display {
     Block,
-    Inline
+    Inline,
 }
 
 impl Default for Display {
@@ -142,7 +163,7 @@ impl From<super::specified::Display> for Display {
         match specified {
             super::specified::Display::Block => Display::Block,
             super::specified::Display::Inline => Display::Inline,
-            _ => Display::default()
+            _ => Display::default(),
         }
     }
 }

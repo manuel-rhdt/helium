@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 
+use crate::dot::{DotGraphSerializer, Connection};
 use crate::layout::flow::FlowRef;
 use crate::node_data_ref::NodeDataRef;
 use crate::parser::{ElementData, ParsedData};
@@ -16,9 +17,7 @@ pub struct NodeRef<T>(Rc<T>);
 
 impl Debug for NodeRef<NodeData> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        f.debug_struct("NodeRef")
-            .field("value", &self.0)
-            .finish()
+        f.debug_struct("NodeRef").field("value", &self.0).finish()
     }
 }
 
@@ -246,13 +245,13 @@ pub trait TreeLinked: Sized + Clone + Eq {
 
     fn following_siblings(&self) -> SiblingIter<Self> {
         SiblingIter {
-            current: Some(self.clone())
+            current: Some(self.clone()),
         }
     }
 
     fn preceding_siblings(&self) -> PrecedingSiblingIter<Self> {
         PrecedingSiblingIter {
-            current: Some(self.clone())
+            current: Some(self.clone()),
         }
     }
 }
@@ -294,6 +293,20 @@ impl TreeLinked for NodeRef<NodeData> {
 
     fn weak_link(&self) -> Self::WeakLink {
         Rc::downgrade(&self.0)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct OpaqueNode(pub usize);
+
+pub trait GetOpaqueNode {
+    fn get_opaque(&self) -> OpaqueNode;
+}
+
+impl GetOpaqueNode for NodeRef<NodeData> {
+    fn get_opaque(&self) -> OpaqueNode {
+        let node_data: *const NodeData = &**self;
+        OpaqueNode(node_data as usize)
     }
 }
 
@@ -391,8 +404,52 @@ impl DomRef {
     pub fn into_element_ref(self) -> Option<ElementRef> {
         NodeDataRef::new_opt(self, |node| match &node.html_data {
             ParsedData::Element(element_data) => Some(element_data),
-            _ => None
+            _ => None,
         })
+    }
+
+    pub fn serialize_dot_graph(&self, out: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let mut serializer = DotGraphSerializer::new(out);
+        serializer.begin_graph("G")?;
+        serializer.push_node(self.clone(), Connection::Root)?;
+        self.serialize_children_and_flows(&mut serializer)?;
+        serializer.end_graph()?;
+        Ok(())
+    }
+
+    fn serialize_children_and_flows(
+        &self,
+        serializer: &mut DotGraphSerializer<&mut dyn std::io::Write>,
+    ) -> std::io::Result<()> {
+        for child in self.children() {
+            serializer.push_node(child.clone(), Connection::DescendantOf(self.get_opaque()))?;
+            child.serialize_children_and_flows(serializer)?;
+        }
+        if let Some(flow) = self.contributed_flows() {
+            if !serializer.contains_node(flow.get_opaque()) {
+                serializer.push_node(flow.clone(), Connection::DescendantOf(self.get_opaque()))?;
+                flow.serialize_children(serializer)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+use crate::dot::{GraphDisplayStyle, Shape, Style};
+
+impl crate::dot::GraphStyle for DomRef {
+    fn graph_style(&self) -> GraphDisplayStyle {
+        match &self.html_data {
+            ParsedData::Element(ElementData { name, .. }) => GraphDisplayStyle::new()
+                .label(&name.local)
+                .shape(Shape::Box),
+            ParsedData::Doctype(_) => GraphDisplayStyle::new().label("doctype"),
+            ParsedData::Document(_) => GraphDisplayStyle::new()
+                .label("document")
+                .style(Style::Filled(0.5, 0.5, 0.5)),
+            ParsedData::Text(_) => GraphDisplayStyle::new().label("text"),
+            _ => Default::default(),
+        }
     }
 }
 
@@ -421,8 +478,10 @@ impl<Node: TreeLinked> Iterator for PrecedingSiblingIter<Node> {
 
     fn next(&mut self) -> Option<Node> {
         let return_value = self.current.clone();
-        self.current = self.current.as_ref().and_then(|node| node.previous_sibling());
+        self.current = self
+            .current
+            .as_ref()
+            .and_then(|node| node.previous_sibling());
         return_value
     }
 }
-

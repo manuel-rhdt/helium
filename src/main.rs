@@ -14,10 +14,13 @@ mod tree;
 pub mod default_cell_ext;
 pub mod display_list;
 pub mod node_data_ref;
+pub mod dot;
 
 use crate::parser::generate_render_tree;
 pub use layout::flow::FlowRef;
 use traverse::Traverse;
+use display_list::DisplayListBuilder;
+use crate::style::device::Device;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "helium")]
@@ -42,9 +45,15 @@ fn main() -> Result<(), Error> {
 
     let dom = generate_render_tree(&html);
 
+    // a4 paper
+    let device = Device {
+        width: 793.7,
+        height: 1123.0,
+    };
+
     let mut layouter = layout::inline_size::LayoutSizeComputation {
         inline_context: layout::inline_size::InlineSizeContext {
-            page_size: 400.0
+            device
         },
         block_context: layout::block_size::BlockSizeContext {}
     };
@@ -53,7 +62,14 @@ fn main() -> Result<(), Error> {
 
     root_flow.traverse(&mut layouter);
 
-    dom.contributed_flows().map(|flow| pdf::write_pdf(flow));
+    let mut dotfile = fs::File::create("graph.dot")?;
+    dom.serialize_dot_graph(&mut dotfile)?;
+
+    let mut display_list_builder = DisplayListBuilder::default();
+    root_flow.traverse(&mut display_list_builder);
+    let display_list = dbg!(display_list_builder.build());
+
+    pdf::write_pdf(display_list, device)?;
 
     Ok(())
 }

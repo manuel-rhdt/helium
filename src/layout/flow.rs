@@ -1,15 +1,16 @@
-use crate::style::properties::computed::ComputedValues;
-use crate::tree::{Links, TreeLinked, Link};
-use crate::display_list::{DisplayList, Point};
-use super::inline_size::InlineSizeContext;
 use super::block_size::BlockSizeContext;
+use super::inline_size::InlineSizeContext;
+use crate::display_list::{DisplayList, Point};
+use crate::dot::{Connection, DotGraphSerializer, GraphDisplayStyle, GraphStyle, Style, Shape};
+use crate::style::properties::computed::ComputedValues;
+use crate::tree::{GetOpaqueNode, Link, Links, OpaqueNode, TreeLinked};
 
 use log::warn;
 
-use std::fmt::Debug;
-use std::rc::{Rc, Weak};
-use std::ops::Deref;
 use std::cell::Cell;
+use std::fmt::Debug;
+use std::ops::Deref;
+use std::rc::{Rc, Weak};
 
 #[derive(Debug, Clone)]
 pub struct FlowRef(Rc<dyn Flow>);
@@ -20,6 +21,8 @@ impl PartialEq for FlowRef {
     }
 }
 
+impl Eq for FlowRef {}
+
 impl Deref for FlowRef {
     type Target = dyn Flow;
 
@@ -28,14 +31,26 @@ impl Deref for FlowRef {
     }
 }
 
-impl Eq for FlowRef {}
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum FlowType {
+    Block,
+    Inline
+}
+
+#[derive(Debug, Clone)]
+pub struct FlowDescription {
+    pub flow_type: FlowType,
+}
 
 /// This trait defines a common interface that all Flow types obey.
 pub trait Flow: Debug {
     /// Returns a reference to the contained `FlowBase`.
-    /// 
+    ///
     /// Every flow must contain a `FlowBase`.
     fn flow_base(&self) -> &FlowBase;
+
+    /// Returns a description of the flow.
+    fn description(&self) -> FlowDescription;
 
     /// Returns a reference to the computed style properties for this flow.
     ///
@@ -46,14 +61,17 @@ pub trait Flow: Debug {
     }
 
     /// Creates a `FlowRef` from a flow.
-    /// 
+    ///
     /// This function is useful during the construction of the flow tree.
-    fn into_ref(self) -> FlowRef where Self: 'static + Sized {
+    fn into_ref(self) -> FlowRef
+    where
+        Self: 'static + Sized,
+    {
         FlowRef(Rc::new(self))
     }
 
     /// Calculates and assigns the inline size of the flow.
-    /// 
+    ///
     /// It is assumed that the paren't inline size was already calculated.
     fn assign_inline_sizes(&self, _self_node: FlowRef, _context: &InlineSizeContext) {
         warn!("assign_inline_sizes is not implemented for {:?}", self)
@@ -68,20 +86,51 @@ pub trait Flow: Debug {
     }
 
     /// Called before children are drawn.
-    fn build_display_list(&self, _list: &mut DisplayList) {}
+    fn build_display_list(&self, _list: &mut DisplayList) {
+        warn!("build_display_list is not implemented for {:?}", self)
+    }
+}
+
+impl GraphStyle for FlowRef {
+    fn graph_style(&self) -> GraphDisplayStyle {
+        match self.description().flow_type {
+            FlowType::Block => GraphDisplayStyle::new().label("BlockFlow").shape(Shape::Box).style(Style::Filled(1.0, 0.5, 0.5)),
+            FlowType::Inline => GraphDisplayStyle::new().label("InlineFlow").style(Style::Filled(1.0, 0.5, 0.5))   
+        }
+    }
+}
+
+impl GetOpaqueNode for FlowRef {
+    fn get_opaque(&self) -> OpaqueNode {
+        let node_data: *const dyn Flow = &**self;
+        OpaqueNode(node_data as *const () as usize)
+    }
+}
+
+impl FlowRef {
+    pub fn serialize_children(
+        &self,
+        serializer: &mut DotGraphSerializer<impl std::io::Write>,
+    ) -> std::io::Result<()> {
+        for child in self.children() {
+            serializer.push_node(child.clone(), Connection::DescendantOf(self.get_opaque()))?;
+            child.serialize_children(serializer)?;
+        }
+        Ok(())
+    }
 }
 
 /// The "base class" of all flows.
-/// 
+///
 /// This holds information common to all flow types.
 #[derive(Debug, Clone)]
 pub struct FlowBase {
     pub(super) links: Links<Rc<dyn Flow>, Weak<dyn Flow>>,
 
     style: ComputedValues,
-    
+
     /// The inline size of a flow (aka width in ltr layout).
-    /// 
+    ///
     /// This quantity is computed during the top-down layout traversal. During
     /// this traversal children generally compute their inline metrics based on
     /// the parent's inline size.
@@ -89,7 +138,8 @@ pub struct FlowBase {
 
     pub block_size: Cell<f32>,
 
-    pub position: Cell<Point>,
+    /// The offset from the parent's top left corner.
+    pub offset: Cell<Point>,
 }
 
 impl FlowBase {
@@ -100,12 +150,17 @@ impl FlowBase {
             style,
             inline_size: Default::default(),
             block_size: Default::default(),
-            position: Default::default(),
+            offset: Default::default(),
         }
     }
 
-    fn style(&self) -> &ComputedValues {
+    pub fn style(&self) -> &ComputedValues {
         &self.style
+    }
+
+    pub fn set_block_offset(&self, offset: f32) {
+        let old = self.offset.get();
+        self.offset.set(Point::new(old.x, offset))
     }
 }
 
@@ -143,6 +198,4 @@ impl Link for Weak<dyn Flow> {
 }
 
 #[cfg(test)]
-mod test {
-
-}
+mod test {}

@@ -1,6 +1,7 @@
 use super::flow::FlowRef;
 use super::block_size::BlockSizeContext;
 use crate::traverse::Traversal;
+use crate::style::device::Device;
 
 #[derive(Debug)]
 pub struct LayoutSizeComputation {
@@ -21,7 +22,7 @@ impl Traversal<FlowRef> for LayoutSizeComputation {
 
 #[derive(Debug)]
 pub struct InlineSizeContext {
-    pub page_size: f32,
+    pub device: Device,
 }
 
 impl InlineSizeContext {

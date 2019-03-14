@@ -1,13 +1,14 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
 use crate::tree::ElementRef;
+use super::properties::specified;
 
 use cssparser::{
     AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, QualifiedRuleParser, RuleListParser,
     SourceLocation, ToCss, Token,
 };
 use html5ever::{LocalName, Namespace};
-use log::{error, warn, debug};
+use log::{error, warn};
 use selectors::matching;
 use selectors::context::QuirksMode;
 use selectors::parser::{NonTSPseudoClass, SelectorImpl, SelectorList, SelectorParseErrorKind};
@@ -258,13 +259,13 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
 
 #[derive(Debug, Copy, Clone)]
 pub enum PropertyDeclaration {
-    Width(f32),
+    Width { value: f32, unit: specified::Unit },
     Height(f32),
     MarginLeft(f32),
     MarginRight(f32),
     MarginTop(f32),
     MarginBottom(f32),
-    Display(super::properties::specified::Display)
+    Display(specified::Display)
 }
 
 pub struct StyleDeclarationParser {}
@@ -280,7 +281,7 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
         if name.eq_ignore_ascii_case("width") {
             match input.next()? {
-                Token::Dimension { value, unit: _, .. } => Ok(PropertyDeclaration::Width(*value)),
+                Token::Dimension { value, unit, .. } => Ok(PropertyDeclaration::Width { value: *value, unit: unit.parse().unwrap() }),
                 unexpected => {
                     let unexpected = unexpected.clone();
                     Err(input.new_basic_unexpected_token_error(unexpected).into())
