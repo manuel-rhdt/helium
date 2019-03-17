@@ -4,7 +4,6 @@ use std::ops::Deref;
 use std::rc::{Rc, Weak};
 
 use crate::dot::{DotGraphSerializer, Connection};
-use crate::layout::flow::FlowRef;
 use crate::node_data_ref::NodeDataRef;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::properties::computed::ComputedValues;
@@ -317,14 +316,11 @@ pub struct NodeData {
 
     computed_values: Cell<Option<ComputedValues>>,
 
-    contributed_flows: Cell<Option<FlowRef>>,
+    pub layout_entity: Cell<Option<crate::layout::entity::LayoutEntity>>,
 }
 
 impl Clone for NodeData {
     fn clone(&self) -> Self {
-        let contributed_flows = self.contributed_flows.take();
-        self.contributed_flows.set(contributed_flows.clone());
-
         let computed_values = self.computed_values.take();
         self.computed_values.set(computed_values.clone());
 
@@ -332,18 +328,15 @@ impl Clone for NodeData {
             links: self.links.clone(),
             html_data: self.html_data.clone(),
             computed_values: Cell::new(computed_values),
-            contributed_flows: Cell::new(contributed_flows),
+            layout_entity: self.layout_entity.clone()
         }
     }
 }
 
 impl Debug for NodeData {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        let contributed_flows = self.contributed_flows.take();
-        self.contributed_flows.set(contributed_flows.clone());
         f.debug_struct("NodeData")
             .field("html_data", &self.html_data)
-            .field("contributed_flows", &contributed_flows)
             .finish()
     }
 }
@@ -360,18 +353,8 @@ impl NodeData {
             },
             html_data,
             computed_values: None.into(),
-            contributed_flows: None.into(),
+            layout_entity: None.into()
         }
-    }
-
-    pub fn contributed_flows(&self) -> Option<FlowRef> {
-        let flow = self.contributed_flows.take();
-        self.contributed_flows.set(flow.clone());
-        flow
-    }
-
-    pub fn set_contributed_flows(&self, flow: Option<FlowRef>) {
-        self.contributed_flows.set(flow)
     }
 
     pub fn style(&self) -> Option<ComputedValues> {
@@ -424,12 +407,6 @@ impl DomRef {
         for child in self.children() {
             serializer.push_node(child.clone(), Connection::DescendantOf(self.get_opaque()))?;
             child.serialize_children_and_flows(serializer)?;
-        }
-        if let Some(flow) = self.contributed_flows() {
-            if !serializer.contains_node(flow.get_opaque()) {
-                serializer.push_node(flow.clone(), Connection::DescendantOf(self.get_opaque()))?;
-                flow.serialize_children(serializer)?;
-            }
         }
         Ok(())
     }

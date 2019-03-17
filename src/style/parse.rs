@@ -1,7 +1,7 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
-use crate::tree::ElementRef;
 use super::properties::specified;
+use crate::tree::ElementRef;
 
 use cssparser::{
     AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, QualifiedRuleParser, RuleListParser,
@@ -9,8 +9,8 @@ use cssparser::{
 };
 use html5ever::{LocalName, Namespace};
 use log::{error, warn};
-use selectors::matching;
 use selectors::context::QuirksMode;
+use selectors::matching;
 use selectors::parser::{NonTSPseudoClass, SelectorImpl, SelectorList, SelectorParseErrorKind};
 
 #[derive(Default, Debug)]
@@ -41,7 +41,7 @@ impl Styles {
         error!("Could not read stylesheet \"{}\"", href)
     }
 
-    pub fn rules_iter(&self) -> impl DoubleEndedIterator<Item=&QualifiedRule> {
+    pub fn rules_iter(&self) -> impl DoubleEndedIterator<Item = &QualifiedRule> {
         self.rules.iter()
     }
 }
@@ -81,7 +81,7 @@ impl PropertyDeclarationBlock {
         Default::default()
     }
 
-    pub fn declarations(&self) -> impl ExactSizeIterator<Item=&PropertyDeclaration> {
+    pub fn declarations(&self) -> impl ExactSizeIterator<Item = &PropertyDeclaration> {
         self.declarations.iter()
     }
 }
@@ -259,16 +259,25 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
 
 #[derive(Debug, Copy, Clone)]
 pub enum PropertyDeclaration {
-    Width { value: f32, unit: specified::Unit },
-    Height(f32),
-    MarginLeft(f32),
-    MarginRight(f32),
-    MarginTop(f32),
-    MarginBottom(f32),
-    Display(specified::Display)
+    Width(specified::QuantityOrPercentage),
+    Height(specified::QuantityOrPercentage),
+    Display(specified::Display),
 }
 
 pub struct StyleDeclarationParser {}
+
+impl StyleDeclarationParser {
+    fn parse_quantity_or_percentage<'i, 't>(
+        &mut self,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<specified::QuantityOrPercentage, ParseError<'i, ()>> {
+        specified::QuantityOrPercentage::parse(input.next()?).map_err(|unexpected_token| {
+            input
+                .new_basic_unexpected_token_error(unexpected_token)
+                .into()
+        })
+    }
+}
 
 impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
     type Declaration = PropertyDeclaration;
@@ -280,15 +289,12 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
         if name.eq_ignore_ascii_case("width") {
-            match input.next()? {
-                Token::Dimension { value, unit, .. } => Ok(PropertyDeclaration::Width { value: *value, unit: unit.parse().unwrap() }),
-                unexpected => {
-                    let unexpected = unexpected.clone();
-                    Err(input.new_basic_unexpected_token_error(unexpected).into())
-                }
-            }
-        } 
-        else if name.eq_ignore_ascii_case("display") {
+            self.parse_quantity_or_percentage(input)
+                .map(PropertyDeclaration::Width)
+        } else if name.eq_ignore_ascii_case("height") {
+            self.parse_quantity_or_percentage(input)
+                .map(PropertyDeclaration::Height)
+        } else if name.eq_ignore_ascii_case("display") {
             match input.next()? {
                 Token::Ident(ident) => Ok(PropertyDeclaration::Display(ident.parse().unwrap())),
                 unexpected => {
@@ -296,8 +302,7 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
                     Err(input.new_basic_unexpected_token_error(unexpected).into())
                 }
             }
-        }
-        else {
+        } else {
             warn!("Unknown style property \"{}\"", name);
             Err(input.new_custom_error(()))
         }

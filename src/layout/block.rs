@@ -1,93 +1,47 @@
 use super::block_size::BlockSizeContext;
-use super::flow::{Flow, FlowBase, FlowRef, FlowDescription, FlowType};
-use super::fragment::Fragment;
 use super::inline_size::InlineSizeContext;
 use crate::default_cell_ext::DefaultCellExt;
 use crate::display_list::DisplayList;
-use crate::style::properties::computed::{ComputedValues, GenericSize};
+use crate::style::properties::computed::{
+    ComputedValues, CssFloat, GenericSize, LengthPercentage, Percentage, PixelLength,
+};
 use crate::tree::TreeLinked;
 
 use std::cell::Cell;
 use std::fmt;
 
-pub struct BlockFlow {
-    base: FlowBase,
-    fragment: Cell<Option<Fragment>>,
+use specs::{world::{Index, EntitiesRes}, Component, VecStorage, Entity};
+
+#[derive(Debug, Clone)]
+pub struct BlockFormattingContext {
+    pub elements: Vec<Index>,
 }
 
-impl fmt::Debug for BlockFlow {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        f.debug_struct("BlockFlow")
-            .field("base", &self.base)
-            .finish()
-    }
-}
-
-impl Flow for BlockFlow {
-    fn flow_base(&self) -> &FlowBase {
-        &self.base
-    }
-
-    fn description(&self) -> FlowDescription {
-        FlowDescription {
-            flow_type: FlowType::Block
-        }
-    }
-
-    fn assign_inline_sizes(&self, self_node: FlowRef, context: &InlineSizeContext) {
-        let size =
-            if let GenericSize::LengthPercentage(length_percentage) = self.style().position.width {
-                // use specified width, if any
-                length_percentage.length().map(|x| x.0)
+impl BlockFormattingContext {
+    pub fn element_entities<'a>(&'a self, entities_res: &'a EntitiesRes) -> impl 'a + Iterator<Item=Entity> {
+        self.elements.iter().filter_map(move |&index| {
+            let entity = entities_res.entity(index);
+            if entities_res.is_alive(entity) {
+                Some(entity)
             } else {
                 None
-            };
-
-        // when no width was specified, use parent's width, falling back to the page width if there is no parent
-        let size =
-            size.unwrap_or_else(|| get_parent_inline_size(self_node).unwrap_or(context.device.width));
-
-        self.base.inline_size.set(size);
-
-        self.fragment.mutate(|fragment| {
-            fragment.as_mut().map(|f| f.content_size.width = size);
-        });
-    }
-
-    fn assign_block_size(&self, self_node: FlowRef, _context: &BlockSizeContext) {
-        let mut block_size = 0.0;
-
-        for child_flow in self_node.children() {
-            child_flow.flow_base().set_block_offset(block_size);
-            block_size += child_flow.flow_base().block_size.get();
-        }
-
-        self.flow_base().block_size.set(block_size);
-
-        self.fragment.mutate(|fragment| {
-            fragment.as_mut().map(|f| f.content_size.height = 30.0);
-        });
-    }
-
-    fn build_display_list(&self, list: &mut DisplayList) {
-        if let Some(fragment) = self.fragment.take() {
-            list.append_fragment(fragment)
-        }
+            }
+        })
     }
 }
 
-impl BlockFlow {
-    pub fn new(fragment: Option<Fragment>, style: ComputedValues) -> Self {
-        BlockFlow {
-            base: FlowBase::new(style),
-            fragment: Cell::new(fragment),
-        }
-    }
+impl Component for BlockFormattingContext {
+    type Storage = VecStorage<Self>;
 }
 
-/// Returns the inline size of the containing box or `None` if called with the
-/// root node.
-fn get_parent_inline_size(node: FlowRef) -> Option<f32> {
-    node.parent()
-        .map(|parent| parent.flow_base().inline_size.get())
+// CSS2 10.3.3
+pub fn calculate_inline_size(container_size: CssFloat, style: &ComputedValues) -> CssFloat {
+    match style.position.width {
+        GenericSize::Auto => container_size,
+        GenericSize::LengthPercentage(lp) => match lp {
+            LengthPercentage::Length(PixelLength(abs_size)) => abs_size,
+            LengthPercentage::Percentage(Percentage(percent)) => container_size * percent,
+            LengthPercentage::Both { .. } => unimplemented!(),
+        },
+    }
 }

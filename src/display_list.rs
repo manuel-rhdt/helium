@@ -1,4 +1,6 @@
-use crate::layout::fragment::Fragment;
+use crate::layout::entity::Position;
+
+use specs::{Join, ReadStorage, System};
 
 #[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct Point {
@@ -11,7 +13,7 @@ pub struct Rect {
     pub x: f32,
     pub y: f32,
     pub width: f32,
-    pub height: f32
+    pub height: f32,
 }
 
 impl Point {
@@ -23,7 +25,7 @@ impl Point {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DisplayItem {
     LineString(Vec<Point>),
-    FilledRect(Rect)
+    FilledRect(Rect),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -36,27 +38,14 @@ impl DisplayList {
         self.items.push(item)
     }
 
-    pub fn append_fragment(&mut self, fragment: Fragment) {
-        let rect = Rect {
-            x: 0.0,
-            y: 0.0,
-            width: fragment.content_size.width,
-            height: fragment.content_size.height
-        };
-        self.append(DisplayItem::FilledRect(rect))
-    }
-
-    pub fn items(&self) -> impl ExactSizeIterator<Item=&DisplayItem> {
+    pub fn items(&self) -> impl ExactSizeIterator<Item = &DisplayItem> {
         self.items.iter()
     }
 }
 
-use crate::layout::flow::FlowRef;
-use crate::traverse::Traversal;
-
 #[derive(Debug, Default)]
 pub struct DisplayListBuilder {
-    display_list: DisplayList
+    display_list: DisplayList,
 }
 
 impl DisplayListBuilder {
@@ -65,11 +54,20 @@ impl DisplayListBuilder {
     }
 }
 
-impl Traversal<FlowRef> for DisplayListBuilder {
-    /// Compute the inline sizes of all elements.
-    fn preorder_traverse(&mut self, node: FlowRef) {
-        node.build_display_list(&mut self.display_list)
-    }
+impl<'a> System<'a> for DisplayListBuilder {
+    type SystemData = ReadStorage<'a, Position>;
 
-    fn postorder_traverse(&mut self, _node: FlowRef) {}
+    fn run(&mut self, pos: Self::SystemData) {
+        for pos in pos.join() {
+            if pos.width == 0.0 || pos.height == 0.0 {
+                continue;
+            }
+            self.display_list.append(DisplayItem::FilledRect(Rect {
+                x: pos.x,
+                y: pos.y,
+                width: pos.width,
+                height: pos.height,
+            }))
+        }
+    }
 }

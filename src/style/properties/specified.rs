@@ -1,10 +1,12 @@
 use std::str::FromStr;
 
+use cssparser::Token;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Display {
     None,
     Block,
-    Inline
+    Inline,
 }
 
 impl FromStr for Display {
@@ -15,7 +17,7 @@ impl FromStr for Display {
             "none" => Ok(Display::None),
             "block" => Ok(Display::Block),
             "inline" => Ok(Display::Inline),
-            _ => Err(())
+            _ => Err(()),
         }
     }
 }
@@ -23,7 +25,7 @@ impl FromStr for Display {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Unit {
     Px,
-    Cm
+    Cm,
 }
 
 impl FromStr for Unit {
@@ -33,7 +35,29 @@ impl FromStr for Unit {
         match s {
             "px" => Ok(Unit::Px),
             "cm" => Ok(Unit::Cm),
-            _ => Err(())
+            _ => Err(()),
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum QuantityOrPercentage {
+    Quantity { value: super::CssFloat, unit: Unit },
+    Percentage(super::Percentage),
+}
+
+impl QuantityOrPercentage {
+    pub fn parse<'a, 'b>(token: &'a Token<'b>) -> Result<Self, Token<'b>> {
+        let result = match token {
+            Token::Dimension { value, unit, .. } => QuantityOrPercentage::Quantity {
+                value: *value,
+                unit: unit.parse().unwrap(),
+            },
+            Token::Percentage { unit_value, .. } => {
+                QuantityOrPercentage::Percentage(super::Percentage(*unit_value))
+            }
+            unexpected => return Err(unexpected.clone()),
+        };
+        Ok(result)
     }
 }

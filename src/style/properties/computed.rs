@@ -16,6 +16,7 @@ impl PixelLength {
     }
 }
 
+/// A value between 0 and 1 which is interpreted as a relative size.
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
 pub struct Percentage(pub CssFloat);
 
@@ -68,9 +69,24 @@ impl Default for GenericSize {
     }
 }
 
+impl GenericSize {
+    pub fn from_specified(spec: super::specified::QuantityOrPercentage) -> Self {
+        use super::specified::QuantityOrPercentage;
+        match spec {
+            QuantityOrPercentage::Quantity { value, unit } => GenericSize::LengthPercentage(
+                LengthPercentage::Length(PixelLength::from_val_unit(value, unit)),
+            ),
+            QuantityOrPercentage::Percentage(percentage) => {
+                GenericSize::LengthPercentage(LengthPercentage::Percentage(percentage))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Position {
     pub width: GenericSize,
+    pub height: GenericSize,
 }
 
 /// Contains the style structs.
@@ -115,15 +131,15 @@ impl StyleBuilder {
 
     pub fn add_declaration(&mut self, decl: PropertyDeclaration) {
         match decl {
-            PropertyDeclaration::Width { value, unit } => self.mutate_position(|mut pos| {
-                pos.width = GenericSize::LengthPercentage(LengthPercentage::Length(
-                    PixelLength::from_val_unit(value, unit),
-                ))
-            }),
+            PropertyDeclaration::Width(specified) => {
+                self.mutate_position(|mut pos| pos.width = GenericSize::from_specified(specified))
+            }
+            PropertyDeclaration::Height(specified) => {
+                self.mutate_position(|mut pos| pos.height = GenericSize::from_specified(specified))
+            }
             PropertyDeclaration::Display(val) => {
                 self.mutate_box(|mut box_| box_.display = val.into())
             }
-            _ => {}
         }
     }
 

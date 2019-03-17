@@ -2,8 +2,6 @@ use html5ever::tendril::{StrTendril, TendrilSink};
 use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::{Attribute, ExpandedName, QualName};
 
-use crate::layout::construct::FlowConstructor;
-use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use crate::tree::{NodeData, NodeRef, TreeLinked};
 
@@ -341,13 +339,5 @@ fn parse_html() -> html5ever::Parser<Sink> {
 
 pub fn generate_render_tree(html: &str) -> DomRef {
     let parser = parse_html();
-
-    // this is the dom tree
-    let document = parser.one(html);
-
-    let mut flow_constructor = FlowConstructor::new();
-
-    document.traverse(&mut flow_constructor);
-
-    document
+    parser.one(html)
 }

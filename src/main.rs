@@ -5,22 +5,22 @@ use derive_more::From;
 use std::fs;
 use std::path::PathBuf;
 
+pub mod default_cell_ext;
+pub mod display_list;
+pub mod dot;
 pub mod layout;
+pub mod node_data_ref;
 mod parser;
 mod pdf;
 pub mod style;
 mod traverse;
 mod tree;
-pub mod default_cell_ext;
-pub mod display_list;
-pub mod node_data_ref;
-pub mod dot;
 
 use crate::parser::generate_render_tree;
-pub use layout::flow::FlowRef;
-use traverse::Traverse;
-use display_list::DisplayListBuilder;
 use crate::style::device::Device;
+use display_list::DisplayListBuilder;
+
+use specs::RunNow;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "helium")]
@@ -51,22 +51,13 @@ fn main() -> Result<(), Error> {
         height: 1123.0,
     };
 
-    let mut layouter = layout::inline_size::LayoutSizeComputation {
-        inline_context: layout::inline_size::InlineSizeContext {
-            device
-        },
-        block_context: layout::block_size::BlockSizeContext {}
-    };
-
-    let root_flow = dom.contributed_flows().expect("The root dom node must have a flow.");
-
-    root_flow.traverse(&mut layouter);
+    let layout_context = layout::layout(dom.clone(), device);
 
     let mut dotfile = fs::File::create("graph.dot")?;
     dom.serialize_dot_graph(&mut dotfile)?;
 
     let mut display_list_builder = DisplayListBuilder::default();
-    root_flow.traverse(&mut display_list_builder);
+    display_list_builder.run_now(&layout_context.res);
     let display_list = dbg!(display_list_builder.build());
 
     pdf::write_pdf(display_list, device)?;

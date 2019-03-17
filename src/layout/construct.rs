@@ -1,20 +1,22 @@
-use super::block::BlockFlow;
-use super::flow::{Flow, FlowRef};
-use super::fragment::{Fragment, SpecificFragment};
-use super::inline::InlineFlow;
+use super::block::{BlockFormattingContext};
+use super::entity::{ContainingBlock, LayoutEntity, Position};
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
-use crate::style::properties::computed::{ComputedValues, Display, StyleBuilder};
+use crate::style::properties::computed::{ComputedValues, StyleBuilder};
 use crate::traverse::Traversal;
 use crate::tree::{DomRef, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
+use specs::{Builder, World};
+
+use std::fmt;
 
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug, Default)]
 pub struct FlowConstructor {
     styles: Styles,
     inside_style_tag: bool,
+    entity_constructor: EntityConstructor,
 }
 
 impl Traversal<DomRef> for FlowConstructor {
@@ -69,15 +71,13 @@ impl Traversal<DomRef> for FlowConstructor {
         } else {
             node.set_style(Default::default());
         }
+
+        // we insert the entities in tree order
+        self.entity_constructor.build_entity(node)
     }
 
     fn postorder_traverse(&mut self, node: DomRef) {
-        let style = node.style().expect("No style was assigned");
-        let flow = match style.box_.display {
-            Display::Inline => self.build_fragments_for_inline(node.clone(), style),
-            Display::Block => self.build_block_flow(node.clone(), style),
-        };
-        node.set_contributed_flows(flow);
+        self.entity_constructor.build_formatting_context(node)
     }
 }
 
@@ -86,31 +86,72 @@ impl FlowConstructor {
         FlowConstructor::default()
     }
 
-    fn build_block_flow(&self, node: DomRef, style: ComputedValues) -> Option<FlowRef> {
-        let fragment = Fragment::default();
-        let block_flow = BlockFlow::new(Some(fragment), style).into_ref();
+    pub fn layout_context(self) -> super::entity::LayoutContext {
+        self.entity_constructor.world
+    }
+}
 
-        for child_flow in node.children().flat_map(|child| child.contributed_flows()) {
-            block_flow.append(child_flow);
-        }
+struct EntityConstructor {
+    world: World,
+}
 
-        Some(block_flow)
+impl fmt::Debug for EntityConstructor {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("EntityConstructor").finish()
+    }
+}
+
+impl Default for EntityConstructor {
+    fn default() -> Self {
+        let mut world = World::new();
+        world.register::<ContainingBlock>();
+        world.register::<Position>();
+        world.register::<ComputedValues>();
+        world.register::<BlockFormattingContext>();
+        EntityConstructor { world }
+    }
+}
+
+impl EntityConstructor {
+    fn build_entity(&mut self, node: DomRef) {
+        let style = node.style().expect("No style was assigned");
+        let parent_entity = node.parent().and_then(|x| x.layout_entity.get());
+        let entity = self.build_block_entity(style, parent_entity);
+        node.layout_entity.set(Some(entity));
     }
 
-    fn build_fragments_for_inline(&self, node: DomRef, style: ComputedValues) -> Option<FlowRef> {
-        let fragments = match &node.html_data {
-            ParsedData::Text(string) => vec![Fragment {
-                class: SpecificFragment::Text(string.borrow().clone()),
-                ..Default::default()
-            }],
-            _ => vec![],
-        };
-        let inline_flow = InlineFlow::with_fragments(fragments, style).into_ref();
+    fn build_block_entity(
+        &mut self,
+        style: ComputedValues,
+        parent_entity: Option<LayoutEntity>,
+    ) -> LayoutEntity {
+        let entity_builer = self.world.create_entity().with(style);
 
-        for child_flow in node.children().flat_map(|child| child.contributed_flows()) {
-            inline_flow.append(child_flow);
+        let entity_builer = if let Some(parent_entity) = parent_entity {
+            entity_builer.with(ContainingBlock {
+                entity: parent_entity,
+            })
+        } else {
+            entity_builer
+        };
+
+        entity_builer
+            .with(Position::default())
+            .build()
+            .into()
+    }
+
+    fn build_formatting_context(&mut self, node: DomRef) {
+        let mut block_formatting_context = BlockFormattingContext { elements: vec![] };
+        for child in node.children() {
+            let child_entity = child.layout_entity.get().expect("node has no entity");
+            block_formatting_context.elements.push(child_entity.0.id());
         }
 
-        Some(inline_flow)
+        if block_formatting_context.elements.len() > 0 {
+            let self_entity = node.layout_entity.get().expect("node has no entity").0;
+            self.world.write_storage().insert(self_entity, block_formatting_context).unwrap();
+        }
+
     }
 }

@@ -4,7 +4,7 @@ use std::process::Command;
 
 #[test]
 fn file_doesnt_exist() -> Result<(), Box<std::error::Error>> {
-    let mut cmd = Command::main_binary()?;
+    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
     cmd.arg("test/file/doesnt/exist");
     cmd.assert()
         .failure()
