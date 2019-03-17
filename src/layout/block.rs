@@ -1,14 +1,6 @@
-use super::block_size::BlockSizeContext;
-use super::inline_size::InlineSizeContext;
-use crate::default_cell_ext::DefaultCellExt;
-use crate::display_list::DisplayList;
 use crate::style::properties::computed::{
     ComputedValues, CssFloat, GenericSize, LengthPercentage, Percentage, PixelLength,
 };
-use crate::tree::TreeLinked;
-
-use std::cell::Cell;
-use std::fmt;
 
 use specs::{world::{Index, EntitiesRes}, Component, VecStorage, Entity};
 
