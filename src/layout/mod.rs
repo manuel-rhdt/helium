@@ -3,10 +3,13 @@ pub mod block;
 pub mod block_size;
 pub mod construct;
 pub mod entity;
+pub mod inline;
 pub mod inline_size;
+pub mod text;
 
 use crate::layout::entity::LayoutContext;
 use crate::style::device::Device;
+use crate::style::properties::computed::PixelLength;
 use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use construct::FlowConstructor;
@@ -18,11 +21,14 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     dom.traverse(&mut flow_constructor);
 
     let mut layout_context = flow_constructor.layout_context();
+
+    // create the page container entity (which defines the width of the root
+    // element)
     let page_container = layout_context
         .create_entity()
         .with(entity::Position {
-            x: 0.0,
-            y: 0.0,
+            x: PixelLength(0.0),
+            y: PixelLength(0.0),
             width: device.width,
             height: device.height,
         })
@@ -39,12 +45,17 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
         )
         .unwrap();
 
+    // Assign widths.
     let mut inline_size_context = inline_size::InlineSizeContext::new(device);
     inline_size_context.run_now(&layout_context.res);
 
-    // assign_heights
+    // Assign heights to all entities where it does not depend on their children.
     assign_heights::AssignHeights.run_now(&layout_context.res);
 
+    // inline context layout
+    inline::InlineLayout.run_now(&layout_context.res);
+
+    // Assign heights to the remaining entities.
     let mut block_size_context = block_size::BlockSizeContext {};
     block_size_context.run_now(&layout_context.res);
 

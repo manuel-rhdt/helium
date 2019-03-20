@@ -18,6 +18,7 @@ mod tree;
 
 use crate::parser::generate_render_tree;
 use crate::style::device::Device;
+use style::properties::computed::PixelLength;
 use display_list::DisplayListBuilder;
 
 use specs::RunNow;
@@ -47,8 +48,8 @@ fn main() -> Result<(), Error> {
 
     // a4 paper
     let device = Device {
-        width: 793.7,
-        height: 1123.0,
+        width: PixelLength(793.7),
+        height: PixelLength(1123.0),
     };
 
     let layout_context = layout::layout(dom.clone(), device);

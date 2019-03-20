@@ -1,8 +1,8 @@
-use crate::display_list::{DisplayItem, Rect};
+use crate::display_list::{self, DisplayItem, Rect};
 use crate::style::device::Device;
-use crate::style::properties::computed::CssFloat;
+use crate::style::properties::computed::PixelLength;
 
-use printpdf::{Error, Line, Mm, PdfDocument, Point, CurTransMat};
+use printpdf::{BuiltinFont, CurTransMat, Error, Line, Mm, PdfDocument, Point};
 
 use font_kit::family_name::FamilyName;
 use font_kit::handle::Handle;
@@ -15,56 +15,69 @@ use std::io::BufWriter;
 const MM_PER_IN: f64 = 25.4;
 const PT_PER_IN: f64 = 72.0;
 
-fn px_to_mm(px: CssFloat) -> Mm {
-    Mm(f64::from(px) * 0.75 * MM_PER_IN / PT_PER_IN)
+impl From<PixelLength> for Mm {
+    fn from(px: PixelLength) -> Mm {
+        Mm(f64::from(px.0) * (0.75 * MM_PER_IN / PT_PER_IN))
+    }
 }
 
-pub fn write_pdf(display_list: crate::display_list::DisplayList, device: Device) -> Result<(), Error> {
-    let (doc, page1, layer1) =
-        PdfDocument::new("PDF_Document_title", px_to_mm(device.width), px_to_mm(device.height), "Layer 1");
+pub fn write_pdf(
+    display_list: crate::display_list::DisplayList,
+    device: Device,
+) -> Result<(), Error> {
+    let (doc, page1, layer1) = PdfDocument::new(
+        "PDF_Document_title",
+        device.width.into(),
+        device.height.into(),
+        "Layer 1",
+    );
     let current_layer = doc.get_page(page1).get_layer(layer1);
 
     let font = SystemSource::new()
         .select_best_match(&[FamilyName::SansSerif], &Properties::new())
         .unwrap();
 
-    let font = match font {
+    let _font = match font {
         Handle::Path { path, .. } => doc.add_external_font(File::open(path)?)?,
         _ => unimplemented!(),
     };
 
-    current_layer.begin_text_section();
-
-    current_layer.set_font(&font, 33);
-    current_layer.set_text_cursor(Mm(10.0), Mm(10.0));
-    current_layer.set_line_height(33);
-
-    current_layer.write_text("Hello Wordl!".clone(), &font);
-
-    current_layer.end_text_section();
-
-    current_layer.set_ctm(CurTransMat::Translate(Mm(0.0), px_to_mm(device.height)));
-    current_layer.set_ctm(CurTransMat::Scale(1.0, -1.0));
+    let builtin_font = doc.add_builtin_font(BuiltinFont::Helvetica)?;
 
     for item in display_list.items() {
-        match *item {
+        match item {
             DisplayItem::FilledRect(Rect {
                 x,
                 y,
                 width,
                 height,
             }) => {
-                let p1 = Point::new(px_to_mm(x), px_to_mm(y));
-                let p2 = Point::new(px_to_mm(x + width), px_to_mm(y));
-                let p3 = Point::new(px_to_mm(x + width), px_to_mm(y + height));
-                let p4 = Point::new(px_to_mm(x), px_to_mm(y + height));
+                current_layer.save_graphics_state();
+                current_layer.set_ctm(CurTransMat::Translate(Mm(0.0), device.height.into()));
+                current_layer.set_ctm(CurTransMat::Scale(1.0, -1.0));
+                let p1 = Point::new((*x).into(), (*y).into());
+                let p2 = Point::new((*x + *width).into(), (*y).into());
+                let p3 = Point::new((*x + *width).into(), (*y + *height).into());
+                let p4 = Point::new((*x).into(), (*y + *height).into());
 
-                let mut line: Line = [p1, p2, p3, p4].into_iter().map(|&pt| (pt, false)).collect();
+                let mut line: Line = [p1, p2, p3, p4]
+                    .into_iter()
+                    .map(|&pt| (pt, false))
+                    .collect();
                 line.set_fill(false);
                 line.set_closed(true);
                 line.set_stroke(true);
                 current_layer.add_shape(line);
-            },
+                current_layer.restore_graphics_state();
+            }
+            DisplayItem::Text(display_list::Point { x, y }, text) => {
+                let p = Point::new((*x).into(), (*y).into());
+                current_layer.begin_text_section();
+                current_layer.set_font(&builtin_font, 33);
+                current_layer.set_text_cursor(p.x.into(), p.y.into());
+                current_layer.write_text(text.clone(), &builtin_font);
+                current_layer.end_text_section();
+            }
             _ => {}
         }
     }

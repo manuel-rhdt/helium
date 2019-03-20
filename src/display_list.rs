@@ -1,23 +1,24 @@
-use crate::layout::entity::Position;
+use crate::layout::entity::{Position, Text};
+use crate::style::properties::computed::PixelLength;
 
 use specs::{Join, ReadStorage, System};
 
 #[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct Point {
-    pub x: f32,
-    pub y: f32,
+    pub x: PixelLength,
+    pub y: PixelLength,
 }
 
 #[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct Rect {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
+    pub x: PixelLength,
+    pub y: PixelLength,
+    pub width: PixelLength,
+    pub height: PixelLength,
 }
 
 impl Point {
-    pub fn new(x: f32, y: f32) -> Self {
+    pub fn new(x: PixelLength, y: PixelLength) -> Self {
         Point { x, y }
     }
 }
@@ -26,6 +27,7 @@ impl Point {
 pub enum DisplayItem {
     LineString(Vec<Point>),
     FilledRect(Rect),
+    Text(Point, String),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -55,12 +57,18 @@ impl DisplayListBuilder {
 }
 
 impl<'a> System<'a> for DisplayListBuilder {
-    type SystemData = ReadStorage<'a, Position>;
+    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, Text>);
 
-    fn run(&mut self, pos: Self::SystemData) {
-        for pos in pos.join() {
-            if pos.width == 0.0 || pos.height == 0.0 {
+    fn run(&mut self, (pos, text): Self::SystemData) {
+        for (pos, text) in (&pos, text.maybe()).join() {
+            if pos.width == PixelLength(0.0) || pos.height == PixelLength(0.0) {
                 continue;
+            }
+            if let Some(text) = text {
+                self.display_list.append(DisplayItem::Text(
+                    Point { x: pos.x, y: pos.y },
+                    text.characters.clone(),
+                ));
             }
             self.display_list.append(DisplayItem::FilledRect(Rect {
                 x: pos.x,

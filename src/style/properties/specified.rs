@@ -2,6 +2,14 @@ use std::str::FromStr;
 
 use cssparser::Token;
 
+#[derive(Debug, Copy, Clone)]
+pub enum PropertyDeclaration {
+    Width(QuantityOrPercentage),
+    Height(QuantityOrPercentage),
+    Display(Display),
+    FontSize
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Display {
     None,

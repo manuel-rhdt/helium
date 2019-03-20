@@ -1,8 +1,8 @@
 
-use super::properties::computed::CssFloat;
+use super::properties::computed::PixelLength;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Device {
-    pub width: CssFloat,
-    pub height: CssFloat,
+    pub width: PixelLength,
+    pub height: PixelLength,
 }

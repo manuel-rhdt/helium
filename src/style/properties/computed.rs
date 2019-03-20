@@ -1,11 +1,32 @@
 use std::sync::Arc;
+use std::ops::{Add, AddAssign, Mul};
 
-use super::super::parse::PropertyDeclaration;
+use super::specified::PropertyDeclaration;
 
 pub type CssFloat = f32;
 
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
 pub struct PixelLength(pub CssFloat);
+
+impl Add for PixelLength {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
+    }
+}
+
+impl AddAssign for PixelLength {
+    fn add_assign(&mut self, other: Self) {
+        self.0 += other.0
+    }
+}
+
+impl Mul<Percentage> for PixelLength {
+    type Output = Self;
+    fn mul(self, other: Percentage) -> Self {
+        Self(self.0 * other.0)
+    }
+}
 
 impl PixelLength {
     pub fn from_val_unit(val: f32, unit: super::specified::Unit) -> Self {
@@ -24,7 +45,9 @@ type Length = PixelLength;
 
 /// A length, a percentage or a combination of both using `calc`.
 ///
-/// See [https://drafts.csswg.org/css-values-4/#typedef-length-percentage](https://drafts.csswg.org/css-values-4/#typedef-length-percentage).
+/// See
+/// [https://drafts.csswg.org/css-values-4/#typedef-length-percentage]
+/// (https://drafts.csswg.org/css-values-4/#typedef-length-percentage).
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum LengthPercentage {
     Length(Length),
@@ -94,6 +117,7 @@ pub struct Position {
 pub struct ComputedValues {
     pub box_: Arc<Box>,
     pub position: Arc<Position>,
+    pub font: Arc<Font>,
 }
 
 #[derive(Debug, Default)]
@@ -101,6 +125,7 @@ pub struct StyleBuilder {
     inherited_values: ComputedValues,
     position: Option<Position>,
     box_: Option<Box>,
+    font: Option<Font>,
 }
 
 impl StyleBuilder {
@@ -140,19 +165,24 @@ impl StyleBuilder {
             PropertyDeclaration::Display(val) => {
                 self.mutate_box(|mut box_| box_.display = val.into())
             }
+            PropertyDeclaration::FontSize => unimplemented!()
         }
     }
 
     pub fn build(self) -> ComputedValues {
         ComputedValues {
-            position: match self.position {
-                None => self.inherited_values.position,
-                Some(pos) => Arc::new(pos),
-            },
-            box_: match self.box_ {
-                None => self.inherited_values.box_,
-                Some(box_) => Arc::new(box_),
-            },
+            position: self
+                .position
+                .map(Arc::new)
+                .unwrap_or(self.inherited_values.position),
+            box_: self
+                .box_
+                .map(Arc::new)
+                .unwrap_or(self.inherited_values.box_),
+            font: self
+                .font
+                .map(Arc::new)
+                .unwrap_or(self.inherited_values.font),
         }
     }
 }
@@ -180,6 +210,19 @@ impl From<super::specified::Display> for Display {
             super::specified::Display::Block => Display::Block,
             super::specified::Display::Inline => Display::Inline,
             _ => Display::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Font {
+    pub font_size: PixelLength,
+}
+
+impl Default for Font {
+    fn default() -> Self {
+        Self {
+            font_size: PixelLength(12.0)
         }
     }
 }

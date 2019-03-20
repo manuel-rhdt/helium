@@ -1,6 +1,6 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
-use super::properties::specified;
+use super::properties::specified::{self, PropertyDeclaration};
 use crate::tree::ElementRef;
 
 use cssparser::{
@@ -257,13 +257,6 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum PropertyDeclaration {
-    Width(specified::QuantityOrPercentage),
-    Height(specified::QuantityOrPercentage),
-    Display(specified::Display),
-}
-
 pub struct StyleDeclarationParser {}
 
 impl StyleDeclarationParser {
@@ -302,7 +295,15 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
                     Err(input.new_basic_unexpected_token_error(unexpected).into())
                 }
             }
-        } else {
+        } else if name.eq_ignore_ascii_case("font-size") {
+            match input.next()? {
+                unexpected => {
+                    let unexpected = unexpected.clone();
+                    Err(input.new_basic_unexpected_token_error(unexpected).into())
+                }
+            }
+        } 
+        else {
             warn!("Unknown style property \"{}\"", name);
             Err(input.new_custom_error(()))
         }

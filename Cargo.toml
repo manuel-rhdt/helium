@@ -19,3 +19,11 @@ specs = "0.14"
 [dev-dependencies]
 assert_cmd = "0.11"
 predicates = "1"
+
+[build-dependencies]
+afm = "0.1.2"
+glob = "0.3.0"
+pom = "1"
+quote = "0.6.11"
+Inflector = "0.11.4"
+proc-macro2 = "0.4.27"

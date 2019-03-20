@@ -1,6 +1,6 @@
 use super::block::BlockFormattingContext;
 use super::entity::Position;
-use crate::style::properties::computed::{ComputedValues, GenericSize};
+use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength};
 
 use specs::{Entities, ReadStorage, System, WriteStorage};
 
@@ -23,9 +23,9 @@ impl<'a> System<'a> for BlockSizeContext {
         let sorted_entities: Vec<_> = (&entities, &context, &computed_values).join().collect();
 
         for (entity, formatting_context, computed_values) in sorted_entities.iter().rev() {
-            let mut block_size = 0.0;
+            let mut block_size = PixelLength(0.0);
             for child in formatting_context.element_entities(&entities) {
-                let mut child_position = positions.get_mut(child).unwrap();
+                let child_position = positions.get_mut(child).unwrap();
                 child_position.y += block_size;
                 block_size += child_position.height;
             }
