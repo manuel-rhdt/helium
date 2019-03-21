@@ -1,6 +1,7 @@
 use super::block::BlockFormattingContext;
 use super::entity::{Position, Text};
 use super::text::layout_text;
+use crate::style::properties::computed::ComputedValues;
 
 use specs::{
     world::{EntitiesRes, Index},
@@ -38,6 +39,7 @@ pub struct InlineLayout;
 impl<'a> System<'a> for InlineLayout {
     type SystemData = (
         Entities<'a>,
+        ReadStorage<'a, ComputedValues>,
         WriteStorage<'a, Position>,
         ReadStorage<'a, InlineFormattingContext>,
         WriteStorage<'a, BlockFormattingContext>,
@@ -48,32 +50,42 @@ impl<'a> System<'a> for InlineLayout {
         &mut self,
         (
             entities,
+            style,
             mut positions,
             inline_formatting_context,
             mut block_formatting_context,
             mut text,
         ): Self::SystemData,
     ) {
-        for (entity, inline_formatting_context) in (&entities, &inline_formatting_context).join() {
-            let self_width = positions.get(entity).unwrap().width;
-            for _child in inline_formatting_context.element_entities(&entities) {
-                let _linebreaks =
-                    layout_text("Lorem ipsum dolor", self_width);
+        for (entity, style, inline_formatting_context) in
+            (&entities, &style, &inline_formatting_context).join()
+        {
+            let &Position { x, y, width, .. } = positions.get(entity).unwrap();
+            let mut string = String::new();
+            for child in inline_formatting_context.element_entities(&entities) {
+                let text = text.get(child).unwrap();
+                let _linebreaks = layout_text(&text.characters, style.font.font_size, width);
+                string.push_str(&text.characters);
             }
-            let line_height = super::text::line_height();
+            let font_height = super::text::font_height(style.font.font_size);
+            let line_gap = style.font.line_height - font_height;
+
             let line = entities
                 .build_entity()
                 .with(
                     Position {
-                        height: line_height,
-                        width: self_width,
-                        ..Default::default()
+                        x,
+                        y,
+                        height: style.font.line_height,
+                        width,
                     },
                     &mut positions,
                 )
                 .with(
                     Text {
-                        characters: "Lorem ipsum".to_string(),
+                        characters: string,
+                        font_size: style.font.font_size,
+                        baseline: super::text::font_ascender(style.font.font_size) + line_gap / 2.0,
                     },
                     &mut text,
                 )

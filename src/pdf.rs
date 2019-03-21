@@ -2,7 +2,7 @@ use crate::display_list::{self, DisplayItem, Rect};
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
-use printpdf::{BuiltinFont, CurTransMat, Error, Line, Mm, PdfDocument, Point};
+use printpdf::{BuiltinFont, Error, Line, Mm, PdfDocument, Point, CurTransMat};
 
 use font_kit::family_name::FamilyName;
 use font_kit::handle::Handle;
@@ -46,19 +46,27 @@ pub fn write_pdf(
 
     for item in display_list.items() {
         match item {
+            DisplayItem::PushTransform => current_layer.save_graphics_state(),
+            DisplayItem::RestoreTransform => current_layer.restore_graphics_state(),
+            DisplayItem::Translate(x, y) => {
+                let x = *x;
+                let y = -*y;
+                current_layer.set_ctm(CurTransMat::Translate(x.into(), y.into()));
+            },
             DisplayItem::FilledRect(Rect {
                 x,
                 y,
                 width,
                 height,
             }) => {
-                current_layer.save_graphics_state();
-                current_layer.set_ctm(CurTransMat::Translate(Mm(0.0), device.height.into()));
-                current_layer.set_ctm(CurTransMat::Scale(1.0, -1.0));
-                let p1 = Point::new((*x).into(), (*y).into());
-                let p2 = Point::new((*x + *width).into(), (*y).into());
-                let p3 = Point::new((*x + *width).into(), (*y + *height).into());
-                let p4 = Point::new((*x).into(), (*y + *height).into());
+                let x = *x;
+                let y = device.height - *y - *height;
+                let width = *width;
+                let height = *height;
+                let p1 = Point::new(x.into(), y.into());
+                let p2 = Point::new((x + width).into(), y.into());
+                let p3 = Point::new((x + width).into(), (y + height).into());
+                let p4 = Point::new(x.into(), (y + height).into());
 
                 let mut line: Line = [p1, p2, p3, p4]
                     .into_iter()
@@ -68,12 +76,13 @@ pub fn write_pdf(
                 line.set_closed(true);
                 line.set_stroke(true);
                 current_layer.add_shape(line);
-                current_layer.restore_graphics_state();
             }
-            DisplayItem::Text(display_list::Point { x, y }, text) => {
-                let p = Point::new((*x).into(), (*y).into());
+            DisplayItem::Text(display_list::Point { x, y }, _, text) => {
+                let x = *x;
+                let y = device.height - *y;
+                let p = Point::new(x.into(), y.into());
                 current_layer.begin_text_section();
-                current_layer.set_font(&builtin_font, 33);
+                current_layer.set_font(&builtin_font, 12);
                 current_layer.set_text_cursor(p.x.into(), p.y.into());
                 current_layer.write_text(text.clone(), &builtin_font);
                 current_layer.end_text_section();

@@ -36,17 +36,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             let wx = metric.wx;
             quote!(CharMetric {
                 name: #name,
-                bbox: [#(#bbox),*],
+                bbox: [#(FontUnit(#bbox)),*],
                 character_code: #character_code,
-                advance_width: #wx,
+                advance_width: FontUnit(#wx),
             })
         });
 
         tokens.push(quote!(
             BuiltInFontMetrics {
                 font_name: #font_name,
-                ascender: #ascender,
-                descender: #descender,
+                ascender: FontUnit(#ascender),
+                descender: FontUnit(#descender),
                 char_metrics: &[#(#char_metrics),*],
             }
         ));

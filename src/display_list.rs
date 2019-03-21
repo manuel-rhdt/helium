@@ -1,4 +1,4 @@
-use crate::layout::entity::{Position, Text};
+use crate::layout::entity::{Position, StackingContextRelativePosition, Text};
 use crate::style::properties::computed::PixelLength;
 
 use specs::{Join, ReadStorage, System};
@@ -27,7 +27,10 @@ impl Point {
 pub enum DisplayItem {
     LineString(Vec<Point>),
     FilledRect(Rect),
-    Text(Point, String),
+    Text(Point, PixelLength, String),
+    Translate(PixelLength, PixelLength),
+    PushTransform,
+    RestoreTransform,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -54,28 +57,44 @@ impl DisplayListBuilder {
     pub fn build(self) -> DisplayList {
         self.display_list
     }
+
+    fn append_text(&mut self, pos: Point, text: &Text) {
+        self.display_list.append(DisplayItem::Text(
+            Point {
+                y: pos.y + text.baseline,
+                ..pos
+            },
+            text.font_size,
+            text.characters.clone(),
+        ));
+    }
 }
 
 impl<'a> System<'a> for DisplayListBuilder {
-    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, Text>);
+    type SystemData = (
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, StackingContextRelativePosition>,
+        ReadStorage<'a, Text>,
+    );
 
-    fn run(&mut self, (pos, text): Self::SystemData) {
-        for (pos, text) in (&pos, text.maybe()).join() {
-            if pos.width == PixelLength(0.0) || pos.height == PixelLength(0.0) {
+    fn run(&mut self, (positions, global_pos, text): Self::SystemData) {
+        for (&StackingContextRelativePosition { x, y }, &Position { width, height, .. }, text) in
+            (&global_pos, &positions, text.maybe()).join()
+        {
+            if width == PixelLength(0.0) || height == PixelLength(0.0) {
                 continue;
             }
-            if let Some(text) = text {
-                self.display_list.append(DisplayItem::Text(
-                    Point { x: pos.x, y: pos.y },
-                    text.characters.clone(),
-                ));
-            }
+
             self.display_list.append(DisplayItem::FilledRect(Rect {
-                x: pos.x,
-                y: pos.y,
-                width: pos.width,
-                height: pos.height,
-            }))
+                x,
+                y,
+                width,
+                height,
+            }));
+
+            if let Some(text) = text {
+                self.append_text(Point { x, y }, text);
+            }
         }
     }
 }

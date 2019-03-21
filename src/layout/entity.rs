@@ -17,11 +17,20 @@ impl Component for ContainingBlock {
     type Storage = DenseVecStorage<Self>;
 }
 
+/// Describes the position of a box, where (x, y) specifies the top-left corner
+/// and width and height specify the dimensions.
+/// 
+/// The origin of the coordinate system is usually the parent element's top left
+/// corner.
 #[derive(Debug, Copy, Clone, Default)]
 pub struct Position {
+    /// Horizontal coordinate of the top left corner.
     pub x: PixelLength,
+    /// Vertical coordinate of the top left corner.
     pub y: PixelLength,
+    /// Width of the box.
     pub width: PixelLength,
+    /// Height of the box.
     pub height: PixelLength
 }
 
@@ -29,13 +38,27 @@ impl Component for Position {
     type Storage = DenseVecStorage<Self>;
 }
 
+/// The position of a box relative to the smallest containing stacking context.
+#[derive(Debug, Copy, Clone, Default)]
+pub struct StackingContextRelativePosition {
+    pub x: PixelLength,
+    pub y: PixelLength
+}
+
+impl Component for StackingContextRelativePosition {
+    type Storage = DenseVecStorage<Self>;
+}
+
 impl Component for ComputedValues {
     type Storage = DenseVecStorage<Self>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Text {
-    pub characters: String
+    pub characters: String,
+    pub font_size: PixelLength,
+    /// Distance from the top of the line box to the baseline of the text.
+    pub baseline: PixelLength,
 }
 
 impl Component for Text {

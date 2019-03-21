@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::ops::{Add, AddAssign, Mul};
+use std::ops::{Add, AddAssign, Mul, Div, Sub, Neg};
 
 use super::specified::PropertyDeclaration;
 
@@ -7,6 +7,12 @@ pub type CssFloat = f32;
 
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
 pub struct PixelLength(pub CssFloat);
+
+impl PixelLength {
+    pub fn from_pt(pt: f32) -> Self {
+        PixelLength(pt / 0.75)
+    }
+}
 
 impl Add for PixelLength {
     type Output = Self;
@@ -21,6 +27,20 @@ impl AddAssign for PixelLength {
     }
 }
 
+impl Sub for PixelLength {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
+        Self(self.0 - other.0)
+    }
+}
+
+impl Neg for PixelLength {
+    type Output = Self;
+    fn neg(self) -> Self {
+        Self(-self.0)
+    }
+}
+
 impl Mul<Percentage> for PixelLength {
     type Output = Self;
     fn mul(self, other: Percentage) -> Self {
@@ -28,11 +48,33 @@ impl Mul<Percentage> for PixelLength {
     }
 }
 
+impl Mul<f32> for PixelLength {
+    type Output = Self;
+    fn mul(self, other: f32) -> Self {
+        Self(self.0 * other)
+    }
+}
+
+impl Mul for PixelLength {
+    type Output = Self;
+    fn mul(self, other: PixelLength) -> Self {
+        Self(self.0 * other.0)
+    }
+}
+
+impl Div<f32> for PixelLength {
+    type Output = Self;
+    fn div(self, other: f32) -> Self {
+        Self(self.0 / other)
+    }
+}
+
 impl PixelLength {
     pub fn from_val_unit(val: f32, unit: super::specified::Unit) -> Self {
         match unit {
             super::specified::Unit::Px => PixelLength(val),
-            super::specified::Unit::Cm => PixelLength(val / 2.54 * 72.0 / 0.75),
+            super::specified::Unit::Cm => PixelLength::from_pt(val / 2.54 * 72.0),
+            super::specified::Unit::Pt => PixelLength::from_pt(val)
         }
     }
 }
@@ -217,12 +259,14 @@ impl From<super::specified::Display> for Display {
 #[derive(Debug, Clone)]
 pub struct Font {
     pub font_size: PixelLength,
+    pub line_height: PixelLength
 }
 
 impl Default for Font {
     fn default() -> Self {
         Self {
-            font_size: PixelLength(12.0)
+            font_size: PixelLength::from_pt(12.0),
+            line_height: PixelLength::from_pt(12.0) * 1.2
         }
     }
 }

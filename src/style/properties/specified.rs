@@ -34,6 +34,7 @@ impl FromStr for Display {
 pub enum Unit {
     Px,
     Cm,
+    Pt,
 }
 
 impl FromStr for Unit {
@@ -43,6 +44,7 @@ impl FromStr for Unit {
         match s {
             "px" => Ok(Unit::Px),
             "cm" => Ok(Unit::Cm),
+            "pt" => Ok(Unit::Pt),
             _ => Err(()),
         }
     }

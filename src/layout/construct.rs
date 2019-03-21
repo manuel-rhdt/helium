@@ -1,5 +1,7 @@
 use super::block::BlockFormattingContext;
-use super::entity::{ContainingBlock, LayoutEntity, Position, Text};
+use super::entity::{
+    ContainingBlock, LayoutEntity, Position, StackingContextRelativePosition, Text,
+};
 use super::inline::InlineFormattingContext;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
@@ -111,6 +113,7 @@ impl Default for EntityConstructor {
         world.register::<BlockFormattingContext>();
         world.register::<InlineFormattingContext>();
         world.register::<Text>();
+        world.register::<StackingContextRelativePosition>();
         EntityConstructor { world }
     }
 }
@@ -120,12 +123,21 @@ impl EntityConstructor {
     fn build_entity(&mut self, node: DomRef) {
         let style = node.style().expect("No style was assigned");
         let parent_entity = node.parent().and_then(|x| x.layout_entity.get());
-        let entity = match node.html_data {
+        let entity = match &node.html_data {
             ParsedData::Element(_) => self.build_block_entity(style, parent_entity),
+            ParsedData::Document(_) => self.build_root_entity(),
+            ParsedData::Text(string) => {
+                self.build_text_entity(style, parent_entity, &string.borrow())
+            }
             _ => self.build_block_entity(style, parent_entity),
         };
 
         node.layout_entity.set(Some(entity));
+    }
+
+    // called on top-down traversal
+    fn build_root_entity(&mut self) -> LayoutEntity {
+        self.build_block_entity(Default::default(), None)
     }
 
     // called on top-down traversal
@@ -145,6 +157,26 @@ impl EntityConstructor {
         };
 
         entity_builer.with(Position::default()).build().into()
+    }
+
+    fn build_text_entity(
+        &mut self,
+        style: ComputedValues,
+        parent_entity: Option<LayoutEntity>,
+        text: &str,
+    ) -> LayoutEntity {
+        let LayoutEntity(entity) = self.build_block_entity(style, parent_entity);
+        self.world
+            .write_storage()
+            .insert(
+                entity,
+                Text {
+                    characters: text.to_owned(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        LayoutEntity(entity)
     }
 
     // called on bottom-up traversal
@@ -178,9 +210,7 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_inline_formatting_context(&mut self, node: DomRef) {
-        let mut inline_formatting_context = InlineFormattingContext {
-            elements: vec![],
-        };
+        let mut inline_formatting_context = InlineFormattingContext { elements: vec![] };
         for child in node.children() {
             let child_entity = child.layout_entity.get().expect("node has no entity");
             inline_formatting_context.elements.push(child_entity.0.id());

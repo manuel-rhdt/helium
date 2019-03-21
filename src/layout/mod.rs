@@ -6,6 +6,7 @@ pub mod entity;
 pub mod inline;
 pub mod inline_size;
 pub mod text;
+mod global_transform;
 
 use crate::layout::entity::LayoutContext;
 use crate::style::device::Device;
@@ -58,6 +59,9 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     // Assign heights to the remaining entities.
     let mut block_size_context = block_size::BlockSizeContext {};
     block_size_context.run_now(&layout_context.res);
+
+    // Calculate positions relative to the parent stacking context
+    global_transform::GlobalTransform.run_now(&layout_context.res);
 
     layout_context
 }
