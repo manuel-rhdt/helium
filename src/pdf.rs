@@ -2,7 +2,7 @@ use crate::display_list::{self, DisplayItem, Rect};
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
-use printpdf::{BuiltinFont, Error, Line, Mm, PdfDocument, Point, CurTransMat};
+use printpdf::{BuiltinFont, Error, Line, Mm, PdfDocument, Point, CurTransMat, Color, Rgb};
 
 use font_kit::family_name::FamilyName;
 use font_kit::handle::Handle;
@@ -44,6 +44,8 @@ pub fn write_pdf(
 
     let builtin_font = doc.add_builtin_font(BuiltinFont::Helvetica)?;
 
+    current_layer.set_fill_color(Color::Rgb(Rgb::new(1.0, 0.0, 0.0, None)));
+
     for item in display_list.items() {
         match item {
             DisplayItem::PushTransform => current_layer.save_graphics_state(),
@@ -72,9 +74,9 @@ pub fn write_pdf(
                     .into_iter()
                     .map(|&pt| (pt, false))
                     .collect();
-                line.set_fill(false);
+                line.set_fill(true);
                 line.set_closed(true);
-                line.set_stroke(true);
+                line.set_stroke(false);
                 current_layer.add_shape(line);
             }
             DisplayItem::Text(display_list::Point { x, y }, _, text) => {

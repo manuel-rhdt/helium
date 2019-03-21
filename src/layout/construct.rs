@@ -5,7 +5,7 @@ use super::entity::{
 use super::inline::InlineFormattingContext;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
-use crate::style::properties::computed::{ComputedValues, StyleBuilder};
+use crate::style::properties::computed::{ComputedValues, Display, StyleBuilder};
 use crate::traverse::Traversal;
 use crate::tree::{DomRef, TreeLinked};
 
@@ -122,6 +122,11 @@ impl EntityConstructor {
     // called on top-down traversal
     fn build_entity(&mut self, node: DomRef) {
         let style = node.style().expect("No style was assigned");
+
+        if style.box_.display == Display::None {
+            return;
+        }
+
         let parent_entity = node.parent().and_then(|x| x.layout_entity.get());
         let entity = match &node.html_data {
             ParsedData::Element(_) => self.build_block_entity(style, parent_entity),
@@ -195,16 +200,20 @@ impl EntityConstructor {
     fn build_block_formatting_context(&mut self, node: DomRef) {
         let mut block_formatting_context = BlockFormattingContext { elements: vec![] };
         for child in node.children() {
-            let child_entity = child.layout_entity.get().expect("node has no entity");
-            block_formatting_context.elements.push(child_entity.0.id());
+            if let Some(child_entity) = child.layout_entity.get() {
+                block_formatting_context.elements.push(child_entity.0.id());
+            } else {
+                continue;
+            }
         }
 
         if block_formatting_context.elements.len() > 0 {
-            let self_entity = node.layout_entity.get().expect("node has no entity").0;
-            self.world
-                .write_storage()
-                .insert(self_entity, block_formatting_context)
-                .unwrap();
+            if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
+                self.world
+                    .write_storage()
+                    .insert(self_entity, block_formatting_context)
+                    .unwrap();
+            }
         }
     }
 
@@ -212,16 +221,18 @@ impl EntityConstructor {
     fn build_inline_formatting_context(&mut self, node: DomRef) {
         let mut inline_formatting_context = InlineFormattingContext { elements: vec![] };
         for child in node.children() {
-            let child_entity = child.layout_entity.get().expect("node has no entity");
-            inline_formatting_context.elements.push(child_entity.0.id());
+            if let Some(LayoutEntity(child_entity)) = child.layout_entity.get() {
+                inline_formatting_context.elements.push(child_entity.id());
+            }
         }
 
         if inline_formatting_context.elements.len() > 0 {
-            let self_entity = node.layout_entity.get().expect("node has no entity").0;
-            self.world
-                .write_storage()
-                .insert(self_entity, inline_formatting_context)
-                .unwrap();
+            if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
+                self.world
+                    .write_storage()
+                    .insert(self_entity, inline_formatting_context)
+                    .unwrap();
+            }
         }
     }
 }

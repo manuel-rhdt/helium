@@ -72,17 +72,23 @@ pub fn layout_text(text: &str, font_size: PixelLength, container_width: PixelLen
     let font = BuiltInFonts::Helvetica.metrics();
     let mut cursor = PixelLength(0.0);
     let mut linebreaks = vec![];
+
+    let mut last_space = (0, PixelLength(0.0));
     for (index, character) in text.chars().enumerate() {
         let char_metric = font
             .char_metrics
             .iter()
             .find(|metric| metric.character_code == character as i32);
 
+        if character == ' ' {
+            last_space = (index, cursor);
+        }
+
         if let Some(char_metric) = char_metric {
             cursor += char_metric.advance_width.to_px(font_size);
             if cursor > container_width {
-                linebreaks.push(index);
-                cursor = PixelLength(0.0);
+                linebreaks.push(last_space.0);
+                cursor = cursor - last_space.1;
             }
         }
     }

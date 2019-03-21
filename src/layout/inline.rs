@@ -61,42 +61,50 @@ impl<'a> System<'a> for InlineLayout {
             (&entities, &style, &inline_formatting_context).join()
         {
             let &Position { x, y, width, .. } = positions.get(entity).unwrap();
-            let mut string = String::new();
-            for child in inline_formatting_context.element_entities(&entities) {
-                let text = text.get(child).unwrap();
-                let _linebreaks = layout_text(&text.characters, style.font.font_size, width);
-                string.push_str(&text.characters);
-            }
-            let font_height = super::text::font_height(style.font.font_size);
-            let line_gap = style.font.line_height - font_height;
 
-            let line = entities
-                .build_entity()
-                .with(
-                    Position {
-                        x,
-                        y,
-                        height: style.font.line_height,
-                        width,
-                    },
-                    &mut positions,
-                )
-                .with(
-                    Text {
-                        characters: string,
-                        font_size: style.font.font_size,
-                        baseline: super::text::font_ascender(style.font.font_size) + line_gap / 2.0,
-                    },
-                    &mut text,
-                )
-                .build();
+            let mut lines = vec![];
+
+            for child in inline_formatting_context.element_entities(&entities) {
+                let content = text.get(child).unwrap().clone();
+                let linebreaks = layout_text(&content.characters, style.font.font_size, width);
+
+                let mut prev_break = 0;
+                for break_point in linebreaks.into_iter().chain(Some(content.characters.len())) {
+                    let line_content = &content.characters[prev_break..break_point];
+
+                    let font_height = super::text::font_height(style.font.font_size);
+                    let line_gap = style.font.line_height - font_height;
+
+                    let line = entities
+                        .build_entity()
+                        .with(
+                            Position {
+                                x,
+                                y,
+                                height: style.font.line_height,
+                                width,
+                            },
+                            &mut positions,
+                        )
+                        .with(
+                            Text {
+                                characters: line_content.to_owned(),
+                                font_size: style.font.font_size,
+                                baseline: super::text::font_ascender(style.font.font_size)
+                                    + line_gap / 2.0,
+                            },
+                            &mut text,
+                        )
+                        .build();
+
+                    lines.push(line.id());
+
+                    prev_break = break_point;
+                }
+            }
+
             block_formatting_context
-                .insert(
-                    entity,
-                    BlockFormattingContext {
-                        elements: vec![line.id()],
-                    },
-                )
+                .insert(entity, BlockFormattingContext { elements: lines })
                 .unwrap();
         }
     }

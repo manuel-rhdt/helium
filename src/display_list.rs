@@ -85,12 +85,12 @@ impl<'a> System<'a> for DisplayListBuilder {
                 continue;
             }
 
-            self.display_list.append(DisplayItem::FilledRect(Rect {
-                x,
-                y,
-                width,
-                height,
-            }));
+            // self.display_list.append(DisplayItem::FilledRect(Rect {
+            //     x,
+            //     y,
+            //     width,
+            //     height,
+            // }));
 
             if let Some(text) = text {
                 self.append_text(Point { x, y }, text);

@@ -236,6 +236,7 @@ pub struct Box {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Display {
+    None,
     Block,
     Inline,
 }
@@ -251,7 +252,7 @@ impl From<super::specified::Display> for Display {
         match specified {
             super::specified::Display::Block => Display::Block,
             super::specified::Display::Inline => Display::Inline,
-            _ => Display::default(),
+            super::specified::Display::None => Display::None,
         }
     }
 }

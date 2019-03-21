@@ -59,7 +59,7 @@ fn main() -> Result<(), Error> {
 
     let mut display_list_builder = DisplayListBuilder::default();
     display_list_builder.run_now(&layout_context.res);
-    let display_list = dbg!(display_list_builder.build());
+    let display_list = display_list_builder.build();
 
     pdf::write_pdf(display_list, device)?;
 
