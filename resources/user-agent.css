@@ -21,8 +21,6 @@ title {
 
 embed[hidden] {
   display: inline;
-  height: 0;
-  width: 0;
 }
 
 input[type="hidden" i] {
