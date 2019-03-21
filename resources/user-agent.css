@@ -1,0 +1,83 @@
+[hidden],
+area,
+base,
+basefont,
+datalist,
+head,
+link,
+meta,
+noembed,
+noframes,
+param,
+rp,
+script,
+source,
+style,
+template,
+track,
+title {
+  display: none;
+}
+
+embed[hidden] {
+  display: inline;
+  height: 0;
+  width: 0;
+}
+
+input[type="hidden" i] {
+  display: none !important;
+}
+
+html,
+body {
+  display: block;
+}
+
+address,
+blockquote,
+center,
+div,
+figure,
+figcaption,
+footer,
+form,
+header,
+hr,
+legend,
+listing,
+main,
+p,
+plaintext,
+pre,
+xmp {
+  display: block;
+}
+
+blockquote,
+figure,
+listing,
+p,
+plaintext,
+pre,
+xmp {
+  margin-block-start: 1em;
+  margin-block-end: 1em;
+}
+
+blockquote,
+figure {
+  margin-inline-start: 40px;
+  margin-inline-end: 40px;
+}
+
+address {
+  font-style: italic;
+}
+listing,
+plaintext,
+pre,
+xmp {
+  font-family: monospace;
+  white-space: pre;
+}

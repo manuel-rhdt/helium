@@ -18,8 +18,17 @@ use std::fmt;
 #[derive(Debug, Default)]
 pub struct FlowConstructor {
     styles: Styles,
-    inside_style_tag: bool,
     entity_constructor: EntityConstructor,
+}
+
+impl FlowConstructor {
+    pub fn new() -> Self {
+        FlowConstructor::default()
+    }
+
+    pub fn layout_context(self) -> super::entity::LayoutContext {
+        self.entity_constructor.world
+    }
 }
 
 impl Traversal<DomRef> for FlowConstructor {
@@ -81,16 +90,6 @@ impl Traversal<DomRef> for FlowConstructor {
 
     fn postorder_traverse(&mut self, node: DomRef) {
         self.entity_constructor.build_formatting_context(node)
-    }
-}
-
-impl FlowConstructor {
-    pub fn new() -> Self {
-        FlowConstructor::default()
-    }
-
-    pub fn layout_context(self) -> super::entity::LayoutContext {
-        self.entity_constructor.world
     }
 }
 

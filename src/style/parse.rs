@@ -13,9 +13,18 @@ use selectors::context::QuirksMode;
 use selectors::matching;
 use selectors::parser::{NonTSPseudoClass, SelectorImpl, SelectorList, SelectorParseErrorKind};
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Styles {
     rules: Vec<QualifiedRule>,
+}
+
+impl Default for Styles {
+    fn default() -> Self {
+        let ua_style = include_str!("../../resources/user-agent.css");
+        let mut styles = Styles { rules: vec![] };
+        styles.parse_css(ua_style);
+        styles
+    }
 }
 
 impl Styles {
@@ -100,7 +109,7 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
     ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
         let selector_parser = SelectorParser::default();
         let selector_list =
-            SelectorList::parse(&selector_parser, input).expect("Selector parsing error");
+            SelectorList::parse(&selector_parser, input).map_err(|_| input.new_custom_error(()))?;
         Ok(selector_list)
     }
 
@@ -289,7 +298,13 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
                 .map(PropertyDeclaration::Height)
         } else if name.eq_ignore_ascii_case("display") {
             match input.next()? {
-                Token::Ident(ident) => Ok(PropertyDeclaration::Display(ident.parse().unwrap())),
+                Token::Ident(ident) => match ident.parse() {
+                    Ok(display) => Ok(PropertyDeclaration::Display(display)),
+                    Err(_) => {
+                        let ident = ident.clone();
+                        Err(input.new_unexpected_token_error(Token::Ident(ident)))
+                    },
+                },
                 unexpected => {
                     let unexpected = unexpected.clone();
                     Err(input.new_basic_unexpected_token_error(unexpected).into())
@@ -302,8 +317,7 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
                     Err(input.new_basic_unexpected_token_error(unexpected).into())
                 }
             }
-        } 
-        else {
+        } else {
             warn!("Unknown style property \"{}\"", name);
             Err(input.new_custom_error(()))
         }
