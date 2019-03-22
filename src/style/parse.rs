@@ -1,11 +1,11 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
-use super::properties::specified::{self, PropertyDeclaration};
+use super::properties::specified::{FromCssDecl, PropertyDeclaration};
 use crate::tree::ElementRef;
 
 use cssparser::{
     AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, QualifiedRuleParser, RuleListParser,
-    SourceLocation, ToCss, Token,
+    SourceLocation, ToCss,
 };
 use html5ever::{LocalName, Namespace};
 use log::{error, warn};
@@ -268,19 +268,6 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
 
 pub struct StyleDeclarationParser {}
 
-impl StyleDeclarationParser {
-    fn parse_quantity_or_percentage<'i, 't>(
-        &mut self,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<specified::QuantityOrPercentage, ParseError<'i, ()>> {
-        specified::QuantityOrPercentage::parse(input.next()?).map_err(|unexpected_token| {
-            input
-                .new_basic_unexpected_token_error(unexpected_token)
-                .into()
-        })
-    }
-}
-
 impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
     type Declaration = PropertyDeclaration;
     type Error = ();
@@ -290,37 +277,7 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
         name: CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
-        if name.eq_ignore_ascii_case("width") {
-            self.parse_quantity_or_percentage(input)
-                .map(PropertyDeclaration::Width)
-        } else if name.eq_ignore_ascii_case("height") {
-            self.parse_quantity_or_percentage(input)
-                .map(PropertyDeclaration::Height)
-        } else if name.eq_ignore_ascii_case("display") {
-            match input.next()? {
-                Token::Ident(ident) => match ident.parse() {
-                    Ok(display) => Ok(PropertyDeclaration::Display(display)),
-                    Err(_) => {
-                        let ident = ident.clone();
-                        Err(input.new_unexpected_token_error(Token::Ident(ident)))
-                    },
-                },
-                unexpected => {
-                    let unexpected = unexpected.clone();
-                    Err(input.new_basic_unexpected_token_error(unexpected).into())
-                }
-            }
-        } else if name.eq_ignore_ascii_case("font-size") {
-            match input.next()? {
-                unexpected => {
-                    let unexpected = unexpected.clone();
-                    Err(input.new_basic_unexpected_token_error(unexpected).into())
-                }
-            }
-        } else {
-            warn!("Unknown style property \"{}\"", name);
-            Err(input.new_custom_error(()))
-        }
+        PropertyDeclaration::from_css_decl(name, input)
     }
 }
 

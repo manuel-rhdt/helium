@@ -207,7 +207,7 @@ impl StyleBuilder {
             PropertyDeclaration::Display(val) => {
                 self.mutate_box(|mut box_| box_.display = val.into())
             }
-            PropertyDeclaration::FontSize => unimplemented!()
+            PropertyDeclaration::FontSize(_) => unimplemented!()
         }
     }
 

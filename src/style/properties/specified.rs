@@ -1,13 +1,19 @@
 use std::str::FromStr;
 
-use cssparser::Token;
+use cssparser::{CowRcStr, ParseError, Parser, Token};
+use from_css_decl_derive::FromCssDecl;
 
-#[derive(Debug, Copy, Clone)]
+pub trait FromCssDecl<'i>: Sized {
+    type Error: 'i;
+    fn from_css_decl(name: CowRcStr<'i>, input: &mut Parser<'i, '_>) -> Result<Self, Self::Error>;
+}
+
+#[derive(Debug, Copy, Clone, FromCssDecl)]
 pub enum PropertyDeclaration {
     Width(QuantityOrPercentage),
     Height(QuantityOrPercentage),
     Display(Display),
-    FontSize
+    FontSize(FontSize),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -15,6 +21,34 @@ pub enum Display {
     None,
     Block,
     Inline,
+}
+
+impl Display {
+    pub fn parse<'i>(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
+        match input.next()? {
+            Token::Ident(ident) => match ident.parse() {
+                Ok(display) => Ok(display),
+                Err(_) => {
+                    let ident = ident.clone();
+                    Err(input.new_unexpected_token_error(Token::Ident(ident)))
+                }
+            },
+            unexpected => {
+                let unexpected = unexpected.clone();
+                Err(input.new_basic_unexpected_token_error(unexpected).into())
+            }
+        }
+    }
+}
+
+impl<'i> FromCssDecl<'i> for Display {
+    type Error = ParseError<'i, ()>;
+    fn from_css_decl(
+        _name: CowRcStr<'i>,
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, ()>> {
+        Self::parse(input)
+    }
 }
 
 impl FromStr for Display {
@@ -69,5 +103,34 @@ impl QuantityOrPercentage {
             unexpected => return Err(unexpected.clone()),
         };
         Ok(result)
+    }
+}
+
+impl<'i> FromCssDecl<'i> for QuantityOrPercentage {
+    type Error = ParseError<'i, ()>;
+
+    fn from_css_decl(
+        _name: CowRcStr<'i>,
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, ()>> {
+        QuantityOrPercentage::parse(input.next()?).map_err(|unexpected_token| {
+            input
+                .new_basic_unexpected_token_error(unexpected_token)
+                .into()
+        })
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum FontSize {}
+
+impl<'i> FromCssDecl<'i> for FontSize {
+    type Error = ParseError<'i, ()>;
+
+    fn from_css_decl(
+        _name: CowRcStr<'i>,
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, ()>> {
+        Err(input.new_custom_error(()))
     }
 }
