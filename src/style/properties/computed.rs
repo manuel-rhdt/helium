@@ -1,5 +1,5 @@
+use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
-use std::ops::{Add, AddAssign, Mul, Div, Sub, Neg};
 
 use super::specified::PropertyDeclaration;
 
@@ -69,21 +69,28 @@ impl Div<f32> for PixelLength {
     }
 }
 
-impl PixelLength {
-    pub fn from_val_unit(val: f32, unit: super::specified::Unit) -> Self {
-        match unit {
-            super::specified::Unit::Px => PixelLength(val),
-            super::specified::Unit::Cm => PixelLength::from_pt(val / 2.54 * 72.0),
-            super::specified::Unit::Pt => PixelLength::from_pt(val)
-        }
-    }
-}
-
 /// A value between 0 and 1 which is interpreted as a relative size.
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
 pub struct Percentage(pub CssFloat);
 
-type Length = PixelLength;
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum Length {
+    Absolute(PixelLength),
+    Em(CssFloat),
+}
+
+impl Length {
+    pub fn from_val_unit(val: f32, unit: super::specified::Unit) -> Self {
+        use super::specified::Unit;
+
+        match unit {
+            Unit::Px => Length::Absolute(PixelLength(val)),
+            Unit::Cm => Length::Absolute(PixelLength::from_pt(val / 2.54 * 72.0)),
+            Unit::Pt => Length::Absolute(PixelLength::from_pt(val)),
+            Unit::Em => Length::Em(val),
+        }
+    }
+}
 
 /// A length, a percentage or a combination of both using `calc`.
 ///
@@ -119,6 +126,15 @@ impl LengthPercentage {
             _ => None,
         }
     }
+
+    pub fn absolute(self, container_size: PixelLength, font_size: PixelLength) -> PixelLength {
+        match self {
+            LengthPercentage::Length(Length::Absolute(abs)) => abs,
+            LengthPercentage::Length(Length::Em(em)) => font_size * em,
+            LengthPercentage::Percentage(percentage) => container_size * percentage,
+            _ => unimplemented!(),
+        }
+    }
 }
 
 /// Used as the computed value for `width`.
@@ -139,7 +155,7 @@ impl GenericSize {
         use super::specified::QuantityOrPercentage;
         match spec {
             QuantityOrPercentage::Quantity { value, unit } => GenericSize::LengthPercentage(
-                LengthPercentage::Length(PixelLength::from_val_unit(value, unit)),
+                LengthPercentage::Length(Length::from_val_unit(value, unit)),
             ),
             QuantityOrPercentage::Percentage(percentage) => {
                 GenericSize::LengthPercentage(LengthPercentage::Percentage(percentage))
@@ -152,6 +168,10 @@ impl GenericSize {
 pub struct Position {
     pub width: GenericSize,
     pub height: GenericSize,
+    pub margin_top: GenericSize,
+    pub margin_bottom: GenericSize,
+    pub margin_left: GenericSize,
+    pub margin_right: GenericSize,
 }
 
 /// Contains the style structs.
@@ -207,7 +227,19 @@ impl StyleBuilder {
             PropertyDeclaration::Display(val) => {
                 self.mutate_box(|mut box_| box_.display = val.into())
             }
-            PropertyDeclaration::FontSize(_) => unimplemented!()
+            PropertyDeclaration::FontSize(_) => unimplemented!(),
+            PropertyDeclaration::MarginTop(val) => {
+                self.mutate_position(|mut pos| pos.margin_top = GenericSize::from_specified(val))
+            }
+            PropertyDeclaration::MarginBottom(val) => {
+                self.mutate_position(|mut pos| pos.margin_bottom = GenericSize::from_specified(val))
+            }
+            PropertyDeclaration::MarginLeft(val) => {
+                self.mutate_position(|mut pos| pos.margin_left = GenericSize::from_specified(val))
+            }
+            PropertyDeclaration::MarginRight(val) => {
+                self.mutate_position(|mut pos| pos.margin_right = GenericSize::from_specified(val))
+            }
         }
     }
 
@@ -260,14 +292,14 @@ impl From<super::specified::Display> for Display {
 #[derive(Debug, Clone)]
 pub struct Font {
     pub font_size: PixelLength,
-    pub line_height: PixelLength
+    pub line_height: PixelLength,
 }
 
 impl Default for Font {
     fn default() -> Self {
         Self {
             font_size: PixelLength::from_pt(12.0),
-            line_height: PixelLength::from_pt(12.0) * 1.2
+            line_height: PixelLength::from_pt(12.0) * 1.2,
         }
     }
 }

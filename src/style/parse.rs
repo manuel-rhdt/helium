@@ -8,7 +8,7 @@ use cssparser::{
     SourceLocation, ToCss,
 };
 use html5ever::{LocalName, Namespace};
-use log::{error, warn};
+use log::error;
 use selectors::context::QuirksMode;
 use selectors::matching;
 use selectors::parser::{NonTSPseudoClass, SelectorImpl, SelectorList, SelectorParseErrorKind};
@@ -41,8 +41,6 @@ impl Styles {
                 Ok(rule) => self.rules.push(rule),
             }
         }
-
-        warn!("Parsed rules {:?}", self.rules);
     }
 
     pub fn add_stylesheet(&mut self, href: &str) {

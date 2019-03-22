@@ -1,6 +1,6 @@
 use super::entity::Position;
 use crate::style::properties::computed::ComputedValues;
-use crate::style::properties::computed::{GenericSize, LengthPercentage};
+use crate::style::properties::computed::{GenericSize, Length, LengthPercentage};
 
 use specs::{Join, ReadStorage, System, WriteStorage};
 
@@ -13,7 +13,10 @@ impl<'a> System<'a> for AssignHeights {
         for (style, pos) in (&computed_values, &mut positions).join() {
             match style.position.height {
                 GenericSize::LengthPercentage(lp) => match lp {
-                    LengthPercentage::Length(len) => pos.height = len,
+                    LengthPercentage::Length(Length::Absolute(abs)) => pos.height = abs,
+                    LengthPercentage::Length(Length::Em(em)) => {
+                        pos.height = style.font.font_size * em
+                    }
                     _ => unimplemented!(),
                 },
                 _ => {}

@@ -63,8 +63,8 @@ p,
 plaintext,
 pre,
 xmp {
-  margin-block-start: 1em;
-  margin-block-end: 1em;
+  margin-top: 1em;
+  margin-bottom: 1em;
 }
 
 blockquote,

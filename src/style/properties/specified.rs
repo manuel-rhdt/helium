@@ -14,6 +14,15 @@ pub enum PropertyDeclaration {
     Height(QuantityOrPercentage),
     Display(Display),
     FontSize(FontSize),
+
+    /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-top
+    MarginTop(QuantityOrPercentage),
+    /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-bottom
+    MarginBottom(QuantityOrPercentage),
+    /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-left
+    MarginLeft(QuantityOrPercentage),
+    /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-right
+    MarginRight(QuantityOrPercentage)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -23,8 +32,12 @@ pub enum Display {
     Inline,
 }
 
-impl Display {
-    pub fn parse<'i>(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
+impl<'i> FromCssDecl<'i> for Display {
+    type Error = ParseError<'i, ()>;
+    fn from_css_decl(
+        _name: CowRcStr<'i>,
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, ()>> {
         match input.next()? {
             Token::Ident(ident) => match ident.parse() {
                 Ok(display) => Ok(display),
@@ -38,16 +51,6 @@ impl Display {
                 Err(input.new_basic_unexpected_token_error(unexpected).into())
             }
         }
-    }
-}
-
-impl<'i> FromCssDecl<'i> for Display {
-    type Error = ParseError<'i, ()>;
-    fn from_css_decl(
-        _name: CowRcStr<'i>,
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, ()>> {
-        Self::parse(input)
     }
 }
 
@@ -69,6 +72,7 @@ pub enum Unit {
     Px,
     Cm,
     Pt,
+    Em,
 }
 
 impl FromStr for Unit {
@@ -79,6 +83,7 @@ impl FromStr for Unit {
             "px" => Ok(Unit::Px),
             "cm" => Ok(Unit::Cm),
             "pt" => Ok(Unit::Pt),
+            "em" => Ok(Unit::Em),
             _ => Err(()),
         }
     }
@@ -95,7 +100,7 @@ impl QuantityOrPercentage {
         let result = match token {
             Token::Dimension { value, unit, .. } => QuantityOrPercentage::Quantity {
                 value: *value,
-                unit: unit.parse().unwrap(),
+                unit: unit.parse().map_err(|_| token.clone())?,
             },
             Token::Percentage { unit_value, .. } => {
                 QuantityOrPercentage::Percentage(super::Percentage(*unit_value))

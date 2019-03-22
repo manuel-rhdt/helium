@@ -1,5 +1,5 @@
 use crate::style::properties::computed::{
-    ComputedValues, GenericSize, LengthPercentage, PixelLength,
+    ComputedValues, GenericSize, LengthPercentage, PixelLength, Length,
 };
 
 use specs::{
@@ -37,7 +37,8 @@ pub fn calculate_inline_size(container_size: PixelLength, style: &ComputedValues
     match style.position.width {
         GenericSize::Auto => container_size,
         GenericSize::LengthPercentage(lp) => match lp {
-            LengthPercentage::Length(abs_size) => abs_size,
+            LengthPercentage::Length(Length::Absolute(abs_size)) => abs_size,
+            LengthPercentage::Length(Length::Em(em_size)) => style.font.font_size * em_size,
             LengthPercentage::Percentage(percent) => container_size * percent,
             LengthPercentage::Both { .. } => unimplemented!(),
         },
