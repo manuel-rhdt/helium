@@ -1,6 +1,4 @@
-use crate::style::properties::computed::{
-    ComputedValues, GenericSize, LengthPercentage, PixelLength, Length,
-};
+use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
 use specs::{
     world::{EntitiesRes, Index},
@@ -8,11 +6,11 @@ use specs::{
 };
 
 #[derive(Debug, Clone)]
-pub struct BlockFormattingContext {
+pub struct BlockContainer {
     pub elements: Vec<Index>,
 }
 
-impl BlockFormattingContext {
+impl BlockContainer {
     pub fn element_entities<'a>(
         &'a self,
         entities_res: &'a EntitiesRes,
@@ -28,19 +26,50 @@ impl BlockFormattingContext {
     }
 }
 
-impl Component for BlockFormattingContext {
+impl Component for BlockContainer {
     type Storage = VecStorage<Self>;
 }
 
-// CSS2 10.3.3
-pub fn calculate_inline_size(container_size: PixelLength, style: &ComputedValues) -> PixelLength {
+// https://www.w3.org/TR/CSS22/visudet.html#blockwidth
+pub fn calculate_inline_size(container_size: Px, style: &ComputedValues) -> (Px, Px) {
     match style.position.width {
-        GenericSize::Auto => container_size,
-        GenericSize::LengthPercentage(lp) => match lp {
-            LengthPercentage::Length(Length::Absolute(abs_size)) => abs_size,
-            LengthPercentage::Length(Length::Em(em_size)) => style.font.font_size * em_size,
-            LengthPercentage::Percentage(percent) => container_size * percent,
-            LengthPercentage::Both { .. } => unimplemented!(),
-        },
+        GenericSize::Auto => {
+            let margin_left =
+                style
+                    .position
+                    .margin_left
+                    .absolute(Px(0.0), container_size, style.font.font_size);
+            let margin_right =
+                style
+                    .position
+                    .margin_right
+                    .absolute(Px(0.0), container_size, style.font.font_size);
+            let width = (container_size - margin_left - margin_right).max(Px(0.0));
+            (margin_left, width)
+        }
+        GenericSize::LengthPercentage(lp) => {
+            let width = lp.absolute(container_size, style.font.font_size);
+            let margin_left = match (style.position.margin_left, style.position.margin_right) {
+                (GenericSize::Auto, GenericSize::Auto) => {
+                    // center the child inside the container
+                    (container_size - width) / 2.0
+                }
+                (GenericSize::LengthPercentage(val), GenericSize::Auto) => {
+                    val.absolute(container_size, style.font.font_size)
+                }
+                (GenericSize::Auto, GenericSize::LengthPercentage(val)) => {
+                    let margin_right = val.absolute(container_size, style.font.font_size);
+                    container_size - width - margin_right
+                }
+                (
+                    GenericSize::LengthPercentage(margin_left),
+                    GenericSize::LengthPercentage(_margin_right),
+                ) => {
+                    // over constrained (we use the specified margin_left and width, ignoring margin_right)
+                    margin_left.absolute(container_size, style.font.font_size)
+                }
+            };
+            (margin_left, width)
+        }
     }
 }

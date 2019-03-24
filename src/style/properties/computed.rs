@@ -12,6 +12,10 @@ impl PixelLength {
     pub fn from_pt(pt: f32) -> Self {
         PixelLength(pt / 0.75)
     }
+
+    pub fn max(self, other: PixelLength) -> PixelLength {
+        PixelLength(self.0.max(other.0))
+    }
 }
 
 impl Add for PixelLength {
@@ -162,6 +166,13 @@ impl GenericSize {
             }
         }
     }
+
+    pub fn absolute(self, if_auto: PixelLength, container_size: PixelLength, font_size: PixelLength) -> PixelLength {
+        match self {
+            GenericSize::Auto => if_auto,
+            GenericSize::LengthPercentage(lp) => lp.absolute(container_size, font_size)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -248,7 +259,7 @@ impl StyleBuilder {
             position: self
                 .position
                 .map(Arc::new)
-                .unwrap_or(self.inherited_values.position),
+                .unwrap_or_default(),
             box_: self
                 .box_
                 .map(Arc::new)

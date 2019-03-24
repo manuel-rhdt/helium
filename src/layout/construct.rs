@@ -1,4 +1,4 @@
-use super::block::BlockFormattingContext;
+use super::block::BlockContainer;
 use super::entity::{
     ContainingBlock, LayoutEntity, Position, StackingContextRelativePosition, Text,
 };
@@ -109,7 +109,7 @@ impl Default for EntityConstructor {
         world.register::<ContainingBlock>();
         world.register::<Position>();
         world.register::<ComputedValues>();
-        world.register::<BlockFormattingContext>();
+        world.register::<BlockContainer>();
         world.register::<InlineFormattingContext>();
         world.register::<Text>();
         world.register::<StackingContextRelativePosition>();
@@ -197,7 +197,7 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_block_formatting_context(&mut self, node: DomRef) {
-        let mut block_formatting_context = BlockFormattingContext { elements: vec![] };
+        let mut block_formatting_context = BlockContainer { elements: vec![] };
         for child in node.children() {
             if let Some(child_entity) = child.layout_entity.get() {
                 block_formatting_context.elements.push(child_entity.0.id());

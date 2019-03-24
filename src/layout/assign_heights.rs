@@ -1,26 +1,39 @@
-use super::entity::Position;
+use super::entity::{ContainingBlock, LayoutEntity, Position};
 use crate::style::properties::computed::ComputedValues;
-use crate::style::properties::computed::{GenericSize, Length, LengthPercentage};
+use crate::style::properties::computed::PixelLength as Px;
 
-use specs::{Join, ReadStorage, System, WriteStorage};
+use specs::{Entities, Join, ReadStorage, System, WriteStorage};
 
 pub struct AssignHeights;
 
 impl<'a> System<'a> for AssignHeights {
-    type SystemData = (ReadStorage<'a, ComputedValues>, WriteStorage<'a, Position>);
+    type SystemData = (
+        Entities<'a>,
+        ReadStorage<'a, ComputedValues>,
+        WriteStorage<'a, Position>,
+        ReadStorage<'a, ContainingBlock>,
+    );
 
-    fn run(&mut self, (computed_values, mut positions): Self::SystemData) {
-        for (style, pos) in (&computed_values, &mut positions).join() {
-            match style.position.height {
-                GenericSize::LengthPercentage(lp) => match lp {
-                    LengthPercentage::Length(Length::Absolute(abs)) => pos.height = abs,
-                    LengthPercentage::Length(Length::Em(em)) => {
-                        pos.height = style.font.font_size * em
-                    }
-                    _ => unimplemented!(),
-                },
-                _ => {}
-            }
+    fn run(
+        &mut self,
+        (entities, computed_values, mut positions, containing_block): Self::SystemData,
+    ) {
+        for (
+            entity,
+            style,
+            &ContainingBlock {
+                entity: LayoutEntity(container),
+            },
+        ) in (&entities, &computed_values, &containing_block).join()
+        {
+            let container_pos = positions.get(container).cloned().unwrap_or_default();
+            positions.get_mut(entity).map(|pos| {
+                pos.height = style.position.height.absolute(
+                    Px(0.0),
+                    container_pos.height,
+                    style.font.font_size,
+                )
+            });
         }
     }
 }

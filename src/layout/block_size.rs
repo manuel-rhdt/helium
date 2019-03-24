@@ -1,6 +1,6 @@
-use super::block::BlockFormattingContext;
+use super::block::BlockContainer;
 use super::entity::Position;
-use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength};
+use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
 use specs::{Entities, ReadStorage, System, WriteStorage};
 
@@ -12,7 +12,7 @@ impl<'a> System<'a> for BlockSizeContext {
         Entities<'a>,
         ReadStorage<'a, ComputedValues>,
         WriteStorage<'a, Position>,
-        ReadStorage<'a, BlockFormattingContext>,
+        ReadStorage<'a, BlockContainer>,
     );
 
     fn run(&mut self, (entities, computed_values, mut positions, context): Self::SystemData) {
@@ -23,26 +23,24 @@ impl<'a> System<'a> for BlockSizeContext {
         let sorted_entities: Vec<_> = (&entities, &context, &computed_values).join().collect();
 
         for (entity, formatting_context, style) in sorted_entities.iter().rev() {
-            let mut block_size = PixelLength(0.0);
+            let mut block_size = Px(0.0);
             for child in formatting_context.element_entities(&entities) {
                 let child_position = positions.get_mut(child).unwrap();
                 let child_style = computed_values.get(child).cloned().unwrap_or_default();
 
-                let margin_top = match child_style.position.margin_top {
-                    GenericSize::Auto => PixelLength(0.0),
-                    GenericSize::LengthPercentage(lp) => {
-                        lp.absolute(child_position.width, child_style.font.font_size)
-                    }
-                };
+                let margin_top = child_style.position.margin_top.absolute(
+                    Px(0.0),
+                    child_position.width,
+                    child_style.font.font_size,
+                );
 
-                let margin_bottom = match child_style.position.margin_bottom {
-                    GenericSize::Auto => PixelLength(0.0),
-                    GenericSize::LengthPercentage(lp) => {
-                        lp.absolute(child_position.width, child_style.font.font_size)
-                    }
-                };
+                let margin_bottom = child_style.position.margin_top.absolute(
+                    Px(0.0),
+                    child_position.width,
+                    child_style.font.font_size,
+                );
 
-                child_position.y += block_size + margin_top;
+                child_position.y = block_size + margin_top;
 
                 block_size += child_position.height + margin_top + margin_bottom;
             }

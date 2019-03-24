@@ -1,4 +1,4 @@
-use super::block::BlockFormattingContext;
+use super::block::BlockContainer;
 use super::entity::{Position, StackingContextRelativePosition};
 
 use specs::{Entities, ReadStorage, System, WriteStorage};
@@ -9,7 +9,7 @@ pub struct GlobalTransform;
 impl<'a> System<'a> for GlobalTransform {
     type SystemData = (
         Entities<'a>,
-        ReadStorage<'a, BlockFormattingContext>,
+        ReadStorage<'a, BlockContainer>,
         ReadStorage<'a, Position>,
         WriteStorage<'a, StackingContextRelativePosition>,
     );

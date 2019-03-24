@@ -1,7 +1,7 @@
-use super::block::BlockFormattingContext;
+use super::block::BlockContainer;
 use super::entity::{Position, Text};
 use super::text::layout_text;
-use crate::style::properties::computed::ComputedValues;
+use crate::style::properties::computed::{ComputedValues, PixelLength as Px};
 
 use specs::{
     world::{EntitiesRes, Index},
@@ -42,7 +42,7 @@ impl<'a> System<'a> for InlineLayout {
         ReadStorage<'a, ComputedValues>,
         WriteStorage<'a, Position>,
         ReadStorage<'a, InlineFormattingContext>,
-        WriteStorage<'a, BlockFormattingContext>,
+        WriteStorage<'a, BlockContainer>,
         WriteStorage<'a, Text>,
     );
 
@@ -60,7 +60,7 @@ impl<'a> System<'a> for InlineLayout {
         for (entity, style, inline_formatting_context) in
             (&entities, &style, &inline_formatting_context).join()
         {
-            let &Position { x, y, width, .. } = positions.get(entity).unwrap();
+            let &Position { width, .. } = positions.get(entity).unwrap();
 
             let mut lines = vec![];
 
@@ -79,8 +79,8 @@ impl<'a> System<'a> for InlineLayout {
                         .build_entity()
                         .with(
                             Position {
-                                x,
-                                y,
+                                x: Px(0.0),
+                                y: Px(0.0),
                                 height: style.font.line_height,
                                 width,
                             },
@@ -104,7 +104,7 @@ impl<'a> System<'a> for InlineLayout {
             }
 
             block_formatting_context
-                .insert(entity, BlockFormattingContext { elements: lines })
+                .insert(entity, BlockContainer { elements: lines })
                 .unwrap();
         }
     }
