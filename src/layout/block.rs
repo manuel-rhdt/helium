@@ -11,10 +11,14 @@ pub struct BlockContainer {
 }
 
 impl BlockContainer {
+    pub fn get(&self, index: usize, entities: &EntitiesRes) -> Option<Entity> {
+        self.elements.get(index).map(|&index| entities.entity(index))
+    }
+
     pub fn element_entities<'a>(
         &'a self,
         entities_res: &'a EntitiesRes,
-    ) -> impl 'a + Iterator<Item = Entity> {
+    ) -> impl 'a + Iterator<Item = Entity> + Clone {
         self.elements.iter().filter_map(move |&index| {
             let entity = entities_res.entity(index);
             if entities_res.is_alive(entity) {

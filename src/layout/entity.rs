@@ -1,7 +1,7 @@
-use specs::{Entity, Component, DenseVecStorage, VecStorage, World};
 use derive_more::From;
+use specs::{Component, DenseVecStorage, Entity, NullStorage, VecStorage, World};
 
-use crate::style::properties::computed::{PixelLength, ComputedValues};
+use crate::style::properties::computed::{ComputedValues, PixelLength};
 
 pub type LayoutContext = World;
 
@@ -19,7 +19,7 @@ impl Component for ContainingBlock {
 
 /// Describes the position of a box, where (x, y) specifies the top-left corner
 /// and width and height specify the dimensions.
-/// 
+///
 /// The origin of the coordinate system is usually the parent element's top left
 /// corner.
 #[derive(Debug, Copy, Clone, Default)]
@@ -31,7 +31,7 @@ pub struct Position {
     /// Width of the box.
     pub width: PixelLength,
     /// Height of the box.
-    pub height: PixelLength
+    pub height: PixelLength,
 }
 
 impl Component for Position {
@@ -42,7 +42,7 @@ impl Component for Position {
 #[derive(Debug, Copy, Clone, Default)]
 pub struct StackingContextRelativePosition {
     pub x: PixelLength,
-    pub y: PixelLength
+    pub y: PixelLength,
 }
 
 impl Component for StackingContextRelativePosition {
@@ -56,6 +56,7 @@ impl Component for ComputedValues {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Text {
     pub characters: String,
+    /// Size of an EM box.
     pub font_size: PixelLength,
     /// Distance from the top of the line box to the baseline of the text.
     pub baseline: PixelLength,
@@ -63,4 +64,12 @@ pub struct Text {
 
 impl Component for Text {
     type Storage = VecStorage<Self>;
+}
+
+/// A component that indicates that an entity is considered a collapsible margin.
+#[derive(Debug, Default, Copy, Clone)]
+pub struct CanCollapse;
+
+impl Component for CanCollapse {
+    type Storage = NullStorage<Self>;
 }

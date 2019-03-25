@@ -56,15 +56,17 @@ impl<'a> System<'a> for InlineSizeContext {
                 Some(style) => style,
                 None => continue,
             };
-            let container_width = positions
-                .get(container)
-                .expect("Container has no width")
-                .width;
+            let &Position {
+                x,
+                width: container_width,
+                ..
+            } = positions.get(container).expect("Container has no width");
 
             let (inline_offset, inline_size) =
                 super::block::calculate_inline_size(container_width, &style);
+
             positions.get_mut(entity).map(|pos| {
-                pos.x = inline_offset;
+                pos.x = x + inline_offset;
                 pos.width = inline_size;
             });
         }

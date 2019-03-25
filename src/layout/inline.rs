@@ -60,7 +60,7 @@ impl<'a> System<'a> for InlineLayout {
         for (entity, style, inline_formatting_context) in
             (&entities, &style, &inline_formatting_context).join()
         {
-            let &Position { width, .. } = positions.get(entity).unwrap();
+            let &Position { x, width, .. } = positions.get(entity).unwrap();
 
             let mut lines = vec![];
 
@@ -79,7 +79,7 @@ impl<'a> System<'a> for InlineLayout {
                         .build_entity()
                         .with(
                             Position {
-                                x: Px(0.0),
+                                x,
                                 y: Px(0.0),
                                 height: style.font.line_height,
                                 width,

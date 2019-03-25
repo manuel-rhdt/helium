@@ -1,4 +1,4 @@
-use super::block::BlockContainer;
+use super::block_formatting_context::BlockFormattingContext;
 use super::entity::Position;
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
@@ -12,7 +12,7 @@ impl<'a> System<'a> for BlockSizeContext {
         Entities<'a>,
         ReadStorage<'a, ComputedValues>,
         WriteStorage<'a, Position>,
-        ReadStorage<'a, BlockContainer>,
+        ReadStorage<'a, BlockFormattingContext>,
     );
 
     fn run(&mut self, (entities, computed_values, mut positions, context): Self::SystemData) {
@@ -22,9 +22,9 @@ impl<'a> System<'a> for BlockSizeContext {
         // the list is correctly sorted given the order we construct the entities.
         let sorted_entities: Vec<_> = (&entities, &context, &computed_values).join().collect();
 
-        for (entity, formatting_context, style) in sorted_entities.iter().rev() {
+        for (entity, formatting_context, style) in sorted_entities.iter() {
             let mut block_size = Px(0.0);
-            for child in formatting_context.element_entities(&entities) {
+            for &child in &formatting_context.entities {
                 let child_position = positions.get_mut(child).unwrap();
                 let child_style = computed_values.get(child).cloned().unwrap_or_default();
 

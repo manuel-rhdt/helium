@@ -1,6 +1,7 @@
 use super::block::BlockContainer;
+use super::block_formatting_context::BlockFormattingContext;
 use super::entity::{
-    ContainingBlock, LayoutEntity, Position, StackingContextRelativePosition, Text,
+    ContainingBlock, LayoutEntity, Position, StackingContextRelativePosition, Text, CanCollapse
 };
 use super::inline::InlineFormattingContext;
 use crate::parser::{ElementData, ParsedData};
@@ -29,10 +30,8 @@ impl FlowConstructor {
     pub fn layout_context(self) -> super::entity::LayoutContext {
         self.entity_constructor.world
     }
-}
 
-impl Traversal<DomRef> for FlowConstructor {
-    fn preorder_traverse(&mut self, node: DomRef) {
+    fn read_stylesheet(&mut self, node: &DomRef) {
         if let ParsedData::Element(ElementData {
             name, attributes, ..
         }) = &node.html_data
@@ -61,6 +60,12 @@ impl Traversal<DomRef> for FlowConstructor {
                 }
             }
         }
+    }
+}
+
+impl Traversal<DomRef> for FlowConstructor {
+    fn preorder_traverse(&mut self, node: DomRef) {
+        self.read_stylesheet(&node);
 
         // TODO: Selector matching, Cascade
         if let Some(element_ref) = &node.clone().into_element_ref() {
@@ -113,6 +118,8 @@ impl Default for EntityConstructor {
         world.register::<InlineFormattingContext>();
         world.register::<Text>();
         world.register::<StackingContextRelativePosition>();
+        world.register::<BlockFormattingContext>();
+        world.register::<CanCollapse>();
         EntityConstructor { world }
     }
 }

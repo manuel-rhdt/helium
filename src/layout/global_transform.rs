@@ -1,4 +1,4 @@
-use super::block::BlockContainer;
+use super::block_formatting_context::BlockFormattingContext;
 use super::entity::{Position, StackingContextRelativePosition};
 
 use specs::{Entities, ReadStorage, System, WriteStorage};
@@ -9,7 +9,7 @@ pub struct GlobalTransform;
 impl<'a> System<'a> for GlobalTransform {
     type SystemData = (
         Entities<'a>,
-        ReadStorage<'a, BlockContainer>,
+        ReadStorage<'a, BlockFormattingContext>,
         ReadStorage<'a, Position>,
         WriteStorage<'a, StackingContextRelativePosition>,
     );
@@ -22,7 +22,7 @@ impl<'a> System<'a> for GlobalTransform {
                 x: global_x,
                 y: global_y,
             } = *global_pos.entry(self_entity).unwrap().or_insert(Default::default());
-            for child_entity in formatting_context.element_entities(&entities) {
+            for &child_entity in &formatting_context.entities {
                 let Position {
                     x: rel_x, y: rel_y, ..
                 } = *pos.get(child_entity).unwrap();
