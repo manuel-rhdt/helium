@@ -1,5 +1,7 @@
 use crate::style::properties::computed::PixelLength;
 
+mod whitespace;
+
 /// A postscript font unit (1/1000 of an EM)
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub struct FontUnit(pub f64);
@@ -67,33 +69,46 @@ pub struct CharMetric {
 // }
 include!(concat!(env!("OUT_DIR"), "/base_14_fonts.rs"));
 
-/// Returns linebreak locations
-pub fn layout_text(text: &str, font_size: PixelLength, container_width: PixelLength) -> Vec<usize> {
+/// Returns lines
+pub fn layout_text<'a>(
+    text: &'a mut String,
+    font_size: PixelLength,
+    container_width: PixelLength,
+) -> impl 'a + Iterator<Item = &'a str> {
     let font = BuiltInFonts::Helvetica.metrics();
     let mut cursor = PixelLength(0.0);
-    let mut linebreaks = vec![];
 
+    whitespace::transform_text(text);
+
+    // tracks the string index of the last space and the cursor position for the text after the last space
     let mut last_space = (0, PixelLength(0.0));
-    for (index, character) in text.chars().enumerate() {
+    let mut line_start = 0;
+
+    // make an immutable borrow of text.
+    let text: &'a str = text;
+    text.char_indices().filter_map(move |(index, character)| {
         let char_metric = font
             .char_metrics
             .iter()
             .find(|metric| metric.character_code == character as i32);
 
-        if character == ' ' {
-            last_space = (index, cursor);
-        }
-
         if let Some(char_metric) = char_metric {
             cursor += char_metric.advance_width.to_px(font_size);
+            if character == ' ' {
+                last_space = (index, cursor);
+            }
             if cursor > container_width {
-                linebreaks.push(last_space.0);
+                let result = Some(&text[line_start..last_space.0]);
+                line_start = last_space.0 + 1;
                 cursor = cursor - last_space.1;
+                return result;
             }
         }
-    }
-
-    linebreaks
+        if index + 1 == text.len() {
+            return Some(&text[line_start..]);
+        }
+        return None;
+    })
 }
 
 pub fn font_height(font_size: PixelLength) -> PixelLength {

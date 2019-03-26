@@ -22,7 +22,28 @@ pub enum PropertyDeclaration {
     /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-left
     MarginLeft(QuantityOrPercentage),
     /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-right
-    MarginRight(QuantityOrPercentage)
+    MarginRight(QuantityOrPercentage),
+
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-border-top-width
+    BorderTopWidth(QuantityOrPercentage),
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-border-bottom-width
+    BorderBottomWidth(QuantityOrPercentage),
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-border-left-width
+    BorderLeftWidth(QuantityOrPercentage),
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-border-right-width
+    BorderRightWidth(QuantityOrPercentage),
+
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-top
+    PaddingTop(QuantityOrPercentage),
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-bottom
+    PaddingBottom(QuantityOrPercentage),
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-left
+    PaddingLeft(QuantityOrPercentage),
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-right
+    PaddingRight(QuantityOrPercentage),
+
+    /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
+    WhiteSpace(WhiteSpace)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -71,8 +92,10 @@ impl FromStr for Display {
 pub enum Unit {
     Px,
     Cm,
+    Mm,
     Pt,
     Em,
+    In
 }
 
 impl FromStr for Unit {
@@ -84,6 +107,8 @@ impl FromStr for Unit {
             "cm" => Ok(Unit::Cm),
             "pt" => Ok(Unit::Pt),
             "em" => Ok(Unit::Em),
+            "mm" => Ok(Unit::Mm),
+            "in" => Ok(Unit::In),
             _ => Err(()),
         }
     }
@@ -137,5 +162,33 @@ impl<'i> FromCssDecl<'i> for FontSize {
         input: &mut Parser<'i, '_>,
     ) -> Result<Self, ParseError<'i, ()>> {
         Err(input.new_custom_error(()))
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum WhiteSpace {
+    Normal
+}
+
+impl Default for WhiteSpace {
+    fn default() -> Self {
+        WhiteSpace::Normal
+    }
+}
+
+impl<'i> FromCssDecl<'i> for WhiteSpace {
+    type Error = ParseError<'i, ()>;
+
+    fn from_css_decl(
+        _name: CowRcStr<'i>,
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, ()>> {
+        match input.next()?.clone() {
+            Token::Ident(ident) => match ident.as_ref() {
+                "normal" => return Ok(WhiteSpace::Normal),
+                _ => Err(input.new_unexpected_token_error(Token::Ident(ident)))
+            },
+            unexpected => Err(input.new_unexpected_token_error(unexpected))
+        }
     }
 }

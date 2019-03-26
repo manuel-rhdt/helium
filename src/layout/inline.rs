@@ -65,13 +65,10 @@ impl<'a> System<'a> for InlineLayout {
             let mut lines = vec![];
 
             for child in inline_formatting_context.element_entities(&entities) {
-                let content = text.get(child).unwrap().clone();
-                let linebreaks = layout_text(&content.characters, style.font.font_size, width);
+                let mut content = text.get_mut(child).unwrap().clone();
+                let layout_lines = layout_text(&mut content.characters, style.font.font_size, width);
 
-                let mut prev_break = 0;
-                for break_point in linebreaks.into_iter().chain(Some(content.characters.len())) {
-                    let line_content = &content.characters[prev_break..break_point];
-
+                for line_content in layout_lines {
                     let font_height = super::text::font_height(style.font.font_size);
                     let line_gap = style.font.line_height - font_height;
 
@@ -98,8 +95,6 @@ impl<'a> System<'a> for InlineLayout {
                         .build();
 
                     lines.push(line.id());
-
-                    prev_break = break_point;
                 }
             }
 
