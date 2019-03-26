@@ -1,33 +1,10 @@
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
-use specs::{
-    world::{EntitiesRes, Index},
-    Component, Entity, VecStorage,
-};
+use specs::{Component, Entity, VecStorage};
 
 #[derive(Debug, Clone)]
 pub struct BlockContainer {
-    pub elements: Vec<Index>,
-}
-
-impl BlockContainer {
-    pub fn get(&self, index: usize, entities: &EntitiesRes) -> Option<Entity> {
-        self.elements.get(index).map(|&index| entities.entity(index))
-    }
-
-    pub fn element_entities<'a>(
-        &'a self,
-        entities_res: &'a EntitiesRes,
-    ) -> impl 'a + Iterator<Item = Entity> + Clone {
-        self.elements.iter().filter_map(move |&index| {
-            let entity = entities_res.entity(index);
-            if entities_res.is_alive(entity) {
-                Some(entity)
-            } else {
-                None
-            }
-        })
-    }
+    pub elements: Vec<Entity>,
 }
 
 impl Component for BlockContainer {

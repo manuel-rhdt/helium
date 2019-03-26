@@ -13,6 +13,10 @@ impl PixelLength {
         PixelLength(pt / 0.75)
     }
 
+    pub fn to_pt(self) -> f32 {
+        self.0 * 0.75
+    }
+
     pub fn max(self, other: PixelLength) -> PixelLength {
         PixelLength(self.0.max(other.0))
     }
@@ -83,6 +87,12 @@ pub enum Length {
     Em(CssFloat),
 }
 
+impl Default for Length {
+    fn default() -> Self {
+        Length::Absolute(PixelLength(0.0))
+    }
+}
+
 impl Length {
     #[inline]
     pub fn from_val_unit(val: f32, unit: super::specified::Unit) -> Self {
@@ -95,6 +105,13 @@ impl Length {
             Unit::Em => Length::Em(val),
             Unit::Mm => Length::from_val_unit(0.1 * val, Unit::Cm),
             Unit::In => Length::from_val_unit(val * 72.0, Unit::Pt),
+        }
+    }
+
+    pub fn absolute(self, font_size: PixelLength) -> PixelLength {
+        match self {
+            Length::Absolute(abs) => abs,
+            Length::Em(em) => font_size * em
         }
     }
 }
@@ -136,8 +153,7 @@ impl LengthPercentage {
 
     pub fn absolute(self, container_size: PixelLength, font_size: PixelLength) -> PixelLength {
         match self {
-            LengthPercentage::Length(Length::Absolute(abs)) => abs,
-            LengthPercentage::Length(Length::Em(em)) => font_size * em,
+            LengthPercentage::Length(len) => len.absolute(font_size),
             LengthPercentage::Percentage(percentage) => container_size * percentage,
             _ => unimplemented!(),
         }
@@ -159,11 +175,13 @@ impl Default for GenericSize {
 
 impl GenericSize {
     pub fn from_specified(spec: super::specified::QuantityOrPercentage) -> Self {
-        use super::specified::QuantityOrPercentage;
+        use super::specified::{Quantity, QuantityOrPercentage};
         match spec {
-            QuantityOrPercentage::Quantity { value, unit } => GenericSize::LengthPercentage(
-                LengthPercentage::Length(Length::from_val_unit(value, unit)),
-            ),
+            QuantityOrPercentage::Quantity(Quantity { value, unit }) => {
+                GenericSize::LengthPercentage(LengthPercentage::Length(Length::from_val_unit(
+                    value, unit,
+                )))
+            }
             QuantityOrPercentage::Percentage(percentage) => {
                 GenericSize::LengthPercentage(LengthPercentage::Percentage(percentage))
             }
@@ -195,10 +213,10 @@ pub struct Position {
     pub padding_bottom: GenericSize,
     pub padding_left: GenericSize,
     pub padding_right: GenericSize,
-    pub border_top_width: GenericSize,
-    pub border_bottom_width: GenericSize,
-    pub border_left_width: GenericSize,
-    pub border_right_width: GenericSize,
+    pub border_top_width: Length,
+    pub border_bottom_width: Length,
+    pub border_left_width: Length,
+    pub border_right_width: Length,
 }
 
 /// Contains the style structs.
@@ -289,20 +307,21 @@ impl StyleBuilder {
             PropertyDeclaration::PaddingRight(val) => {
                 self.mutate_position(|mut pos| pos.padding_right = GenericSize::from_specified(val))
             }
-            PropertyDeclaration::BorderTopWidth(val) => self
-                .mutate_position(|mut pos| pos.border_top_width = GenericSize::from_specified(val)),
-            PropertyDeclaration::BorderBottomWidth(val) => self.mutate_position(|mut pos| {
-                pos.border_bottom_width = GenericSize::from_specified(val)
-            }),
-            PropertyDeclaration::BorderLeftWidth(val) => self.mutate_position(|mut pos| {
-                pos.border_left_width = GenericSize::from_specified(val)
-            }),
-            PropertyDeclaration::BorderRightWidth(val) => self.mutate_position(|mut pos| {
-                pos.border_right_width = GenericSize::from_specified(val)
-            }),
-            PropertyDeclaration::WhiteSpace(val) => self.mutate_text(|mut text| {
-                text.white_space = val
-            })
+            PropertyDeclaration::BorderTopWidth(val) => {
+                self.mutate_position(|mut pos| pos.border_top_width = val.into())
+            }
+            PropertyDeclaration::BorderBottomWidth(val) => {
+                self.mutate_position(|mut pos| pos.border_bottom_width = val.into())
+            }
+            PropertyDeclaration::BorderLeftWidth(val) => {
+                self.mutate_position(|mut pos| pos.border_left_width = val.into())
+            }
+            PropertyDeclaration::BorderRightWidth(val) => {
+                self.mutate_position(|mut pos| pos.border_right_width = val.into())
+            }
+            PropertyDeclaration::WhiteSpace(val) => {
+                self.mutate_text(|mut text| text.white_space = val)
+            }
         }
     }
 

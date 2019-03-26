@@ -25,13 +25,13 @@ pub enum PropertyDeclaration {
     MarginRight(QuantityOrPercentage),
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-top-width
-    BorderTopWidth(QuantityOrPercentage),
+    BorderTopWidth(BorderWidth),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-bottom-width
-    BorderBottomWidth(QuantityOrPercentage),
+    BorderBottomWidth(BorderWidth),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-left-width
-    BorderLeftWidth(QuantityOrPercentage),
+    BorderLeftWidth(BorderWidth),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-right-width
-    BorderRightWidth(QuantityOrPercentage),
+    BorderRightWidth(BorderWidth),
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-top
     PaddingTop(QuantityOrPercentage),
@@ -43,7 +43,7 @@ pub enum PropertyDeclaration {
     PaddingRight(QuantityOrPercentage),
 
     /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
-    WhiteSpace(WhiteSpace)
+    WhiteSpace(WhiteSpace),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -95,7 +95,13 @@ pub enum Unit {
     Mm,
     Pt,
     Em,
-    In
+    In,
+}
+
+impl Default for Unit {
+    fn default() -> Self {
+        Unit::Px
+    }
 }
 
 impl FromStr for Unit {
@@ -115,18 +121,24 @@ impl FromStr for Unit {
 }
 
 #[derive(Debug, Copy, Clone)]
+pub struct Quantity {
+    pub value: super::CssFloat,
+    pub unit: Unit,
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum QuantityOrPercentage {
-    Quantity { value: super::CssFloat, unit: Unit },
+    Quantity(Quantity),
     Percentage(super::Percentage),
 }
 
 impl QuantityOrPercentage {
     pub fn parse<'a, 'b>(token: &'a Token<'b>) -> Result<Self, Token<'b>> {
         let result = match token {
-            Token::Dimension { value, unit, .. } => QuantityOrPercentage::Quantity {
+            Token::Dimension { value, unit, .. } => QuantityOrPercentage::Quantity(Quantity {
                 value: *value,
                 unit: unit.parse().map_err(|_| token.clone())?,
-            },
+            }),
             Token::Percentage { unit_value, .. } => {
                 QuantityOrPercentage::Percentage(super::Percentage(*unit_value))
             }
@@ -152,6 +164,55 @@ impl<'i> FromCssDecl<'i> for QuantityOrPercentage {
 }
 
 #[derive(Debug, Copy, Clone)]
+pub enum BorderWidth {
+    Thin,
+    Medium,
+    Thick,
+    Quantity(Quantity),
+}
+
+impl From<BorderWidth> for super::computed::Length {
+    fn from(bw: BorderWidth) -> Self {
+        use super::computed::Length;
+
+        match bw {
+            BorderWidth::Thin => Length::from_val_unit(1.0, Unit::Pt),
+            BorderWidth::Medium => Length::from_val_unit(2.0, Unit::Pt),
+            BorderWidth::Thick => Length::from_val_unit(4.0, Unit::Pt),
+            BorderWidth::Quantity(Quantity { value, unit }) => Length::from_val_unit(value, unit),
+        }
+    }
+}
+
+impl<'i> FromCssDecl<'i> for BorderWidth {
+    type Error = ParseError<'i, ()>;
+
+    fn from_css_decl(
+        _name: CowRcStr<'i>,
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, ()>> {
+        let token = input.next()?;
+        match &token {
+            Token::Ident(ident) => match ident.as_ref() {
+                "thin" => return Ok(BorderWidth::Thin),
+                "medium" => return Ok(BorderWidth::Medium),
+                "thick" => return Ok(BorderWidth::Thick),
+                _ => {}
+            },
+            Token::Dimension { value, unit, .. } => {
+                return Ok(BorderWidth::Quantity(Quantity {
+                    value: *value,
+                    unit: unit.parse().unwrap_or_default(),
+                }));
+            }
+            _ => {}
+        }
+        let token = token.clone();
+        Err(input.new_unexpected_token_error(token))
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum FontSize {}
 
 impl<'i> FromCssDecl<'i> for FontSize {
@@ -167,7 +228,7 @@ impl<'i> FromCssDecl<'i> for FontSize {
 
 #[derive(Debug, Copy, Clone)]
 pub enum WhiteSpace {
-    Normal
+    Normal,
 }
 
 impl Default for WhiteSpace {
@@ -186,9 +247,9 @@ impl<'i> FromCssDecl<'i> for WhiteSpace {
         match input.next()?.clone() {
             Token::Ident(ident) => match ident.as_ref() {
                 "normal" => return Ok(WhiteSpace::Normal),
-                _ => Err(input.new_unexpected_token_error(Token::Ident(ident)))
+                _ => Err(input.new_unexpected_token_error(Token::Ident(ident))),
             },
-            unexpected => Err(input.new_unexpected_token_error(unexpected))
+            unexpected => Err(input.new_unexpected_token_error(unexpected)),
         }
     }
 }

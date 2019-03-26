@@ -1,6 +1,5 @@
-use super::block_formatting_context::BlockFormattingContext;
+use super::block::BlockContainer;
 use super::entity::Position;
-use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
 use specs::{Entities, ReadStorage, System, WriteStorage};
 
@@ -10,44 +9,30 @@ pub struct BlockSizeContext {}
 impl<'a> System<'a> for BlockSizeContext {
     type SystemData = (
         Entities<'a>,
-        ReadStorage<'a, ComputedValues>,
         WriteStorage<'a, Position>,
-        ReadStorage<'a, BlockFormattingContext>,
+        ReadStorage<'a, BlockContainer>,
     );
 
-    fn run(&mut self, (entities, computed_values, mut positions, context): Self::SystemData) {
+    fn run(&mut self, (entities, mut positions, container): Self::SystemData) {
         use specs::Join;
 
         // We need a sorted list of all entities. We currently cheat by assuming
         // the list is correctly sorted given the order we construct the entities.
-        let sorted_entities: Vec<_> = (&entities, &context, &computed_values).join().collect();
+        let sorted_entities: Vec<_> = (&entities, &container).join().collect();
 
-        for (entity, formatting_context, style) in sorted_entities.iter() {
-            let mut block_size = Px(0.0);
-            for &child in &formatting_context.entities {
-                let child_position = positions.get_mut(child).unwrap();
-                let child_style = computed_values.get(child).cloned().unwrap_or_default();
+        for (entity, container) in sorted_entities.iter() {
+            let first_child = container.elements.first();
+            let last_child = container.elements.last();
 
-                let margin_top = child_style.position.margin_top.absolute(
-                    Px(0.0),
-                    child_position.width,
-                    child_style.font.font_size,
-                );
+            let start_y = first_child.map(|&x| positions.get(x).unwrap().y).unwrap_or_default();
+            let end_y = last_child.map(|&x| {
+                let pos = positions.get(x).unwrap();
+                pos.y + pos.height
+            }).unwrap_or_default();
 
-                let margin_bottom = child_style.position.margin_top.absolute(
-                    Px(0.0),
-                    child_position.width,
-                    child_style.font.font_size,
-                );
-
-                child_position.y = block_size + margin_top;
-
-                block_size += child_position.height + margin_top + margin_bottom;
-            }
-            match style.position.height {
-                GenericSize::Auto => positions.get_mut(*entity).unwrap().height = block_size,
-                _ => {}
-            };
+            let container_pos = positions.get_mut(*entity).unwrap();
+            container_pos.y = start_y;
+            container_pos.height = end_y - start_y;
         }
     }
 }

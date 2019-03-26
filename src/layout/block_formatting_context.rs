@@ -41,7 +41,7 @@ impl<'a> System<'a> for BlockFormattingContextBuilder {
                 });
 
             let mut stack = vec![BlockFragmentConstructor::new(
-                block_container.element_entities(&entities),
+                block_container.elements.iter().cloned(),
             )];
             'outer: while let Some(constructor) = stack.last_mut() {
                 while let Some(entity) =
@@ -49,7 +49,7 @@ impl<'a> System<'a> for BlockFormattingContextBuilder {
                 {
                     if let Some(container) = block_containers.get(entity) {
                         stack.push(BlockFragmentConstructor::new(
-                            container.element_entities(&entities),
+                            container.elements.iter().cloned(),
                         ));
                         continue 'outer;
                     } else {

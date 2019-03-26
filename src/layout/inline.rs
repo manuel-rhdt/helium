@@ -94,7 +94,7 @@ impl<'a> System<'a> for InlineLayout {
                         )
                         .build();
 
-                    lines.push(line.id());
+                    lines.push(line);
                 }
             }
 

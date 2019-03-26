@@ -207,7 +207,7 @@ impl EntityConstructor {
         let mut block_formatting_context = BlockContainer { elements: vec![] };
         for child in node.children() {
             if let Some(child_entity) = child.layout_entity.get() {
-                block_formatting_context.elements.push(child_entity.0.id());
+                block_formatting_context.elements.push(child_entity.0);
             } else {
                 continue;
             }

@@ -1,5 +1,5 @@
-use crate::layout::entity::{Position, StackingContextRelativePosition, Text};
-use crate::style::properties::computed::PixelLength;
+use crate::layout::entity::{Position, Text};
+use crate::style::properties::computed::{ComputedValues, PixelLength};
 
 use specs::{Join, ReadStorage, System};
 
@@ -25,7 +25,10 @@ impl Point {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DisplayItem {
-    LineString(Vec<Point>),
+    LineString {
+        points: Vec<Point>,
+        line_width: PixelLength,
+    },
     FilledRect(Rect),
     Text(Point, PixelLength, String),
     Translate(PixelLength, PixelLength),
@@ -73,16 +76,81 @@ impl DisplayListBuilder {
 impl<'a> System<'a> for DisplayListBuilder {
     type SystemData = (
         ReadStorage<'a, Position>,
-        ReadStorage<'a, StackingContextRelativePosition>,
         ReadStorage<'a, Text>,
+        ReadStorage<'a, ComputedValues>,
     );
 
-    fn run(&mut self, (positions, global_pos, text): Self::SystemData) {
-        for (&StackingContextRelativePosition { x, y }, &Position { width, height, .. }, text) in
-            (&global_pos, &positions, text.maybe()).join()
+    fn run(&mut self, (positions, text, computed_values): Self::SystemData) {
+        for (
+            &Position {
+                x,
+                y,
+                width,
+                height,
+            },
+            text,
+            style,
+        ) in (&positions, text.maybe(), computed_values.maybe()).join()
         {
             if width == PixelLength(0.0) || height == PixelLength(0.0) {
                 continue;
+            }
+
+            if let Some(style) = style {
+                let border_top = style
+                    .position
+                    .border_top_width
+                    .absolute(style.font.font_size);
+                let border_bottom = style
+                    .position
+                    .border_bottom_width
+                    .absolute(style.font.font_size);
+                let border_left = style
+                    .position
+                    .border_left_width
+                    .absolute(style.font.font_size);
+                let border_right = style
+                    .position
+                    .border_right_width
+                    .absolute(style.font.font_size);
+
+                let hbt = border_top / 2.0;
+                let hbb = border_bottom / 2.0;
+                let hbl = border_left / 2.0;
+                let hbr = border_right / 2.0;
+
+                if border_top > PixelLength(0.0) {
+                    let pt1 = Point::new(x + hbl, y + hbt);
+                    let pt2 = Point::new(x + width - hbr, y + hbt);
+                    self.display_list.append(DisplayItem::LineString {
+                        points: vec![pt1, pt2],
+                        line_width: border_top,
+                    });
+                }
+                if border_bottom > PixelLength(0.0) {
+                    let pt1 = Point::new(x + hbl, y + height - hbb);
+                    let pt2 = Point::new(x + width - hbr, y + height - hbb);
+                    self.display_list.append(DisplayItem::LineString {
+                        points: vec![pt1, pt2],
+                        line_width: border_bottom,
+                    });
+                }
+                if border_left > PixelLength(0.0) {
+                    let pt1 = Point::new(x + hbl, y + hbt);
+                    let pt2 = Point::new(x + hbl, y + height - hbb);
+                    self.display_list.append(DisplayItem::LineString {
+                        points: vec![pt1, pt2],
+                        line_width: border_left,
+                    });
+                }
+                if border_right > PixelLength(0.0) {
+                    let pt1 = Point::new(x + width - hbr, y + hbt);
+                    let pt2 = Point::new(x + width - hbr, y + height - hbb);
+                    self.display_list.append(DisplayItem::LineString {
+                        points: vec![pt1, pt2],
+                        line_width: border_right,
+                    });
+                }
             }
 
             // self.display_list.append(DisplayItem::FilledRect(Rect {

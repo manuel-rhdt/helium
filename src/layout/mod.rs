@@ -65,8 +65,8 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     layout_context.maintain();
 
     // Assign heights to the remaining entities.
-    // let mut block_size_context = block_size::BlockSizeContext {};
-    // block_size_context.run_now(&layout_context.res);
+    let mut block_size_context = block_size::BlockSizeContext {};
+    block_size_context.run_now(&layout_context.res);
 
     // Calculate positions relative to the parent stacking context
     global_transform::GlobalTransform.run_now(&layout_context.res);

@@ -2,7 +2,7 @@ use crate::display_list::{self, DisplayItem, Rect};
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
-use printpdf::{BuiltinFont, Error, Line, Mm, PdfDocument, Point, CurTransMat};
+use printpdf::{BuiltinFont, CurTransMat, Error, Line, Mm, PdfDocument, Point};
 
 use font_kit::family_name::FamilyName;
 use font_kit::handle::Handle;
@@ -52,7 +52,24 @@ pub fn write_pdf(
                 let x = *x;
                 let y = -*y;
                 current_layer.set_ctm(CurTransMat::Translate(x.into(), y.into()));
-            },
+            }
+            DisplayItem::LineString { points, line_width } => {
+                let mut line: Line = points
+                    .into_iter()
+                    .map(|&crate::display_list::Point { x, y }| {
+                        let x = x;
+                        let y = device.height - y;
+                        let pt = Point::new(x.into(), y.into());
+                        (pt, false)
+                    })
+                    .collect();
+
+                line.set_fill(false);
+                line.set_stroke(true);
+
+                current_layer.set_outline_thickness(line_width.to_pt() as f64);
+                current_layer.add_shape(line)
+            }
             DisplayItem::FilledRect(Rect {
                 x,
                 y,
@@ -87,7 +104,6 @@ pub fn write_pdf(
                 current_layer.write_text(text.clone(), &builtin_font);
                 current_layer.end_text_section();
             }
-            _ => {}
         }
     }
 
