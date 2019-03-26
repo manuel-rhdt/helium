@@ -77,7 +77,9 @@ struct BlockFragmentConstructor<I> {
 #[derive(Debug, Copy, Clone)]
 enum BlockFragmentConstructorState {
     MarginTop,
+    DecorationTop,
     Entity,
+    DecorationBottom,
     MarginBottom,
 }
 
@@ -93,18 +95,20 @@ impl<I: Iterator<Item = Entity>> BlockFragmentConstructor<I> {
     fn build_entity(
         entities: &EntitiesRes,
         positions: &mut WriteStorage<Position>,
-        can_collapse: &mut WriteStorage<CanCollapse>,
+        can_collapse: bool,
+        can_collapse_store: &mut WriteStorage<CanCollapse>,
         height: Px,
     ) -> Entity {
         let pos = Position {
             height: height,
             ..Default::default()
         };
-        entities
-            .build_entity()
-            .with(pos, positions)
-            .with(Default::default(), can_collapse)
-            .build()
+        let builder = entities.build_entity().with(pos, positions);
+        if can_collapse {
+            builder.with(Default::default(), can_collapse_store).build()
+        } else {
+            builder.build()
+        }
     }
 
     fn step(
@@ -124,7 +128,7 @@ impl<I: Iterator<Item = Entity>> BlockFragmentConstructor<I> {
 
             match self.state {
                 BlockFragmentConstructorState::MarginTop => {
-                    self.state = BlockFragmentConstructorState::Entity;
+                    self.state = BlockFragmentConstructorState::DecorationTop;
                     let margin_top = style.position.margin_top.absolute(
                         Px(0.0),
                         pos.width,
@@ -133,13 +137,51 @@ impl<I: Iterator<Item = Entity>> BlockFragmentConstructor<I> {
 
                     if margin_top > Px(0.0) {
                         let margin_entity =
-                            Self::build_entity(entities, positions, can_collapse, margin_top);
+                            Self::build_entity(entities, positions, true, can_collapse, margin_top);
                         break Some(margin_entity);
                     }
                 }
+                BlockFragmentConstructorState::DecorationTop => {
+                    self.state = BlockFragmentConstructorState::Entity;
+
+                    let border_top = style
+                        .position
+                        .border_top_width
+                        .absolute(style.font.font_size);
+
+                    if border_top > Px(0.0) {
+                        let decoration_entity = Self::build_entity(
+                            entities,
+                            positions,
+                            false,
+                            can_collapse,
+                            border_top,
+                        );
+                        break Some(decoration_entity);
+                    }
+                }
                 BlockFragmentConstructorState::Entity => {
-                    self.state = BlockFragmentConstructorState::MarginBottom;
+                    self.state = BlockFragmentConstructorState::DecorationBottom;
                     break Some(entity);
+                }
+                BlockFragmentConstructorState::DecorationBottom => {
+                    self.state = BlockFragmentConstructorState::MarginBottom;
+
+                    let border_bottom = style
+                        .position
+                        .border_bottom_width
+                        .absolute(style.font.font_size);
+
+                    if border_bottom > Px(0.0) {
+                        let decoration_entity = Self::build_entity(
+                            entities,
+                            positions,
+                            false,
+                            can_collapse,
+                            border_bottom,
+                        );
+                        break Some(decoration_entity);
+                    }
                 }
                 BlockFragmentConstructorState::MarginBottom => {
                     self.state = BlockFragmentConstructorState::MarginTop;
@@ -152,8 +194,13 @@ impl<I: Iterator<Item = Entity>> BlockFragmentConstructor<I> {
                     );
 
                     if margin_bottom > Px(0.0) {
-                        let margin_entity =
-                            Self::build_entity(entities, positions, can_collapse, margin_bottom);
+                        let margin_entity = Self::build_entity(
+                            entities,
+                            positions,
+                            true,
+                            can_collapse,
+                            margin_bottom,
+                        );
                         break Some(margin_entity);
                     }
                 }

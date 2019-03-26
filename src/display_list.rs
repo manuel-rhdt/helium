@@ -120,45 +120,38 @@ impl<'a> System<'a> for DisplayListBuilder {
                 let hbr = border_right / 2.0;
 
                 if border_top > PixelLength(0.0) {
-                    let pt1 = Point::new(x + hbl, y + hbt);
-                    let pt2 = Point::new(x + width - hbr, y + hbt);
+                    let pt1 = Point::new(x - border_left, y - hbt);
+                    let pt2 = Point::new(x + width + border_right, y - hbt);
                     self.display_list.append(DisplayItem::LineString {
                         points: vec![pt1, pt2],
                         line_width: border_top,
                     });
                 }
                 if border_bottom > PixelLength(0.0) {
-                    let pt1 = Point::new(x + hbl, y + height - hbb);
-                    let pt2 = Point::new(x + width - hbr, y + height - hbb);
+                    let pt1 = Point::new(x - border_left, y + height + hbb);
+                    let pt2 = Point::new(x + width + border_right, y + height + hbb);
                     self.display_list.append(DisplayItem::LineString {
                         points: vec![pt1, pt2],
                         line_width: border_bottom,
                     });
                 }
                 if border_left > PixelLength(0.0) {
-                    let pt1 = Point::new(x + hbl, y + hbt);
-                    let pt2 = Point::new(x + hbl, y + height - hbb);
+                    let pt1 = Point::new(x - hbl, y);
+                    let pt2 = Point::new(x - hbl, y + height);
                     self.display_list.append(DisplayItem::LineString {
                         points: vec![pt1, pt2],
                         line_width: border_left,
                     });
                 }
                 if border_right > PixelLength(0.0) {
-                    let pt1 = Point::new(x + width - hbr, y + hbt);
-                    let pt2 = Point::new(x + width - hbr, y + height - hbb);
+                    let pt1 = Point::new(x + width + hbr, y);
+                    let pt2 = Point::new(x + width + hbr, y + height);
                     self.display_list.append(DisplayItem::LineString {
                         points: vec![pt1, pt2],
                         line_width: border_right,
                     });
                 }
             }
-
-            // self.display_list.append(DisplayItem::FilledRect(Rect {
-            //     x,
-            //     y,
-            //     width,
-            //     height,
-            // }));
 
             if let Some(text) = text {
                 self.append_text(Point { x, y }, text);

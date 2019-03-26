@@ -13,7 +13,7 @@ impl Component for BlockContainer {
 
 // https://www.w3.org/TR/CSS22/visudet.html#blockwidth
 pub fn calculate_inline_size(container_size: Px, style: &ComputedValues) -> (Px, Px) {
-    match style.position.width {
+    let (margin_left, width) = match style.position.width {
         GenericSize::Auto => {
             let margin_left =
                 style
@@ -50,7 +50,21 @@ pub fn calculate_inline_size(container_size: Px, style: &ComputedValues) -> (Px,
                     margin_left.absolute(container_size, style.font.font_size)
                 }
             };
+
             (margin_left, width)
         }
-    }
+    };
+    let border_left = style
+        .position
+        .border_left_width
+        .absolute(style.font.font_size);
+    let border_right = style
+        .position
+        .border_right_width
+        .absolute(style.font.font_size);
+
+    let offset = margin_left + border_left;
+    let width = width - border_left - border_right;
+
+    (offset, width)
 }
