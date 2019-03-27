@@ -111,7 +111,7 @@ impl Length {
     pub fn absolute(self, font_size: PixelLength) -> PixelLength {
         match self {
             Length::Absolute(abs) => abs,
-            Length::Em(em) => font_size * em
+            Length::Em(em) => font_size * em,
         }
     }
 }
@@ -129,6 +129,12 @@ pub enum LengthPercentage {
         length: Length,
         percentage: Percentage,
     },
+}
+
+impl Default for LengthPercentage {
+    fn default() -> Self {
+        LengthPercentage::Length(Length::default())
+    }
 }
 
 impl LengthPercentage {
@@ -158,6 +164,18 @@ impl LengthPercentage {
             _ => unimplemented!(),
         }
     }
+
+    pub fn from_specified(spec: super::specified::QuantityOrPercentage) -> Self {
+        use super::specified::{Quantity, QuantityOrPercentage};
+        match spec {
+            QuantityOrPercentage::Quantity(Quantity { value, unit }) => {
+                LengthPercentage::Length(Length::from_val_unit(value, unit))
+            }
+            QuantityOrPercentage::Percentage(percentage) => {
+                LengthPercentage::Percentage(percentage)
+            }
+        }
+    }
 }
 
 /// Used as the computed value for `width`.
@@ -175,17 +193,7 @@ impl Default for GenericSize {
 
 impl GenericSize {
     pub fn from_specified(spec: super::specified::QuantityOrPercentage) -> Self {
-        use super::specified::{Quantity, QuantityOrPercentage};
-        match spec {
-            QuantityOrPercentage::Quantity(Quantity { value, unit }) => {
-                GenericSize::LengthPercentage(LengthPercentage::Length(Length::from_val_unit(
-                    value, unit,
-                )))
-            }
-            QuantityOrPercentage::Percentage(percentage) => {
-                GenericSize::LengthPercentage(LengthPercentage::Percentage(percentage))
-            }
-        }
+        GenericSize::LengthPercentage(LengthPercentage::from_specified(spec))
     }
 
     pub fn absolute(
@@ -209,10 +217,10 @@ pub struct Position {
     pub margin_bottom: GenericSize,
     pub margin_left: GenericSize,
     pub margin_right: GenericSize,
-    pub padding_top: GenericSize,
-    pub padding_bottom: GenericSize,
-    pub padding_left: GenericSize,
-    pub padding_right: GenericSize,
+    pub padding_top: LengthPercentage,
+    pub padding_bottom: LengthPercentage,
+    pub padding_left: LengthPercentage,
+    pub padding_right: LengthPercentage,
     pub border_top_width: Length,
     pub border_bottom_width: Length,
     pub border_left_width: Length,
@@ -237,6 +245,7 @@ pub struct StyleBuilder {
     text: Option<Text>,
 }
 
+// TODO: Consider using `Arc::make_mut`.
 impl StyleBuilder {
     pub fn new(inherited_values: ComputedValues) -> Self {
         StyleBuilder {
@@ -296,17 +305,17 @@ impl StyleBuilder {
             PropertyDeclaration::MarginRight(val) => {
                 self.mutate_position(|mut pos| pos.margin_right = GenericSize::from_specified(val))
             }
-            PropertyDeclaration::PaddingTop(val) => {
-                self.mutate_position(|mut pos| pos.padding_top = GenericSize::from_specified(val))
-            }
-            PropertyDeclaration::PaddingBottom(val) => self
-                .mutate_position(|mut pos| pos.padding_bottom = GenericSize::from_specified(val)),
-            PropertyDeclaration::PaddingLeft(val) => {
-                self.mutate_position(|mut pos| pos.padding_left = GenericSize::from_specified(val))
-            }
-            PropertyDeclaration::PaddingRight(val) => {
-                self.mutate_position(|mut pos| pos.padding_right = GenericSize::from_specified(val))
-            }
+            PropertyDeclaration::PaddingTop(val) => self
+                .mutate_position(|mut pos| pos.padding_top = LengthPercentage::from_specified(val)),
+            PropertyDeclaration::PaddingBottom(val) => self.mutate_position(|mut pos| {
+                pos.padding_bottom = LengthPercentage::from_specified(val)
+            }),
+            PropertyDeclaration::PaddingLeft(val) => self.mutate_position(|mut pos| {
+                pos.padding_left = LengthPercentage::from_specified(val)
+            }),
+            PropertyDeclaration::PaddingRight(val) => self.mutate_position(|mut pos| {
+                pos.padding_right = LengthPercentage::from_specified(val)
+            }),
             PropertyDeclaration::BorderTopWidth(val) => {
                 self.mutate_position(|mut pos| pos.border_top_width = val.into())
             }

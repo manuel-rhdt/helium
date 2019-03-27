@@ -164,6 +164,19 @@ impl<'i> FromCssDecl<'i> for QuantityOrPercentage {
 }
 
 #[derive(Debug, Copy, Clone)]
+pub enum AutoOrQuantityOrPercentage {
+    Auto,
+    Quantity(Quantity),
+    Percentage(super::Percentage),
+}
+
+impl Default for AutoOrQuantityOrPercentage {
+    fn default() -> Self {
+        AutoOrQuantityOrPercentage::Auto
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum BorderWidth {
     Thin,
     Medium,

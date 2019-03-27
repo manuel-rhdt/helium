@@ -16,6 +16,9 @@ cssparser = "0.25.2"
 selectors = "0.21.0"
 specs = "0.14"
 from_css_decl_derive = { path = "./from_css_decl_derive" }
+shred-derive = "0.5.1"
+shred = "0.7.1"
+arrayvec = "0.4.10"
 
 [dev-dependencies]
 assert_cmd = "0.11"
