@@ -104,7 +104,12 @@ pub fn calculate_inline_size(
     ComputedValues { position, font, .. }: &ComputedValues,
 ) -> (Px, Px) {
     let font_size = font.font_size;
-    let (margin_left, width) = match position.width {
+    let border_left = position.border_left_width.absolute(font_size);
+    let border_right = position.border_right_width.absolute(font_size);
+    let padding_left = position.padding_left.absolute(container_size, font_size);
+    let padding_right = position.padding_right.absolute(container_size, font_size);
+
+    let (offset, width) = match position.width {
         GenericSize::Auto => {
             let margin_left = position
                 .margin_left
@@ -112,22 +117,33 @@ pub fn calculate_inline_size(
             let margin_right = position
                 .margin_right
                 .absolute(Px(0.0), container_size, font_size);
-            let width = (container_size - margin_left - margin_right).max(Px(0.0));
-            (margin_left, width)
+            let width = (container_size
+                - margin_left
+                - margin_right
+                - border_left
+                - border_right
+                - padding_left
+                - padding_right)
+                .max(Px(0.0));
+            (margin_left + border_left + padding_left, width)
         }
         GenericSize::LengthPercentage(lp) => {
             let width = lp.absolute(container_size, font_size);
             let margin_left = match (position.margin_left, position.margin_right) {
                 (GenericSize::Auto, GenericSize::Auto) => {
                     // center the child horizontally within its container
-                    (container_size - width) / 2.0
+                    let border_box_width =
+                        width + padding_left + padding_right + border_left + border_right;
+                    (container_size - border_box_width) / 2.0
                 }
                 (GenericSize::LengthPercentage(val), GenericSize::Auto) => {
                     val.absolute(container_size, font_size)
                 }
                 (GenericSize::Auto, GenericSize::LengthPercentage(val)) => {
                     let margin_right = val.absolute(container_size, font_size);
-                    container_size - width - margin_right
+                    let border_box_width =
+                        width + padding_left + padding_right + border_left + border_right;
+                    container_size - border_box_width - margin_right
                 }
                 (
                     GenericSize::LengthPercentage(margin_left),
@@ -137,18 +153,9 @@ pub fn calculate_inline_size(
                     margin_left.absolute(container_size, font_size)
                 }
             };
-
-            (margin_left, width)
+            (margin_left + border_left + padding_left, width)
         }
     };
-    let border_left = position.border_left_width.absolute(font_size);
-    let border_right = position.border_right_width.absolute(font_size);
-
-    let padding_left = position.padding_left.absolute(container_size, font_size);
-    let padding_right = position.padding_right.absolute(container_size, font_size);
-
-    let offset = margin_left + border_left + padding_left;
-    let width = width - border_left - padding_left - padding_right - border_right;
 
     (offset, width)
 }

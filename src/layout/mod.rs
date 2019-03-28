@@ -60,7 +60,7 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     layout_context.maintain();
 
     // create block formatting contexts
-    block_formatting_context::BlockFormattingContextBuilder.run_now(&layout_context.res);
+    block_formatting_context::BlockFormattingContextBuilder::new().run_now(&layout_context.res);
 
     layout_context.maintain();
 

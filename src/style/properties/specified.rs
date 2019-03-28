@@ -191,7 +191,7 @@ impl From<BorderWidth> for super::computed::Length {
         match bw {
             BorderWidth::Thin => Length::from_val_unit(1.0, Unit::Pt),
             BorderWidth::Medium => Length::from_val_unit(2.0, Unit::Pt),
-            BorderWidth::Thick => Length::from_val_unit(4.0, Unit::Pt),
+            BorderWidth::Thick => Length::from_val_unit(5.0, Unit::Px),
             BorderWidth::Quantity(Quantity { value, unit }) => Length::from_val_unit(value, unit),
         }
     }
