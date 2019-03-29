@@ -18,7 +18,7 @@ impl Component for ContainingBlock {
 }
 
 /// Describes the position of a box, where (x, y) specifies the top-left corner
-/// and width and height specify the dimensions.
+/// and width and height specify the dimensions of the content rect.
 ///
 /// The origin of the coordinate system is usually the parent element's top left
 /// corner.
@@ -58,7 +58,7 @@ pub struct Text {
     pub characters: String,
     /// Size of an EM box.
     pub font_size: PixelLength,
-    /// Distance from the top of the line box to the baseline of the text.
+    /// Distance from the top content edge of the box to the baseline of the text.
     pub baseline: PixelLength,
 }
 
