@@ -1,90 +1,130 @@
 use std::str::FromStr;
 
 use cssparser::{CowRcStr, ParseError, Parser, Token};
-use from_css_decl_derive::FromCssDecl;
+use from_css_decl_derive::{FromCssDecl, PropertyValue};
 
 pub trait FromCssDecl<'i>: Sized {
     type Error: 'i;
+    type Computed: 'static;
     fn from_css_decl(name: CowRcStr<'i>, input: &mut Parser<'i, '_>) -> Result<Self, Self::Error>;
+
+    fn apply_to(&self, computed: &mut Self::Computed);
 }
 
-#[derive(Debug, Copy, Clone, FromCssDecl)]
+pub trait PropertyValue<'i>: Sized {
+    type Error: 'i;
+    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, Self::Error>;
+
+    fn computed_value<T>(&self) -> T
+    where
+        T: ComputedValue<Self>,
+    {
+        T::from_specified(self)
+    }
+}
+
+pub trait ComputedValue<T>: Sized {
+    fn from_specified(specified_value: &T) -> Self;
+}
+
+impl<Specified, Computed> ComputedValue<Specified> for Computed
+where
+    Computed: From<Specified>,
+    Specified: Clone,
+{
+    fn from_specified(specified_value: &Specified) -> Computed {
+        specified_value.clone().into()
+    }
+}
+
+#[derive(Debug, Clone, FromCssDecl)]
 pub enum PropertyDeclaration {
-    Width(QuantityOrPercentage),
-    Height(QuantityOrPercentage),
-    Display(Display),
-    FontSize(FontSize),
+    Position(Position),
+    Font(Font),
+    Box(Box),
+    Text(Text),
+}
+
+#[derive(Debug, Clone, FromCssDecl)]
+#[computed = "super::computed::Position"]
+pub enum Position {
+    #[property]
+    Width(AutoOrQuantityOrPercentage),
+    #[property]
+    Height(AutoOrQuantityOrPercentage),
 
     /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-top
-    MarginTop(QuantityOrPercentage),
+    #[property]
+    MarginTop(AutoOrQuantityOrPercentage),
     /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-bottom
-    MarginBottom(QuantityOrPercentage),
+    #[property]
+    MarginBottom(AutoOrQuantityOrPercentage),
     /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-left
-    MarginLeft(QuantityOrPercentage),
+    #[property]
+    MarginLeft(AutoOrQuantityOrPercentage),
     /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-right
-    MarginRight(QuantityOrPercentage),
+    #[property]
+    MarginRight(AutoOrQuantityOrPercentage),
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-top-width
+    #[property]
     BorderTopWidth(BorderWidth),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-bottom-width
+    #[property]
     BorderBottomWidth(BorderWidth),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-left-width
+    #[property]
     BorderLeftWidth(BorderWidth),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-right-width
+    #[property]
     BorderRightWidth(BorderWidth),
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-top
+    #[property]
     PaddingTop(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-bottom
+    #[property]
     PaddingBottom(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-left
+    #[property]
     PaddingLeft(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-right
+    #[property]
     PaddingRight(QuantityOrPercentage),
+}
 
+#[derive(Debug, Clone, FromCssDecl)]
+#[computed = "super::computed::Font"]
+pub enum Font {
+    #[property]
+    FontSize(FontSize),
+}
+
+#[derive(Debug, Clone, FromCssDecl)]
+#[computed = "super::computed::Box"]
+pub enum Box {
+    #[property]
+    Display(Display),
+}
+
+#[derive(Debug, Clone, FromCssDecl)]
+#[computed = "super::computed::Text"]
+pub enum Text {
     /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
+    #[property]
     WhiteSpace(WhiteSpace),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
 pub enum Display {
     None,
     Block,
     Inline,
 }
 
-impl<'i> FromCssDecl<'i> for Display {
-    type Error = ParseError<'i, ()>;
-    fn from_css_decl(
-        _name: CowRcStr<'i>,
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, ()>> {
-        match input.next()? {
-            Token::Ident(ident) => match ident.parse() {
-                Ok(display) => Ok(display),
-                Err(_) => {
-                    let ident = ident.clone();
-                    Err(input.new_unexpected_token_error(Token::Ident(ident)))
-                }
-            },
-            unexpected => {
-                let unexpected = unexpected.clone();
-                Err(input.new_basic_unexpected_token_error(unexpected).into())
-            }
-        }
-    }
-}
-
-impl FromStr for Display {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "none" => Ok(Display::None),
-            "block" => Ok(Display::Block),
-            "inline" => Ok(Display::Inline),
-            _ => Err(()),
-        }
+impl Default for Display {
+    fn default() -> Self {
+        Display::Inline
     }
 }
 
@@ -126,48 +166,64 @@ pub struct Quantity {
     pub unit: Unit,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum QuantityOrPercentage {
-    Quantity(Quantity),
-    Percentage(super::Percentage),
-}
-
-impl QuantityOrPercentage {
-    pub fn parse<'a, 'b>(token: &'a Token<'b>) -> Result<Self, Token<'b>> {
-        let result = match token {
-            Token::Dimension { value, unit, .. } => QuantityOrPercentage::Quantity(Quantity {
-                value: *value,
-                unit: unit.parse().map_err(|_| token.clone())?,
-            }),
-            Token::Percentage { unit_value, .. } => {
-                QuantityOrPercentage::Percentage(super::Percentage(*unit_value))
-            }
-            unexpected => return Err(unexpected.clone()),
-        };
-        Ok(result)
-    }
-}
-
-impl<'i> FromCssDecl<'i> for QuantityOrPercentage {
+impl<'i> PropertyValue<'i> for Quantity {
     type Error = ParseError<'i, ()>;
 
-    fn from_css_decl(
-        _name: CowRcStr<'i>,
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, ()>> {
-        QuantityOrPercentage::parse(input.next()?).map_err(|unexpected_token| {
-            input
-                .new_basic_unexpected_token_error(unexpected_token)
-                .into()
+    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
+        let token = input.next()?;
+        let (value, unit) = match token {
+            Token::Dimension { value, unit, .. } => (*value, unit),
+            _ => {
+                let token = token.clone();
+                return Err(input.new_unexpected_token_error(token))
+            },
+        };
+
+        let unit = match unit.parse() {
+            Ok(unit) => unit,
+            Err(_) => {
+                let token = token.clone();
+                return Err(input.new_unexpected_token_error(token))
+            }
+        };
+
+        Ok(Quantity {
+            value: value,
+            unit: unit,
         })
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+/// A value between 0 and 1 which is interpreted as a relative size.
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
+pub struct Percentage(pub super::CssFloat);
+
+impl<'i> PropertyValue<'i> for Percentage {
+    type Error = ParseError<'i, ()>;
+
+    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
+        let token = input.next()?;
+        match token {
+            Token::Percentage { unit_value, .. } => Ok(Percentage(*unit_value)),
+            _ => {
+                let token = token.clone();
+                Err(input.new_unexpected_token_error(token))
+            },
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PropertyValue)]
+pub enum QuantityOrPercentage {
+    Quantity(Quantity),
+    Percentage(Percentage),
+}
+
+#[derive(Debug, Copy, Clone, PropertyValue)]
 pub enum AutoOrQuantityOrPercentage {
     Auto,
     Quantity(Quantity),
-    Percentage(super::Percentage),
+    Percentage(Percentage),
 }
 
 impl Default for AutoOrQuantityOrPercentage {
@@ -176,7 +232,7 @@ impl Default for AutoOrQuantityOrPercentage {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PropertyValue)]
 pub enum BorderWidth {
     Thin,
     Medium,
@@ -197,49 +253,27 @@ impl From<BorderWidth> for super::computed::Length {
     }
 }
 
-impl<'i> FromCssDecl<'i> for BorderWidth {
-    type Error = ParseError<'i, ()>;
+#[derive(Debug, Copy, Clone, PropertyValue)]
+pub enum FontSize {
+    Quantity(Quantity),
+}
 
-    fn from_css_decl(
-        _name: CowRcStr<'i>,
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, ()>> {
-        let token = input.next()?;
-        match &token {
-            Token::Ident(ident) => match ident.as_ref() {
-                "thin" => return Ok(BorderWidth::Thin),
-                "medium" => return Ok(BorderWidth::Medium),
-                "thick" => return Ok(BorderWidth::Thick),
-                _ => {}
-            },
-            Token::Dimension { value, unit, .. } => {
-                return Ok(BorderWidth::Quantity(Quantity {
-                    value: *value,
-                    unit: unit.parse().unwrap_or_default(),
-                }));
+impl ComputedValue<FontSize> for super::computed::PixelLength {
+    fn from_specified(specified_value: &FontSize) -> Self {
+        use super::computed::Length;
+
+        match *specified_value {
+            FontSize::Quantity(Quantity { value, unit }) => {
+                match Length::from_val_unit(value, unit) {
+                    Length::Absolute(abs) => abs,
+                    _ => unimplemented!(),
+                }
             }
-            _ => {}
         }
-        let token = token.clone();
-        Err(input.new_unexpected_token_error(token))
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum FontSize {}
-
-impl<'i> FromCssDecl<'i> for FontSize {
-    type Error = ParseError<'i, ()>;
-
-    fn from_css_decl(
-        _name: CowRcStr<'i>,
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, ()>> {
-        Err(input.new_custom_error(()))
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PropertyValue)]
 pub enum WhiteSpace {
     Normal,
 }
@@ -247,22 +281,5 @@ pub enum WhiteSpace {
 impl Default for WhiteSpace {
     fn default() -> Self {
         WhiteSpace::Normal
-    }
-}
-
-impl<'i> FromCssDecl<'i> for WhiteSpace {
-    type Error = ParseError<'i, ()>;
-
-    fn from_css_decl(
-        _name: CowRcStr<'i>,
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, ()>> {
-        match input.next()?.clone() {
-            Token::Ident(ident) => match ident.as_ref() {
-                "normal" => return Ok(WhiteSpace::Normal),
-                _ => Err(input.new_unexpected_token_error(Token::Ident(ident))),
-            },
-            unexpected => Err(input.new_unexpected_token_error(unexpected)),
-        }
     }
 }

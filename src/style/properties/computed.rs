@@ -1,7 +1,8 @@
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
-use super::specified::PropertyDeclaration;
+pub use super::specified::Display;
+use super::specified::{self, FromCssDecl, Percentage, PropertyDeclaration};
 
 pub type CssFloat = f32;
 
@@ -76,10 +77,6 @@ impl Div<f32> for PixelLength {
         Self(self.0 / other)
     }
 }
-
-/// A value between 0 and 1 which is interpreted as a relative size.
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
-pub struct Percentage(pub CssFloat);
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Length {
@@ -164,15 +161,17 @@ impl LengthPercentage {
             _ => unimplemented!(),
         }
     }
+}
 
-    pub fn from_specified(spec: super::specified::QuantityOrPercentage) -> Self {
+impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage {
+    fn from_specified(spec: &super::specified::QuantityOrPercentage) -> Self {
         use super::specified::{Quantity, QuantityOrPercentage};
         match spec {
             QuantityOrPercentage::Quantity(Quantity { value, unit }) => {
-                LengthPercentage::Length(Length::from_val_unit(value, unit))
+                LengthPercentage::Length(Length::from_val_unit(*value, *unit))
             }
             QuantityOrPercentage::Percentage(percentage) => {
-                LengthPercentage::Percentage(percentage)
+                LengthPercentage::Percentage(*percentage)
             }
         }
     }
@@ -191,11 +190,24 @@ impl Default for GenericSize {
     }
 }
 
-impl GenericSize {
-    pub fn from_specified(spec: super::specified::QuantityOrPercentage) -> Self {
-        GenericSize::LengthPercentage(LengthPercentage::from_specified(spec))
+impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize {
+    fn from_specified(spec: &specified::AutoOrQuantityOrPercentage) -> Self {
+        match spec {
+            specified::AutoOrQuantityOrPercentage::Auto => GenericSize::Auto,
+            specified::AutoOrQuantityOrPercentage::Percentage(percentage) => {
+                GenericSize::LengthPercentage(LengthPercentage::Percentage(*percentage))
+            }
+            specified::AutoOrQuantityOrPercentage::Quantity(specified::Quantity {
+                value,
+                unit,
+            }) => GenericSize::LengthPercentage(LengthPercentage::Length(Length::from_val_unit(
+                *value, *unit,
+            ))),
+        }
     }
+}
 
+impl GenericSize {
     pub fn absolute(
         self,
         if_auto: PixelLength,
@@ -239,10 +251,7 @@ pub struct ComputedValues {
 #[derive(Debug, Default)]
 pub struct StyleBuilder {
     inherited_values: ComputedValues,
-    position: Option<Position>,
-    box_: Option<Box>,
-    font: Option<Font>,
-    text: Option<Text>,
+    new_values: ComputedValues,
 }
 
 // TODO: Consider using `Arc::make_mut`.
@@ -254,131 +263,31 @@ impl StyleBuilder {
         }
     }
 
-    fn mutate_position(&mut self, f: impl FnOnce(&mut Position)) {
-        let mut position = self
-            .position
-            .take()
-            .unwrap_or_else(|| Position::clone(&*self.inherited_values.position));
-        f(&mut position);
-        self.position = Some(position);
-    }
-
-    fn mutate_box(&mut self, f: impl FnOnce(&mut Box)) {
-        let mut box_ = self
-            .box_
-            .take()
-            .unwrap_or_else(|| Box::clone(&*self.inherited_values.box_));
-        f(&mut box_);
-        self.box_ = Some(box_);
-    }
-
-    fn mutate_text(&mut self, f: impl FnOnce(&mut Text)) {
-        let mut text = self
-            .text
-            .take()
-            .unwrap_or_else(|| Text::clone(&*self.inherited_values.text));
-        f(&mut text);
-        self.text = Some(text);
-    }
-
     pub fn add_declaration(&mut self, decl: PropertyDeclaration) {
         match decl {
-            PropertyDeclaration::Width(specified) => {
-                self.mutate_position(|mut pos| pos.width = GenericSize::from_specified(specified))
+            PropertyDeclaration::Box(decl) => {
+                decl.apply_to(Arc::make_mut(&mut self.new_values.box_))
             }
-            PropertyDeclaration::Height(specified) => {
-                self.mutate_position(|mut pos| pos.height = GenericSize::from_specified(specified))
+            PropertyDeclaration::Font(decl) => {
+                decl.apply_to(Arc::make_mut(&mut self.new_values.font))
             }
-            PropertyDeclaration::Display(val) => {
-                self.mutate_box(|mut box_| box_.display = val.into())
+            PropertyDeclaration::Position(decl) => {
+                decl.apply_to(Arc::make_mut(&mut self.new_values.position))
             }
-            PropertyDeclaration::FontSize(_) => unimplemented!(),
-            PropertyDeclaration::MarginTop(val) => {
-                self.mutate_position(|mut pos| pos.margin_top = GenericSize::from_specified(val))
-            }
-            PropertyDeclaration::MarginBottom(val) => {
-                self.mutate_position(|mut pos| pos.margin_bottom = GenericSize::from_specified(val))
-            }
-            PropertyDeclaration::MarginLeft(val) => {
-                self.mutate_position(|mut pos| pos.margin_left = GenericSize::from_specified(val))
-            }
-            PropertyDeclaration::MarginRight(val) => {
-                self.mutate_position(|mut pos| pos.margin_right = GenericSize::from_specified(val))
-            }
-            PropertyDeclaration::PaddingTop(val) => self
-                .mutate_position(|mut pos| pos.padding_top = LengthPercentage::from_specified(val)),
-            PropertyDeclaration::PaddingBottom(val) => self.mutate_position(|mut pos| {
-                pos.padding_bottom = LengthPercentage::from_specified(val)
-            }),
-            PropertyDeclaration::PaddingLeft(val) => self.mutate_position(|mut pos| {
-                pos.padding_left = LengthPercentage::from_specified(val)
-            }),
-            PropertyDeclaration::PaddingRight(val) => self.mutate_position(|mut pos| {
-                pos.padding_right = LengthPercentage::from_specified(val)
-            }),
-            PropertyDeclaration::BorderTopWidth(val) => {
-                self.mutate_position(|mut pos| pos.border_top_width = val.into())
-            }
-            PropertyDeclaration::BorderBottomWidth(val) => {
-                self.mutate_position(|mut pos| pos.border_bottom_width = val.into())
-            }
-            PropertyDeclaration::BorderLeftWidth(val) => {
-                self.mutate_position(|mut pos| pos.border_left_width = val.into())
-            }
-            PropertyDeclaration::BorderRightWidth(val) => {
-                self.mutate_position(|mut pos| pos.border_right_width = val.into())
-            }
-            PropertyDeclaration::WhiteSpace(val) => {
-                self.mutate_text(|mut text| text.white_space = val)
+            PropertyDeclaration::Text(decl) => {
+                decl.apply_to(Arc::make_mut(&mut self.new_values.text))
             }
         }
     }
 
     pub fn build(self) -> ComputedValues {
-        ComputedValues {
-            position: self.position.map(Arc::new).unwrap_or_default(),
-            box_: self
-                .box_
-                .map(Arc::new)
-                .unwrap_or(self.inherited_values.box_),
-            font: self
-                .font
-                .map(Arc::new)
-                .unwrap_or(self.inherited_values.font),
-            text: self
-                .text
-                .map(Arc::new)
-                .unwrap_or(self.inherited_values.text),
-        }
+        self.new_values
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Box {
-    pub display: Display,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Display {
-    None,
-    Block,
-    Inline,
-}
-
-impl Default for Display {
-    fn default() -> Display {
-        Display::Inline
-    }
-}
-
-impl From<super::specified::Display> for Display {
-    fn from(specified: super::specified::Display) -> Display {
-        match specified {
-            super::specified::Display::Block => Display::Block,
-            super::specified::Display::Inline => Display::Inline,
-            super::specified::Display::None => Display::None,
-        }
-    }
+    pub display: super::specified::Display,
 }
 
 #[derive(Debug, Clone)]
