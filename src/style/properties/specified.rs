@@ -6,14 +6,14 @@ use from_css_decl_derive::{FromCssDecl, PropertyValue};
 pub trait FromCssDecl<'i>: Sized {
     type Error: 'i;
     type Computed: 'static;
-    fn from_css_decl(name: CowRcStr<'i>, input: &mut Parser<'i, '_>) -> Result<Self, Self::Error>;
+    fn from_css_decl(name: CowRcStr<'i>, input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, Self::Error>>;
 
     fn apply_to(&self, computed: &mut Self::Computed);
 }
 
 pub trait PropertyValue<'i>: Sized {
     type Error: 'i;
-    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, Self::Error>;
+    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, Self::Error>>;
 
     fn computed_value<T>(&self) -> T
     where
@@ -25,6 +25,25 @@ pub trait PropertyValue<'i>: Sized {
 
 pub trait ComputedValue<T>: Sized {
     fn from_specified(specified_value: &T) -> Self;
+}
+
+impl<'i, T> PropertyValue<'i> for Vec<T> where T: PropertyValue<'i> {
+    type Error = T::Error;
+
+    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, Self::Error>> {
+        input.parse_entirely(|input| {
+            let mut result = vec![];
+            loop {
+                if input.is_exhausted() {
+                    break Ok(result)
+                }
+                match T::from_css_property_value(input) {
+                    Ok(val) => result.push(val),
+                    Err(err) => break Err(err)
+                }
+            }
+        })
+    }
 }
 
 impl<Specified, Computed> ComputedValue<Specified> for Computed
@@ -53,6 +72,14 @@ pub enum Position {
     #[property]
     Height(AutoOrQuantityOrPercentage),
 
+    #[property]
+    #[shorthand("margin-top", method = "top")]
+    #[shorthand("margin-bottom", method = "bottom")]
+    #[shorthand("margin-left", method = "left")]
+    #[shorthand("margin-right", method = "right")]
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-margin
+    Margin(List<AutoOrQuantityOrPercentage>),
+
     /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-top
     #[property]
     MarginTop(AutoOrQuantityOrPercentage),
@@ -78,6 +105,14 @@ pub enum Position {
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-right-width
     #[property]
     BorderRightWidth(BorderWidth),
+
+    #[property]
+    #[shorthand("padding-top", method = "top")]
+    #[shorthand("padding-bottom", method = "bottom")]
+    #[shorthand("padding-left", method = "left")]
+    #[shorthand("padding-right", method = "right")]
+    /// https://www.w3.org/TR/CSS22/box.html#propdef-padding
+    Padding(List<QuantityOrPercentage>),
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-top
     #[property]
@@ -160,6 +195,53 @@ impl FromStr for Unit {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct List<T> {
+    elements: Vec<T>
+}
+
+impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for List<T> {
+    type Error = T::Error;
+
+    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, T::Error>> {
+        Vec::<T>::from_css_property_value(input).map(|elements| List { elements })
+    }
+}
+
+impl<'a, T: PropertyValue<'a>> List<T> {
+    fn top(&self) -> &T {
+        match self.elements.len() {
+            1 | 2 | 3 | 4 => &self.elements[0],
+            _ => panic!()
+        }
+    }
+
+    fn bottom(&self) -> &T {
+        match self.elements.len() {
+            1 | 2 => &self.elements[0],
+            3 | 4 => &self.elements[2],
+            _ => panic!()
+        }
+    }
+
+    fn left(&self) -> &T {
+        match self.elements.len() {
+            1 => &self.elements[0],
+            2 | 3 => &self.elements[1],
+            4 => &self.elements[3],
+            _ => panic!()
+        }
+    }
+
+    fn right(&self) -> &T {
+        match self.elements.len() {
+            1 => &self.elements[0],
+            2 | 3 | 4 => &self.elements[1],
+            _ => panic!()
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct Quantity {
     pub value: super::CssFloat,
@@ -167,7 +249,7 @@ pub struct Quantity {
 }
 
 impl<'i> PropertyValue<'i> for Quantity {
-    type Error = ParseError<'i, ()>;
+    type Error = ();
 
     fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
         let token = input.next()?;
@@ -199,7 +281,7 @@ impl<'i> PropertyValue<'i> for Quantity {
 pub struct Percentage(pub super::CssFloat);
 
 impl<'i> PropertyValue<'i> for Percentage {
-    type Error = ParseError<'i, ()>;
+    type Error = ();
 
     fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
         let token = input.next()?;
