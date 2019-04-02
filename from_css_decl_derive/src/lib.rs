@@ -68,7 +68,6 @@ fn impl_from_css_decl_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream 
         };
         if is_property {
             let shorthands = parse_shorthands(&attrs);
-            let spec = parse_spec(&attrs);
 
             let ident_kebab = to_kebab_case(&ident.to_string());
             let ident_snake = Ident::new(&to_snake_case(&ident.to_string()), Span::call_site());
