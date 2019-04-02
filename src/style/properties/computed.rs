@@ -2,7 +2,9 @@ use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
 pub use super::specified::Display;
-use super::specified::{self, FromCssDecl, Percentage, PropertyDeclaration};
+use super::specified::{self, BorderStyle, FromCssDecl, Percentage, PropertyDeclaration};
+
+use cssparser::RGBA;
 
 pub type CssFloat = f32;
 
@@ -237,6 +239,10 @@ pub struct Position {
     pub border_bottom_width: Length,
     pub border_left_width: Length,
     pub border_right_width: Length,
+    pub border_top_style: BorderStyle,
+    pub border_bottom_style: BorderStyle,
+    pub border_left_style: BorderStyle,
+    pub border_right_style: BorderStyle,
 }
 
 /// Contains the style structs.
@@ -246,6 +252,7 @@ pub struct ComputedValues {
     pub position: Arc<Position>,
     pub font: Arc<Font>,
     pub text: Arc<Text>,
+    pub background: Arc<Background>,
 }
 
 #[derive(Debug, Default)]
@@ -276,6 +283,9 @@ impl StyleBuilder {
             }
             PropertyDeclaration::Text(decl) => {
                 decl.apply_to(Arc::make_mut(&mut self.new_values.text))
+            }
+            PropertyDeclaration::Background(decl) => {
+                decl.apply_to(Arc::make_mut(&mut self.new_values.background))
             }
         }
     }
@@ -308,4 +318,17 @@ impl Default for Font {
 #[derive(Debug, Default, Clone)]
 pub struct Text {
     pub white_space: super::specified::WhiteSpace,
+}
+
+#[derive(Debug, Clone)]
+pub struct Background {
+    pub background_color: cssparser::Color,
+}
+
+impl Default for Background {
+    fn default() -> Self {
+        Background {
+            background_color: cssparser::Color::RGBA(RGBA::transparent()),
+        }
+    }
 }
