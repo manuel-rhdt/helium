@@ -32,7 +32,6 @@ struct Options {
 
 #[derive(Debug, From)]
 pub enum Error {
-    PdfWriteError(printpdf::Error),
     Io(std::io::Error),
 }
 

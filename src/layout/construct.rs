@@ -1,7 +1,8 @@
 use super::block::BlockContainer;
 use super::block_formatting_context::BlockFormattingContext;
 use super::entity::{
-    ContainingBlock, LayoutEntity, Position, StackingContextRelativePosition, Text, CanCollapse
+    CanCollapse, ContainingBlock, LayoutEntity, Position, StackingContextRelativePosition, Text,
+    UnscannedText,
 };
 use super::inline::InlineFormattingContext;
 use crate::parser::{ElementData, ParsedData};
@@ -117,6 +118,7 @@ impl Default for EntityConstructor {
         world.register::<BlockContainer>();
         world.register::<InlineFormattingContext>();
         world.register::<Text>();
+        world.register::<UnscannedText>();
         world.register::<StackingContextRelativePosition>();
         world.register::<BlockFormattingContext>();
         world.register::<CanCollapse>();
@@ -181,9 +183,8 @@ impl EntityConstructor {
             .write_storage()
             .insert(
                 entity,
-                Text {
+                UnscannedText {
                     characters: text.to_owned(),
-                    ..Default::default()
                 },
             )
             .unwrap();

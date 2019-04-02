@@ -54,8 +54,17 @@ impl Component for ComputedValues {
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Text {
+pub struct UnscannedText {
     pub characters: String,
+}
+
+impl Component for UnscannedText {
+    type Storage = VecStorage<Self>;
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Text {
+    pub characters: Vec<u8>,
     /// Size of an EM box.
     pub font_size: PixelLength,
     /// Distance from the top content edge of the box to the baseline of the text.

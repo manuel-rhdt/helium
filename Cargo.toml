@@ -5,7 +5,6 @@ authors = ["Manuel Reinhardt"]
 edition = "2018"
 
 [dependencies]
-printpdf = "0.2.10"
 structopt = "0.2" 
 derive_more = "0.14"
 font-kit = "0.1"
@@ -16,6 +15,7 @@ cssparser = "0.25.2"
 selectors = "0.21.0"
 specs = "0.14"
 from_css_decl_derive = { path = "./from_css_decl_derive" }
+lemon_pdf = { path = "../lemon_pdf" }
 shred-derive = "0.5.1"
 shred = "0.7.1"
 arrayvec = "0.4.10"
@@ -25,9 +25,6 @@ assert_cmd = "0.11"
 predicates = "1"
 
 [build-dependencies]
-afm = "0.1.2"
-glob = "0.3.0"
-pom = "1"
 quote = "0.6.11"
 Inflector = "0.11.4"
 proc-macro2 = "0.4.27"

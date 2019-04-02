@@ -1,5 +1,5 @@
 use super::block::BlockContainer;
-use super::entity::{Position, Text};
+use super::entity::{Position, Text, UnscannedText};
 use super::text::layout_text;
 use crate::style::properties::computed::{ComputedValues, PixelLength as Px};
 
@@ -44,6 +44,7 @@ impl<'a> System<'a> for InlineLayout {
         ReadStorage<'a, InlineFormattingContext>,
         WriteStorage<'a, BlockContainer>,
         WriteStorage<'a, Text>,
+        WriteStorage<'a, UnscannedText>,
     );
 
     fn run(
@@ -55,6 +56,7 @@ impl<'a> System<'a> for InlineLayout {
             inline_formatting_context,
             mut block_formatting_context,
             mut text,
+            mut unscanned_text
         ): Self::SystemData,
     ) {
         for (entity, style, inline_formatting_context) in
@@ -65,7 +67,7 @@ impl<'a> System<'a> for InlineLayout {
             let mut lines = vec![];
 
             for child in inline_formatting_context.element_entities(&entities) {
-                let mut content = text.get_mut(child).unwrap().clone();
+                let mut content = unscanned_text.get_mut(child).unwrap().clone();
                 let layout_lines = layout_text(&mut content.characters, style.font.font_size, width);
 
                 for line_content in layout_lines {

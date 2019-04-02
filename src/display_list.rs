@@ -30,7 +30,7 @@ pub enum DisplayItem {
         line_width: PixelLength,
     },
     FilledRect(Rect),
-    Text(Point, PixelLength, String),
+    Text(Point, PixelLength, Vec<u8>),
     Translate(PixelLength, PixelLength),
     PushTransform,
     RestoreTransform,
