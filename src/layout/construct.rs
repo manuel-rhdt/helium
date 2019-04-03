@@ -1,8 +1,8 @@
 use super::block::BlockContainer;
 use super::block_formatting_context::BlockFormattingContext;
 use super::entity::{
-    CanCollapse, ContainingBlock, LayoutEntity, Position, StackingContextRelativePosition, Text,
-    UnscannedText,
+    CanCollapse, ContainingBlock, Decoration, LayoutEntity, Position,
+    StackingContextRelativePosition, Text, UnscannedText,
 };
 use super::inline::InlineFormattingContext;
 use crate::parser::{ElementData, ParsedData};
@@ -122,6 +122,7 @@ impl Default for EntityConstructor {
         world.register::<StackingContextRelativePosition>();
         world.register::<BlockFormattingContext>();
         world.register::<CanCollapse>();
+        world.register::<Decoration>();
         EntityConstructor { world }
     }
 }

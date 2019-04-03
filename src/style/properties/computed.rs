@@ -4,7 +4,7 @@ use std::sync::Arc;
 pub use super::specified::Display;
 use super::specified::{self, BorderStyle, FromCssDecl, Percentage, PropertyDeclaration};
 
-use cssparser::RGBA;
+pub use cssparser::RGBA;
 
 pub type CssFloat = f32;
 
@@ -245,6 +245,23 @@ pub struct Position {
     pub border_right_style: BorderStyle,
 }
 
+impl Position {
+    fn fixup(&mut self) {
+        if let BorderStyle::None = self.border_top_style {
+            self.border_top_width = Length::default();
+        }
+        if let BorderStyle::None = self.border_bottom_style {
+            self.border_bottom_width = Length::default();
+        }
+        if let BorderStyle::None = self.border_left_style {
+            self.border_left_width = Length::default();
+        }
+        if let BorderStyle::None = self.border_right_style {
+            self.border_right_width = Length::default();
+        }
+    }
+}
+
 /// Contains the style structs.
 #[derive(Debug, Clone, Default)]
 pub struct ComputedValues {
@@ -253,6 +270,12 @@ pub struct ComputedValues {
     pub font: Arc<Font>,
     pub text: Arc<Text>,
     pub background: Arc<Background>,
+}
+
+impl ComputedValues {
+    fn fixup(&mut self) {
+        Arc::make_mut(&mut self.position).fixup()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -290,7 +313,8 @@ impl StyleBuilder {
         }
     }
 
-    pub fn build(self) -> ComputedValues {
+    pub fn build(mut self) -> ComputedValues {
+        self.new_values.fixup();
         self.new_values
     }
 }

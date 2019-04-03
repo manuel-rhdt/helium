@@ -1,5 +1,5 @@
-use crate::layout::entity::{Position, Text};
-use crate::style::properties::computed::{ComputedValues, PixelLength};
+use crate::layout::entity::{Decoration, Position, Text};
+use crate::style::properties::computed::{PixelLength, RGBA};
 
 use specs::{Join, ReadStorage, System};
 
@@ -30,10 +30,11 @@ pub enum DisplayItem {
         line_width: PixelLength,
     },
     FilledRect(Rect),
+    Color(RGBA),
     Text(Point, PixelLength, Vec<u8>),
     Translate(PixelLength, PixelLength),
-    PushTransform,
-    RestoreTransform,
+    Push,
+    Pop,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -49,20 +50,9 @@ impl DisplayList {
     pub fn items(&self) -> impl ExactSizeIterator<Item = &DisplayItem> {
         self.items.iter()
     }
-}
-
-#[derive(Debug, Default)]
-pub struct DisplayListBuilder {
-    display_list: DisplayList,
-}
-
-impl DisplayListBuilder {
-    pub fn build(self) -> DisplayList {
-        self.display_list
-    }
 
     fn append_text(&mut self, pos: Point, text: &Text) {
-        self.display_list.append(DisplayItem::Text(
+        self.append(DisplayItem::Text(
             Point {
                 y: pos.y + text.baseline,
                 ..pos
@@ -73,14 +63,15 @@ impl DisplayListBuilder {
     }
 }
 
-impl<'a> System<'a> for DisplayListBuilder {
-    type SystemData = (
-        ReadStorage<'a, Position>,
-        ReadStorage<'a, Text>,
-        ReadStorage<'a, ComputedValues>,
-    );
+#[derive(Debug, Default)]
+pub struct DisplayDecoration {
+    pub display_list: DisplayList,
+}
 
-    fn run(&mut self, (positions, text, computed_values): Self::SystemData) {
+impl<'a> System<'a> for DisplayDecoration {
+    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, Decoration>);
+
+    fn run(&mut self, (positions, decorations): Self::SystemData) {
         for (
             &Position {
                 x,
@@ -88,9 +79,8 @@ impl<'a> System<'a> for DisplayListBuilder {
                 width,
                 height,
             },
-            text,
-            style,
-        ) in (&positions, text.maybe(), computed_values.maybe()).join()
+            deco,
+        ) in (&positions, &decorations).join()
         {
             use PixelLength as Px;
 
@@ -98,64 +88,82 @@ impl<'a> System<'a> for DisplayListBuilder {
                 continue;
             }
 
-            if let Some(ComputedValues { position, font, .. }) = style {
-                let padding_top = position.padding_top.absolute(Px(0.0), font.font_size);
-                let padding_bottom = position.padding_bottom.absolute(Px(0.0), font.font_size);
-                let padding_left = position.padding_left.absolute(Px(0.0), font.font_size);
-                let padding_right = position.padding_right.absolute(Px(0.0), font.font_size);
+            let &Decoration {
+                padding,
+                border,
+                background_color,
+                ..
+            } = deco;
 
-                let border_top = position.border_top_width.absolute(font.font_size);
-                let border_bottom = position.border_bottom_width.absolute(font.font_size);
-                let border_left = position.border_left_width.absolute(font.font_size);
-                let border_right = position.border_right_width.absolute(font.font_size);
-
-                let hbt = border_top / 2.0;
-                let hbb = border_bottom / 2.0;
-                let hbl = border_left / 2.0;
-                let hbr = border_right / 2.0;
-
-                let xmin = x - padding_left - border_left;
-                let xmax = x + width + padding_right + border_right;
-                let ymin = y - padding_top - border_top;
-                let ymax = y + height + padding_bottom + border_bottom;
-
-                if border_top > PixelLength(0.0) {
-                    let pt1 = Point::new(xmin, ymin + hbt);
-                    let pt2 = Point::new(xmax, ymin + hbt);
-                    self.display_list.append(DisplayItem::LineString {
-                        points: vec![pt1, pt2],
-                        line_width: border_top,
-                    });
-                }
-                if border_bottom > PixelLength(0.0) {
-                    let pt1 = Point::new(xmin, ymax - hbb);
-                    let pt2 = Point::new(xmax, ymax - hbb);
-                    self.display_list.append(DisplayItem::LineString {
-                        points: vec![pt1, pt2],
-                        line_width: border_bottom,
-                    });
-                }
-                if border_left > PixelLength(0.0) {
-                    let pt1 = Point::new(xmin + hbl, ymin);
-                    let pt2 = Point::new(xmin + hbl, ymax);
-                    self.display_list.append(DisplayItem::LineString {
-                        points: vec![pt1, pt2],
-                        line_width: border_left,
-                    });
-                }
-                if border_right > PixelLength(0.0) {
-                    let pt1 = Point::new(xmax - hbr, ymin);
-                    let pt2 = Point::new(xmax - hbr, ymax);
-                    self.display_list.append(DisplayItem::LineString {
-                        points: vec![pt1, pt2],
-                        line_width: border_right,
-                    });
-                }
+            if background_color != RGBA::transparent() {
+                self.display_list.append(DisplayItem::Push);
+                self.display_list
+                    .append(DisplayItem::Color(background_color));
+                self.display_list.append(DisplayItem::FilledRect(Rect {
+                    x: x - padding.left,
+                    y: y - padding.top,
+                    width: width + padding.left + padding.right,
+                    height: height + padding.top + padding.bottom,
+                }));
+                self.display_list.append(DisplayItem::Pop);
             }
 
-            if let Some(text) = text {
-                self.append_text(Point { x, y }, text);
+            let hbt = border.top / 2.0;
+            let hbb = border.bottom / 2.0;
+            let hbl = border.left / 2.0;
+            let hbr = border.right / 2.0;
+
+            let xmin = x - padding.left - border.left;
+            let xmax = x + width + padding.right + border.right;
+            let ymin = y - padding.top - border.top;
+            let ymax = y + height + padding.bottom + border.bottom;
+
+            if border.top > Px(0.0) {
+                let pt1 = Point::new(xmin, ymin + hbt);
+                let pt2 = Point::new(xmax, ymin + hbt);
+                self.display_list.append(DisplayItem::LineString {
+                    points: vec![pt1, pt2],
+                    line_width: border.top,
+                });
             }
+            if border.bottom > Px(0.0) {
+                let pt1 = Point::new(xmin, ymax - hbb);
+                let pt2 = Point::new(xmax, ymax - hbb);
+                self.display_list.append(DisplayItem::LineString {
+                    points: vec![pt1, pt2],
+                    line_width: border.bottom,
+                });
+            }
+            if border.left > Px(0.0) {
+                let pt1 = Point::new(xmin + hbl, ymin);
+                let pt2 = Point::new(xmin + hbl, ymax);
+                self.display_list.append(DisplayItem::LineString {
+                    points: vec![pt1, pt2],
+                    line_width: border.left,
+                });
+            }
+            if border.right > Px(0.0) {
+                let pt1 = Point::new(xmax - hbr, ymin);
+                let pt2 = Point::new(xmax - hbr, ymax);
+                self.display_list.append(DisplayItem::LineString {
+                    points: vec![pt1, pt2],
+                    line_width: border.right,
+                });
+            }
+        }
+    }
+}
+
+pub struct DisplayText {
+    pub display_list: DisplayList,
+}
+
+impl<'a> System<'a> for DisplayText {
+    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, Text>);
+
+    fn run(&mut self, (positions, text): Self::SystemData) {
+        for (&Position { x, y, .. }, text) in (&positions, &text).join() {
+            self.display_list.append_text(Point { x, y }, text)
         }
     }
 }

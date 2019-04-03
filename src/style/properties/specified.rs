@@ -158,6 +158,30 @@ pub enum Position {
     #[shorthand("border-left-style", method = "left")]
     #[shorthand("border-right-style", method = "right")]
     BorderStyle(List<BorderStyle>),
+
+    #[property]
+    #[shorthand("border-top-width", method = "width")]
+    #[shorthand("border-top-style", method = "style")]
+    BorderTop(List<Border>),
+    #[property]
+    #[shorthand("border-bottom-width", method = "width")]
+    #[shorthand("border-bottom-style", method = "style")]
+    BorderBottom(List<Border>),
+    #[property]
+    #[shorthand("border-left-width", method = "width")]
+    #[shorthand("border-left-style", method = "style")]
+    BorderLeft(List<Border>),
+    #[property]
+    #[shorthand("border-right-width", method = "width")]
+    #[shorthand("border-right-style", method = "style")]
+    BorderRight(List<Border>),
+
+    #[property]
+    #[shorthand("border-top", method = "clone")]
+    #[shorthand("border-bottom", method = "clone")]
+    #[shorthand("border-left", method = "clone")]
+    #[shorthand("border-right", method = "clone")]
+    Border(List<Border>),
 }
 
 #[derive(Debug, Clone, FromCssDecl)]
@@ -250,35 +274,35 @@ impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for List<T> {
     }
 }
 
-impl<'a, T: PropertyValue<'a>> List<T> {
-    fn top(&self) -> &T {
+impl<'a, T: Copy + PropertyValue<'a>> List<T> {
+    fn top(&self) -> T {
         match self.elements.len() {
-            1 | 2 | 3 | 4 => &self.elements[0],
+            1 | 2 | 3 | 4 => self.elements[0],
             _ => panic!(),
         }
     }
 
-    fn bottom(&self) -> &T {
+    fn bottom(&self) -> T {
         match self.elements.len() {
-            1 | 2 => &self.elements[0],
-            3 | 4 => &self.elements[2],
+            1 | 2 => self.elements[0],
+            3 | 4 => self.elements[2],
             _ => panic!(),
         }
     }
 
-    fn left(&self) -> &T {
+    fn left(&self) -> T {
         match self.elements.len() {
-            1 => &self.elements[0],
-            2 | 3 => &self.elements[1],
-            4 => &self.elements[3],
+            1 => self.elements[0],
+            2 | 3 => self.elements[1],
+            4 => self.elements[3],
             _ => panic!(),
         }
     }
 
-    fn right(&self) -> &T {
+    fn right(&self) -> T {
         match self.elements.len() {
-            1 => &self.elements[0],
-            2 | 3 | 4 => &self.elements[1],
+            1 => self.elements[0],
+            2 | 3 | 4 => self.elements[1],
             _ => panic!(),
         }
     }
@@ -364,6 +388,12 @@ pub enum BorderWidth {
     Quantity(Quantity),
 }
 
+impl Default for BorderWidth {
+    fn default() -> BorderWidth {
+        BorderWidth::Medium
+    }
+}
+
 impl From<BorderWidth> for super::computed::Length {
     fn from(bw: BorderWidth) -> Self {
         use super::computed::Length;
@@ -427,5 +457,37 @@ impl<'i> PropertyValue<'i> for Color {
         input: &mut Parser<'i, '_>,
     ) -> Result<Self, ParseError<'i, Self::Error>> {
         Color::parse(input).map_err(Into::into)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PropertyValue)]
+pub enum Border {
+    Width(BorderWidth),
+    Style(BorderStyle),
+}
+
+impl List<Border> {
+    fn width(&self) -> BorderWidth {
+        self.elements
+            .iter()
+            .rev()
+            .filter_map(|border| match border {
+                Border::Width(width) => Some(*width),
+                _ => None,
+            })
+            .next()
+            .unwrap_or_default()
+    }
+
+    fn style(&self) -> BorderStyle {
+        self.elements
+            .iter()
+            .rev()
+            .filter_map(|border| match border {
+                Border::Style(style) => Some(*style),
+                _ => None,
+            })
+            .next()
+            .unwrap_or_default()
     }
 }

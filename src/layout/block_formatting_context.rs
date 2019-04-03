@@ -97,10 +97,11 @@ fn build_spacing_entity(
     }
 }
 
-/// Returns an iterator that returns up to five entities:
+/// Returns an iterator that returns up to six entities:
 /// - An entity representing the top margin
 /// - an entity representing the top (border + padding)
 /// - the entity given in the first argument
+/// - a placeholder entity to enforce height constraints
 /// - An entity representing the bottom margin
 /// - an entity representing the bottom (border + padding)
 fn block_fragments<'a>(

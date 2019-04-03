@@ -3,9 +3,9 @@ use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
 use lemon_pdf::font::builtin::BuiltInFont;
-use lemon_pdf::{Context, Page, Pt, Version};
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::stream::StreamFilter;
+use lemon_pdf::{Context, Page, Pt, Version};
 
 use std::fs::File;
 use std::io::{BufWriter, Error};
@@ -24,20 +24,31 @@ pub fn write_pdf(
     let mut context = Context::with_writer(file, Version::Pdf1_7)?;
 
     let mut page = Page::new();
-    page.set_media_box(MediaBox::new(Pt(0.0), Pt(0.0), device.width.into(), device.height.into()));
-    page.add_content(&mut context, Some(StreamFilter::Deflate), |page_context| {
+    page.set_media_box(MediaBox::new(
+        Pt(0.0),
+        Pt(0.0),
+        device.width.into(),
+        device.height.into(),
+    ));
+    page.add_content(&mut context, None, |page_context| {
         let font = BuiltInFont::Helvetica.font(&mut page_context.pdf_context)?;
         let font_ref = page_context.pdf_context.write_object(font)?;
         let font_key = page_context.add_font(font_ref);
 
         for item in display_list.items() {
             match item {
-                DisplayItem::PushTransform => page_context.save_graphics_state()?,
-                DisplayItem::RestoreTransform => page_context.restore_graphics_state()?,
+                DisplayItem::Push => page_context.save_graphics_state()?,
+                DisplayItem::Pop => page_context.restore_graphics_state()?,
                 DisplayItem::Translate(x, y) => {
                     let x = *x;
                     let y = -*y;
                     page_context.concatenate_matrix(1.0, 0.0, 0.0, 1.0, x.into(), y.into())?;
+                }
+                &DisplayItem::Color(color) => {
+                    let red = color.red as f64 / u8::max_value() as f64;
+                    let green = color.green as f64 / u8::max_value() as f64;
+                    let blue = color.blue as f64 / u8::max_value() as f64;
+                    page_context.device_rgb_fill_color(red, green, blue)?;
                 }
                 &DisplayItem::LineString {
                     ref points,
@@ -77,7 +88,7 @@ pub fn write_pdf(
                     let height = Pt::from(*height);
 
                     page_context.rect(x, y, width, height)?;
-                    page_context.stroke_path()?;
+                    page_context.fill_path()?;
                 }
                 &DisplayItem::Text(display_list::Point { x, y }, font_size, ref text) => {
                     let x = x;

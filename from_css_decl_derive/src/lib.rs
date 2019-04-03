@@ -3,10 +3,12 @@
 extern crate proc_macro;
 
 use inflector::cases::kebabcase::to_kebab_case;
+use inflector::cases::pascalcase::to_pascal_case;
 use inflector::cases::snakecase::to_snake_case;
 use proc_macro2::{Ident, Span};
-use quote::quote;
-use syn::{Data, DataEnum, Field, Fields, FieldsUnnamed, Variant};
+use quote::{quote, quote_spanned};
+use syn::{Data, DataEnum, Field, Fields, FieldsUnnamed, LitStr, Variant};
+use syn::spanned::Spanned;
 
 #[proc_macro_derive(FromCssDecl, attributes(property, computed, shorthand, spec))]
 pub fn from_css_decl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -70,7 +72,7 @@ fn impl_from_css_decl_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream 
             let shorthands = parse_shorthands(&attrs);
 
             let ident_kebab = to_kebab_case(&ident.to_string());
-            let ident_snake = Ident::new(&to_snake_case(&ident.to_string()), Span::call_site());
+            let ident_snake = Ident::new(&to_snake_case(&ident.to_string()),ident.span());
 
             if shorthands.is_empty() {
                 property_cases.push(quote! {
@@ -79,7 +81,7 @@ fn impl_from_css_decl_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream 
                     }
                 });
             } else {
-                let shorthands = shorthands.iter().map(|sh| sh.token_stream());
+                let shorthands = shorthands.iter().map(|sh| sh.token_stream(name));
                 property_cases.push(quote! {
                     #name::#ident(val) => {
                         #(#shorthands);*
@@ -125,16 +127,20 @@ fn impl_from_css_decl_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream 
 }
 
 struct Shorthand {
-    property_name: String,
+    span: Span,
+    property_name: LitStr,
     method_name: proc_macro2::Ident,
 }
 
 impl Shorthand {
-    fn token_stream(&self) -> proc_macro2::TokenStream {
-        let ident = Ident::new(&to_snake_case(&self.property_name), Span::call_site());
+    fn token_stream(&self, struct_name: &Ident) -> proc_macro2::TokenStream {
+        let ident = Ident::new(
+            &to_pascal_case(&self.property_name.value()),
+            self.property_name.span(),
+        );
         let method = &self.method_name;
-        quote! {
-            computed.#ident = val.#method().computed_value()
+        quote_spanned! { self.span =>
+            #struct_name::#ident(val.#method()).apply_to(computed);
         }
     }
 }
@@ -150,20 +156,22 @@ fn parse_shorthands(attrs: &[syn::Attribute]) -> Vec<Shorthand> {
                 None
             }
         })
-        .map(|meta| match meta {
+        .map(|meta| match &meta {
             syn::Meta::List(syn::MetaList { nested, .. }) => {
-                let mut iter = nested.into_iter();
+                let mut iter = nested.iter();
                 let property_name =
                     if let Some(syn::NestedMeta::Literal(syn::Lit::Str(str_lit))) = iter.next() {
-                        str_lit.value()
+                        str_lit.clone()
                     } else {
                         panic!("invalid property name")
                     };
 
+                let span;
                 let method_name = match iter.next() {
                     Some(syn::NestedMeta::Meta(syn::Meta::NameValue(name_value))) => {
                         assert!(name_value.ident == "method");
-                        if let syn::Lit::Str(str_lit) = name_value.lit {
+                        span = name_value.span();
+                        if let syn::Lit::Str(str_lit) = &name_value.lit {
                             str_lit.parse().expect("Could not parse method name")
                         } else {
                             panic!("invalid method name {:?}", name_value.lit)
@@ -172,9 +180,11 @@ fn parse_shorthands(attrs: &[syn::Attribute]) -> Vec<Shorthand> {
                     other => panic!("invalid method name {:?}", other),
                 };
 
+
                 Shorthand {
                     property_name,
                     method_name,
+                    span
                 }
             }
             _ => panic!("expected list in shorthand attribute"),
@@ -196,18 +206,18 @@ fn parse_spec(attrs: &[syn::Attribute]) -> Option<String> {
             }
         })
         .next();
-    spec_attr.map(|meta| {
-        match meta {
-            syn::Meta::List(syn::MetaList { nested, .. }) => {
-                match nested.into_iter().next().expect("#[spec] expects a string literal") {
-                    syn::NestedMeta::Literal(syn::Lit::Str(str_lit)) => {
-                        str_lit.value()
-                    }
-                    _ => panic!("#[spec] expects a string literal")
-                }
+    spec_attr.map(|meta| match meta {
+        syn::Meta::List(syn::MetaList { nested, .. }) => {
+            match nested
+                .into_iter()
+                .next()
+                .expect("#[spec] expects a string literal")
+            {
+                syn::NestedMeta::Literal(syn::Lit::Str(str_lit)) => str_lit.value(),
+                _ => panic!("#[spec] expects a string literal"),
             }
-            _ => panic!("#[spec] expects a string literal"),
         }
+        _ => panic!("#[spec] expects a string literal"),
     })
 }
 

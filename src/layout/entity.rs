@@ -82,3 +82,35 @@ pub struct CanCollapse;
 impl Component for CanCollapse {
     type Storage = NullStorage<Self>;
 }
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct EdgeValues<T> {
+    pub top: T,
+    pub left: T,
+    pub bottom: T,
+    pub right: T,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Decoration {
+    pub padding: EdgeValues<PixelLength>,
+    pub border: EdgeValues<PixelLength>,
+    pub margin: EdgeValues<PixelLength>,
+    pub background_color: crate::style::properties::computed::RGBA,
+}
+
+impl Default for Decoration {
+    fn default() -> Self {
+        use crate::style::properties::computed::RGBA;
+        Decoration {
+            padding: Default::default(),
+            border: Default::default(),
+            margin: Default::default(),
+            background_color: RGBA::transparent()
+        }
+    }
+}
+
+impl Component for Decoration {
+    type Storage = VecStorage<Self>;
+}

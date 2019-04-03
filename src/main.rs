@@ -19,7 +19,6 @@ mod tree;
 use crate::parser::generate_render_tree;
 use crate::style::device::Device;
 use style::properties::computed::PixelLength;
-use display_list::DisplayListBuilder;
 
 use specs::RunNow;
 
@@ -56,9 +55,14 @@ fn main() -> Result<(), Error> {
     let mut dotfile = fs::File::create("graph.dot")?;
     dom.serialize_dot_graph(&mut dotfile)?;
 
-    let mut display_list_builder = DisplayListBuilder::default();
-    display_list_builder.run_now(&layout_context.res);
-    let display_list = display_list_builder.build();
+    let display_list = display_list::DisplayList::default();
+    let mut decorations_builder = display_list::DisplayDecoration { display_list };
+    decorations_builder.run_now(&layout_context.res);
+    let mut text_builder = display_list::DisplayText {
+        display_list: decorations_builder.display_list,
+    };
+    text_builder.run_now(&layout_context.res);
+    let display_list = text_builder.display_list;
 
     pdf::write_pdf(display_list, device)?;
 

@@ -1,5 +1,4 @@
-use super::block_size::BlockSizeContext;
-use super::entity::{ContainingBlock, Position};
+use super::entity::{ContainingBlock, Decoration, Position};
 use crate::style::device::Device;
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
@@ -7,27 +6,13 @@ use specs::{Entities, Entity, ReadStorage, System, WriteStorage};
 
 use shred_derive::SystemData;
 
-#[derive(Debug)]
-pub struct LayoutSizeComputation {
-    pub inline_context: InlineSizeContext,
-    pub block_context: BlockSizeContext,
-}
-
-impl LayoutSizeComputation {
-    pub fn new(device: Device) -> Self {
-        LayoutSizeComputation {
-            inline_context: InlineSizeContext { device },
-            block_context: BlockSizeContext {},
-        }
-    }
-}
-
 #[derive(SystemData)]
 pub struct InlineSizeResources<'a> {
     pub entities: Entities<'a>,
     pub computed_values: ReadStorage<'a, ComputedValues>,
     pub positions: WriteStorage<'a, Position>,
     pub containing_blocks: ReadStorage<'a, ContainingBlock>,
+    pub decorations: WriteStorage<'a, Decoration>,
 }
 
 #[derive(Debug)]
@@ -80,16 +65,63 @@ impl<'a> System<'a> for InlineSizeContext {
             let style = resources.computed_values.get(entity);
             let container_width = self.get_container_width(entity, &resources);
 
-            let (inline_offset, inline_size) = match (style, container_width) {
+            match (style, container_width) {
                 (Some(style), Some(container_width)) => {
-                    calculate_inline_size(container_width, &style)
-                }
-                _ => continue,
-            };
+                    let mut decoration = calculate_padding_and_border(container_width, &style);
+                    let inline_size =
+                        calculate_inline_size(container_width, &mut decoration, &style);
+                    let inline_offset =
+                        decoration.margin.left + decoration.border.left + decoration.padding.left;
 
-            self.set_inline_pos(entity, inline_offset, inline_size, &mut resources);
+                    self.set_inline_pos(entity, inline_offset, inline_size, &mut resources);
+
+                    if decoration != Default::default() {
+                        resources.decorations.insert(entity, decoration).unwrap();
+                    }
+                }
+                _ => {}
+            };
         }
     }
+}
+
+pub fn calculate_padding_and_border(
+    container_size: Px,
+    ComputedValues {
+        position,
+        font,
+        background,
+        ..
+    }: &ComputedValues,
+) -> Decoration {
+    let mut deco = Decoration::default();
+    let font_size = font.font_size;
+
+    deco.border.top = position.border_top_width.absolute(font_size);
+    deco.border.bottom = position.border_bottom_width.absolute(font_size);
+    deco.border.left = position.border_left_width.absolute(font_size);
+    deco.border.right = position.border_right_width.absolute(font_size);
+
+    deco.padding.top = position.padding_top.absolute(container_size, font_size);
+    deco.padding.bottom = position.padding_bottom.absolute(container_size, font_size);
+    deco.padding.left = position.padding_left.absolute(container_size, font_size);
+    deco.padding.right = position.padding_right.absolute(container_size, font_size);
+
+    // margin_left and margin_right get calculated in `calculate_inline_size`
+    deco.margin.top = position
+        .margin_top
+        .absolute(Px(0.0), container_size, font_size);
+    deco.margin.bottom = position
+        .margin_bottom
+        .absolute(Px(0.0), container_size, font_size);
+
+    use cssparser::{Color, RGBA};
+    deco.background_color = match background.background_color {
+        Color::CurrentColor => RGBA::transparent(),
+        Color::RGBA(rgba) => rgba,
+    };
+
+    deco
 }
 
 /// Does the constraint resolution needed to calculate the inline size of an entity
@@ -101,39 +133,38 @@ impl<'a> System<'a> for InlineSizeContext {
 /// https://www.w3.org/TR/CSS22/visudet.html#blockwidth
 pub fn calculate_inline_size(
     container_size: Px,
+    deco: &mut Decoration,
     ComputedValues { position, font, .. }: &ComputedValues,
-) -> (Px, Px) {
+) -> Px {
     let font_size = font.font_size;
-    let border_left = position.border_left_width.absolute(font_size);
-    let border_right = position.border_right_width.absolute(font_size);
-    let padding_left = position.padding_left.absolute(container_size, font_size);
-    let padding_right = position.padding_right.absolute(container_size, font_size);
 
-    let (offset, width) = match position.width {
+    let width = match position.width {
         GenericSize::Auto => {
-            let margin_left = position
+            deco.margin.left = position
                 .margin_left
                 .absolute(Px(0.0), container_size, font_size);
-            let margin_right = position
+            deco.margin.right = position
                 .margin_right
                 .absolute(Px(0.0), container_size, font_size);
-            let width = (container_size
-                - margin_left
-                - margin_right
-                - border_left
-                - border_right
-                - padding_left
-                - padding_right)
-                .max(Px(0.0));
-            (margin_left + border_left + padding_left, width)
+            (container_size
+                - deco.margin.left
+                - deco.margin.right
+                - deco.border.left
+                - deco.border.right
+                - deco.padding.left
+                - deco.padding.right)
+                .max(Px(0.0))
         }
         GenericSize::LengthPercentage(lp) => {
             let width = lp.absolute(container_size, font_size);
-            let margin_left = match (position.margin_left, position.margin_right) {
+            deco.margin.left = match (position.margin_left, position.margin_right) {
                 (GenericSize::Auto, GenericSize::Auto) => {
                     // center the child horizontally within its container
-                    let border_box_width =
-                        width + padding_left + padding_right + border_left + border_right;
+                    let border_box_width = width
+                        + deco.padding.left
+                        + deco.padding.right
+                        + deco.border.left
+                        + deco.border.right;
                     (container_size - border_box_width) / 2.0
                 }
                 (GenericSize::LengthPercentage(val), GenericSize::Auto) => {
@@ -141,8 +172,11 @@ pub fn calculate_inline_size(
                 }
                 (GenericSize::Auto, GenericSize::LengthPercentage(val)) => {
                     let margin_right = val.absolute(container_size, font_size);
-                    let border_box_width =
-                        width + padding_left + padding_right + border_left + border_right;
+                    let border_box_width = width
+                        + deco.padding.left
+                        + deco.padding.right
+                        + deco.border.left
+                        + deco.border.right;
                     container_size - border_box_width - margin_right
                 }
                 (
@@ -153,9 +187,9 @@ pub fn calculate_inline_size(
                     margin_left.absolute(container_size, font_size)
                 }
             };
-            (margin_left + border_left + padding_left, width)
+            width
         }
     };
 
-    (offset, width)
+    width
 }
