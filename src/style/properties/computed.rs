@@ -321,27 +321,27 @@ impl StyleBuilder {
 
 #[derive(Debug, Clone, Default)]
 pub struct Box {
-    pub display: super::specified::Display,
+    pub display: specified::Display,
 }
 
 #[derive(Debug, Clone)]
 pub struct Font {
     pub font_size: PixelLength,
-    pub line_height: PixelLength,
+    pub line_height: LineHeight,
 }
 
 impl Default for Font {
     fn default() -> Self {
         Self {
             font_size: PixelLength::from_pt(12.0),
-            line_height: PixelLength::from_pt(12.0) * 1.2,
+            line_height: LineHeight::default(),
         }
     }
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct Text {
-    pub white_space: super::specified::WhiteSpace,
+    pub white_space: specified::WhiteSpace,
 }
 
 #[derive(Debug, Clone)]
@@ -353,6 +353,30 @@ impl Default for Background {
     fn default() -> Self {
         Background {
             background_color: cssparser::Color::RGBA(RGBA::transparent()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum LineHeight {
+    Normal,
+    LengthPercentage(LengthPercentage),
+}
+
+impl Default for LineHeight {
+    fn default() -> Self {
+        LineHeight::Normal
+    }
+}
+
+impl From<specified::LineHeight> for LineHeight {
+    fn from(spec: specified::LineHeight) -> Self {
+        use specified::PropertyValue;
+        match spec {
+            specified::LineHeight::Normal => LineHeight::Normal,
+            specified::LineHeight::QuantityOrPercentage(qp) => {
+                LineHeight::LengthPercentage(qp.computed_value())
+            }
         }
     }
 }

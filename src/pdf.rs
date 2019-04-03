@@ -30,7 +30,7 @@ pub fn write_pdf(
         device.width.into(),
         device.height.into(),
     ));
-    page.add_content(&mut context, None, |page_context| {
+    page.add_content(&mut context, Some(StreamFilter::Deflate), |page_context| {
         let font = BuiltInFont::Helvetica.font(&mut page_context.pdf_context)?;
         let font_ref = page_context.pdf_context.write_object(font)?;
         let font_key = page_context.add_font(font_ref);

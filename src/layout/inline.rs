@@ -1,7 +1,7 @@
 use super::block::BlockContainer;
 use super::entity::{Position, Text, UnscannedText};
 use super::text::layout_text;
-use crate::style::properties::computed::{ComputedValues, PixelLength as Px};
+use crate::style::properties::computed::{ComputedValues, LineHeight, PixelLength as Px};
 
 use specs::{
     world::{EntitiesRes, Index},
@@ -56,7 +56,7 @@ impl<'a> System<'a> for InlineLayout {
             inline_formatting_context,
             mut block_formatting_context,
             mut text,
-            mut unscanned_text
+            mut unscanned_text,
         ): Self::SystemData,
     ) {
         for (entity, style, inline_formatting_context) in
@@ -68,11 +68,18 @@ impl<'a> System<'a> for InlineLayout {
 
             for child in inline_formatting_context.element_entities(&entities) {
                 let mut content = unscanned_text.get_mut(child).unwrap().clone();
-                let layout_lines = layout_text(&mut content.characters, style.font.font_size, width);
+                let layout_lines =
+                    layout_text(&mut content.characters, style.font.font_size, width);
 
                 for line_content in layout_lines {
                     let font_height = super::text::font_height(style.font.font_size);
-                    let line_gap = style.font.line_height - font_height;
+                    let line_height = match style.font.line_height {
+                        LineHeight::Normal => font_height * 1.2,
+                        LineHeight::LengthPercentage(lp) => {
+                            lp.absolute(style.font.font_size, style.font.font_size)
+                        }
+                    };
+                    let line_gap = line_height - font_height;
 
                     let line = entities
                         .build_entity()
@@ -80,7 +87,7 @@ impl<'a> System<'a> for InlineLayout {
                             Position {
                                 x,
                                 y: Px(0.0),
-                                height: style.font.line_height,
+                                height: line_height,
                                 width,
                             },
                             &mut positions,

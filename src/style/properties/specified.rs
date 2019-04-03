@@ -189,6 +189,8 @@ pub enum Position {
 pub enum Font {
     #[property]
     FontSize(FontSize),
+    #[property]
+    LineHeight(LineHeight)
 }
 
 #[derive(Debug, Clone, FromCssDecl)]
@@ -490,4 +492,10 @@ impl List<Border> {
             .next()
             .unwrap_or_default()
     }
+}
+
+#[derive(Debug, Copy, Clone, PropertyValue)]
+pub enum LineHeight {
+    QuantityOrPercentage(QuantityOrPercentage),
+    Normal
 }
