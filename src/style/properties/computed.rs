@@ -1,8 +1,8 @@
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
+use super::specified::{self, BorderStyle, ParseDeclaration, Percentage, PropertyDeclaration, ComputedValue};
 pub use super::specified::{Display, FontFamily};
-use super::specified::{self, BorderStyle, ParseDeclaration, Percentage, PropertyDeclaration};
 
 pub use cssparser::RGBA;
 
@@ -22,6 +22,20 @@ impl PixelLength {
 
     pub fn max(self, other: PixelLength) -> PixelLength {
         PixelLength(self.0.max(other.0))
+    }
+
+    #[inline]
+    pub fn from_val_unit(val: f32, unit: super::specified::Unit, font_size: PixelLength) -> Self {
+        use super::specified::Unit;
+
+        match unit {
+            Unit::Px => Self(val),
+            Unit::Cm => Self::from_val_unit(val / 2.54, Unit::In, font_size),
+            Unit::Pt => Self::from_pt(val),
+            Unit::Em => val * font_size,
+            Unit::Mm => Self::from_val_unit(0.1 * val, Unit::Cm, font_size),
+            Unit::In => Self::from_val_unit(val * 72.0, Unit::Pt, font_size),
+        }
     }
 }
 
@@ -66,6 +80,13 @@ impl Mul<f32> for PixelLength {
     }
 }
 
+impl Mul<PixelLength> for f32 {
+    type Output = PixelLength;
+    fn mul(self, other: PixelLength) -> PixelLength {
+        PixelLength(self * other.0)
+    }
+}
+
 impl Mul for PixelLength {
     type Output = Self;
     fn mul(self, other: PixelLength) -> Self {
@@ -80,41 +101,6 @@ impl Div<f32> for PixelLength {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum Length {
-    Absolute(PixelLength),
-    Em(CssFloat),
-}
-
-impl Default for Length {
-    fn default() -> Self {
-        Length::Absolute(PixelLength(0.0))
-    }
-}
-
-impl Length {
-    #[inline]
-    pub fn from_val_unit(val: f32, unit: super::specified::Unit) -> Self {
-        use super::specified::Unit;
-
-        match unit {
-            Unit::Px => Length::Absolute(PixelLength(val)),
-            Unit::Cm => Length::from_val_unit(val / 2.54, Unit::In),
-            Unit::Pt => Length::Absolute(PixelLength::from_pt(val)),
-            Unit::Em => Length::Em(val),
-            Unit::Mm => Length::from_val_unit(0.1 * val, Unit::Cm),
-            Unit::In => Length::from_val_unit(val * 72.0, Unit::Pt),
-        }
-    }
-
-    pub fn absolute(self, font_size: PixelLength) -> PixelLength {
-        match self {
-            Length::Absolute(abs) => abs,
-            Length::Em(em) => font_size * em,
-        }
-    }
-}
-
 /// A length, a percentage or a combination of both using `calc`.
 ///
 /// See
@@ -122,25 +108,25 @@ impl Length {
 /// (https://drafts.csswg.org/css-values-4/#typedef-length-percentage).
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum LengthPercentage {
-    Length(Length),
+    PixelLength(PixelLength),
     Percentage(Percentage),
     Both {
-        length: Length,
+        length: PixelLength,
         percentage: Percentage,
     },
 }
 
 impl Default for LengthPercentage {
     fn default() -> Self {
-        LengthPercentage::Length(Length::default())
+        LengthPercentage::PixelLength(PixelLength::default())
     }
 }
 
 impl LengthPercentage {
     /// If the `LengthPercentage` contains an absolute length, return it.
-    pub fn length(&self) -> Option<Length> {
+    pub fn length(&self) -> Option<PixelLength> {
         match self {
-            LengthPercentage::Length(length) | LengthPercentage::Both { length, .. } => {
+            LengthPercentage::PixelLength(length) | LengthPercentage::Both { length, .. } => {
                 Some(*length)
             }
             _ => None,
@@ -156,9 +142,9 @@ impl LengthPercentage {
         }
     }
 
-    pub fn absolute(self, container_size: PixelLength, font_size: PixelLength) -> PixelLength {
+    pub fn absolute(self, container_size: PixelLength) -> PixelLength {
         match self {
-            LengthPercentage::Length(len) => len.absolute(font_size),
+            LengthPercentage::PixelLength(len) => len,
             LengthPercentage::Percentage(percentage) => container_size * percentage,
             _ => unimplemented!(),
         }
@@ -166,11 +152,18 @@ impl LengthPercentage {
 }
 
 impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage {
-    fn from_specified(spec: &super::specified::QuantityOrPercentage) -> Self {
+    fn from_specified(
+        spec: &super::specified::QuantityOrPercentage,
+        style: &ComputedValues,
+    ) -> Self {
         use super::specified::{Quantity, QuantityOrPercentage};
         match spec {
             QuantityOrPercentage::Quantity(Quantity { value, unit }) => {
-                LengthPercentage::Length(Length::from_val_unit(*value, *unit))
+                LengthPercentage::PixelLength(PixelLength::from_val_unit(
+                    *value,
+                    *unit,
+                    style.font.font_size,
+                ))
             }
             QuantityOrPercentage::Percentage(percentage) => {
                 LengthPercentage::Percentage(*percentage)
@@ -193,7 +186,10 @@ impl Default for GenericSize {
 }
 
 impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize {
-    fn from_specified(spec: &specified::AutoOrQuantityOrPercentage) -> Self {
+    fn from_specified(
+        spec: &specified::AutoOrQuantityOrPercentage,
+        style: &ComputedValues,
+    ) -> Self {
         match spec {
             specified::AutoOrQuantityOrPercentage::Auto => GenericSize::Auto,
             specified::AutoOrQuantityOrPercentage::Percentage(percentage) => {
@@ -202,27 +198,26 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
             specified::AutoOrQuantityOrPercentage::Quantity(specified::Quantity {
                 value,
                 unit,
-            }) => GenericSize::LengthPercentage(LengthPercentage::Length(Length::from_val_unit(
-                *value, *unit,
-            ))),
+            }) => GenericSize::LengthPercentage(LengthPercentage::PixelLength(
+                PixelLength::from_val_unit(*value, *unit, style.font.font_size),
+            )),
         }
     }
 }
 
 impl GenericSize {
-    pub fn absolute(
-        self,
-        if_auto: PixelLength,
-        container_size: PixelLength,
-        font_size: PixelLength,
-    ) -> PixelLength {
+    pub fn absolute(self, if_auto: PixelLength, container_size: PixelLength) -> PixelLength {
         match self {
             GenericSize::Auto => if_auto,
-            GenericSize::LengthPercentage(lp) => lp.absolute(container_size, font_size),
+            GenericSize::LengthPercentage(lp) => lp.absolute(container_size),
         }
     }
 }
 
+/// The style struct containing properties related to positioning
+/// of boxes.
+///
+/// These properties are _not_ inherited.
 #[derive(Debug, Clone, Default)]
 pub struct Position {
     pub width: GenericSize,
@@ -235,10 +230,10 @@ pub struct Position {
     pub padding_bottom: LengthPercentage,
     pub padding_left: LengthPercentage,
     pub padding_right: LengthPercentage,
-    pub border_top_width: Length,
-    pub border_bottom_width: Length,
-    pub border_left_width: Length,
-    pub border_right_width: Length,
+    pub border_top_width: PixelLength,
+    pub border_bottom_width: PixelLength,
+    pub border_left_width: PixelLength,
+    pub border_right_width: PixelLength,
     pub border_top_style: BorderStyle,
     pub border_bottom_style: BorderStyle,
     pub border_left_style: BorderStyle,
@@ -248,21 +243,24 @@ pub struct Position {
 impl Position {
     fn fixup(&mut self) {
         if let BorderStyle::None = self.border_top_style {
-            self.border_top_width = Length::default();
+            self.border_top_width = PixelLength::default();
         }
         if let BorderStyle::None = self.border_bottom_style {
-            self.border_bottom_width = Length::default();
+            self.border_bottom_width = PixelLength::default();
         }
         if let BorderStyle::None = self.border_left_style {
-            self.border_left_width = Length::default();
+            self.border_left_width = PixelLength::default();
         }
         if let BorderStyle::None = self.border_right_style {
-            self.border_right_width = Length::default();
+            self.border_right_width = PixelLength::default();
         }
     }
 }
 
-/// Contains the style structs.
+use std::convert::AsMut;
+
+/// Contains the style structs and encompasses all the style information for
+/// an element.
 #[derive(Debug, Clone, Default)]
 pub struct ComputedValues {
     pub box_: Arc<Box>,
@@ -270,6 +268,32 @@ pub struct ComputedValues {
     pub font: Arc<Font>,
     pub text: Arc<Text>,
     pub background: Arc<Background>,
+}
+
+impl AsMut<Box> for ComputedValues {
+    fn as_mut(&mut self) -> &mut Box {
+        Arc::make_mut(&mut self.box_)
+    }
+}
+impl AsMut<Position> for ComputedValues {
+    fn as_mut(&mut self) -> &mut Position {
+        Arc::make_mut(&mut self.position)
+    }
+}
+impl AsMut<Font> for ComputedValues {
+    fn as_mut(&mut self) -> &mut Font {
+        Arc::make_mut(&mut self.font)
+    }
+}
+impl AsMut<Text> for ComputedValues {
+    fn as_mut(&mut self) -> &mut Text {
+        Arc::make_mut(&mut self.text)
+    }
+}
+impl AsMut<Background> for ComputedValues {
+    fn as_mut(&mut self) -> &mut Background {
+        Arc::make_mut(&mut self.background)
+    }
 }
 
 impl ComputedValues {
@@ -284,9 +308,9 @@ pub struct StyleBuilder {
     new_values: ComputedValues,
 }
 
-// TODO: Consider using `Arc::make_mut`.
 impl StyleBuilder {
     pub fn new(inherited_values: ComputedValues) -> Self {
+        // implement inheritance
         StyleBuilder {
             inherited_values,
             ..Default::default()
@@ -295,21 +319,11 @@ impl StyleBuilder {
 
     pub fn add_declaration(&mut self, decl: PropertyDeclaration) {
         match decl {
-            PropertyDeclaration::Box(decl) => {
-                decl.apply_to(Arc::make_mut(&mut self.new_values.box_))
-            }
-            PropertyDeclaration::Font(decl) => {
-                decl.apply_to(Arc::make_mut(&mut self.new_values.font))
-            }
-            PropertyDeclaration::Position(decl) => {
-                decl.apply_to(Arc::make_mut(&mut self.new_values.position))
-            }
-            PropertyDeclaration::Text(decl) => {
-                decl.apply_to(Arc::make_mut(&mut self.new_values.text))
-            }
-            PropertyDeclaration::Background(decl) => {
-                decl.apply_to(Arc::make_mut(&mut self.new_values.background))
-            }
+            PropertyDeclaration::Box(decl) => decl.apply_to(&mut self.new_values),
+            PropertyDeclaration::Font(decl) => decl.apply_to(&mut self.new_values),
+            PropertyDeclaration::Position(decl) => decl.apply_to(&mut self.new_values),
+            PropertyDeclaration::Text(decl) => decl.apply_to(&mut self.new_values),
+            PropertyDeclaration::Background(decl) => decl.apply_to(&mut self.new_values),
         }
     }
 
@@ -371,13 +385,12 @@ impl Default for LineHeight {
     }
 }
 
-impl From<specified::LineHeight> for LineHeight {
-    fn from(spec: specified::LineHeight) -> Self {
-        use specified::PropertyValue;
-        match spec {
+impl ComputedValue<specified::LineHeight> for LineHeight {
+    fn from_specified(lh: &specified::LineHeight, style: &super::computed::ComputedValues) -> Self {
+        match lh {
             specified::LineHeight::Normal => LineHeight::Normal,
             specified::LineHeight::QuantityOrPercentage(qp) => {
-                LineHeight::LengthPercentage(qp.computed_value())
+                LineHeight::LengthPercentage(LengthPercentage::from_specified(qp, style))
             }
         }
     }

@@ -4,7 +4,7 @@ use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
 use lemon_pdf::content::PageContext;
-use lemon_pdf::font::builtin::{BuiltInFont, SimpleFont};
+use lemon_pdf::font::builtin::BuiltInFont;
 use lemon_pdf::font::encoding::{EncodingEntry, PredefinedEncoding};
 use lemon_pdf::font::Font;
 use lemon_pdf::pagetree::MediaBox;
@@ -99,7 +99,7 @@ pub fn write_pdf(
                         font_map.insert(font.clone(), val);
                     }
                     let (font_key, font) = font_map.get(&font).unwrap();
-                    
+
                     let x = x;
                     let y = device.height - y;
                     page_context.begin_text()?;

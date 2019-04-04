@@ -194,9 +194,11 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_formatting_context(&mut self, node: DomRef) {
-        if node.children().all(|child| match child.html_data {
-            ParsedData::Text(_) => true,
-            _ => false,
+        if node.children().all(|child| {
+            match child.style().expect("No style was assigned").box_.display {
+                Display::Inline => true,
+                _ => false,
+            }
         }) {
             self.build_inline_formatting_context(node)
         } else {

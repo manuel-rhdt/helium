@@ -28,11 +28,10 @@ impl<'a> System<'a> for AssignHeights {
         {
             let container_pos = positions.get(container).cloned().unwrap_or_default();
             positions.get_mut(entity).map(|pos| {
-                pos.height = style.position.height.absolute(
-                    Px(0.0),
-                    container_pos.height,
-                    style.font.font_size,
-                )
+                pos.height = style
+                    .position
+                    .height
+                    .absolute(Px(0.0), container_pos.height)
             });
         }
     }

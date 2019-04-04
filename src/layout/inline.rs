@@ -1,6 +1,6 @@
 use super::block::BlockContainer;
 use super::entity::{Position, Text, UnscannedText};
-use super::text::{layout_text, font::match_font};
+use super::text::{font::match_font, layout_text};
 use crate::style::properties::computed::{ComputedValues, LineHeight, PixelLength as Px};
 
 use specs::{
@@ -76,9 +76,7 @@ impl<'a> System<'a> for InlineLayout {
                     let font_height = super::text::font_height(style.font.font_size);
                     let line_height = match style.font.line_height {
                         LineHeight::Normal => font_height * 1.2,
-                        LineHeight::LengthPercentage(lp) => {
-                            lp.absolute(style.font.font_size, style.font.font_size)
-                        }
+                        LineHeight::LengthPercentage(lp) => lp.absolute(style.font.font_size),
                     };
                     let line_gap = line_height - font_height;
 

@@ -89,34 +89,29 @@ pub fn calculate_padding_and_border(
     container_size: Px,
     ComputedValues {
         position,
-        font,
         background,
         ..
     }: &ComputedValues,
 ) -> Decoration {
     let mut deco = Decoration::default();
-    let font_size = font.font_size;
 
-    deco.border.top = position.border_top_width.absolute(font_size);
-    deco.border.bottom = position.border_bottom_width.absolute(font_size);
-    deco.border.left = position.border_left_width.absolute(font_size);
-    deco.border.right = position.border_right_width.absolute(font_size);
+    deco.border.top = position.border_top_width;
+    deco.border.bottom = position.border_bottom_width;
+    deco.border.left = position.border_left_width;
+    deco.border.right = position.border_right_width;
 
-    deco.padding.top = position.padding_top.absolute(container_size, font_size);
-    deco.padding.bottom = position.padding_bottom.absolute(container_size, font_size);
-    deco.padding.left = position.padding_left.absolute(container_size, font_size);
-    deco.padding.right = position.padding_right.absolute(container_size, font_size);
+    deco.padding.top = position.padding_top.absolute(container_size);
+    deco.padding.bottom = position.padding_bottom.absolute(container_size);
+    deco.padding.left = position.padding_left.absolute(container_size);
+    deco.padding.right = position.padding_right.absolute(container_size);
 
     // margin_left and margin_right get calculated in `calculate_inline_size`
-    deco.margin.top = position
-        .margin_top
-        .absolute(Px(0.0), container_size, font_size);
-    deco.margin.bottom = position
-        .margin_bottom
-        .absolute(Px(0.0), container_size, font_size);
+    deco.margin.top = position.margin_top.absolute(Px(0.0), container_size);
+    deco.margin.bottom = position.margin_bottom.absolute(Px(0.0), container_size);
 
     use cssparser::{Color, RGBA};
     deco.background_color = match background.background_color {
+        // TODO:
         Color::CurrentColor => RGBA::transparent(),
         Color::RGBA(rgba) => rgba,
     };
@@ -134,18 +129,12 @@ pub fn calculate_padding_and_border(
 pub fn calculate_inline_size(
     container_size: Px,
     deco: &mut Decoration,
-    ComputedValues { position, font, .. }: &ComputedValues,
+    ComputedValues { position, .. }: &ComputedValues,
 ) -> Px {
-    let font_size = font.font_size;
-
     let width = match position.width {
         GenericSize::Auto => {
-            deco.margin.left = position
-                .margin_left
-                .absolute(Px(0.0), container_size, font_size);
-            deco.margin.right = position
-                .margin_right
-                .absolute(Px(0.0), container_size, font_size);
+            deco.margin.left = position.margin_left.absolute(Px(0.0), container_size);
+            deco.margin.right = position.margin_right.absolute(Px(0.0), container_size);
             (container_size
                 - deco.margin.left
                 - deco.margin.right
@@ -156,7 +145,7 @@ pub fn calculate_inline_size(
                 .max(Px(0.0))
         }
         GenericSize::LengthPercentage(lp) => {
-            let width = lp.absolute(container_size, font_size);
+            let width = lp.absolute(container_size);
             deco.margin.left = match (position.margin_left, position.margin_right) {
                 (GenericSize::Auto, GenericSize::Auto) => {
                     // center the child horizontally within its container
@@ -168,10 +157,10 @@ pub fn calculate_inline_size(
                     (container_size - border_box_width) / 2.0
                 }
                 (GenericSize::LengthPercentage(val), GenericSize::Auto) => {
-                    val.absolute(container_size, font_size)
+                    val.absolute(container_size)
                 }
                 (GenericSize::Auto, GenericSize::LengthPercentage(val)) => {
-                    let margin_right = val.absolute(container_size, font_size);
+                    let margin_right = val.absolute(container_size);
                     let border_box_width = width
                         + deco.padding.left
                         + deco.padding.right
@@ -184,7 +173,7 @@ pub fn calculate_inline_size(
                     GenericSize::LengthPercentage(_margin_right),
                 ) => {
                     // over constrained (we use the specified margin_left and width, ignoring margin_right)
-                    margin_left.absolute(container_size, font_size)
+                    margin_left.absolute(container_size)
                 }
             };
             width

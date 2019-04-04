@@ -13,7 +13,7 @@ pub trait ParseDeclaration<'i> {
     where
         Self: Sized;
 
-    fn apply_to(&self, computed: &mut Self::Computed);
+    fn apply_to(&self, computed: &mut super::computed::ComputedValues);
 }
 
 pub trait PropertyValue<'i>: Sized {
@@ -22,16 +22,19 @@ pub trait PropertyValue<'i>: Sized {
         input: &mut Parser<'i, '_>,
     ) -> Result<Self, ParseError<'i, Self::Error>>;
 
-    fn computed_value<T>(&self) -> T
+    fn computed_value<T>(&self, computed_values: &super::computed::ComputedValues) -> T
     where
         T: ComputedValue<Self>,
     {
-        T::from_specified(self)
+        T::from_specified(self, computed_values)
     }
 }
 
 pub trait ComputedValue<T>: Sized {
-    fn from_specified(specified_value: &T) -> Self;
+    fn from_specified(
+        specified_value: &T,
+        computed_values: &super::computed::ComputedValues,
+    ) -> Self;
 }
 
 impl<'i> PropertyValue<'i> for String {
@@ -73,7 +76,10 @@ where
     Computed: From<Specified>,
     Specified: Clone,
 {
-    fn from_specified(specified_value: &Specified) -> Computed {
+    fn from_specified(
+        specified_value: &Specified,
+        _: &super::computed::ComputedValues,
+    ) -> Computed {
         specified_value.clone().into()
     }
 }
@@ -344,7 +350,10 @@ impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for CommaSeparated<T> {
 }
 
 impl<T: Clone> ComputedValue<CommaSeparated<T>> for Vec<T> {
-    fn from_specified(comma_separated: &CommaSeparated<T>) -> Self {
+    fn from_specified(
+        comma_separated: &CommaSeparated<T>,
+        _: &super::computed::ComputedValues,
+    ) -> Self {
         comma_separated.elements.clone()
     }
 }
@@ -435,15 +444,17 @@ impl Default for BorderWidth {
     }
 }
 
-impl From<BorderWidth> for super::computed::Length {
-    fn from(bw: BorderWidth) -> Self {
-        use super::computed::Length;
+impl ComputedValue<BorderWidth> for super::computed::PixelLength {
+    fn from_specified(bw: &BorderWidth, style: &super::computed::ComputedValues) -> Self {
+        use super::computed::PixelLength;
 
         match bw {
-            BorderWidth::Thin => Length::from_val_unit(1.0, Unit::Pt),
-            BorderWidth::Medium => Length::from_val_unit(2.0, Unit::Pt),
-            BorderWidth::Thick => Length::from_val_unit(5.0, Unit::Px),
-            BorderWidth::Quantity(Quantity { value, unit }) => Length::from_val_unit(value, unit),
+            BorderWidth::Thin => PixelLength(1.0),
+            BorderWidth::Medium => PixelLength(3.0),
+            BorderWidth::Thick => PixelLength(5.0),
+            &BorderWidth::Quantity(Quantity { value, unit }) => {
+                PixelLength::from_val_unit(value, unit, style.font.font_size)
+            }
         }
     }
 }
@@ -454,15 +465,12 @@ pub enum FontSize {
 }
 
 impl ComputedValue<FontSize> for super::computed::PixelLength {
-    fn from_specified(specified_value: &FontSize) -> Self {
-        use super::computed::Length;
+    fn from_specified(font_size: &FontSize, style: &super::computed::ComputedValues) -> Self {
+        use super::computed::PixelLength;
 
-        match *specified_value {
+        match *font_size {
             FontSize::Quantity(Quantity { value, unit }) => {
-                match Length::from_val_unit(value, unit) {
-                    Length::Absolute(abs) => abs,
-                    _ => unimplemented!(),
-                }
+                PixelLength::from_val_unit(value, unit, style.font.font_size)
             }
         }
     }

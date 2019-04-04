@@ -77,7 +77,8 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
             if shorthands.is_empty() {
                 property_cases.push(quote! {
                     #name::#ident(val) => {
-                        computed.#ident_snake = val.computed_value();
+                        let computed_value = val.computed_value(&*computed);
+                        std::convert::AsMut::<#computed_values>::as_mut(computed).#ident_snake = computed_value;
                     }
                 });
             } else {
@@ -114,7 +115,7 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
                 Err(input.new_custom_error(()))
             }
 
-            fn apply_to(&self, computed: &mut #computed_values) {
+            fn apply_to(&self, computed: &mut super::computed::ComputedValues) {
                 match self {
                     #(#property_cases),*
                     _ => {}

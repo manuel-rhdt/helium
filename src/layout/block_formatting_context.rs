@@ -69,7 +69,11 @@ impl<'a> System<'a> for BlockFormattingContextBuilder {
         }
 
         if let (Some(entity), Some(context)) = (current_entity, current_block_formatting_context) {
-            context.layout(&mut resources.positions, &resources.can_collapse, &self.fixed_offset_map);
+            context.layout(
+                &mut resources.positions,
+                &resources.can_collapse,
+                &self.fixed_offset_map,
+            );
             formatting_context.insert(entity, context).unwrap();
         }
     }
@@ -130,16 +134,16 @@ fn block_fragments<'a>(
             ..
         } = &*style.position;
 
-        let height = height.absolute(Px(0.0), pos.width, style.font.font_size);
+        let height = height.absolute(Px(0.0), pos.width);
 
         // TODO: Margin and Padding size is relative to container width!
-        let margin_top = margin_top.absolute(Px(0.0), pos.width, style.font.font_size);
-        let border_top = border_top_width.absolute(style.font.font_size);
-        let padding_top = padding_top.absolute(Px(0.0), style.font.font_size);
+        let margin_top = margin_top.absolute(Px(0.0), pos.width);
+        let border_top = border_top_width;
+        let padding_top = padding_top.absolute(Px(0.0));
 
-        let margin_bottom = margin_bottom.absolute(Px(0.0), pos.width, style.font.font_size);
-        let border_bottom = border_bottom_width.absolute(style.font.font_size);
-        let padding_bottom = padding_bottom.absolute(Px(0.0), style.font.font_size);
+        let margin_bottom = margin_bottom.absolute(Px(0.0), pos.width);
+        let border_bottom = border_bottom_width;
+        let padding_bottom = padding_bottom.absolute(Px(0.0));
 
         if margin_top > Px(0.0) {
             let entity = build_spacing_entity(true, margin_top, resources);
@@ -235,7 +239,7 @@ impl BlockFormattingContext {
         &self,
         positions: &mut WriteStorage<'_, Position>,
         can_collapse: &WriteStorage<'_, CanCollapse>,
-        offset_from_map: &HashMap<Entity, OffsetFrom>
+        offset_from_map: &HashMap<Entity, OffsetFrom>,
     ) {
         let mut cursor = Px(0.0);
         let mut previous_margin_size: Option<Px> = None;
