@@ -1,6 +1,6 @@
 use super::block::BlockContainer;
 use super::entity::{Position, Text, UnscannedText};
-use super::text::layout_text;
+use super::text::{layout_text, font::match_font};
 use crate::style::properties::computed::{ComputedValues, LineHeight, PixelLength as Px};
 
 use specs::{
@@ -68,8 +68,9 @@ impl<'a> System<'a> for InlineLayout {
 
             for child in inline_formatting_context.element_entities(&entities) {
                 let mut content = unscanned_text.get_mut(child).unwrap().clone();
+                let font = match_font(&style).unwrap();
                 let layout_lines =
-                    layout_text(&mut content.characters, style.font.font_size, width);
+                    layout_text(&mut content.characters, &font, style.font.font_size, width);
 
                 for line_content in layout_lines {
                     let font_height = super::text::font_height(style.font.font_size);
@@ -94,7 +95,8 @@ impl<'a> System<'a> for InlineLayout {
                         )
                         .with(
                             Text {
-                                characters: line_content.to_owned(),
+                                glyphs: line_content.to_owned(),
+                                font,
                                 font_size: style.font.font_size,
                                 baseline: super::text::font_ascender(style.font.font_size)
                                     + line_gap / 2.0,

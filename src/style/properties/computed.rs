@@ -1,8 +1,8 @@
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
-pub use super::specified::Display;
-use super::specified::{self, BorderStyle, FromCssDecl, Percentage, PropertyDeclaration};
+pub use super::specified::{Display, FontFamily};
+use super::specified::{self, BorderStyle, ParseDeclaration, Percentage, PropertyDeclaration};
 
 pub use cssparser::RGBA;
 
@@ -326,6 +326,7 @@ pub struct Box {
 
 #[derive(Debug, Clone)]
 pub struct Font {
+    pub font_family: Vec<specified::FontFamily>,
     pub font_size: PixelLength,
     pub line_height: LineHeight,
 }
@@ -333,6 +334,7 @@ pub struct Font {
 impl Default for Font {
     fn default() -> Self {
         Self {
+            font_family: vec![specified::FontFamily::SansSerif],
             font_size: PixelLength::from_pt(12.0),
             line_height: LineHeight::default(),
         }

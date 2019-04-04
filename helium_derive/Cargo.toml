@@ -1,5 +1,5 @@
 [package]
-name = "from_css_decl_derive"
+name = "helium_derive"
 version = "0.1.0"
 authors = ["Manuel Reinhardt <manuel.rhdt@gmail.com>"]
 edition = "2018"

@@ -1,9 +1,9 @@
 //! Contains the builtin PDF fonts
 
-pub use lemon_pdf::font::FontUnit;
 pub use lemon_pdf::font::builtin::BuiltInFont;
+pub use lemon_pdf::font::FontUnit;
 
-use super::whitespace;
+use super::{whitespace, Font};
 use crate::style::properties::computed::PixelLength;
 
 impl From<FontUnit> for PixelLength {
@@ -19,10 +19,13 @@ fn scale(fu: FontUnit, font_size: PixelLength) -> PixelLength {
 /// Returns lines
 pub fn layout_text<'a>(
     text: &'a mut String,
+    font: &Font,
     font_size: PixelLength,
     container_width: PixelLength,
-) -> impl 'a + Iterator<Item = Vec<u8>> {
-    let font = BuiltInFont::Helvetica.metrics();
+) -> impl 'a + Iterator<Item = Vec<u32>> {
+    let font = match font {
+        Font::BuiltIn(builtin_font) => builtin_font.metrics(),
+    };
     let mut cursor = PixelLength(0.0);
 
     whitespace::transform_text(text);
@@ -33,23 +36,23 @@ pub fn layout_text<'a>(
     // make an immutable borrow of text.
     let text: &'a str = &*text;
 
-    let mut encoded_str = vec![];
+    let mut glyph_indices = vec![];
     text.char_indices().filter_map(move |(index, character)| {
         let char_index = (font.unicode_mapping)(character);
         let char_metric = char_index.and_then(|index| font.char_metrics.get(index));
 
         if let Some(char_metric) = char_metric {
-            encoded_str.push(char_metric.character_code as u8);
+            glyph_indices.push(char_index.unwrap() as u32);
             cursor += scale(char_metric.advance_width, font_size);
             if character == ' ' {
-                last_space = (encoded_str.len() - 1, cursor);
+                last_space = (glyph_indices.len() - 1, cursor);
             }
             if cursor > container_width {
-                let full_line = &encoded_str[..last_space.0];
+                let full_line = &glyph_indices[..last_space.0];
                 let result = Some(full_line.to_owned());
 
                 let mut i = 0;
-                encoded_str.retain(|_| {
+                glyph_indices.retain(|_| {
                     i += 1;
                     (i - 1) > last_space.0
                 });
@@ -58,10 +61,10 @@ pub fn layout_text<'a>(
                 return result;
             }
         } else {
-            return None
+            return None;
         }
         if index + 1 == text.len() {
-            return Some(encoded_str.clone());
+            return Some(glyph_indices.clone());
         }
         None
     })

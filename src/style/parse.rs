@@ -1,6 +1,6 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
-use super::properties::specified::{FromCssDecl, PropertyDeclaration};
+use super::properties::specified::{ParseDeclaration, PropertyDeclaration};
 use crate::tree::ElementRef;
 
 use cssparser::{
@@ -275,7 +275,7 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
         name: CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
-        PropertyDeclaration::from_css_decl(name, input)
+        PropertyDeclaration::parse_declaration(name, input)
     }
 }
 

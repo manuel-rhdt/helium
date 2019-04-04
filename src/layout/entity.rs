@@ -64,7 +64,8 @@ impl Component for UnscannedText {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Text {
-    pub characters: Vec<u8>,
+    pub glyphs: Vec<u32>,
+    pub font: super::text::Font,
     /// Size of an EM box.
     pub font_size: PixelLength,
     /// Distance from the top content edge of the box to the baseline of the text.

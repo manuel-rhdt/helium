@@ -1,15 +1,17 @@
 use std::str::FromStr;
 
 use cssparser::{Color, CowRcStr, ParseError, Parser, Token};
-use from_css_decl_derive::{FromCssDecl, PropertyValue};
+use helium_derive::{ParseDeclaration, PropertyValue};
 
-pub trait FromCssDecl<'i>: Sized {
+pub trait ParseDeclaration<'i> {
     type Error: 'i;
     type Computed: 'static;
-    fn from_css_decl(
+    fn parse_declaration(
         name: CowRcStr<'i>,
         input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>>;
+    ) -> Result<Self, ParseError<'i, Self::Error>>
+    where
+        Self: Sized;
 
     fn apply_to(&self, computed: &mut Self::Computed);
 }
@@ -30,6 +32,16 @@ pub trait PropertyValue<'i>: Sized {
 
 pub trait ComputedValue<T>: Sized {
     fn from_specified(specified_value: &T) -> Self;
+}
+
+impl<'i> PropertyValue<'i> for String {
+    type Error = ();
+
+    fn from_css_property_value(
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        Ok(input.expect_ident_or_string()?.to_string())
+    }
 }
 
 impl<'i, T> PropertyValue<'i> for Vec<T>
@@ -66,7 +78,9 @@ where
     }
 }
 
-#[derive(Debug, Clone, FromCssDecl)]
+/// Holds any property declaration that is supported by helium, grouped
+/// by style structs.
+#[derive(Debug, Clone, ParseDeclaration)]
 pub enum PropertyDeclaration {
     Position(Position),
     Font(Font),
@@ -75,7 +89,7 @@ pub enum PropertyDeclaration {
     Background(Background),
 }
 
-#[derive(Debug, Clone, FromCssDecl)]
+#[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Position"]
 pub enum Position {
     #[property]
@@ -184,23 +198,25 @@ pub enum Position {
     Border(List<Border>),
 }
 
-#[derive(Debug, Clone, FromCssDecl)]
+#[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Font"]
 pub enum Font {
     #[property]
+    FontFamily(CommaSeparated<FontFamily>),
+    #[property]
     FontSize(FontSize),
     #[property]
-    LineHeight(LineHeight)
+    LineHeight(LineHeight),
 }
 
-#[derive(Debug, Clone, FromCssDecl)]
+#[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Box"]
 pub enum Box {
     #[property]
     Display(Display),
 }
 
-#[derive(Debug, Clone, FromCssDecl)]
+#[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Text"]
 pub enum Text {
     /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
@@ -208,7 +224,7 @@ pub enum Text {
     WhiteSpace(WhiteSpace),
 }
 
-#[derive(Debug, Clone, FromCssDecl)]
+#[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Background"]
 pub enum Background {
     /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
@@ -307,6 +323,29 @@ impl<'a, T: Copy + PropertyValue<'a>> List<T> {
             2 | 3 | 4 => self.elements[1],
             _ => panic!(),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CommaSeparated<T> {
+    elements: Vec<T>,
+}
+
+impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for CommaSeparated<T> {
+    type Error = T::Error;
+
+    fn from_css_property_value(
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, T::Error>> {
+        input
+            .parse_comma_separated(|input| T::from_css_property_value(input))
+            .map(|elements| CommaSeparated { elements })
+    }
+}
+
+impl<T: Clone> ComputedValue<CommaSeparated<T>> for Vec<T> {
+    fn from_specified(comma_separated: &CommaSeparated<T>) -> Self {
+        comma_separated.elements.clone()
     }
 }
 
@@ -497,5 +536,12 @@ impl List<Border> {
 #[derive(Debug, Copy, Clone, PropertyValue)]
 pub enum LineHeight {
     QuantityOrPercentage(QuantityOrPercentage),
-    Normal
+    Normal,
+}
+
+#[derive(Debug, Clone, PropertyValue)]
+pub enum FontFamily {
+    SansSerif,
+    Serif,
+    Named(String),
 }

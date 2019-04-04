@@ -14,7 +14,7 @@ simple_logger = "1.0"
 cssparser = "0.25.2"
 selectors = "0.21.0"
 specs = "0.14"
-from_css_decl_derive = { path = "./from_css_decl_derive" }
+helium_derive = { path = "./helium_derive" }
 lemon_pdf = { path = "../lemon_pdf" }
 shred-derive = "0.5.1"
 shred = "0.7.1"

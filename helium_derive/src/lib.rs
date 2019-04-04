@@ -10,8 +10,8 @@ use quote::{quote, quote_spanned};
 use syn::{Data, DataEnum, Field, Fields, FieldsUnnamed, LitStr, Variant};
 use syn::spanned::Spanned;
 
-#[proc_macro_derive(FromCssDecl, attributes(property, computed, shorthand, spec))]
-pub fn from_css_decl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+#[proc_macro_derive(ParseDeclaration, attributes(property, computed, shorthand, spec))]
+pub fn parse_declaration_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
     // Construct a representation of Rust code as a syntax tree
@@ -19,12 +19,12 @@ pub fn from_css_decl_derive(input: proc_macro::TokenStream) -> proc_macro::Token
     let ast = syn::parse2(input).unwrap();
 
     // Build the trait implementation
-    let result = impl_from_css_decl_macro(&ast);
+    let result = impl_parse_declaration_macro(&ast);
 
     result.into()
 }
 
-fn impl_from_css_decl_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream {
+fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream {
     let name = &ast.ident;
     let computed_values = ast
         .attrs
@@ -52,7 +52,7 @@ fn impl_from_css_decl_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream 
 
     let variants = match &ast.data {
         Data::Enum(DataEnum { variants, .. }) => variants,
-        _ => panic!("#[FromCssDecl] can only be applied to enums."),
+        _ => panic!("#[ParseDeclaration] can only be applied to enums."),
     };
 
     let mut property_cases = vec![];
@@ -96,7 +96,7 @@ fn impl_from_css_decl_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream 
             }
         } else {
             quote! {
-                match <#parser_ty as FromCssDecl>::from_css_decl(name.clone(), input) {
+                match <#parser_ty as ParseDeclaration>::parse_declaration(name.clone(), input) {
                     Ok(success) => return Ok(#name::#ident(success)),
                     Err(err) => {},
                 }
@@ -105,11 +105,11 @@ fn impl_from_css_decl_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream 
     }).collect::<Vec<_>>();
 
     let trait_impl = quote! {
-        impl<'i> FromCssDecl<'i> for #name {
+        impl<'i> ParseDeclaration<'i> for #name {
             type Error = ();
             type Computed = #computed_values;
 
-            fn from_css_decl(name: cssparser::CowRcStr<'i>, input: &mut cssparser::Parser<'i, '_>) -> Result<#name, ParseError<'i, Self::Error>> {
+            fn parse_declaration(name: cssparser::CowRcStr<'i>, input: &mut cssparser::Parser<'i, '_>) -> Result<#name, ParseError<'i, Self::Error>> {
                 #(#if_clauses)*
                 Err(input.new_custom_error(()))
             }

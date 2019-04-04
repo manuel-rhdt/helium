@@ -1,12 +1,17 @@
 use crate::display_list::{self, DisplayItem, Rect};
+use crate::layout::text::Font as HFont;
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
-use lemon_pdf::font::builtin::BuiltInFont;
+use lemon_pdf::content::PageContext;
+use lemon_pdf::font::builtin::{BuiltInFont, SimpleFont};
+use lemon_pdf::font::encoding::{EncodingEntry, PredefinedEncoding};
+use lemon_pdf::font::Font;
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::{Context, Page, Pt, Version};
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Error};
 
@@ -31,9 +36,7 @@ pub fn write_pdf(
         device.height.into(),
     ));
     page.add_content(&mut context, Some(StreamFilter::Deflate), |page_context| {
-        let font = BuiltInFont::Helvetica.font(&mut page_context.pdf_context)?;
-        let font_ref = page_context.pdf_context.write_object(font)?;
-        let font_key = page_context.add_font(font_ref);
+        let mut font_map = HashMap::new();
 
         for item in display_list.items() {
             match item {
@@ -90,13 +93,19 @@ pub fn write_pdf(
                     page_context.rect(x, y, width, height)?;
                     page_context.fill_path()?;
                 }
-                &DisplayItem::Text(display_list::Point { x, y }, font_size, ref text) => {
+                &DisplayItem::Text(display_list::Point { x, y }, font_size, font, ref text) => {
+                    if font_map.get(&font).is_none() {
+                        let val = add_font(page_context, &font)?;
+                        font_map.insert(font.clone(), val);
+                    }
+                    let (font_key, font) = font_map.get(&font).unwrap();
+                    
                     let x = x;
                     let y = device.height - y;
                     page_context.begin_text()?;
-                    page_context.set_font(&font_key, font_size.into())?;
+                    page_context.set_font(font_key, font_size.into())?;
                     page_context.set_position(x.into(), y.into())?;
-                    page_context.draw_simple_glyphs(&text)?;
+                    page_context.draw_simple_glyphs(&encode_glyphs_simple(text, font))?;
                     page_context.end_text()?;
                 }
             }
@@ -109,4 +118,36 @@ pub fn write_pdf(
     context.finish()?;
 
     Ok(())
+}
+
+fn add_font(
+    context: &mut PageContext<impl std::io::Write>,
+    font: &HFont,
+) -> Result<(String, Font), std::io::Error> {
+    let mut font = match font {
+        HFont::BuiltIn(font) => font.font(&mut context.pdf_context)?,
+    };
+    font.encoding = Some(EncodingEntry::Predefined(
+        PredefinedEncoding::WinAnsiEncoding,
+    ));
+    let font_ref = context
+        .pdf_context
+        .write_object(Font::Simple(font.clone()))?;
+
+    Ok((context.add_font(font_ref), Font::Simple(font)))
+}
+
+fn encode_glyphs_simple(glyphs: &[u32], font: &Font) -> Vec<u8> {
+    let font = match font {
+        Font::Simple(font) => font,
+    };
+    let encoding = font.encoding.as_ref().unwrap();
+    let metrics = BuiltInFont::Helvetica.metrics();
+    glyphs
+        .into_iter()
+        .flat_map(|&glyph| {
+            let char_name = metrics.char_metrics.get(glyph as usize).unwrap().name;
+            encoding.encode(char_name)
+        })
+        .collect()
 }
