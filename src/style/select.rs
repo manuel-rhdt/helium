@@ -1,5 +1,5 @@
 use super::parse;
-use crate::tree::{ElementRef, TreeLinked};
+use crate::tree::{DomRef, ElementRef, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, LocalName, Namespace, QualName};
 use selectors::{
@@ -31,22 +31,20 @@ impl selectors::Element for ElementRef {
 
     #[inline]
     fn parent_element(&self) -> Option<Self> {
-        self.as_node()
-            .parent()
-            .and_then(|parent| parent.into_element_ref())
+        self.as_node().parent().and_then(DomRef::into_element_ref)
     }
     #[inline]
     fn prev_sibling_element(&self) -> Option<Self> {
         self.as_node()
             .preceding_siblings()
-            .filter_map(|node| node.into_element_ref())
+            .filter_map(DomRef::into_element_ref)
             .next()
     }
     #[inline]
     fn next_sibling_element(&self) -> Option<Self> {
         self.as_node()
             .following_siblings()
-            .filter_map(|node| node.into_element_ref())
+            .filter_map(DomRef::into_element_ref)
             .next()
     }
     #[inline]
@@ -80,11 +78,11 @@ impl selectors::Element for ElementRef {
     }
 
     #[inline]
-    fn local_name<'a>(&'a self) -> &'a LocalName {
+    fn local_name(&self) -> &LocalName {
         &self.name.local
     }
     #[inline]
-    fn namespace<'a>(&'a self) -> &'a Namespace {
+    fn namespace(&self) -> &Namespace {
         &self.name.ns
     }
 

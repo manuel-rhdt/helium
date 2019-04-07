@@ -7,8 +7,8 @@ use inflector::cases::pascalcase::to_pascal_case;
 use inflector::cases::snakecase::to_snake_case;
 use proc_macro2::{Ident, Span};
 use quote::{quote, quote_spanned};
-use syn::{Data, DataEnum, Field, Fields, FieldsUnnamed, LitStr, Variant};
 use syn::spanned::Spanned;
+use syn::{Data, DataEnum, Field, Fields, FieldsUnnamed, LitStr, Variant};
 
 #[proc_macro_derive(ParseDeclaration, attributes(property, computed, shorthand, spec))]
 pub fn parse_declaration_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -52,7 +52,7 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
 
     let variants = match &ast.data {
         Data::Enum(DataEnum { variants, .. }) => variants,
-        _ => panic!("#[ParseDeclaration] can only be applied to enums."),
+        _ => panic!("#[derive(ParseDeclaration)] can only be applied to enums."),
     };
 
     let mut property_cases = vec![];
@@ -96,6 +96,9 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
                 }
             }
         } else {
+            property_cases.push(quote! {
+                #name::#ident(val) => { val.apply_to(computed) }
+            });
             quote! {
                 match <#parser_ty as ParseDeclaration>::parse_declaration(name.clone(), input) {
                     Ok(success) => return Ok(#name::#ident(success)),
@@ -118,13 +121,12 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
             fn apply_to(&self, computed: &mut super::computed::ComputedValues) {
                 match self {
                     #(#property_cases),*
-                    _ => {}
                 }
             }
         }
     };
 
-    trait_impl.into()
+    trait_impl
 }
 
 struct Shorthand {
@@ -181,11 +183,10 @@ fn parse_shorthands(attrs: &[syn::Attribute]) -> Vec<Shorthand> {
                     other => panic!("invalid method name {:?}", other),
                 };
 
-
                 Shorthand {
                     property_name,
                     method_name,
-                    span
+                    span,
                 }
             }
             _ => panic!("expected list in shorthand attribute"),
@@ -282,7 +283,7 @@ fn impl_property_value_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream
         }
     };
 
-    gen.into()
+    gen
 }
 
 #[cfg(test)]

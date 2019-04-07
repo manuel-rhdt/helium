@@ -195,12 +195,13 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_formatting_context(&mut self, node: DomRef) {
-        if node.children().all(|child| {
-            match child.style().expect("No style was assigned").box_.display {
+        let is_display_inline =
+            |node: DomRef| match node.style().expect("No style was assigned").box_.display {
                 Display::Inline => true,
                 _ => false,
-            }
-        }) {
+            };
+            
+        if node.children().all(is_display_inline) {
             self.build_inline_formatting_context(node)
         } else {
             self.build_block_formatting_context(node)
@@ -218,7 +219,7 @@ impl EntityConstructor {
             }
         }
 
-        if block_formatting_context.elements.len() > 0 {
+        if !block_formatting_context.elements.is_empty() {
             if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
                 self.world
                     .write_storage()
@@ -237,7 +238,7 @@ impl EntityConstructor {
             }
         }
 
-        if inline_formatting_context.elements.len() > 0 {
+        if !inline_formatting_context.elements.is_empty() {
             if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
                 self.world
                     .write_storage()

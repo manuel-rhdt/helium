@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 
-use crate::dot::{DotGraphSerializer, Connection};
+use crate::dot::{Connection, DotGraphSerializer};
 use crate::node_data_ref::NodeDataRef;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::properties::computed::ComputedValues;
@@ -205,13 +205,11 @@ pub trait TreeLinked: Sized + Clone + Eq {
                 .links()
                 .next
                 .set(Some(new_sibling.clone().strong_link()));
-        } else {
-            self.parent().map(|parent| {
-                parent
-                    .links()
-                    .first_child
-                    .set(Some(new_sibling.clone().strong_link()))
-            });
+        } else if let Some(parent) = self.parent() {
+            parent
+                .links()
+                .first_child
+                .set(Some(new_sibling.clone().strong_link()))
         }
 
         self.links().previous.set(Some(new_sibling.weak_link()));
@@ -328,7 +326,7 @@ impl Clone for NodeData {
             links: self.links.clone(),
             html_data: self.html_data.clone(),
             computed_values: Cell::new(computed_values),
-            layout_entity: self.layout_entity.clone()
+            layout_entity: self.layout_entity.clone(),
         }
     }
 }
@@ -353,7 +351,7 @@ impl NodeData {
             },
             html_data,
             computed_values: None.into(),
-            layout_entity: None.into()
+            layout_entity: None.into(),
         }
     }
 
@@ -440,7 +438,7 @@ impl<Node: TreeLinked> Iterator for SiblingIter<Node> {
 
     fn next(&mut self) -> Option<Node> {
         let return_value = self.current.clone();
-        self.current = self.current.as_ref().and_then(|node| node.next_sibling());
+        self.current = self.current.as_ref().and_then(TreeLinked::next_sibling);
         return_value
     }
 }
@@ -455,10 +453,7 @@ impl<Node: TreeLinked> Iterator for PrecedingSiblingIter<Node> {
 
     fn next(&mut self) -> Option<Node> {
         let return_value = self.current.clone();
-        self.current = self
-            .current
-            .as_ref()
-            .and_then(|node| node.previous_sibling());
+        self.current = self.current.as_ref().and_then(TreeLinked::previous_sibling);
         return_value
     }
 }

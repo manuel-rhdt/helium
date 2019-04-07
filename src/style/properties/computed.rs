@@ -318,13 +318,7 @@ impl StyleBuilder {
     }
 
     pub fn add_declaration(&mut self, decl: PropertyDeclaration) {
-        match decl {
-            PropertyDeclaration::Box(decl) => decl.apply_to(&mut self.new_values),
-            PropertyDeclaration::Font(decl) => decl.apply_to(&mut self.new_values),
-            PropertyDeclaration::Position(decl) => decl.apply_to(&mut self.new_values),
-            PropertyDeclaration::Text(decl) => decl.apply_to(&mut self.new_values),
-            PropertyDeclaration::Background(decl) => decl.apply_to(&mut self.new_values),
-        }
+        decl.apply_to(&mut self.new_values)
     }
 
     pub fn build(mut self) -> ComputedValues {

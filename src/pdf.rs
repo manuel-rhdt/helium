@@ -17,7 +17,7 @@ use std::io::{BufWriter, Error};
 
 impl From<PixelLength> for Pt {
     fn from(px: PixelLength) -> Pt {
-        Pt(px.0 as f64 * 0.75)
+        Pt(f64::from(px.0) * 0.75)
     }
 }
 
@@ -98,7 +98,7 @@ pub fn write_pdf(
                         let val = add_font(page_context, &font)?;
                         font_map.insert(font.clone(), val);
                     }
-                    let (font_key, font) = font_map.get(&font).unwrap();
+                    let (font_key, font) = &font_map[&font];
 
                     let x = x;
                     let y = device.height - y;
@@ -144,9 +144,9 @@ fn encode_glyphs_simple(glyphs: &[u32], font: &Font) -> Vec<u8> {
     let encoding = font.encoding.as_ref().unwrap();
     let metrics = BuiltInFont::Helvetica.metrics();
     glyphs
-        .into_iter()
+        .iter()
         .flat_map(|&glyph| {
-            let char_name = metrics.char_metrics.get(glyph as usize).unwrap().name;
+            let char_name = metrics.char_metrics[glyph as usize].name;
             encoding.encode(char_name)
         })
         .collect()

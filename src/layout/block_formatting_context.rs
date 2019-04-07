@@ -1,5 +1,5 @@
 use super::block::BlockContainer;
-use super::entity::{CanCollapse, Position};
+use super::entity::{CanCollapse, Decoration, Position};
 use crate::style::properties::computed::{ComputedValues, PixelLength as Px, Position as Pos};
 
 use arrayvec::ArrayVec;
@@ -14,6 +14,7 @@ pub struct BlockFragmentConstructorResources<'a> {
     pub positions: WriteStorage<'a, Position>,
     pub can_collapse: WriteStorage<'a, CanCollapse>,
     pub computed_values: ReadStorage<'a, ComputedValues>,
+    pub decorations: ReadStorage<'a, Decoration>,
 }
 
 #[derive(Default)]
@@ -85,7 +86,7 @@ fn build_spacing_entity(
     resources: &mut BlockFragmentConstructorResources,
 ) -> Entity {
     let pos = Position {
-        height: height,
+        height,
         ..Default::default()
     };
     let builder = resources
@@ -108,12 +109,17 @@ fn build_spacing_entity(
 /// - a placeholder entity to enforce height constraints
 /// - An entity representing the bottom margin
 /// - an entity representing the bottom (border + padding)
-fn block_fragments<'a>(
+fn block_fragments(
     entity: Entity,
     resources: &mut BlockFragmentConstructorResources<'_>,
     offset_from_map: &mut HashMap<Entity, OffsetFrom>,
 ) -> ArrayVec<[Entity; 6]> {
     let style = resources.computed_values.get(entity);
+    let deco = resources
+        .decorations
+        .get(entity)
+        .cloned()
+        .unwrap_or_default();
 
     let mut built_entities = ArrayVec::new();
 
@@ -123,35 +129,16 @@ fn block_fragments<'a>(
             .get(entity)
             .expect("Entity needs to have a position");
 
-        let &Pos {
-            height,
-            margin_top,
-            margin_bottom,
-            padding_top,
-            padding_bottom,
-            border_top_width,
-            border_bottom_width,
-            ..
-        } = &*style.position;
-
+        let &Pos { height, .. } = &*style.position;
         let height = height.absolute(Px(0.0), pos.width);
 
-        // TODO: Margin and Padding size is relative to container width!
-        let margin_top = margin_top.absolute(Px(0.0), pos.width);
-        let border_top = border_top_width;
-        let padding_top = padding_top.absolute(Px(0.0));
-
-        let margin_bottom = margin_bottom.absolute(Px(0.0), pos.width);
-        let border_bottom = border_bottom_width;
-        let padding_bottom = padding_bottom.absolute(Px(0.0));
-
-        if margin_top > Px(0.0) {
-            let entity = build_spacing_entity(true, margin_top, resources);
+        if deco.margin.top > Px(0.0) {
+            let entity = build_spacing_entity(true, deco.margin.top, resources);
             built_entities.push(entity);
         }
 
-        if padding_top > Px(0.0) || border_top > Px(0.0) {
-            let entity = build_spacing_entity(false, padding_top + border_top, resources);
+        if deco.padding.top > Px(0.0) || deco.border.top > Px(0.0) {
+            let entity = build_spacing_entity(false, deco.padding.top + deco.border.top, resources);
             built_entities.push(entity);
         }
 
@@ -170,13 +157,14 @@ fn block_fragments<'a>(
             );
         }
 
-        if padding_bottom > Px(0.0) || border_bottom > Px(0.0) {
-            let entity = build_spacing_entity(false, padding_bottom + border_bottom, resources);
+        if deco.padding.bottom > Px(0.0) || deco.border.bottom > Px(0.0) {
+            let entity =
+                build_spacing_entity(false, deco.padding.bottom + deco.border.bottom, resources);
             built_entities.push(entity);
         }
 
-        if margin_bottom > Px(0.0) {
-            let entity = build_spacing_entity(true, margin_bottom, resources);
+        if deco.margin.bottom > Px(0.0) {
+            let entity = build_spacing_entity(true, deco.margin.bottom, resources);
             built_entities.push(entity);
         }
 
@@ -208,13 +196,11 @@ impl<I: Iterator<Item = Entity>> BlockFragmentConstructor<I> {
         if let Some(entity) = self.inner_iter.next() {
             Some(entity)
         } else {
-            if let Some(new_entity) = self.outer_iter.next() {
+            self.outer_iter.next().map(|new_entity| {
                 self.inner_iter =
                     block_fragments(new_entity, resources, offset_from_map).into_iter();
-                Some(self.inner_iter.next().expect("Internal Error"))
-            } else {
-                None
-            }
+                self.inner_iter.next().expect("Internal Error")
+            })
         }
     }
 }
@@ -257,7 +243,7 @@ impl BlockFormattingContext {
             if pos.height == Px(0.0) {
                 continue;
             }
-            if let Some(_) = can_collapse.get(entity) {
+            if can_collapse.get(entity).is_some() {
                 if let Some(previous_margin) = previous_margin_size {
                     previous_margin_size = Some(previous_margin.max(pos.height));
                 } else {

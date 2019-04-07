@@ -43,10 +43,10 @@ impl InlineSizeContext {
         width: Px,
         resources: &mut InlineSizeResources,
     ) {
-        resources.positions.get_mut(entity).map(|pos| {
+        if let Some(mut pos) = resources.positions.get_mut(entity) {
             pos.x = offset;
             pos.width = width;
-        });
+        }
     }
 }
 
@@ -65,22 +65,18 @@ impl<'a> System<'a> for InlineSizeContext {
             let style = resources.computed_values.get(entity);
             let container_width = self.get_container_width(entity, &resources);
 
-            match (style, container_width) {
-                (Some(style), Some(container_width)) => {
-                    let mut decoration = calculate_padding_and_border(container_width, &style);
-                    let inline_size =
-                        calculate_inline_size(container_width, &mut decoration, &style);
-                    let inline_offset =
-                        decoration.margin.left + decoration.border.left + decoration.padding.left;
+            if let (Some(style), Some(container_width)) = (style, container_width) {
+                let mut decoration = calculate_padding_and_border(container_width, &style);
+                let inline_size = calculate_inline_size(container_width, &mut decoration, &style);
+                let inline_offset =
+                    decoration.margin.left + decoration.border.left + decoration.padding.left;
 
-                    self.set_inline_pos(entity, inline_offset, inline_size, &mut resources);
+                self.set_inline_pos(entity, inline_offset, inline_size, &mut resources);
 
-                    if decoration != Default::default() {
-                        resources.decorations.insert(entity, decoration).unwrap();
-                    }
+                if decoration != Default::default() {
+                    resources.decorations.insert(entity, decoration).unwrap();
                 }
-                _ => {}
-            };
+            }
         }
     }
 }
@@ -131,7 +127,7 @@ pub fn calculate_inline_size(
     deco: &mut Decoration,
     ComputedValues { position, .. }: &ComputedValues,
 ) -> Px {
-    let width = match position.width {
+    match position.width {
         GenericSize::Auto => {
             deco.margin.left = position.margin_left.absolute(Px(0.0), container_size);
             deco.margin.right = position.margin_right.absolute(Px(0.0), container_size);
@@ -178,7 +174,5 @@ pub fn calculate_inline_size(
             };
             width
         }
-    };
-
-    width
+    }
 }

@@ -6,7 +6,7 @@ pub fn transform_text(text: &mut String) {
         }
     }
 
-    let mut last_whitespace = false;
+    let mut last_whitespace = true;
     text.retain(|ch| {
         let should_keep = !(last_whitespace && is_whitespace(ch));
         last_whitespace = is_whitespace(ch);

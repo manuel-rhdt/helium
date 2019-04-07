@@ -130,7 +130,7 @@ impl DomAccess for NodeRef<NodeData> {
     {
         NodeRef::new(NodeData::from_html_data(ParsedData::Element(ElementData {
             template_contents: None,
-            name: name,
+            name,
             attributes: RefCell::new(attributes.into_iter().collect()),
         })))
     }

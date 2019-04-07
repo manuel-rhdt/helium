@@ -384,11 +384,7 @@ impl<'i> PropertyValue<'i> for Quantity {
                 return Err(input.new_unexpected_token_error(token));
             }
         };
-
-        Ok(Quantity {
-            value: value,
-            unit: unit,
-        })
+        Ok(Quantity { value, unit })
     }
 }
 
