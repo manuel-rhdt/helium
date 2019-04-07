@@ -12,7 +12,7 @@ impl From<FontUnit> for PixelLength {
     }
 }
 
-fn scale(fu: FontUnit, font_size: PixelLength) -> PixelLength {
+pub fn scale(fu: FontUnit, font_size: PixelLength) -> PixelLength {
     font_size * PixelLength::from(fu)
 }
 
@@ -68,14 +68,4 @@ pub fn layout_text<'a>(
         }
         None
     })
-}
-
-pub fn font_height(font_size: PixelLength) -> PixelLength {
-    let metrics = BuiltInFont::Helvetica.metrics();
-    scale(metrics.ascender - metrics.descender, font_size)
-}
-
-pub fn font_ascender(font_size: PixelLength) -> PixelLength {
-    let metrics = BuiltInFont::Helvetica.metrics();
-    scale(metrics.ascender, font_size)
 }

@@ -173,6 +173,7 @@ impl EntityConstructor {
         entity_builer.with(Position::default()).build().into()
     }
 
+    /// builds an anonymous inline box for text nodes
     fn build_text_entity(
         &mut self,
         style: ComputedValues,
@@ -232,7 +233,7 @@ impl EntityConstructor {
         let mut inline_formatting_context = InlineFormattingContext { elements: vec![] };
         for child in node.children() {
             if let Some(LayoutEntity(child_entity)) = child.layout_entity.get() {
-                inline_formatting_context.elements.push(child_entity.id());
+                inline_formatting_context.elements.push(child_entity);
             }
         }
 

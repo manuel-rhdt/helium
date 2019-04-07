@@ -1,7 +1,6 @@
-
-mod whitespace;
 pub mod builtin;
 pub mod font;
+mod whitespace;
 
-pub use builtin::{font_height, font_ascender, layout_text};
+pub use builtin::layout_text;
 pub use font::Font;

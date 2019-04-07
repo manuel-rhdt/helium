@@ -3,31 +3,12 @@ use super::entity::{Position, Text, UnscannedText};
 use super::text::{font::match_font, layout_text};
 use crate::style::properties::computed::{ComputedValues, LineHeight, PixelLength as Px};
 
-use specs::{
-    world::{EntitiesRes, Index},
-    Component, Entity, VecStorage,
-};
+use specs::{Component, Entity, VecStorage};
 use specs::{Entities, Join, ReadStorage, System, WriteStorage};
 
 #[derive(Debug, Clone)]
 pub struct InlineFormattingContext {
-    pub elements: Vec<Index>,
-}
-
-impl InlineFormattingContext {
-    pub fn element_entities<'a>(
-        &'a self,
-        entities_res: &'a EntitiesRes,
-    ) -> impl 'a + Iterator<Item = Entity> {
-        self.elements.iter().filter_map(move |&index| {
-            let entity = entities_res.entity(index);
-            if entities_res.is_alive(entity) {
-                Some(entity)
-            } else {
-                None
-            }
-        })
-    }
+    pub elements: Vec<Entity>,
 }
 
 impl Component for InlineFormattingContext {
@@ -66,14 +47,18 @@ impl<'a> System<'a> for InlineLayout {
 
             let mut lines = vec![];
 
-            for child in inline_formatting_context.element_entities(&entities) {
-                let mut content = unscanned_text.get_mut(child).unwrap().clone();
+            for &child in &inline_formatting_context.elements {
+                let mut content = if let Some(content) = unscanned_text.get_mut(child) {
+                    content.clone()
+                } else {
+                    continue;
+                };
                 let font = match_font(&style).unwrap();
                 let layout_lines =
                     layout_text(&mut content.characters, &font, style.font.font_size, width);
 
                 for line_content in layout_lines {
-                    let font_height = super::text::font_height(style.font.font_size);
+                    let font_height = font.font_height(style.font.font_size);
                     let line_height = match style.font.line_height {
                         LineHeight::Normal => font_height * 1.2,
                         LineHeight::LengthPercentage(lp) => lp.absolute(style.font.font_size),
@@ -96,7 +81,7 @@ impl<'a> System<'a> for InlineLayout {
                                 glyphs: line_content.to_owned(),
                                 font,
                                 font_size: style.font.font_size,
-                                baseline: super::text::font_ascender(style.font.font_size)
+                                baseline: font.ascender(style.font.font_size)
                                     + line_gap / 2.0,
                             },
                             &mut text,
