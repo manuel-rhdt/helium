@@ -1,6 +1,8 @@
 use super::block::BlockContainer;
 use super::entity::{CanCollapse, Decoration, Position};
-use crate::style::properties::computed::{ComputedValues, PixelLength as Px, Position as Pos};
+use crate::style::properties::computed::{
+    ComputedValues, GenericSize, PixelLength as Px, Position as Pos,
+};
 
 use arrayvec::ArrayVec;
 use shred_derive::SystemData;
@@ -113,7 +115,7 @@ fn block_fragments(
     entity: Entity,
     resources: &mut BlockFragmentConstructorResources<'_>,
     offset_from_map: &mut HashMap<Entity, OffsetFrom>,
-) -> ArrayVec<[Entity; 6]> {
+) -> ArrayVec<[Entity; 7]> {
     let style = resources.computed_values.get(entity);
     let deco = resources
         .decorations
@@ -130,7 +132,8 @@ fn block_fragments(
             .expect("Entity needs to have a position");
 
         let &Pos { height, .. } = &*style.position;
-        let height = height.absolute(Px(0.0), pos.width);
+        let height_is_auto = height == GenericSize::Auto;
+        let height = pos.height;
 
         if deco.margin.top > Px(0.0) {
             let entity = build_spacing_entity(true, deco.margin.top, resources);
@@ -142,16 +145,24 @@ fn block_fragments(
             built_entities.push(entity);
         }
 
+        let marker = if !height_is_auto {
+            let marker = build_spacing_entity(true, Px(0.0), resources);
+            built_entities.push(marker);
+            Some(marker)
+        } else {
+            None
+        };
+
         built_entities.push(entity);
 
         // if we have a given height, insert a placeholder element
-        if height > Px(0.0) {
+        if !height_is_auto {
             let placeholder = build_spacing_entity(false, Px(0.0), resources);
             built_entities.push(placeholder);
             offset_from_map.insert(
                 placeholder,
                 OffsetFrom {
-                    entity,
+                    entity: marker.unwrap(),
                     offset: height,
                 },
             );
@@ -177,7 +188,7 @@ fn block_fragments(
 
 pub struct BlockFragmentConstructor<I> {
     outer_iter: I,
-    inner_iter: arrayvec::IntoIter<[Entity; 6]>,
+    inner_iter: arrayvec::IntoIter<[Entity; 7]>,
 }
 
 impl<I: Iterator<Item = Entity>> BlockFragmentConstructor<I> {
@@ -231,23 +242,23 @@ impl BlockFormattingContext {
         let mut previous_margin_size: Option<Px> = None;
 
         for &entity in &self.entities {
-            if let Some(offset) = offset_from_map.get(&entity) {
-                let from_pos = positions.get(offset.entity).expect("Invalid Entity");
-                cursor = from_pos.y + offset.offset;
-                continue;
-            }
-
-            let pos = positions.get_mut(entity).expect("Invalid Entity");
+            let pos = if let Some(offset) = offset_from_map.get(&entity) {
+                let from_pos = *positions.get(offset.entity).expect("Invalid Entity");
+                let mut pos = positions.get_mut(entity).expect("Invalid Entity");
+                pos.height = from_pos.y + offset.offset - cursor;
+                pos
+            } else {
+                positions.get_mut(entity).expect("Invalid Entity")
+            };
 
             // Handle margin collapse
-            if pos.height == Px(0.0) {
-                continue;
-            }
-            if can_collapse.get(entity).is_some() {
+
+            let can_collapse = can_collapse.get(entity).is_some() || pos.height == Px(0.0);
+            if can_collapse {
                 if let Some(previous_margin) = previous_margin_size {
                     previous_margin_size = Some(previous_margin.max(pos.height));
                 } else {
-                    previous_margin_size = Some(pos.height);
+                    previous_margin_size = Some(dbg!(pos.height));
                 }
                 pos.y = cursor;
             } else {

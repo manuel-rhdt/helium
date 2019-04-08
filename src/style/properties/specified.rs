@@ -1,7 +1,7 @@
 use std::borrow::{Cow, ToOwned};
 use std::str::FromStr;
 
-use cssparser::{Color, CowRcStr, ParseError, Parser, Token};
+use cssparser::{match_ignore_ascii_case, Color, CowRcStr, ParseError, Parser, Token};
 use helium_derive::{ParseDeclaration, PropertyValue};
 
 pub trait ParseDeclaration<'i> {
@@ -276,7 +276,7 @@ impl FromStr for Unit {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match_ignore_ascii_case! { s,
             "px" => Ok(Unit::Px),
             "cm" => Ok(Unit::Cm),
             "pt" => Ok(Unit::Pt),

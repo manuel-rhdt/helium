@@ -27,11 +27,8 @@ impl<'a> System<'a> for AssignHeights {
         ) in (&entities, &computed_values, &containing_block).join()
         {
             let container_pos = positions.get(container).cloned().unwrap_or_default();
-            if let Some(mut pos) =  positions.get_mut(entity) {
-                pos.height = style
-                    .position
-                    .height
-                    .absolute(Px(0.0), container_pos.height)
+            if let Some(mut pos) = positions.get_mut(entity) {
+                pos.height = style.position.height.absolute(Px(0.0), container_pos.width)
             }
         }
     }

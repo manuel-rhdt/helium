@@ -197,20 +197,20 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_block_formatting_context(&mut self, node: DomRef) {
-        let mut block_formatting_context = BlockContainer { elements: vec![] };
+        let mut block_container = BlockContainer { elements: vec![] };
         for child in node.children() {
             if let Some(child_entity) = child.layout_entity.get() {
-                block_formatting_context.elements.push(child_entity.0);
+                block_container.elements.push(child_entity.0);
             } else {
                 continue;
             }
         }
 
-        if !block_formatting_context.elements.is_empty() {
+        if !block_container.elements.is_empty() {
             if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
                 self.world
                     .write_storage()
-                    .insert(self_entity, block_formatting_context)
+                    .insert(self_entity, block_container)
                     .unwrap();
             }
         }

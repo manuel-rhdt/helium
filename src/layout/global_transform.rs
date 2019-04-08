@@ -19,7 +19,7 @@ impl<'a> System<'a> for GlobalTransform {
 
         for (self_entity, formatting_context) in (&entities, &formatting_context).join() {
             let StackingContextRelativePosition {
-                x: global_x,
+                x: _global_x,
                 y: global_y,
             } = *global_pos.entry(self_entity).unwrap().or_insert(Default::default());
             for &child_entity in &formatting_context.entities {
@@ -30,7 +30,7 @@ impl<'a> System<'a> for GlobalTransform {
                     .insert(
                         child_entity,
                         StackingContextRelativePosition {
-                            x: global_x + rel_x,
+                            x: rel_x,
                             y: global_y + rel_y,
                         },
                     )

@@ -105,9 +105,10 @@ pub fn calculate_padding_and_border(
     deco.margin.top = position.margin_top.absolute(Px(0.0), container_size);
     deco.margin.bottom = position.margin_bottom.absolute(Px(0.0), container_size);
 
+    // TODO: Do this elsewhere?
     use cssparser::{Color, RGBA};
     deco.background_color = match background.background_color {
-        // TODO:
+        // TODO: CurrentColor
         Color::CurrentColor => RGBA::transparent(),
         Color::RGBA(rgba) => rgba,
     };

@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate cssparser;
 use structopt::StructOpt;
 
 use derive_more::From;
