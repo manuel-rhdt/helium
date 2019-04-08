@@ -25,13 +25,13 @@ impl InlineSizeContext {
         InlineSizeContext { device }
     }
 
-    pub fn get_container_width(
+    pub fn get_container_pos(
         &self,
         entity: Entity,
         resources: &InlineSizeResources,
-    ) -> Option<Px> {
+    ) -> Option<Position> {
         let container = resources.containing_blocks.get(entity)?.entity.0;
-        let container_width = resources.positions.get(container)?.width;
+        let container_width = *resources.positions.get(container)?;
 
         Some(container_width)
     }
@@ -63,15 +63,15 @@ impl<'a> System<'a> for InlineSizeContext {
         // calculate inline-sizes
         for &entity in sorted_entities.iter() {
             let style = resources.computed_values.get(entity);
-            let container_width = self.get_container_width(entity, &resources);
+            let container_pos = self.get_container_pos(entity, &resources);
 
-            if let (Some(style), Some(container_width)) = (style, container_width) {
-                let mut decoration = calculate_padding_and_border(container_width, &style);
-                let inline_size = calculate_inline_size(container_width, &mut decoration, &style);
+            if let (Some(style), Some(container_pos)) = (style, container_pos) {
+                let mut decoration = calculate_padding_and_border(container_pos.width, &style);
+                let inline_size = calculate_inline_size(container_pos.width, &mut decoration, &style);
                 let inline_offset =
                     decoration.margin.left + decoration.border.left + decoration.padding.left;
 
-                self.set_inline_pos(entity, inline_offset, inline_size, &mut resources);
+                self.set_inline_pos(entity, container_pos.x + inline_offset, inline_size, &mut resources);
 
                 if decoration != Default::default() {
                     resources.decorations.insert(entity, decoration).unwrap();
