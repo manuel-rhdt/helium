@@ -80,7 +80,7 @@ impl QualifiedRule {
 
 #[derive(Debug, Default)]
 pub struct PropertyDeclarationBlock {
-    declarations: Vec<PropertyDeclaration>,
+    declarations: Vec<PropertyDeclaration<'static>>,
 }
 
 impl PropertyDeclarationBlock {
@@ -267,7 +267,7 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
 pub struct StyleDeclarationParser {}
 
 impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
-    type Declaration = PropertyDeclaration;
+    type Declaration = PropertyDeclaration<'static>;
     type Error = ();
 
     fn parse_value<'t>(
@@ -282,6 +282,6 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
 impl<'i> AtRuleParser<'i> for StyleDeclarationParser {
     type PreludeNoBlock = ();
     type PreludeBlock = ();
-    type AtRule = PropertyDeclaration;
+    type AtRule = PropertyDeclaration<'static>;
     type Error = ();
 }

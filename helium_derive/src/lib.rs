@@ -26,6 +26,9 @@ pub fn parse_declaration_derive(input: proc_macro::TokenStream) -> proc_macro::T
 
 fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream {
     let name = &ast.ident;
+    let generics = &ast.generics;
+    let mut generics_appended = ast.generics.clone();
+    generics_appended.params.push(syn::parse2(quote!{ 'i }).unwrap());
     let computed_values = ast
         .attrs
         .iter()
@@ -109,11 +112,11 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
     }).collect::<Vec<_>>();
 
     let trait_impl = quote! {
-        impl<'i> ParseDeclaration<'i> for #name {
+        impl #generics_appended ParseDeclaration<'i> for #name #generics {
             type Error = ();
             type Computed = #computed_values;
 
-            fn parse_declaration(name: cssparser::CowRcStr<'i>, input: &mut cssparser::Parser<'i, '_>) -> Result<#name, ParseError<'i, Self::Error>> {
+            fn parse_declaration(name: cssparser::CowRcStr<'i>, input: &mut cssparser::Parser<'i, '_>) -> Result<Self, ParseError<'i, Self::Error>> {
                 #(#if_clauses)*
                 Err(input.new_custom_error(()))
             }

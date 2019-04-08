@@ -1,3 +1,4 @@
+use std::borrow::{Cow, ToOwned};
 use std::str::FromStr;
 
 use cssparser::{Color, CowRcStr, ParseError, Parser, Token};
@@ -87,8 +88,8 @@ where
 /// Holds any property declaration that is supported by helium, grouped
 /// by style structs.
 #[derive(Debug, Clone, ParseDeclaration)]
-pub enum PropertyDeclaration {
-    Position(Position),
+pub enum PropertyDeclaration<'a> {
+    Position(Position<'a>),
     Font(Font),
     Box(Box),
     Text(Text),
@@ -97,7 +98,7 @@ pub enum PropertyDeclaration {
 
 #[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Position"]
-pub enum Position {
+pub enum Position<'a> {
     #[property]
     Width(AutoOrQuantityOrPercentage),
     #[property]
@@ -109,7 +110,7 @@ pub enum Position {
     #[shorthand("margin-left", method = "left")]
     #[shorthand("margin-right", method = "right")]
     /// https://www.w3.org/TR/CSS22/box.html#propdef-margin
-    Margin(List<AutoOrQuantityOrPercentage>),
+    Margin(List<'a, AutoOrQuantityOrPercentage>),
 
     /// Spec: https://www.w3.org/TR/CSS22/box.html#propdef-margin-top
     #[property]
@@ -130,7 +131,7 @@ pub enum Position {
     #[shorthand("padding-left", method = "left")]
     #[shorthand("padding-right", method = "right")]
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding
-    Padding(List<QuantityOrPercentage>),
+    Padding(List<'a, QuantityOrPercentage>),
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-top
     #[property]
@@ -162,7 +163,7 @@ pub enum Position {
     #[shorthand("border-bottom-width", method = "bottom")]
     #[shorthand("border-left-width", method = "left")]
     #[shorthand("border-right-width", method = "right")]
-    BorderWidth(List<BorderWidth>),
+    BorderWidth(List<'a, BorderWidth>),
 
     #[property]
     BorderTopStyle(BorderStyle),
@@ -177,31 +178,31 @@ pub enum Position {
     #[shorthand("border-bottom-style", method = "bottom")]
     #[shorthand("border-left-style", method = "left")]
     #[shorthand("border-right-style", method = "right")]
-    BorderStyle(List<BorderStyle>),
+    BorderStyle(List<'a, BorderStyle>),
 
     #[property]
     #[shorthand("border-top-width", method = "width")]
     #[shorthand("border-top-style", method = "style")]
-    BorderTop(List<Border>),
+    BorderTop(List<'a, Border>),
     #[property]
     #[shorthand("border-bottom-width", method = "width")]
     #[shorthand("border-bottom-style", method = "style")]
-    BorderBottom(List<Border>),
+    BorderBottom(List<'a, Border>),
     #[property]
     #[shorthand("border-left-width", method = "width")]
     #[shorthand("border-left-style", method = "style")]
-    BorderLeft(List<Border>),
+    BorderLeft(List<'a, Border>),
     #[property]
     #[shorthand("border-right-width", method = "width")]
     #[shorthand("border-right-style", method = "style")]
-    BorderRight(List<Border>),
+    BorderRight(List<'a, Border>),
 
     #[property]
-    #[shorthand("border-top", method = "clone")]
-    #[shorthand("border-bottom", method = "clone")]
-    #[shorthand("border-left", method = "clone")]
-    #[shorthand("border-right", method = "clone")]
-    Border(List<Border>),
+    #[shorthand("border-top", method = "make_ref")]
+    #[shorthand("border-bottom", method = "make_ref")]
+    #[shorthand("border-left", method = "make_ref")]
+    #[shorthand("border-right", method = "make_ref")]
+    Border(List<'a, Border>),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -288,21 +289,43 @@ impl FromStr for Unit {
 }
 
 #[derive(Debug, Clone)]
-pub struct List<T> {
-    elements: Vec<T>,
+pub struct List<'a, T: 'a>
+where
+    [T]: ToOwned<Owned = Vec<T>>,
+{
+    elements: Cow<'a, [T]>,
 }
 
-impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for List<T> {
+impl<'a, 'i, T: PropertyValue<'i>> PropertyValue<'i> for List<'a, T>
+where
+    [T]: ToOwned<Owned = Vec<T>>,
+{
     type Error = T::Error;
 
     fn from_css_property_value(
         input: &mut Parser<'i, '_>,
     ) -> Result<Self, ParseError<'i, T::Error>> {
-        Vec::<T>::from_css_property_value(input).map(|elements| List { elements })
+        Vec::<T>::from_css_property_value(input).map(|elements| List {
+            elements: Cow::Owned(elements),
+        })
     }
 }
 
-impl<'a, T: Copy + PropertyValue<'a>> List<T> {
+impl<'a, T> List<'a, T>
+where
+    [T]: ToOwned<Owned = Vec<T>>,
+{
+    fn make_ref(&'a self) -> Self {
+        List {
+            elements: Cow::Borrowed(&self.elements),
+        }
+    }
+}
+
+impl<'a, T: Copy + PropertyValue<'a>> List<'a, T>
+where
+    [T]: ToOwned<Owned = Vec<T>>,
+{
     fn top(&self) -> T {
         match self.elements.len() {
             1 | 2 | 3 | 4 => self.elements[0],
@@ -515,7 +538,7 @@ pub enum Border {
     Style(BorderStyle),
 }
 
-impl List<Border> {
+impl<'a> List<'a, Border> {
     fn width(&self) -> BorderWidth {
         self.elements
             .iter()
@@ -559,7 +582,7 @@ pub enum FontFamily {
 pub enum FontStyle {
     Normal,
     Italic,
-    Oblique
+    Oblique,
 }
 
 impl Default for FontStyle {
@@ -571,7 +594,7 @@ impl Default for FontStyle {
 #[derive(Debug, Clone, PropertyValue)]
 pub enum FontWeight {
     Normal,
-    Bold
+    Bold,
 }
 
 impl Default for FontWeight {
