@@ -16,10 +16,31 @@ use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use construct::FlowConstructor;
 
-use specs::{Builder, RunNow};
+use specs::{Builder, Dispatcher, DispatcherBuilder, World};
 
 pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
-    let mut flow_constructor = FlowConstructor::new();
+    let inline_size_context = inline_size::InlineSizeContext::new(device);
+
+    // here we set the layout passes
+    let mut dispatcher: Dispatcher = DispatcherBuilder::new()
+        // Assign widths.
+        .with(inline_size_context, "inline-size", &[])
+        // Assign heights to all entities where it does not depend on their children.
+        .with(assign_heights::AssignHeights, "assign-heights", &["inline-size"])
+        .with(inline::InlineLayout, "inline-layout", &["assign-heights"])
+        // block formatting
+        .with(block_formatting_context::BlockFormattingContextBuilder::new(), "block-formatting", &["inline-layout"])
+        // Assign heights to the remaining entities.
+        .with(block_size::BlockSizeContext {}, "block-size", &["block-formatting"])
+        // Calculate positions relative to the parent stacking context
+        .with(global_transform::GlobalTransform, "global-transform", &["block-size"])
+        // Calculate positions relative to the parent sline
+        .with(inline::InlinePositionAssign, "inline-position-assign", &["global-transform"])
+        .build();
+
+    let mut world = World::new();
+    dispatcher.setup(&mut world.res);
+    let mut flow_constructor = FlowConstructor::new(world);
     dom.traverse(&mut flow_constructor);
 
     let mut layout_context = flow_constructor.layout_context();
@@ -47,29 +68,8 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
         )
         .unwrap();
 
-    // Assign widths.
-    let mut inline_size_context = inline_size::InlineSizeContext::new(device);
-    inline_size_context.run_now(&layout_context.res);
-
-    // Assign heights to all entities where it does not depend on their children.
-    assign_heights::AssignHeights.run_now(&layout_context.res);
-
-    // inline context layout
-    inline::InlineLayout.run_now(&layout_context.res);
-
-    layout_context.maintain();
-
-    // create block formatting contexts
-    block_formatting_context::BlockFormattingContextBuilder::new().run_now(&layout_context.res);
-
-    layout_context.maintain();
-
-    // Assign heights to the remaining entities.
-    let mut block_size_context = block_size::BlockSizeContext {};
-    block_size_context.run_now(&layout_context.res);
-
-    // Calculate positions relative to the parent stacking context
-    global_transform::GlobalTransform.run_now(&layout_context.res);
+    // perform the layout passes
+    dispatcher.dispatch(&layout_context.res);
 
     layout_context
 }

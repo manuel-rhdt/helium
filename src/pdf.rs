@@ -48,9 +48,10 @@ pub fn write_pdf(
                     page_context.concatenate_matrix(1.0, 0.0, 0.0, 1.0, x.into(), y.into())?;
                 }
                 &DisplayItem::Color(color) => {
-                    let red = color.red as f64 / u8::max_value() as f64;
-                    let green = color.green as f64 / u8::max_value() as f64;
-                    let blue = color.blue as f64 / u8::max_value() as f64;
+                    let floatize = |val: u8| f64::from(val) / f64::from(u8::max_value());
+                    let red = floatize(color.red);
+                    let green = floatize(color.green);
+                    let blue = floatize(color.blue);
                     page_context.device_rgb_fill_color(red, green, blue)?;
                 }
                 &DisplayItem::LineString {
@@ -58,22 +59,20 @@ pub fn write_pdf(
                     line_width,
                 } => {
                     let mut point_iter =
-                        points
-                            .into_iter()
-                            .map(|&crate::display_list::Point { x, y }| {
-                                let x = Pt::from(x);
-                                let y = Pt::from(device.height - y);
-                                (x, y)
-                            });
+                        points.iter().map(|&crate::display_list::Point { x, y }| {
+                            let x = Pt::from(x);
+                            let y = Pt::from(device.height - y);
+                            (x, y)
+                        });
 
-                    if let Some(pt) = point_iter.next() {
-                        page_context.move_to(pt.0, pt.1)?
+                    if let Some((x, y)) = point_iter.next() {
+                        page_context.move_to(x, y)?
                     } else {
                         continue;
                     }
 
-                    for pt in point_iter {
-                        page_context.line_to(pt.0, pt.1)?
+                    for (x, y) in point_iter {
+                        page_context.line_to(x, y)?
                     }
 
                     page_context.line_width(line_width.into())?;
@@ -93,9 +92,9 @@ pub fn write_pdf(
                     page_context.rect(x, y, width, height)?;
                     page_context.fill_path()?;
                 }
-                &DisplayItem::Text(display_list::Point { x, y }, font_size, font, ref text) => {
-                    if font_map.get(&font).is_none() {
-                        let val = add_font(page_context, &font)?;
+                &DisplayItem::Text(display_list::Point { x, y }, font_size, ref font, ref text) => {
+                    if font_map.get(font).is_none() {
+                        let val = add_font(page_context, font)?;
                         font_map.insert(font.clone(), val);
                     }
                     let (font_key, font) = &font_map[&font];
@@ -138,9 +137,7 @@ fn add_font(
 }
 
 fn encode_glyphs_simple(glyphs: &[u32], font: &Font) -> Vec<u8> {
-    let font = match font {
-        Font::Simple(font) => font,
-    };
+    let Font::Simple(font) = font;
     let encoding = font.encoding.as_ref().unwrap();
     let metrics = BuiltInFont::Helvetica.metrics();
     glyphs

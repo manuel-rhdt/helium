@@ -3,6 +3,8 @@
 pub use lemon_pdf::font::builtin::BuiltInFont;
 pub use lemon_pdf::font::FontUnit;
 
+use super::super::entity::Text;
+use super::super::inline::InlineFormatter;
 use super::{whitespace, Font};
 use crate::style::properties::computed::PixelLength;
 
@@ -21,9 +23,10 @@ pub fn layout_text<'a>(
     text: &'a mut String,
     font: &Font,
     font_size: PixelLength,
-    container_width: PixelLength,
-) -> impl 'a + Iterator<Item = Vec<u32>> {
-    let font = match font {
+    line_height: PixelLength,
+    inline_formatter: &mut InlineFormatter,
+) {
+    let font_metrics = match font {
         Font::BuiltIn(builtin_font) => builtin_font.metrics(),
     };
     let mut cursor = PixelLength(0.0);
@@ -37,9 +40,9 @@ pub fn layout_text<'a>(
     let text: &'a str = &*text;
 
     let mut glyph_indices = vec![];
-    text.char_indices().filter_map(move |(index, character)| {
-        let char_index = (font.unicode_mapping)(character);
-        let char_metric = char_index.and_then(|index| font.char_metrics.get(index));
+    for (index, character) in text.char_indices() {
+        let char_index = (font_metrics.unicode_mapping)(character);
+        let char_metric = char_index.and_then(|index| font_metrics.char_metrics.get(index));
 
         if let Some(char_metric) = char_metric {
             glyph_indices.push(char_index.unwrap() as u32);
@@ -47,9 +50,19 @@ pub fn layout_text<'a>(
             if character == ' ' {
                 last_space = (glyph_indices.len() - 1, cursor);
             }
-            if cursor > container_width {
-                let full_line = &glyph_indices[..last_space.0];
-                let result = Some(full_line.to_owned());
+            if cursor > inline_formatter.remaining_width() {
+                let full_line = glyph_indices[..last_space.0].to_owned();
+                if !full_line.is_empty() {
+                    split_fragment(
+                        full_line,
+                        font,
+                        font_size,
+                        line_height,
+                        last_space.1,
+                        inline_formatter,
+                    );
+                }
+                inline_formatter.new_line();
 
                 let mut i = 0;
                 glyph_indices.retain(|_| {
@@ -58,14 +71,44 @@ pub fn layout_text<'a>(
                 });
 
                 cursor = cursor - last_space.1;
-                return result;
             }
         } else {
-            return None;
+            continue;
         }
         if index + 1 == text.len() {
-            return Some(glyph_indices.clone());
+            split_fragment(
+                glyph_indices.clone(),
+                font,
+                font_size,
+                line_height,
+                cursor,
+                inline_formatter,
+            );
         }
-        None
-    })
+    }
+}
+
+fn split_fragment(
+    glyphs: Vec<u32>,
+    font: &Font,
+    font_size: PixelLength,
+    line_height: PixelLength,
+    line_width: PixelLength,
+    inline_formatter: &mut InlineFormatter,
+) {
+    let line_gap = line_height - font.font_height(font_size);
+    let fragment = inline_formatter
+        .entities
+        .build_entity()
+        .with(
+            Text {
+                glyphs,
+                font: font.clone(),
+                font_size,
+                baseline: font.ascender(font_size) + line_gap / 2.0,
+            },
+            inline_formatter.texts,
+        )
+        .build();
+    inline_formatter.append_fragment(fragment, line_width, line_height);
 }

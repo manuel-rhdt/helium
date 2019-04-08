@@ -1,9 +1,5 @@
 use super::block::BlockContainer;
-use super::block_formatting_context::BlockFormattingContext;
-use super::entity::{
-    CanCollapse, ContainingBlock, Decoration, LayoutEntity, Position,
-    StackingContextRelativePosition, Text, UnscannedText,
-};
+use super::entity::{ContainingBlock, LayoutEntity, Position, UnscannedText};
 use super::inline::InlineFormattingContext;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
@@ -17,15 +13,18 @@ use specs::{Builder, World};
 use std::fmt;
 
 /// tracks state while traversing the html document and builds a flow tree.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FlowConstructor {
     styles: Styles,
     entity_constructor: EntityConstructor,
 }
 
 impl FlowConstructor {
-    pub fn new() -> Self {
-        FlowConstructor::default()
+    pub fn new(world: World) -> Self {
+        FlowConstructor {
+            styles: Default::default(),
+            entity_constructor: EntityConstructor::new(world),
+        }
     }
 
     pub fn layout_context(self) -> super::entity::LayoutContext {
@@ -87,7 +86,9 @@ impl Traversal<DomRef> for FlowConstructor {
             }
             element_ref.as_node().set_style(style_builder.build());
         } else {
-            node.set_style(Default::default());
+            let parent_style = node.parent().and_then(|parent| parent.style());
+            let style = StyleBuilder::new(parent_style.unwrap_or_default()).build();
+            node.set_style(style);
         }
 
         // we insert the entities in tree order
@@ -109,25 +110,11 @@ impl fmt::Debug for EntityConstructor {
     }
 }
 
-impl Default for EntityConstructor {
-    fn default() -> Self {
-        let mut world = World::new();
-        world.register::<ContainingBlock>();
-        world.register::<Position>();
-        world.register::<ComputedValues>();
-        world.register::<BlockContainer>();
-        world.register::<InlineFormattingContext>();
-        world.register::<Text>();
-        world.register::<UnscannedText>();
-        world.register::<StackingContextRelativePosition>();
-        world.register::<BlockFormattingContext>();
-        world.register::<CanCollapse>();
-        world.register::<Decoration>();
+impl EntityConstructor {
+    fn new(world: World) -> Self {
         EntityConstructor { world }
     }
-}
 
-impl EntityConstructor {
     // called on top-down traversal
     fn build_entity(&mut self, node: DomRef) {
         let style = node.style().expect("No style was assigned");
@@ -200,7 +187,7 @@ impl EntityConstructor {
                 Display::Inline => true,
                 _ => false,
             };
-            
+
         if node.children().all(is_display_inline) {
             self.build_inline_formatting_context(node)
         } else {
@@ -234,7 +221,15 @@ impl EntityConstructor {
         let mut inline_formatting_context = InlineFormattingContext { elements: vec![] };
         for child in node.children() {
             if let Some(LayoutEntity(child_entity)) = child.layout_entity.get() {
-                inline_formatting_context.elements.push(child_entity);
+                if let Some(InlineFormattingContext { elements }) =
+                    self.world.write_storage().remove(child_entity)
+                {
+                    inline_formatting_context
+                        .elements
+                        .extend_from_slice(&elements);
+                } else {
+                    inline_formatting_context.elements.push(child_entity);
+                }
             }
         }
 

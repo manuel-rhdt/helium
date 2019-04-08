@@ -210,6 +210,10 @@ pub enum Font {
     #[property]
     FontFamily(CommaSeparated<FontFamily>),
     #[property]
+    FontStyle(FontStyle),
+    #[property]
+    FontWeight(FontWeight),
+    #[property]
     FontSize(FontSize),
     #[property]
     LineHeight(LineHeight),
@@ -547,5 +551,31 @@ pub enum LineHeight {
 pub enum FontFamily {
     SansSerif,
     Serif,
+    Monospace,
     Named(String),
+}
+
+#[derive(Debug, Clone, PropertyValue)]
+pub enum FontStyle {
+    Normal,
+    Italic,
+    Oblique
+}
+
+impl Default for FontStyle {
+    fn default() -> FontStyle {
+        FontStyle::Normal
+    }
+}
+
+#[derive(Debug, Clone, PropertyValue)]
+pub enum FontWeight {
+    Normal,
+    Bold
+}
+
+impl Default for FontWeight {
+    fn default() -> FontWeight {
+        FontWeight::Normal
+    }
 }

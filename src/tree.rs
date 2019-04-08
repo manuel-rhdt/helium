@@ -173,8 +173,12 @@ pub trait TreeLinked: Sized + Clone + Eq {
         let next_sibling_ref = next_sibling.as_ref().map(Self::StrongLink::get);
         let previous_sibling_ref = previous_sibling.as_ref().and_then(Self::WeakLink::get);
 
-        next_sibling_ref.map(|node| node.links().previous.set(previous_sibling.clone()));
-        previous_sibling_ref.map(|node| node.links().next.set(next_sibling.clone()));
+        if let Some(node) = next_sibling_ref {
+            node.links().previous.set(previous_sibling.clone());
+        }
+        if let Some(node) = previous_sibling_ref {
+            node.links().next.set(next_sibling.clone());
+        }
 
         if let Some(parent) = self
             .links()

@@ -1,8 +1,10 @@
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
-use super::specified::{self, BorderStyle, ParseDeclaration, Percentage, PropertyDeclaration, ComputedValue};
-pub use super::specified::{Display, FontFamily};
+use super::specified::{
+    self, BorderStyle, ComputedValue, ParseDeclaration, Percentage, PropertyDeclaration,
+};
+pub use super::specified::{Display, FontFamily, FontStyle, FontWeight};
 
 pub use cssparser::RGBA;
 
@@ -310,10 +312,13 @@ pub struct StyleBuilder {
 
 impl StyleBuilder {
     pub fn new(inherited_values: ComputedValues) -> Self {
-        // implement inheritance
+        let inherited = ComputedValues {
+            font: inherited_values.font.clone(),
+            ..Default::default()
+        };
         StyleBuilder {
             inherited_values,
-            ..Default::default()
+            new_values: inherited,
         }
     }
 
@@ -335,6 +340,8 @@ pub struct Box {
 #[derive(Debug, Clone)]
 pub struct Font {
     pub font_family: Vec<specified::FontFamily>,
+    pub font_style: FontStyle,
+    pub font_weight: FontWeight,
     pub font_size: PixelLength,
     pub line_height: LineHeight,
 }
@@ -343,6 +350,8 @@ impl Default for Font {
     fn default() -> Self {
         Self {
             font_family: vec![specified::FontFamily::SansSerif],
+            font_style: FontStyle::default(),
+            font_weight: FontWeight::default(),
             font_size: PixelLength::from_pt(12.0),
             line_height: LineHeight::default(),
         }
