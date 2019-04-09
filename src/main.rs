@@ -27,6 +27,8 @@ use specs::RunNow;
 #[derive(StructOpt, Debug)]
 #[structopt(name = "helium")]
 struct Options {
+    #[structopt(long = "no-compression")]
+    no_filter: bool,
     #[structopt(parse(from_os_str))]
     input: PathBuf,
 }
@@ -66,7 +68,7 @@ fn main() -> Result<(), Error> {
     text_builder.run_now(&layout_context.res);
     let display_list = text_builder.display_list;
 
-    pdf::write_pdf(display_list, device)?;
+    pdf::write_pdf(display_list, device, opt.no_filter)?;
 
     Ok(())
 }

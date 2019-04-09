@@ -24,6 +24,7 @@ impl From<PixelLength> for Pt {
 pub fn write_pdf(
     display_list: crate::display_list::DisplayList,
     device: Device,
+    no_filter: bool
 ) -> Result<(), Error> {
     let file = BufWriter::new(File::create("test_working.pdf")?);
     let mut context = Context::with_writer(file, Version::Pdf1_7)?;
@@ -35,7 +36,14 @@ pub fn write_pdf(
         device.width.into(),
         device.height.into(),
     ));
-    page.add_content(&mut context, Some(StreamFilter::Deflate), |page_context| {
+
+    let filter = if no_filter {
+        None
+    } else {
+        Some(StreamFilter::Deflate)
+    };
+
+    page.add_content(&mut context, filter, |page_context| {
         let mut font_map = HashMap::new();
 
         for item in display_list.items() {
