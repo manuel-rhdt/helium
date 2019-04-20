@@ -1,6 +1,6 @@
-use super::block::BlockContainer;
 use super::entity::{ContainingBlock, LayoutEntity, Position, UnscannedText};
 use super::inline::InlineFormattingContext;
+use super::normal_formatting::{BlockFormattingContext, BlockLevelElement};
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
 use crate::style::properties::computed::{ComputedValues, Display, StyleBuilder};
@@ -149,18 +149,18 @@ impl EntityConstructor {
     ) -> LayoutEntity {
         let entity_builer = self.world.create_entity().with(style);
 
-        let entity_builer = if let Some(parent_entity) = parent_entity {
-            entity_builer.with(ContainingBlock {
-                entity: parent_entity,
-            })
-        } else {
-            entity_builer
-        };
+        // let entity_builer = if let Some(parent_entity) = parent_entity {
+        //     entity_builer.with(ContainingBlock {
+        //         entity: parent_entity,
+        //     })
+        // } else {
+        //     entity_builer
+        // };
 
         entity_builer.with(Position::default()).build().into()
     }
 
-    /// builds an anonymous inline box for text nodes
+    /// builds an anonymous block box for text nodes
     fn build_text_entity(
         &mut self,
         style: ComputedValues,
@@ -197,20 +197,35 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_block_formatting_context(&mut self, node: DomRef) {
-        let mut block_container = BlockContainer { elements: vec![] };
+        let mut block_formatting_context = BlockFormattingContext { elements: vec![] };
+
+        if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
+            block_formatting_context.elements.push(BlockLevelElement::ContainerStart(self_entity))
+        }
+
         for child in node.children() {
-            if let Some(child_entity) = child.layout_entity.get() {
-                block_container.elements.push(child_entity.0);
-            } else {
-                continue;
+            if let Some(LayoutEntity(child_entity)) = child.layout_entity.get() {
+                if let Some(BlockFormattingContext { elements }) =
+                    self.world.write_storage().remove(child_entity)
+                {
+                    block_formatting_context
+                        .elements
+                        .extend_from_slice(&elements);
+                } else {
+                    block_formatting_context.elements.push(BlockLevelElement::Leaf(child_entity));
+                }
             }
         }
 
-        if !block_container.elements.is_empty() {
+        if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
+            block_formatting_context.elements.push(BlockLevelElement::ContainerEnd(self_entity))
+        }
+
+        if !block_formatting_context.elements.is_empty() {
             if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
                 self.world
                     .write_storage()
-                    .insert(self_entity, block_container)
+                    .insert(self_entity, block_formatting_context)
                     .unwrap();
             }
         }

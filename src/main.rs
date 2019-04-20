@@ -54,13 +54,14 @@ fn main() -> Result<(), Error> {
         height: PixelLength(1123.0),
     };
 
-    let layout_context = layout::layout(dom.clone(), device);
+    let mut layout_context = layout::layout(dom.clone(), device);
 
     let mut dotfile = fs::File::create("graph.dot")?;
     dom.serialize_dot_graph(&mut dotfile)?;
 
     let display_list = display_list::DisplayList::default();
     let mut decorations_builder = display_list::DisplayDecoration { display_list };
+    decorations_builder.setup(&mut layout_context.res);
     decorations_builder.run_now(&layout_context.res);
     let mut text_builder = display_list::DisplayText {
         display_list: decorations_builder.display_list,

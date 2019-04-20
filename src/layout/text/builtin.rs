@@ -3,10 +3,10 @@
 pub use lemon_pdf::font::builtin::BuiltInFont;
 pub use lemon_pdf::font::FontUnit;
 
-use super::super::entity::Text;
-use super::super::inline::InlineFormatter;
-use super::{whitespace, Font};
 use crate::style::properties::computed::PixelLength;
+
+use std::collections::VecDeque;
+use std::str::Chars;
 
 impl From<FontUnit> for PixelLength {
     fn from(fu: FontUnit) -> PixelLength {
@@ -18,97 +18,146 @@ pub fn scale(fu: FontUnit, font_size: PixelLength) -> PixelLength {
     font_size * PixelLength::from(fu)
 }
 
-/// Returns lines
-pub fn layout_text<'a>(
-    text: &'a mut String,
-    font: &Font,
-    font_size: PixelLength,
-    line_height: PixelLength,
-    inline_formatter: &mut InlineFormatter,
-) {
-    let font_metrics = match font {
-        Font::BuiltIn(builtin_font) => builtin_font.metrics(),
-    };
-    let mut cursor = PixelLength(0.0);
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct InlineFragment {
+    pub glyph_indices: Vec<u32>,
+    pub advance: PixelLength,
+    pub new_line_after: bool
+}
 
-    whitespace::transform_text(text);
-
-    // tracks the string index of the last space and the cursor position for the text after the last space
-    let mut last_space = (0, PixelLength(0.0));
-
-    // make an immutable borrow of text.
-    let text: &'a str = &*text;
-
-    let mut glyph_indices = vec![];
-    for (index, character) in text.char_indices() {
-        let char_index = (font_metrics.unicode_mapping)(character);
-        let char_metric = char_index.and_then(|index| font_metrics.char_metrics.get(index));
-
-        if let Some(char_metric) = char_metric {
-            glyph_indices.push(char_index.unwrap() as u32);
-            cursor += scale(char_metric.advance_width, font_size);
-            if character == ' ' {
-                last_space = (glyph_indices.len() - 1, cursor);
-            }
-            if cursor > inline_formatter.remaining_width() {
-                let full_line = glyph_indices[..last_space.0].to_owned();
-                if !full_line.is_empty() {
-                    split_fragment(
-                        full_line,
-                        font,
-                        font_size,
-                        line_height,
-                        last_space.1,
-                        inline_formatter,
-                    );
-                }
-                inline_formatter.new_line();
-
-                let mut i = 0;
-                glyph_indices.retain(|_| {
-                    i += 1;
-                    (i - 1) > last_space.0
-                });
-
-                cursor = cursor - last_space.1;
-            }
-        } else {
-            continue;
+impl InlineFragment {
+    pub fn new_line() -> Self {
+        InlineFragment {
+            new_line_after: true,
+            ..Default::default()
         }
-        if index + 1 == text.len() {
-            split_fragment(
-                glyph_indices.clone(),
-                font,
-                font_size,
-                line_height,
-                cursor,
-                inline_formatter,
-            );
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.glyph_indices.is_empty()
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct LineIsFullError;
+
+#[derive(Debug, Clone)]
+pub struct InlineFragmentIteratorState {
+    /// an index into the text content of the element describing the current
+    /// progress
+    progress: usize,
+    /// An index into the `glyph_indices` buffer, pointing to the last breakpoint.
+    last_breakpoint: usize,
+    /// The cursor position just before `last_breakpoint`.
+    last_line_advance: PixelLength,
+    /// The cursor position just after `last_breakpoint`.
+    next_line_start: PixelLength,
+    /// the current cursor position
+    cursor: PixelLength,
+    /// a buffer of glyph indices.
+    glyph_indices: VecDeque<u32>,
+    /// The font used to determine the glyphs and their advances.
+    font: BuiltInFont,
+    /// The font size in pixels used to scale the glyph metrics
+    font_size: PixelLength,
+    pub remaining_line: PixelLength,
+}
+
+impl InlineFragmentIteratorState {
+    pub fn new(font: BuiltInFont, font_size: PixelLength) -> Self {
+        InlineFragmentIteratorState {
+            progress: 0,
+            last_breakpoint: 0,
+            last_line_advance: PixelLength(0.0),
+            next_line_start: PixelLength(0.0),
+            cursor: PixelLength(0.0),
+            glyph_indices: VecDeque::new(),
+            font,
+            font_size,
+            remaining_line: PixelLength(0.0),
+        }
+    }
+
+    fn push_character(&mut self, character: char) -> Result<(), LineIsFullError> {
+        self.progress = character.len_utf8();
+        if character == ' ' {
+            self.last_breakpoint = self.glyph_indices.len();
+            self.last_line_advance = self.cursor;
+        }
+
+        let char_index = (self.font.metrics().unicode_mapping)(character);
+        let char_metric = char_index
+            .and_then(|index| self.font.metrics().char_metrics.get(index))
+            .unwrap();
+        self.glyph_indices.push_back(char_index.unwrap() as u32);
+
+        self.cursor += scale(char_metric.advance_width, self.font_size);
+
+        if character == ' ' {
+            self.next_line_start = self.cursor;
+        }
+
+        if self.cursor > self.remaining_line {
+            Err(LineIsFullError)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn create_line(&mut self, last_line: bool) -> Option<InlineFragment> {
+        let finished_line: Vec<_> = self.glyph_indices.drain(..self.last_breakpoint).collect();
+        if !finished_line.is_empty() {
+            let advance = self.last_line_advance;
+
+            // reset some line-dependent values
+            self.cursor = self.cursor - self.next_line_start;
+            self.last_line_advance = PixelLength(0.0);
+            self.next_line_start = PixelLength(0.0);
+            self.last_breakpoint = 0;
+
+            Some(InlineFragment {
+                glyph_indices: finished_line,
+                advance,
+                new_line_after: !last_line,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn iter<'a>(&self, text: &'a str) -> impl 'a + Iterator<Item=InlineFragment> {
+        InlineFragmentIterator {
+            state: self.clone(),
+            text: text[self.progress..].chars(),
         }
     }
 }
 
-fn split_fragment(
-    glyphs: Vec<u32>,
-    font: &Font,
-    font_size: PixelLength,
-    line_height: PixelLength,
-    line_width: PixelLength,
-    inline_formatter: &mut InlineFormatter,
-) {
-    let line_gap = line_height - font.font_height(font_size);
-    let fragment = inline_formatter
-        .entities
-        .build_entity()
-        .with(
-            Text {
-                glyphs,
-                font: font.clone(),
-                font_size,
-                baseline: font.ascender(font_size) + line_gap / 2.0,
-            },
-            inline_formatter.texts,
-        )
-        .build();
-    inline_formatter.append_fragment(fragment, line_width, line_height);
+pub struct InlineFragmentIterator<'a> {
+    state: InlineFragmentIteratorState,
+    text: Chars<'a>,
+}
+
+impl<'a> Iterator for InlineFragmentIterator<'a> {
+    type Item = InlineFragment;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(character) = self.text.next() {
+                if let Err(LineIsFullError) = self.state.push_character(character) {
+                    if let Some(line) = self.state.create_line(false) {
+                        break Some(line);
+                    } else {
+                        // returning an empty fragment signals that a
+                        // new line has to be started
+                        break Some(InlineFragment::new_line());
+                    }
+                }
+            } else {
+                // Return the last line, if any fragments are still remaining.
+                // `create_line` returns `None` if no fragments can be created.
+                break self.state.create_line(true);
+            }
+        }
+    }
 }

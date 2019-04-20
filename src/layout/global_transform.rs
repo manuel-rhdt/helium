@@ -1,4 +1,4 @@
-use super::block_formatting_context::BlockFormattingContext;
+use super::normal_formatting::BlockFormattingContext;
 use super::entity::{Position, StackingContextRelativePosition};
 
 use specs::{Entities, ReadStorage, System, WriteStorage};
@@ -22,7 +22,7 @@ impl<'a> System<'a> for GlobalTransform {
                 x: _global_x,
                 y: global_y,
             } = *global_pos.entry(self_entity).unwrap().or_insert(Default::default());
-            for &child_entity in &formatting_context.entities {
+            for &child_entity in &formatting_context.elements {
                 let Position {
                     x: rel_x, y: rel_y, ..
                 } = *pos.get(child_entity).unwrap();

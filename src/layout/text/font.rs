@@ -1,4 +1,6 @@
-use super::builtin::{scale, BuiltInFont};
+use super::builtin::{scale};
+
+pub use super::builtin::BuiltInFont;
 
 use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, PixelLength,
