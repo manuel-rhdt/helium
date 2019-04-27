@@ -1,6 +1,8 @@
 pub mod builtin;
 pub mod font;
-mod whitespace;
+pub mod whitespace;
 
+pub use builtin::{
+    InlineFragment, InlineFragmentIterator, InlineFragmentIteratorState, LineIsFullError,
+};
 pub use font::Font;
-pub use builtin::{InlineFragment, InlineFragmentIteratorState, InlineFragmentIterator};

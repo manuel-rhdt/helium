@@ -1,4 +1,4 @@
-use super::entity::{ContainingBlock, LayoutEntity, Position, UnscannedText};
+use super::entity::{LayoutEntity, Position, UnscannedText};
 use super::inline::InlineFormattingContext;
 use super::normal_formatting::{BlockFormattingContext, BlockLevelElement};
 use crate::parser::{ElementData, ParsedData};
@@ -123,14 +123,11 @@ impl EntityConstructor {
             return;
         }
 
-        let parent_entity = node.parent().and_then(|x| x.layout_entity.get());
         let entity = match &node.html_data {
-            ParsedData::Element(_) => self.build_block_entity(style, parent_entity),
+            ParsedData::Element(_) => self.build_block_entity(style),
             ParsedData::Document(_) => self.build_root_entity(),
-            ParsedData::Text(string) => {
-                self.build_text_entity(style, parent_entity, &string.borrow())
-            }
-            _ => self.build_block_entity(style, parent_entity),
+            ParsedData::Text(string) => self.build_text_entity(style, &string.borrow()),
+            _ => self.build_block_entity(style),
         };
 
         node.layout_entity.set(Some(entity));
@@ -138,36 +135,18 @@ impl EntityConstructor {
 
     // called on top-down traversal
     fn build_root_entity(&mut self) -> LayoutEntity {
-        self.build_block_entity(Default::default(), None)
+        self.build_block_entity(Default::default())
     }
 
     // called on top-down traversal
-    fn build_block_entity(
-        &mut self,
-        style: ComputedValues,
-        parent_entity: Option<LayoutEntity>,
-    ) -> LayoutEntity {
+    fn build_block_entity(&mut self, style: ComputedValues) -> LayoutEntity {
         let entity_builer = self.world.create_entity().with(style);
-
-        // let entity_builer = if let Some(parent_entity) = parent_entity {
-        //     entity_builer.with(ContainingBlock {
-        //         entity: parent_entity,
-        //     })
-        // } else {
-        //     entity_builer
-        // };
-
         entity_builer.with(Position::default()).build().into()
     }
 
     /// builds an anonymous block box for text nodes
-    fn build_text_entity(
-        &mut self,
-        style: ComputedValues,
-        parent_entity: Option<LayoutEntity>,
-        text: &str,
-    ) -> LayoutEntity {
-        let LayoutEntity(entity) = self.build_block_entity(style, parent_entity);
+    fn build_text_entity(&mut self, style: ComputedValues, text: &str) -> LayoutEntity {
+        let LayoutEntity(entity) = self.build_block_entity(style);
         self.world
             .write_storage()
             .insert(
@@ -200,7 +179,9 @@ impl EntityConstructor {
         let mut block_formatting_context = BlockFormattingContext { elements: vec![] };
 
         if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
-            block_formatting_context.elements.push(BlockLevelElement::ContainerStart(self_entity))
+            block_formatting_context
+                .elements
+                .push(BlockLevelElement::ContainerStart(self_entity))
         }
 
         for child in node.children() {
@@ -212,13 +193,17 @@ impl EntityConstructor {
                         .elements
                         .extend_from_slice(&elements);
                 } else {
-                    block_formatting_context.elements.push(BlockLevelElement::Leaf(child_entity));
+                    block_formatting_context
+                        .elements
+                        .push(BlockLevelElement::Leaf(child_entity));
                 }
             }
         }
 
         if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
-            block_formatting_context.elements.push(BlockLevelElement::ContainerEnd(self_entity))
+            block_formatting_context
+                .elements
+                .push(BlockLevelElement::ContainerEnd(self_entity))
         }
 
         if !block_formatting_context.elements.is_empty() {

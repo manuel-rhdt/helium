@@ -24,7 +24,7 @@ impl From<PixelLength> for Pt {
 pub fn write_pdf(
     display_list: crate::display_list::DisplayList,
     device: Device,
-    no_filter: bool
+    no_filter: bool,
 ) -> Result<(), Error> {
     let file = BufWriter::new(File::create("test_working.pdf")?);
     let mut context = Context::with_writer(file, Version::Pdf1_7)?;

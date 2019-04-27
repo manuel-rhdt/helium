@@ -67,11 +67,17 @@ impl<'a> System<'a> for InlineSizeContext {
 
             if let (Some(style), Some(container_pos)) = (style, container_pos) {
                 let mut decoration = calculate_padding_and_border(container_pos.width, &style);
-                let inline_size = calculate_inline_size(container_pos.width, &mut decoration, &style);
+                let inline_size =
+                    calculate_inline_size(container_pos.width, &mut decoration, &style);
                 let inline_offset =
                     decoration.margin.left + decoration.border.left + decoration.padding.left;
 
-                self.set_inline_pos(entity, container_pos.x + inline_offset, inline_size, &mut resources);
+                self.set_inline_pos(
+                    entity,
+                    container_pos.x + inline_offset,
+                    inline_size,
+                    &mut resources,
+                );
 
                 if decoration != Default::default() {
                     resources.decorations.insert(entity, decoration).unwrap();

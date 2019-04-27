@@ -1,4 +1,4 @@
-use super::builtin::{scale};
+use super::builtin::scale;
 
 pub use super::builtin::BuiltInFont;
 

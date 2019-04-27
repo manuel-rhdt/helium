@@ -1,21 +1,21 @@
-use crate::tree::{TreeLinked, OpaqueNode, GetOpaqueNode};
+use crate::tree::{GetOpaqueNode, OpaqueNode, TreeLinked};
 
-use std::io::{Write, Result};
-use std::fmt;
 use std::collections::HashMap;
+use std::fmt;
+use std::io::{Result, Write};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Shape {
     Box,
     Circle,
     Ellipse,
-    Plaintext
+    Plaintext,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub enum Style {
     /// fill color
-    Filled(f32, f32, f32)
+    Filled(f32, f32, f32),
 }
 
 impl fmt::Display for Style {
@@ -38,7 +38,7 @@ impl fmt::Display for Shape {
             Shape::Box => write!(f, "shape=box"),
             Shape::Circle => write!(f, "shape=circle"),
             Shape::Ellipse => write!(f, "shape=ellipse"),
-            Shape::Plaintext => write!(f, "shape=plaintext")
+            Shape::Plaintext => write!(f, "shape=plaintext"),
         }
     }
 }
@@ -47,7 +47,7 @@ impl fmt::Display for Shape {
 pub struct GraphDisplayStyle {
     pub label: String,
     pub shape: Shape,
-    pub style: Option<Style>
+    pub style: Option<Style>,
 }
 
 impl GraphDisplayStyle {
@@ -63,10 +63,7 @@ impl GraphDisplayStyle {
     }
 
     pub fn shape(self, shape: Shape) -> Self {
-        GraphDisplayStyle {
-            shape,
-            ..self
-        }
+        GraphDisplayStyle { shape, ..self }
     }
 
     pub fn style(self, style: Style) -> Self {
@@ -88,13 +85,13 @@ impl GraphDisplayStyle {
 #[derive(Debug, Copy, Clone)]
 pub enum Connection {
     Root,
-    DescendantOf(OpaqueNode)
+    DescendantOf(OpaqueNode),
 }
 
 pub struct DotGraphSerializer<Output> {
     output: Output,
     styles: Vec<GraphDisplayStyle>,
-    node_index_map: HashMap<OpaqueNode, usize>
+    node_index_map: HashMap<OpaqueNode, usize>,
 }
 
 impl<Output: Write> DotGraphSerializer<Output> {
@@ -102,7 +99,7 @@ impl<Output: Write> DotGraphSerializer<Output> {
         DotGraphSerializer {
             output,
             styles: vec![],
-            node_index_map: HashMap::new()
+            node_index_map: HashMap::new(),
         }
     }
 
@@ -121,7 +118,10 @@ impl<Output: Write> DotGraphSerializer<Output> {
 
     /// # Panics
     /// Panics if the connection contains a node that was not pushed before.
-    pub fn push_node<Node>(&mut self, node: Node, connection: Connection) -> Result<()> where Node: GraphStyle {
+    pub fn push_node<Node>(&mut self, node: Node, connection: Connection) -> Result<()>
+    where
+        Node: GraphStyle,
+    {
         let opaque = node.get_opaque();
         let node_index = if let Some(&index) = self.node_index_map.get(&opaque) {
             index
@@ -149,15 +149,21 @@ impl<Output: Write> DotGraphSerializer<Output> {
         writeln!(self.output, "}}")?;
         Ok(())
     }
-    
-    fn write_dot<Node>(&mut self, root_node: Node) -> Result<()> where Node: GraphStyle + TreeLinked {
+
+    fn write_dot<Node>(&mut self, root_node: Node) -> Result<()>
+    where
+        Node: GraphStyle + TreeLinked,
+    {
         self.begin_graph("G")?;
         self.push_node(root_node.clone(), Connection::Root)?;
         self.write_all_children(root_node)?;
         self.end_graph()
     }
 
-    fn write_all_children<Node>(&mut self, node: Node) -> Result<()> where Node: GraphStyle + TreeLinked {
+    fn write_all_children<Node>(&mut self, node: Node) -> Result<()>
+    where
+        Node: GraphStyle + TreeLinked,
+    {
         for child in node.children() {
             self.push_node(child.clone(), Connection::DescendantOf(node.get_opaque()))?;
             self.write_all_children(child)?;

@@ -2,14 +2,14 @@
 
 use crate::tree::NodeRef;
 
-use std::ops::Deref;
 use std::fmt;
+use std::ops::Deref;
 
 /// Holds a strong reference to a node, but dereferences to some component inside of it.
 #[derive(Eq)]
 pub struct NodeDataRef<Node, Data> {
     keep_alive: NodeRef<Node>,
-    reference: *const Data
+    reference: *const Data,
 }
 
 impl<Node, Data> NodeDataRef<Node, Data> {
@@ -22,7 +22,10 @@ impl<Node, Data> NodeDataRef<Node, Data> {
     }
 
     /// Create a `NodeDataRef` for and a component that may or may not be in a given node.
-    pub fn new_opt(rc: NodeRef<Node>, f: impl FnOnce(&Node) -> Option<&Data>) -> Option<NodeDataRef<Node, Data>> {
+    pub fn new_opt(
+        rc: NodeRef<Node>,
+        f: impl FnOnce(&Node) -> Option<&Data>,
+    ) -> Option<NodeDataRef<Node, Data>> {
         f(&*rc).map(|r| r as *const Data).map(move |r| NodeDataRef {
             reference: r,
             keep_alive: rc,
@@ -37,7 +40,9 @@ impl<Node, Data> NodeDataRef<Node, Data> {
 
 impl<Node, Data> Deref for NodeDataRef<Node, Data> {
     type Target = Data;
-    fn deref(&self) -> &Data { unsafe { &*self.reference } }
+    fn deref(&self) -> &Data {
+        unsafe { &*self.reference }
+    }
 }
 
 // #[derive(PartialEq)] would compare both fields

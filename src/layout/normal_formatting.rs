@@ -1,26 +1,28 @@
 use super::entity::{Position, Text, UnscannedText};
-use super::inline::{
-    InlineFormatter, InlineFormatterData, InlineFormattingContext, InlinePos, Stack,
-};
-use super::inline_size::{calculate_§_size, calculate_padding_and_border};
+use super::inline::{InlineFormatter, InlineFormatterData, InlineFormattingContext, InlinePos};
+use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
 use crate::style::properties::computed::{ComputedValues, PixelLength};
 
 use shred_derive::SystemData;
-use specs::{Component, DenseVecStorage, Entities, Entity, ReadStorage, WriteStorage, System};
+use specs::{Component, DenseVecStorage, Entities, Entity, ReadStorage, System, WriteStorage};
 
 pub struct BlockLevelLayout {
     pub page_width: PixelLength,
-    pub page_height: PixelLength
+    pub page_height: PixelLength,
 }
 
 impl<'data> System<'data> for BlockLevelLayout {
-    type SystemData = (BlockFormatterData<'data>, ReadStorage<'data, BlockFormattingContext>);
+    type SystemData = (
+        BlockFormatterData<'data>,
+        ReadStorage<'data, BlockFormattingContext>,
+    );
 
     fn run(&mut self, (mut data, block_formatting_contexts): Self::SystemData) {
         use specs::Join;
 
         for BlockFormattingContext { elements } in block_formatting_contexts.join() {
-            let mut block_formatter = BlockFormatter::new(&elements, (self.page_width, self.page_height), &mut data);
+            let mut block_formatter =
+                BlockFormatter::new(&elements, (self.page_width, self.page_height), &mut data);
             block_formatter.layout();
         }
     }
@@ -35,7 +37,7 @@ pub enum BlockLevelElement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockFormattingContext {
-    pub elements: Vec<BlockLevelElement>
+    pub elements: Vec<BlockLevelElement>,
 }
 
 impl Component for BlockFormattingContext {
@@ -52,6 +54,9 @@ impl Component for BlockFragment {
     type Storage = DenseVecStorage<Self>;
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+struct PageFullError;
+
 #[derive(SystemData)]
 pub struct BlockFormatterData<'data> {
     pub entities: Entities<'data>,
@@ -61,7 +66,6 @@ pub struct BlockFormatterData<'data> {
     pub texts: WriteStorage<'data, Text>,
     pub inline_pos: WriteStorage<'data, InlinePos>,
     pub unscanned_texts: WriteStorage<'data, UnscannedText>,
-    pub stacks: WriteStorage<'data, Stack>,
 }
 
 pub struct BlockFormatter<'elements, 'data> {
@@ -71,7 +75,6 @@ pub struct BlockFormatter<'elements, 'data> {
     pub elements: &'elements [BlockLevelElement],
     cursor: PixelLength,
     container_size: (PixelLength, PixelLength),
-    preliminary_entities: Vec<Entity>,
     inline_formatter: Option<InlineFormatter>,
     data: &'elements mut BlockFormatterData<'data>,
 }
@@ -89,7 +92,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             elements,
             cursor: PixelLength(0.0),
             container_size,
-            preliminary_entities: vec![],
             inline_formatter: None,
             data,
         }
@@ -117,14 +119,9 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 }
                 BlockLevelElement::Leaf(leaf) => {
                     // determine the leaf's height
-                    self.layout_leaf(leaf);
-                    // try to increase the cursor, or start a new page
-
-                    // place the leaf at the current cursor position
-
-                    // flush preliminary changes
-                    self.elements = iter.as_slice();
-                    return Some(());
+                    while let Err(PageFullError) = self.layout_leaf(leaf) {
+                        self.new_page()
+                    }
                 }
                 BlockLevelElement::ContainerEnd(_) => {
                     // try to increase the cursor or start a new page
@@ -134,42 +131,50 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                         .expect("Internal Error: Invalid nesting");
                 }
             }
+
+            // we have to reset the current inline formatter after an element has finished.
+            self.inline_formatter = None;
         }
         assert!(self.in_progress_containers.is_empty());
         None
     }
 
-    pub fn layout_leaf(&mut self, leaf: Entity) {
+    fn layout_leaf(&mut self, leaf: Entity) -> Result<(), PageFullError> {
         if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
             // initialize an inline formatter
             let (offset, width) = self.current_container_size();
             let remaining_block_size = self.remaining_block_size();
-            let mut inline_formatter = self
-                .inline_formatter.take()
-                .unwrap_or_else(|| InlineFormatter::new(width, remaining_block_size));
+            let inline_formatter = self
+                .inline_formatter
+                .get_or_insert_with(|| InlineFormatter::new(width, width, remaining_block_size));
 
-            let mut inline_formatter_data = InlineFormatterData {
-                entities: &self.data.entities,
-                positions: &mut self.data.positions,
-                texts: &mut self.data.texts,
-                inline_pos: &mut self.data.inline_pos,
-                computed_values: &self.data.computed_values,
-                unscanned_texts: &mut self.data.unscanned_texts,
-                stacks: &mut self.data.stacks,
-            };
-
-            let iter = inline_formatter.iter(
-                &inline_formatting_context.elements,
-                &mut inline_formatter_data,
-            );
-            for line_stack in iter {
-                self.cursor += line_stack.block_size;
-                if dbg!(line_stack).page_break_after {
-                    self.cursor = PixelLength(0.0);
+            loop {
+                let mut inline_formatter_data = InlineFormatterData {
+                    entities: &self.data.entities,
+                    positions: &mut self.data.positions,
+                    texts: &mut self.data.texts,
+                    inline_pos: &mut self.data.inline_pos,
+                    computed_values: &self.data.computed_values,
+                    unscanned_texts: &mut self.data.unscanned_texts,
+                };
+                let mut iter = inline_formatter.iter(
+                    &inline_formatting_context.elements,
+                    &mut inline_formatter_data,
+                );
+                if let Some(line_stack) = iter.next() {
+                    line_stack
+                        .stack
+                        .set_positions((offset, self.cursor), &mut self.data.positions);
+                    self.cursor += line_stack.stack.height();
+                    if line_stack.page_break_after {
+                        return Err(PageFullError);
+                    }
+                } else {
+                    break;
                 }
-
             }
         }
+        Ok(())
     }
 
     fn current_container_size(&self) -> (PixelLength, PixelLength) {
@@ -183,11 +188,12 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let style = self.data.computed_values.get(entity);
         let style = style.expect("No style information");
         let (container_offset, container_size) = self.current_container_size();
-        inline_offset_and_width(container_size, &style)
+        let (offset, size) = inline_offset_and_width(container_size, &style);
+        (container_offset + offset, size)
     }
 
     fn new_page(&mut self) {
-        self.cursor = PixelLength(0.0);
+        // self.cursor = PixelLength(0.0);
     }
 }
 

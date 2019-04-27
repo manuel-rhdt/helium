@@ -22,7 +22,7 @@ pub fn scale(fu: FontUnit, font_size: PixelLength) -> PixelLength {
 pub struct InlineFragment {
     pub glyph_indices: Vec<u32>,
     pub advance: PixelLength,
-    pub new_line_after: bool
+    pub new_line_after: bool,
 }
 
 impl InlineFragment {
@@ -61,10 +61,16 @@ pub struct InlineFragmentIteratorState {
     /// The font size in pixels used to scale the glyph metrics
     font_size: PixelLength,
     pub remaining_line: PixelLength,
+    pub line_width: PixelLength,
 }
 
 impl InlineFragmentIteratorState {
-    pub fn new(font: BuiltInFont, font_size: PixelLength) -> Self {
+    pub fn new(
+        font: BuiltInFont,
+        font_size: PixelLength,
+        line_width: PixelLength,
+        remaining_line: PixelLength,
+    ) -> Self {
         InlineFragmentIteratorState {
             progress: 0,
             last_breakpoint: 0,
@@ -74,12 +80,13 @@ impl InlineFragmentIteratorState {
             glyph_indices: VecDeque::new(),
             font,
             font_size,
-            remaining_line: PixelLength(0.0),
+            line_width,
+            remaining_line,
         }
     }
 
     fn push_character(&mut self, character: char) -> Result<(), LineIsFullError> {
-        self.progress = character.len_utf8();
+        self.progress += character.len_utf8();
         if character == ' ' {
             self.last_breakpoint = self.glyph_indices.len();
             self.last_line_advance = self.cursor;
@@ -89,7 +96,11 @@ impl InlineFragmentIteratorState {
         let char_metric = char_index
             .and_then(|index| self.font.metrics().char_metrics.get(index))
             .unwrap();
-        self.glyph_indices.push_back(char_index.unwrap() as u32);
+        self.glyph_indices.push_back(
+            char_index
+                .unwrap_or_else(|| panic!("Could not find character {:?} in font.", character))
+                as u32,
+        );
 
         self.cursor += scale(char_metric.advance_width, self.font_size);
 
@@ -105,11 +116,20 @@ impl InlineFragmentIteratorState {
     }
 
     fn create_line(&mut self, last_line: bool) -> Option<InlineFragment> {
-        let finished_line: Vec<_> = self.glyph_indices.drain(..self.last_breakpoint).collect();
+        let finished_line: Vec<_> = if last_line {
+            self.glyph_indices.drain(..).collect()
+        } else {
+            self.glyph_indices.drain(..self.last_breakpoint).collect()
+        };
+        
         if !finished_line.is_empty() {
+            // remove whitespace at beginning of new line.
+            self.glyph_indices.pop_front();
+
             let advance = self.last_line_advance;
 
             // reset some line-dependent values
+            self.remaining_line = self.line_width;
             self.cursor = self.cursor - self.next_line_start;
             self.last_line_advance = PixelLength(0.0);
             self.next_line_start = PixelLength(0.0);
@@ -121,11 +141,15 @@ impl InlineFragmentIteratorState {
                 new_line_after: !last_line,
             })
         } else {
+            self.remaining_line = self.line_width;
             None
         }
     }
 
-    pub fn iter<'a>(&self, text: &'a str) -> impl 'a + Iterator<Item=InlineFragment> {
+    pub fn iter<'a>(
+        &self,
+        text: &'a str,
+    ) -> impl 'a + Iterator<Item = Result<InlineFragment, LineIsFullError>> {
         InlineFragmentIterator {
             state: self.clone(),
             text: text[self.progress..].chars(),
@@ -139,24 +163,24 @@ pub struct InlineFragmentIterator<'a> {
 }
 
 impl<'a> Iterator for InlineFragmentIterator<'a> {
-    type Item = InlineFragment;
+    type Item = Result<InlineFragment, LineIsFullError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(character) = self.text.next() {
                 if let Err(LineIsFullError) = self.state.push_character(character) {
                     if let Some(line) = self.state.create_line(false) {
-                        break Some(line);
+                        break Some(Ok(line));
                     } else {
-                        // returning an empty fragment signals that a
-                        // new line has to be started
-                        break Some(InlineFragment::new_line());
+                        break Some(Err(LineIsFullError));
                     }
                 }
             } else {
                 // Return the last line, if any fragments are still remaining.
-                // `create_line` returns `None` if no fragments can be created.
-                break self.state.create_line(true);
+                //
+                // Since `create_line` returns `None` if no fragments can be created, we also return
+                // `None` to indicate that the iterator is depleted.
+                break self.state.create_line(true).map(Result::Ok);
             }
         }
     }

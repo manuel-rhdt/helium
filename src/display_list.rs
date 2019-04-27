@@ -1,6 +1,6 @@
 use crate::layout::entity::{Decoration, Position, Text};
-use crate::style::properties::computed::{PixelLength, RGBA};
 use crate::layout::text::Font;
+use crate::style::properties::computed::{PixelLength, RGBA};
 
 use specs::{Join, ReadStorage, System};
 

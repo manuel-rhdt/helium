@@ -107,7 +107,7 @@ impl Default for Decoration {
             padding: Default::default(),
             border: Default::default(),
             margin: Default::default(),
-            background_color: RGBA::transparent()
+            background_color: RGBA::transparent(),
         }
     }
 }
