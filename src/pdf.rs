@@ -1,5 +1,5 @@
 use crate::display_list::{self, DisplayItem, Rect};
-use crate::layout::text::Font as HFont;
+use crate::layout::text::{Font as HFont, font::GlyphIndex};
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
@@ -144,14 +144,14 @@ fn add_font(
     Ok((context.add_font(font_ref), Font::Simple(font)))
 }
 
-fn encode_glyphs_simple(glyphs: &[u32], font: &Font) -> Vec<u8> {
+fn encode_glyphs_simple(glyphs: &[GlyphIndex], font: &Font) -> Vec<u8> {
     let Font::Simple(font) = font;
     let encoding = font.encoding.as_ref().unwrap();
     let metrics = BuiltInFont::Helvetica.metrics();
     glyphs
         .iter()
         .flat_map(|&glyph| {
-            let char_name = metrics.char_metrics[glyph as usize].name;
+            let char_name = metrics.char_metrics[glyph.0 as usize].name;
             encoding.encode(char_name)
         })
         .collect()

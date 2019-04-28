@@ -2,6 +2,7 @@ use derive_more::From;
 use specs::{Component, DenseVecStorage, Entity, NullStorage, VecStorage, World};
 
 use crate::style::properties::computed::{ComputedValues, PixelLength};
+use super::text::font::GlyphIndex;
 
 pub type LayoutContext = World;
 
@@ -64,7 +65,7 @@ impl Component for UnscannedText {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Text {
-    pub glyphs: Vec<u32>,
+    pub glyphs: Vec<GlyphIndex>,
     pub font: super::text::Font,
     /// Size of an EM box.
     pub font_size: PixelLength,

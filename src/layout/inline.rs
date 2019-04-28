@@ -1,6 +1,7 @@
 use super::entity::{Position, Text, UnscannedText};
 use super::text::{
-    font::match_font, Font, InlineFragment, InlineFragmentIteratorState, LineIsFullError,
+    font::{match_font, GlyphMetricsProvide},
+    Font, InlineFragment, InlineFragmentIteratorState, LineIsFullError,
 };
 use crate::style::properties::computed::{ComputedValues, LineHeight, PixelLength as Px};
 
@@ -9,6 +10,8 @@ use specs::{
     Component, Entity, VecStorage,
 };
 use specs::{Entities, Join, ReadStorage, System, WriteStorage};
+
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct InlineFormattingContext {
@@ -28,13 +31,13 @@ pub struct InlineFormatterData<'refs, 'system> {
     pub unscanned_texts: &'refs mut WriteStorage<'system, UnscannedText>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 struct InlineFormatterState {
     /// An index into the elements array of the `InlineFormattingContext`, pointing to the current
     /// element.
     current_element_index: usize,
     /// Additional state associated with the current element.
-    inline_fragment_iter_state: Option<InlineFragmentIteratorState>,
+    inline_fragment_iter_state: Option<InlineFragmentIteratorState<Rc<dyn GlyphMetricsProvide>>>,
 }
 
 impl InlineFormatterState {
@@ -53,10 +56,11 @@ impl InlineFormatterState {
             let style = computed_values.get(entity).expect("No style assigned");
             let text = unscanned_texts.get_mut(entity).expect("No text assigned");
             super::text::whitespace::transform_text(&mut text.characters);
-            let Font::BuiltIn(font) = match_font(&style).unwrap();
+            let glyph_metrics_provider = match_font(&style)
+                .expect("Could not find any matching fonts.")
+                .glyph_metrics_provider(style.font.font_size);
             self.inline_fragment_iter_state = Some(InlineFragmentIteratorState::new(
-                font,
-                style.font.font_size,
+                glyph_metrics_provider,
                 line_width,
                 remaining_inline_space,
             ));
@@ -78,7 +82,8 @@ impl InlineFormatterState {
                 "Before calling fragment_iter, the output of \
                  `InlineFormatterState.next_element` must be checked.",
             )
-            .iter(text)
+            .clone()
+            .into_iterator(text)
     }
 }
 

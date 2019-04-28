@@ -1,5 +1,5 @@
 use crate::layout::entity::{Decoration, Position, Text};
-use crate::layout::text::Font;
+use crate::layout::text::{Font, font::GlyphIndex};
 use crate::style::properties::computed::{PixelLength, RGBA};
 
 use specs::{Join, ReadStorage, System};
@@ -32,7 +32,7 @@ pub enum DisplayItem {
     },
     FilledRect(Rect),
     Color(RGBA),
-    Text(Point, PixelLength, Font, Vec<u32>),
+    Text(Point, PixelLength, Font, Vec<GlyphIndex>),
     Translate(PixelLength, PixelLength),
     Push,
     Pop,

@@ -1,4 +1,4 @@
-use super::entity::{Position, Text, UnscannedText};
+use super::entity::{Position, Text, UnscannedText, Decoration};
 use super::inline::{InlineFormatter, InlineFormatterData, InlineFormattingContext, InlinePos};
 use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
 use crate::style::properties::computed::{ComputedValues, PixelLength};
@@ -70,6 +70,8 @@ pub struct BlockFormatterData<'data> {
 
 pub struct BlockFormatter<'elements, 'data> {
     pub in_progress_containers: Vec<Entity>,
+    /// A list of the inline offsets and inline sizes of all content boxes of
+    /// `in_progress_containers`.
     pub inline_sizes: Vec<(PixelLength, PixelLength)>,
     pub pages: Vec<Entity>,
     pub elements: &'elements [BlockLevelElement],
@@ -114,21 +116,22 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 BlockLevelElement::ContainerStart(entity) => {
                     let (offset, size) = self.inline_size_calc(entity);
                     self.inline_sizes.push((offset, size));
-                    // try to increase the cursor, or start a new page
                     self.in_progress_containers.push(entity);
+
                 }
                 BlockLevelElement::Leaf(leaf) => {
-                    // determine the leaf's height
                     while let Err(PageFullError) = self.layout_leaf(leaf) {
                         self.new_page()
                     }
                 }
                 BlockLevelElement::ContainerEnd(_) => {
                     // try to increase the cursor or start a new page
-                    self.inline_sizes.pop().unwrap();
+                    self.inline_sizes
+                        .pop()
+                        .expect("Internal Error: Invalid tree");
                     self.in_progress_containers
                         .pop()
-                        .expect("Internal Error: Invalid nesting");
+                        .expect("Internal Error: Invalid tree");
                 }
             }
 
@@ -139,9 +142,12 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         None
     }
 
+    /// Put the leaf at the current cursor position.
+    ///
+    /// Returns `Err` if a new page needs to be started to finish the leaf.
     fn layout_leaf(&mut self, leaf: Entity) -> Result<(), PageFullError> {
         if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
-            // initialize an inline formatter
+            // Initialize an inline formatter if `self.inline_formatter` is `None`.
             let (offset, width) = self.current_container_size();
             let remaining_block_size = self.remaining_block_size();
             let inline_formatter = self
@@ -187,9 +193,9 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     fn inline_size_calc(&mut self, entity: Entity) -> (PixelLength, PixelLength) {
         let style = self.data.computed_values.get(entity);
         let style = style.expect("No style information");
-        let (container_offset, container_size) = self.current_container_size();
-        let (offset, size) = inline_offset_and_width(container_size, &style);
-        (container_offset + offset, size)
+        let (offset, container_size) = self.current_container_size();
+        let dimension = calculate_container_dimensions(container_size, &style);
+        (dimension.inline_offset() + offset, dimension.inline_size)
     }
 
     fn new_page(&mut self) {
@@ -197,14 +203,26 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 }
 
-fn inline_offset_and_width(
+#[derive(Debug, Copy, Clone)]
+struct ContainerDimensions {
+    decoration: Decoration,
+    inline_size: PixelLength,
+}
+
+impl ContainerDimensions {
+    fn inline_offset(self) -> PixelLength {
+        self.decoration.border.left + self.decoration.margin.left + self.decoration.padding.left
+    }
+}
+
+fn calculate_container_dimensions(
     container_size: PixelLength,
     style: &ComputedValues,
-) -> (PixelLength, PixelLength) {
+) -> ContainerDimensions {
     let mut decoration = calculate_padding_and_border(container_size, &style);
-    let width = calculate_inline_size(container_size, &mut decoration, &style);
-    (
-        decoration.margin.left + decoration.border.left + decoration.padding.left,
-        width,
-    )
+    let inline_size = calculate_inline_size(container_size, &mut decoration, &style);
+    ContainerDimensions {
+        decoration,
+        inline_size,
+    }
 }

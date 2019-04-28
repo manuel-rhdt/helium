@@ -3,14 +3,50 @@
 pub use lemon_pdf::font::builtin::BuiltInFont;
 pub use lemon_pdf::font::FontUnit;
 
+
+use super::font::{GlyphIndex, GlyphMetricsProvide};
 use crate::style::properties::computed::PixelLength;
-
 use std::collections::VecDeque;
-use std::str::Chars;
 
+use std::ops::Deref;
+use std::str::Chars;
 impl From<FontUnit> for PixelLength {
     fn from(fu: FontUnit) -> PixelLength {
         PixelLength((fu.0 / 1000.0) as _)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct FontInstance {
+    font: BuiltInFont,
+    size: PixelLength,
+}
+
+impl FontInstance {
+    pub(super) fn new(font: BuiltInFont, size: PixelLength) -> FontInstance {
+        FontInstance { font, size }
+    }
+}
+
+impl GlyphMetricsProvide for FontInstance {
+    fn char_to_glyph_index(&self, ch: char) -> GlyphIndex {
+        GlyphIndex(
+            (self.font.metrics().unicode_mapping)(ch)
+                .unwrap_or_else(|| panic!("Could not find character {:?} in font.", ch))
+                as u32,
+        )
+    }
+
+    fn glyph_advance(&self, glyph: GlyphIndex) -> PixelLength {
+        scale(
+            self.font
+                .metrics()
+                .char_metrics
+                .get(glyph.0 as usize)
+                .unwrap()
+                .advance_width,
+            self.size,
+        )
     }
 }
 
@@ -20,31 +56,23 @@ pub fn scale(fu: FontUnit, font_size: PixelLength) -> PixelLength {
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct InlineFragment {
-    pub glyph_indices: Vec<u32>,
+    pub glyph_indices: Vec<GlyphIndex>,
     pub advance: PixelLength,
     pub new_line_after: bool,
 }
 
 impl InlineFragment {
-    pub fn new_line() -> Self {
-        InlineFragment {
-            new_line_after: true,
-            ..Default::default()
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         self.glyph_indices.is_empty()
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct LineIsFullError;
 
 #[derive(Debug, Clone)]
-pub struct InlineFragmentIteratorState {
-    /// an index into the text content of the element describing the current
-    /// progress
+pub struct InlineFragmentIteratorState<Font> {
+    /// An index into the text content of the element describing the current progress.
     progress: usize,
     /// An index into the `glyph_indices` buffer, pointing to the last breakpoint.
     last_breakpoint: usize,
@@ -55,22 +83,21 @@ pub struct InlineFragmentIteratorState {
     /// the current cursor position
     cursor: PixelLength,
     /// a buffer of glyph indices.
-    glyph_indices: VecDeque<u32>,
+    glyph_indices: VecDeque<GlyphIndex>,
     /// The font used to determine the glyphs and their advances.
-    font: BuiltInFont,
-    /// The font size in pixels used to scale the glyph metrics
-    font_size: PixelLength,
+    font: Font,
+    /// The line width of the current line.
     pub remaining_line: PixelLength,
+    /// The line width of the lines after the current line.
     pub line_width: PixelLength,
 }
 
-impl InlineFragmentIteratorState {
-    pub fn new(
-        font: BuiltInFont,
-        font_size: PixelLength,
-        line_width: PixelLength,
-        remaining_line: PixelLength,
-    ) -> Self {
+impl<Font, T> InlineFragmentIteratorState<Font>
+where
+    Font: std::ops::Deref<Target = T>,
+    T: ?Sized + GlyphMetricsProvide,
+{
+    pub fn new(font: Font, line_width: PixelLength, remaining_line: PixelLength) -> Self {
         InlineFragmentIteratorState {
             progress: 0,
             last_breakpoint: 0,
@@ -79,7 +106,6 @@ impl InlineFragmentIteratorState {
             cursor: PixelLength(0.0),
             glyph_indices: VecDeque::new(),
             font,
-            font_size,
             line_width,
             remaining_line,
         }
@@ -92,17 +118,10 @@ impl InlineFragmentIteratorState {
             self.last_line_advance = self.cursor;
         }
 
-        let char_index = (self.font.metrics().unicode_mapping)(character);
-        let char_metric = char_index
-            .and_then(|index| self.font.metrics().char_metrics.get(index))
-            .unwrap();
-        self.glyph_indices.push_back(
-            char_index
-                .unwrap_or_else(|| panic!("Could not find character {:?} in font.", character))
-                as u32,
-        );
+        let glyph_index = self.font.char_to_glyph_index(character);
+        self.glyph_indices.push_back(glyph_index);
 
-        self.cursor += scale(char_metric.advance_width, self.font_size);
+        self.cursor += self.font.glyph_advance(glyph_index);
 
         if character == ' ' {
             self.next_line_start = self.cursor;
@@ -121,7 +140,7 @@ impl InlineFragmentIteratorState {
         } else {
             self.glyph_indices.drain(..self.last_breakpoint).collect()
         };
-        
+
         if !finished_line.is_empty() {
             // remove whitespace at beginning of new line.
             self.glyph_indices.pop_front();
@@ -146,23 +165,23 @@ impl InlineFragmentIteratorState {
         }
     }
 
-    pub fn iter<'a>(
-        &self,
-        text: &'a str,
-    ) -> impl 'a + Iterator<Item = Result<InlineFragment, LineIsFullError>> {
+    pub fn into_iterator(self, text: &str) -> InlineFragmentIterator<'_, Font> {
+        let progress = self.progress;
         InlineFragmentIterator {
-            state: self.clone(),
-            text: text[self.progress..].chars(),
+            state: self,
+            text: text[progress..].chars(),
         }
     }
 }
 
-pub struct InlineFragmentIterator<'a> {
-    state: InlineFragmentIteratorState,
+pub struct InlineFragmentIterator<'a, Font> {
+    state: InlineFragmentIteratorState<Font>,
     text: Chars<'a>,
 }
 
-impl<'a> Iterator for InlineFragmentIterator<'a> {
+impl<'a, Font: Deref<Target = T>, T: ?Sized + GlyphMetricsProvide> Iterator
+    for InlineFragmentIterator<'a, Font>
+{
     type Item = Result<InlineFragment, LineIsFullError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -183,5 +202,38 @@ impl<'a> Iterator for InlineFragmentIterator<'a> {
                 break self.state.create_line(true).map(Result::Ok);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use PixelLength as Px;
+
+    struct MockFont;
+
+    impl GlyphMetricsProvide for MockFont {
+        fn char_to_glyph_index(&self, _ch: char) -> GlyphIndex {
+            GlyphIndex(1)
+        }
+
+        fn glyph_advance(&self, _glyph: GlyphIndex) -> PixelLength {
+            Px(100.0)
+        }
+    }
+
+    #[test]
+    fn test_line_break() {
+        let inline_fragment_iterator_state =
+            InlineFragmentIteratorState::new(&MockFont, Px(1000.0), Px(1000.0));
+
+        let text = "0123 4567 89 0123 456 789";
+
+        let mut iter = inline_fragment_iterator_state.into_iterator(&text);
+
+        assert_eq!(9, iter.next().unwrap().unwrap().glyph_indices.len());
+        assert_eq!(7, iter.next().unwrap().unwrap().glyph_indices.len());
+        assert_eq!(7, iter.next().unwrap().unwrap().glyph_indices.len());
+        assert_eq!(None, iter.next());
     }
 }

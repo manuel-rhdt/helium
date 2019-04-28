@@ -6,6 +6,11 @@ use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, PixelLength,
 };
 
+use std::rc::Rc;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct GlyphIndex(pub u32);
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Font {
     BuiltIn(BuiltInFont),
@@ -26,6 +31,12 @@ impl Font {
 
     pub fn font_height(&self, font_size: PixelLength) -> PixelLength {
         self.ascender(font_size) - self.descender(font_size)
+    }
+
+    pub fn glyph_metrics_provider(&self, font_size: PixelLength) -> Rc<dyn GlyphMetricsProvide> {
+        match self {
+            Font::BuiltIn(builtin) => Rc::new(super::builtin::FontInstance::new(*builtin, font_size))
+        }
     }
 }
 
@@ -89,4 +100,9 @@ pub fn match_font(style: &ComputedValues) -> Option<Font> {
             },
             FontFamily::Named(_) => None,
         })
+}
+
+pub trait GlyphMetricsProvide {
+    fn char_to_glyph_index(&self, ch: char) -> GlyphIndex;
+    fn glyph_advance(&self, glyph: GlyphIndex) -> PixelLength;
 }

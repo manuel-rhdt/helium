@@ -131,32 +131,32 @@ pub fn calculate_padding_and_border(
 /// https://www.w3.org/TR/CSS22/visudet.html#blockwidth
 pub fn calculate_inline_size(
     container_size: Px,
-    deco: &mut Decoration,
+    Decoration { margin, padding, border, .. }: &mut Decoration,
     ComputedValues { position, .. }: &ComputedValues,
 ) -> Px {
     match position.width {
         GenericSize::Auto => {
-            deco.margin.left = position.margin_left.absolute(Px(0.0), container_size);
-            deco.margin.right = position.margin_right.absolute(Px(0.0), container_size);
+            margin.left = position.margin_left.absolute(Px(0.0), container_size);
+            margin.right = position.margin_right.absolute(Px(0.0), container_size);
             (container_size
-                - deco.margin.left
-                - deco.margin.right
-                - deco.border.left
-                - deco.border.right
-                - deco.padding.left
-                - deco.padding.right)
+                - margin.left
+                - margin.right
+                - border.left
+                - border.right
+                - padding.left
+                - padding.right)
                 .max(Px(0.0))
         }
         GenericSize::LengthPercentage(lp) => {
             let width = lp.absolute(container_size);
-            deco.margin.left = match (position.margin_left, position.margin_right) {
+            margin.left = match (position.margin_left, position.margin_right) {
                 (GenericSize::Auto, GenericSize::Auto) => {
                     // center the child horizontally within its container
                     let border_box_width = width
-                        + deco.padding.left
-                        + deco.padding.right
-                        + deco.border.left
-                        + deco.border.right;
+                        + padding.left
+                        + padding.right
+                        + border.left
+                        + border.right;
                     (container_size - border_box_width) / 2.0
                 }
                 (GenericSize::LengthPercentage(val), GenericSize::Auto) => {
@@ -165,10 +165,10 @@ pub fn calculate_inline_size(
                 (GenericSize::Auto, GenericSize::LengthPercentage(val)) => {
                     let margin_right = val.absolute(container_size);
                     let border_box_width = width
-                        + deco.padding.left
-                        + deco.padding.right
-                        + deco.border.left
-                        + deco.border.right;
+                        + padding.left
+                        + padding.right
+                        + border.left
+                        + border.right;
                     container_size - border_box_width - margin_right
                 }
                 (
