@@ -1,4 +1,4 @@
-use super::entity::{Position, Text, UnscannedText, Decoration};
+use super::entity::{Decoration, Position, Text, UnscannedText};
 use super::inline::{InlineFormatter, InlineFormatterData, InlineFormattingContext, InlinePos};
 use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
 use crate::style::properties::computed::{ComputedValues, PixelLength};
@@ -69,10 +69,7 @@ pub struct BlockFormatterData<'data> {
 }
 
 pub struct BlockFormatter<'elements, 'data> {
-    pub in_progress_containers: Vec<Entity>,
-    /// A list of the inline offsets and inline sizes of all content boxes of
-    /// `in_progress_containers`.
-    pub inline_sizes: Vec<(PixelLength, PixelLength)>,
+    in_progress_containers: Vec<Container>,
     pub pages: Vec<Entity>,
     pub elements: &'elements [BlockLevelElement],
     cursor: PixelLength,
@@ -90,7 +87,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         BlockFormatter {
             in_progress_containers: vec![],
             pages: vec![],
-            inline_sizes: vec![],
             elements,
             cursor: PixelLength(0.0),
             container_size,
@@ -110,13 +106,29 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     /// their sizes to correctly layout the leaves (i.e. leaving space for vertical margins and
     /// decoration and determining the width of leaves).
     pub fn layout(&mut self) -> Option<()> {
+        assert!(self.in_progress_containers.is_empty());
         let mut iter = self.elements.iter();
         for &element in &mut iter {
             match element {
                 BlockLevelElement::ContainerStart(entity) => {
-                    let (offset, size) = self.inline_size_calc(entity);
-                    self.inline_sizes.push((offset, size));
-                    self.in_progress_containers.push(entity);
+                    let style = self.data.computed_values.get(entity).unwrap();
+                    let (offset, container_size) = self.current_container_size();
+                    let dimensions = calculate_container_dimensions(container_size, &style);
+
+                    let container = Container {
+                        entity,
+                        inline_offset: offset + dimensions.inline_offset(),
+                        dimensions,
+                    };
+                    self.in_progress_containers.push(container);
+
+                    let Decoration {
+                        padding,
+                        border,
+                        margin,
+                        ..
+                    } = &dimensions.decoration;
+                    self.cursor += padding.top + border.top + margin.top;
 
                 }
                 BlockLevelElement::Leaf(leaf) => {
@@ -125,13 +137,18 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     }
                 }
                 BlockLevelElement::ContainerEnd(_) => {
-                    // try to increase the cursor or start a new page
-                    self.inline_sizes
+                    let container = self
+                        .in_progress_containers
                         .pop()
                         .expect("Internal Error: Invalid tree");
-                    self.in_progress_containers
-                        .pop()
-                        .expect("Internal Error: Invalid tree");
+
+                    let Decoration {
+                        padding,
+                        border,
+                        margin,
+                        ..
+                    } = &container.dimensions.decoration;
+                    self.cursor += padding.bottom + border.bottom + margin.bottom;
                 }
             }
 
@@ -184,18 +201,11 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 
     fn current_container_size(&self) -> (PixelLength, PixelLength) {
-        self.inline_sizes
+        self.in_progress_containers
             .last()
             .cloned()
+            .map(|container| (container.inline_offset, container.dimensions.inline_size))
             .unwrap_or((PixelLength(0.0), self.container_size.0))
-    }
-
-    fn inline_size_calc(&mut self, entity: Entity) -> (PixelLength, PixelLength) {
-        let style = self.data.computed_values.get(entity);
-        let style = style.expect("No style information");
-        let (offset, container_size) = self.current_container_size();
-        let dimension = calculate_container_dimensions(container_size, &style);
-        (dimension.inline_offset() + offset, dimension.inline_size)
     }
 
     fn new_page(&mut self) {
@@ -225,4 +235,11 @@ fn calculate_container_dimensions(
         decoration,
         inline_size,
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+struct Container {
+    entity: Entity,
+    inline_offset: PixelLength,
+    dimensions: ContainerDimensions,
 }

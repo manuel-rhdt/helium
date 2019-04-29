@@ -1,5 +1,12 @@
 #[macro_use]
 extern crate cssparser;
+
+#[cfg(test)]
+extern crate quickcheck;
+#[cfg(test)]
+#[macro_use(quickcheck)]
+extern crate quickcheck_macros;
+
 use structopt::StructOpt;
 
 use derive_more::From;

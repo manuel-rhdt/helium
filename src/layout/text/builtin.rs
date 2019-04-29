@@ -223,7 +223,7 @@ mod test {
     }
 
     #[test]
-    fn test_line_break() {
+    fn test_line_breaking() {
         let inline_fragment_iterator_state =
             InlineFragmentIteratorState::new(&MockFont, Px(1000.0), Px(1000.0));
 

@@ -15,7 +15,7 @@ cssparser = "0.25.2"
 selectors = "0.21.0"
 specs = "0.14"
 helium_derive = { path = "./helium_derive" }
-lemon_pdf = { path = "../lemon_pdf" }
+lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 shred-derive = "0.5.1"
 shred = "0.7.1"
 arrayvec = "0.4.10"
@@ -23,6 +23,8 @@ arrayvec = "0.4.10"
 [dev-dependencies]
 assert_cmd = "0.11"
 predicates = "1"
+quickcheck = "0.8.2"
+quickcheck_macros = "0.8.0"
 
 [build-dependencies]
 quote = "0.6.11"

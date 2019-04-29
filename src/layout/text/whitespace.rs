@@ -1,11 +1,10 @@
-pub fn transform_text(text: &mut String) {
-    fn is_whitespace(ch: char) -> bool {
-        match ch {
-            ' ' | '\t' | '\n' => true,
-            _ => false,
-        }
+fn is_whitespace(ch: char) -> bool {
+    match ch {
+        ' ' | '\t' | '\n' => true,
+        _ => false,
     }
-
+}
+pub fn transform_text(text: &mut String) {
     let mut last_whitespace = true;
     for i in 0..text.len() {
         if !text.is_char_boundary(i) {
@@ -22,4 +21,23 @@ pub fn transform_text(text: &mut String) {
         last_whitespace = is_whitespace(ch);
         should_keep
     })
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[quickcheck]
+    fn text_transform_removes_consecutive_whitespace(mut string: String) -> bool {
+        transform_text(&mut string);
+        let mut last_character_was_whitespace = true;
+        for ch in string.chars() {
+            if is_whitespace(ch) && last_character_was_whitespace {
+                return false;
+            }
+            last_character_was_whitespace = is_whitespace(ch);
+        }
+        true
+    }
+
 }
