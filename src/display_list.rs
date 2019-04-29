@@ -1,5 +1,5 @@
 use crate::layout::entity::{Decoration, Position, Text};
-use crate::layout::text::{Font, font::GlyphIndex};
+use crate::layout::text::{font::GlyphIndex, Font};
 use crate::style::properties::computed::{PixelLength, RGBA};
 
 use specs::{Join, ReadStorage, System};

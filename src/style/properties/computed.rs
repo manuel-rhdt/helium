@@ -306,7 +306,6 @@ impl ComputedValues {
 
 #[derive(Debug, Default)]
 pub struct StyleBuilder {
-    inherited_values: ComputedValues,
     new_values: ComputedValues,
 }
 
@@ -317,7 +316,6 @@ impl StyleBuilder {
             ..Default::default()
         };
         StyleBuilder {
-            inherited_values,
             new_values: inherited,
         }
     }

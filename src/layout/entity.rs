@@ -1,8 +1,8 @@
 use derive_more::From;
 use specs::{Component, DenseVecStorage, Entity, NullStorage, VecStorage, World};
 
-use crate::style::properties::computed::{ComputedValues, PixelLength};
 use super::text::font::GlyphIndex;
+use crate::style::properties::computed::{ComputedValues, PixelLength};
 
 pub type LayoutContext = World;
 

@@ -1,5 +1,5 @@
 use crate::display_list::{self, DisplayItem, Rect};
-use crate::layout::text::{Font as HFont, font::GlyphIndex};
+use crate::layout::text::{font::GlyphIndex, Font as HFont};
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 

@@ -129,7 +129,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                         ..
                     } = &dimensions.decoration;
                     self.cursor += padding.top + border.top + margin.top;
-
                 }
                 BlockLevelElement::Leaf(leaf) => {
                     while let Err(PageFullError) = self.layout_leaf(leaf) {

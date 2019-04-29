@@ -305,6 +305,7 @@ where
     fn from_css_property_value(
         input: &mut Parser<'i, '_>,
     ) -> Result<Self, ParseError<'i, T::Error>> {
+        // TODO: Error if zero elements.
         Vec::<T>::from_css_property_value(input).map(|elements| List {
             elements: Cow::Owned(elements),
         })
@@ -322,6 +323,7 @@ where
     }
 }
 
+// TODO: Don't panic!
 impl<'a, T: Copy + PropertyValue<'a>> List<'a, T>
 where
     [T]: ToOwned<Owned = Vec<T>>,

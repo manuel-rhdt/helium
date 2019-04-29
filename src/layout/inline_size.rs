@@ -131,7 +131,12 @@ pub fn calculate_padding_and_border(
 /// https://www.w3.org/TR/CSS22/visudet.html#blockwidth
 pub fn calculate_inline_size(
     container_size: Px,
-    Decoration { margin, padding, border, .. }: &mut Decoration,
+    Decoration {
+        margin,
+        padding,
+        border,
+        ..
+    }: &mut Decoration,
     ComputedValues { position, .. }: &ComputedValues,
 ) -> Px {
     match position.width {
@@ -152,11 +157,8 @@ pub fn calculate_inline_size(
             margin.left = match (position.margin_left, position.margin_right) {
                 (GenericSize::Auto, GenericSize::Auto) => {
                     // center the child horizontally within its container
-                    let border_box_width = width
-                        + padding.left
-                        + padding.right
-                        + border.left
-                        + border.right;
+                    let border_box_width =
+                        width + padding.left + padding.right + border.left + border.right;
                     (container_size - border_box_width) / 2.0
                 }
                 (GenericSize::LengthPercentage(val), GenericSize::Auto) => {
@@ -164,11 +166,8 @@ pub fn calculate_inline_size(
                 }
                 (GenericSize::Auto, GenericSize::LengthPercentage(val)) => {
                     let margin_right = val.absolute(container_size);
-                    let border_box_width = width
-                        + padding.left
-                        + padding.right
-                        + border.left
-                        + border.right;
+                    let border_box_width =
+                        width + padding.left + padding.right + border.left + border.right;
                     container_size - border_box_width - margin_right
                 }
                 (

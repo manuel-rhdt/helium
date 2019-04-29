@@ -5,25 +5,23 @@ use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
 use crate::style::properties::computed::{ComputedValues, Display, StyleBuilder};
 use crate::traverse::Traversal;
-use crate::tree::{DomRef, TreeLinked};
+use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
-use specs::{Builder, World};
-
-use std::fmt;
+use specs::World;
 
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
 pub struct FlowConstructor {
     styles: Styles,
-    entity_constructor: EntityConstructor,
+    entity_constructor: entity_constructor::EntityConstructor,
 }
 
 impl FlowConstructor {
     pub fn new(world: World) -> Self {
         FlowConstructor {
             styles: Default::default(),
-            entity_constructor: EntityConstructor::new(world),
+            entity_constructor: entity_constructor::EntityConstructor::new(world),
         }
     }
 
@@ -96,150 +94,382 @@ impl Traversal<DomRef> for FlowConstructor {
     }
 
     fn postorder_traverse(&mut self, node: DomRef) {
-        self.entity_constructor.build_formatting_context(node)
+        self.entity_constructor.build_formatting_context(&node)
     }
 }
 
-struct EntityConstructor {
-    world: World,
-}
+mod entity_constructor {
+    use super::{
+        BlockFormattingContext, BlockLevelElement, ComputedValues, Display, DomRef,
+        InlineFormattingContext, LayoutEntity, NodeData, ParsedData, Position, TreeLinked,
+        UnscannedText,
+    };
+    use specs::World;
 
-impl fmt::Debug for EntityConstructor {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("EntityConstructor").finish()
+    use std::fmt;
+
+    pub(super) trait AssignLayoutEntity {
+        fn assign_layout_entity(&mut self, entity: LayoutEntity);
+        fn layout_entity(&self) -> Option<LayoutEntity>;
     }
-}
 
-impl EntityConstructor {
-    fn new(world: World) -> Self {
-        EntityConstructor { world }
-    }
-
-    // called on top-down traversal
-    fn build_entity(&mut self, node: DomRef) {
-        let style = node.style().expect("No style was assigned");
-
-        if style.box_.display == Display::None {
-            return;
+    impl AssignLayoutEntity for DomRef {
+        fn assign_layout_entity(&mut self, entity: LayoutEntity) {
+            self.layout_entity.set(Some(entity))
         }
 
-        let entity = match &node.html_data {
-            ParsedData::Element(_) => self.build_block_entity(style),
-            ParsedData::Document(_) => self.build_root_entity(),
-            ParsedData::Text(string) => self.build_text_entity(style, &string.borrow()),
-            _ => self.build_block_entity(style),
-        };
-
-        node.layout_entity.set(Some(entity));
+        fn layout_entity(&self) -> Option<LayoutEntity> {
+            self.layout_entity.get()
+        }
     }
 
-    // called on top-down traversal
-    fn build_root_entity(&mut self) -> LayoutEntity {
-        self.build_block_entity(Default::default())
+    pub(super) trait Styled {
+        fn style(&self) -> ComputedValues;
     }
 
-    // called on top-down traversal
-    fn build_block_entity(&mut self, style: ComputedValues) -> LayoutEntity {
-        let entity_builer = self.world.create_entity().with(style);
-        entity_builer.with(Position::default()).build().into()
+    impl Styled for DomRef {
+        fn style(&self) -> ComputedValues {
+            NodeData::style(&self).expect("No style was assigned to DOM node.")
+        }
     }
 
-    /// builds an anonymous block box for text nodes
-    fn build_text_entity(&mut self, style: ComputedValues, text: &str) -> LayoutEntity {
-        let LayoutEntity(entity) = self.build_block_entity(style);
-        self.world
-            .write_storage()
-            .insert(
-                entity,
-                UnscannedText {
-                    characters: text.to_owned(),
-                },
-            )
-            .unwrap();
-        LayoutEntity(entity)
+    pub(super) trait HtmlNode: Sized {
+        fn html_data(&self) -> &ParsedData;
     }
 
-    // called on bottom-up traversal
-    fn build_formatting_context(&mut self, node: DomRef) {
-        let is_display_inline =
-            |node: DomRef| match node.style().expect("No style was assigned").box_.display {
+    impl HtmlNode for DomRef {
+        fn html_data(&self) -> &ParsedData {
+            &self.html_data
+        }
+    }
+
+    pub(super) trait IterChildren<'a>: Sized {
+        type ChildrenIter: 'a + Iterator<Item = Self>;
+        fn children(&'a self) -> Self::ChildrenIter;
+    }
+
+    impl<'a> IterChildren<'a> for DomRef {
+        type ChildrenIter = crate::tree::SiblingIter<DomRef>;
+        fn children(&'a self) -> Self::ChildrenIter {
+            TreeLinked::children(&self)
+        }
+    }
+
+    pub(super) trait AbstractNode<'a>:
+        AssignLayoutEntity + Styled + HtmlNode + IterChildren<'a>
+    {
+    }
+
+    impl<'a, T: 'a + AssignLayoutEntity + Styled + HtmlNode + IterChildren<'a>> AbstractNode<'a> for T {}
+
+    pub(super) struct EntityConstructor {
+        pub(super) world: World,
+    }
+
+    impl fmt::Debug for EntityConstructor {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.debug_struct("EntityConstructor").finish()
+        }
+    }
+
+    impl EntityConstructor {
+        pub(super) fn new(mut world: World) -> Self {
+            world.register::<ComputedValues>();
+            world.register::<InlineFormattingContext>();
+            world.register::<BlockFormattingContext>();
+            world.register::<Position>();
+            world.register::<UnscannedText>();
+            EntityConstructor { world }
+        }
+
+        // Called on top-down traversal. Takes a node and its style to create a corresponding
+        // `LayoutEntity`, and assigns the entity to the node.
+        pub(super) fn build_entity<'a>(&mut self, mut node: impl AbstractNode<'a>) {
+            let style = node.style();
+
+            if style.box_.display == Display::None {
+                return;
+            }
+
+            let entity = match node.html_data() {
+                ParsedData::Element(_) => self.build_block_entity(style),
+                ParsedData::Document(_) => self.build_root_entity(),
+                ParsedData::Text(string) => self.build_text_entity(style, &string.borrow()),
+                _ => self.build_block_entity(style),
+            };
+
+            node.assign_layout_entity(entity);
+        }
+
+        // called on top-down traversal
+        fn build_root_entity(&mut self) -> LayoutEntity {
+            self.build_block_entity(Default::default())
+        }
+
+        // called on top-down traversal
+        fn build_block_entity(&mut self, style: ComputedValues) -> LayoutEntity {
+            use specs::Builder;
+
+            let entity_builer = self.world.create_entity().with(style);
+            entity_builer.with(Position::default()).build().into()
+        }
+
+        /// builds an anonymous block box for text nodes
+        fn build_text_entity(&mut self, style: ComputedValues, text: &str) -> LayoutEntity {
+            let LayoutEntity(entity) = self.build_block_entity(style);
+            self.world
+                .write_storage()
+                .insert(
+                    entity,
+                    UnscannedText {
+                        characters: text.to_owned(),
+                    },
+                )
+                .unwrap();
+            LayoutEntity(entity)
+        }
+
+        // Called on bottom-up traversal. Traverses the node's children and decides (based on their
+        // computed styles) whether to build a block formatting context or an inline formatting
+        // context.
+        pub(super) fn build_formatting_context<'a, Node: AbstractNode<'a>>(
+            &mut self,
+            node: &'a Node,
+        ) {
+            let is_display_inline = |node: Node| match node.style().box_.display {
                 Display::Inline => true,
                 _ => false,
             };
 
-        if node.children().all(is_display_inline) {
-            self.build_inline_formatting_context(node)
-        } else {
-            self.build_block_formatting_context(node)
-        }
-    }
-
-    // called on bottom-up traversal
-    fn build_block_formatting_context(&mut self, node: DomRef) {
-        let mut block_formatting_context = BlockFormattingContext { elements: vec![] };
-
-        if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
-            block_formatting_context
-                .elements
-                .push(BlockLevelElement::ContainerStart(self_entity))
+            if node.children().all(is_display_inline) {
+                self.build_inline_formatting_context(node)
+            } else {
+                self.build_block_formatting_context(node)
+            }
         }
 
-        for child in node.children() {
-            if let Some(LayoutEntity(child_entity)) = child.layout_entity.get() {
-                if let Some(BlockFormattingContext { elements }) =
-                    self.world.write_storage().remove(child_entity)
-                {
-                    block_formatting_context
-                        .elements
-                        .extend_from_slice(&elements);
-                } else {
-                    block_formatting_context
-                        .elements
-                        .push(BlockLevelElement::Leaf(child_entity));
+        // called on bottom-up traversal
+        fn build_block_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+            let mut block_formatting_context = BlockFormattingContext { elements: vec![] };
+
+            if let Some(LayoutEntity(self_entity)) = node.layout_entity() {
+                block_formatting_context
+                    .elements
+                    .push(BlockLevelElement::ContainerStart(self_entity))
+            }
+
+            for child in node.children() {
+                if let Some(LayoutEntity(child_entity)) = child.layout_entity() {
+                    if let Some(BlockFormattingContext { elements }) =
+                        self.world.write_storage().remove(child_entity)
+                    {
+                        block_formatting_context
+                            .elements
+                            .extend_from_slice(&elements);
+                    } else {
+                        block_formatting_context
+                            .elements
+                            .push(BlockLevelElement::Leaf(child_entity));
+                    }
+                }
+            }
+
+            if let Some(LayoutEntity(self_entity)) = node.layout_entity() {
+                block_formatting_context
+                    .elements
+                    .push(BlockLevelElement::ContainerEnd(self_entity))
+            }
+
+            if !block_formatting_context.elements.is_empty() {
+                if let Some(LayoutEntity(self_entity)) = node.layout_entity() {
+                    self.world
+                        .write_storage()
+                        .insert(self_entity, block_formatting_context)
+                        .unwrap();
                 }
             }
         }
 
-        if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
-            block_formatting_context
-                .elements
-                .push(BlockLevelElement::ContainerEnd(self_entity))
-        }
+        // called on bottom-up traversal
+        fn build_inline_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+            let mut inline_formatting_context = InlineFormattingContext { elements: vec![] };
+            for child in node.children() {
+                if let Some(LayoutEntity(child_entity)) = child.layout_entity() {
+                    if let Some(InlineFormattingContext { elements }) =
+                        self.world.write_storage().remove(child_entity)
+                    {
+                        inline_formatting_context
+                            .elements
+                            .extend_from_slice(&elements);
+                    } else {
+                        inline_formatting_context.elements.push(child_entity);
+                    }
+                }
+            }
 
-        if !block_formatting_context.elements.is_empty() {
-            if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
-                self.world
-                    .write_storage()
-                    .insert(self_entity, block_formatting_context)
-                    .unwrap();
+            if !inline_formatting_context.elements.is_empty() {
+                if let Some(LayoutEntity(self_entity)) = node.layout_entity() {
+                    self.world
+                        .write_storage()
+                        .insert(self_entity, inline_formatting_context)
+                        .unwrap();
+                }
             }
         }
     }
 
-    // called on bottom-up traversal
-    fn build_inline_formatting_context(&mut self, node: DomRef) {
-        let mut inline_formatting_context = InlineFormattingContext { elements: vec![] };
-        for child in node.children() {
-            if let Some(LayoutEntity(child_entity)) = child.layout_entity.get() {
-                if let Some(InlineFormattingContext { elements }) =
-                    self.world.write_storage().remove(child_entity)
-                {
-                    inline_formatting_context
-                        .elements
-                        .extend_from_slice(&elements);
+    #[cfg(test)]
+    mod test {
+        use super::*;
+        use crate::parser::ElementData;
+
+        use html5ever::QualName;
+        use specs::Entity;
+
+        use std::cell::Cell;
+        use std::ops::Index;
+
+        #[derive(Clone)]
+        struct Node {
+            name: &'static str,
+            entity: Cell<Option<LayoutEntity>>,
+            html_data: ParsedData,
+            style: ComputedValues,
+            contents: Vec<Node>,
+        }
+
+        impl Node {
+            fn construct(&self) -> World {
+                let world = World::new();
+                let mut constructor = EntityConstructor::new(world);
+                construct_recursive(self, &mut constructor);
+                constructor.world
+            }
+
+            fn get_name(&self, name: &str) -> Option<&Node> {
+                if self.name == name {
+                    Some(self)
                 } else {
-                    inline_formatting_context.elements.push(child_entity);
+                    for child in &self.contents {
+                        if let Some(node) = child.get_name(name) {
+                            return Some(node);
+                        }
+                    }
+                    None
                 }
+            }
+
+            fn entity(&self) -> Entity {
+                self.entity.get().unwrap().0
             }
         }
 
-        if !inline_formatting_context.elements.is_empty() {
-            if let Some(LayoutEntity(self_entity)) = node.layout_entity.get() {
-                self.world
-                    .write_storage()
-                    .insert(self_entity, inline_formatting_context)
-                    .unwrap();
+        impl<'a> Index<&'a str> for Node {
+            type Output = Node;
+
+            fn index(&self, name: &'a str) -> &Node {
+                self.get_name(name).expect("No node with name found")
             }
         }
+
+        impl<'a> AssignLayoutEntity for &'a Node {
+            fn assign_layout_entity(&mut self, entity: LayoutEntity) {
+                self.entity.set(Some(entity));
+            }
+
+            fn layout_entity(&self) -> Option<LayoutEntity> {
+                self.entity.get()
+            }
+        }
+
+
+        impl<'a> Styled for &'a Node {
+            fn style(&self) -> ComputedValues {
+                self.style.clone()
+            }
+        }
+
+        impl<'a> HtmlNode for &'a Node {
+            fn html_data(&self) -> &ParsedData {
+                &self.html_data
+            }
+        }
+
+        impl<'a> IterChildren<'a> for &'a Node {
+            type ChildrenIter = std::slice::Iter<'a, Node>;
+            fn children(&'a self) -> Self::ChildrenIter {
+                self.contents.iter()
+            }
+        }
+
+
+        fn block(name: &'static str, contents: Vec<Node>) -> Node {
+            use crate::style::properties::computed::Box;
+            use std::sync::Arc;
+            Node {
+                name,
+                entity: Cell::new(None),
+                html_data: ParsedData::Element(ElementData {
+                    name: QualName::new(None, ns!(html), name.into()),
+                    attributes: Default::default(),
+                    template_contents: None,
+                }),
+                style: ComputedValues {
+                    box_: Arc::new(Box {
+                        display: Display::Block,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                contents,
+            }
+        }
+
+        fn text(name: &'static str, text: &'static str) -> Node {
+            Node {
+                name,
+                entity: Cell::new(None),
+                html_data: ParsedData::Text(text.to_string().into()),
+                style: Default::default(),
+                contents: vec![],
+            }
+        }
+
+        fn construct_recursive(node: &Node, constructor: &mut EntityConstructor) {
+            constructor.build_entity(node);
+            for child in node.children() {
+                construct_recursive(child, constructor);
+            }
+            constructor.build_formatting_context(&node);
+        }
+
+        #[test]
+        fn test_block_flow_creation_from_dom_tree() {
+            use BlockLevelElement::*;
+
+            let html = block("a", vec![block("b", vec![])]);
+            let world = html.construct();
+            let block_fmt = world.read_storage();
+            let BlockFormattingContext { elements } = block_fmt.get(html["a"].entity()).unwrap();
+
+            assert_eq!(
+                elements,
+                &vec![
+                    ContainerStart(html["a"].entity()),
+                    Leaf(html["b"].entity()),
+                    ContainerEnd(html["a"].entity()),
+                ]
+            )
+        }
+
+        #[test]
+        fn test_unscanned_text_creation_from_text_node() {
+            let html = text("node1", "Hello World!");
+            let world = html.construct();
+            let unscanned_texts = world.read_storage();
+            let UnscannedText { characters } = unscanned_texts.get(html["node1"].entity()).unwrap();
+            assert_eq!(characters, "Hello World!");
+        }
+
     }
 }

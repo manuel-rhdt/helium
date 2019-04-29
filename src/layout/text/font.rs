@@ -35,7 +35,9 @@ impl Font {
 
     pub fn glyph_metrics_provider(&self, font_size: PixelLength) -> Rc<dyn GlyphMetricsProvide> {
         match self {
-            Font::BuiltIn(builtin) => Rc::new(super::builtin::FontInstance::new(*builtin, font_size))
+            Font::BuiltIn(builtin) => {
+                Rc::new(super::builtin::FontInstance::new(*builtin, font_size))
+            }
         }
     }
 }

@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate cssparser;
 
+#[macro_use]
+extern crate html5ever;
+
 #[cfg(test)]
 extern crate quickcheck;
 #[cfg(test)]
