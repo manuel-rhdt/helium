@@ -235,4 +235,13 @@ mod test {
         assert_eq!(7, iter.next().unwrap().unwrap().glyph_indices.len());
         assert_eq!(None, iter.next());
     }
+
+    #[test]
+    fn test_skip_inline_fragment_if_empty() {
+        let inline_fragment_iterator_state =
+            InlineFragmentIteratorState::new(&MockFont, Px(1000.0), Px(1000.0));
+        let text = "";
+        let mut iter = inline_fragment_iterator_state.into_iterator(&text);
+        assert_eq!(None, iter.next());
+    }
 }
