@@ -324,7 +324,7 @@ mod entity_constructor {
         use crate::parser::ElementData;
 
         use html5ever::QualName;
-        use specs::Entity;
+        use specs::{Component, Entity, ReadStorage};
 
         use std::cell::Cell;
         use std::ops::Index;
@@ -362,11 +362,24 @@ mod entity_constructor {
             fn entity(&self) -> Entity {
                 self.entity.get().unwrap().0
             }
+
+            // Retrieve the component corresponding to this node from the given storage.
+            fn get<'a, T: Component>(&self, storage: &'a ReadStorage<'a, T>) -> &'a T {
+                storage
+                    .get(self.entity())
+                    .expect("Node does not have the needed component")
+            }
         }
 
         impl<'a> Index<&'a str> for Node {
             type Output = Node;
 
+            /// Performs a depth-first search for a node with name `name` starting with `self` and
+            /// descending through the children.
+            /// 
+            /// # Panics
+            /// 
+            /// Panics if no node with the given name can be found.
             fn index(&self, name: &'a str) -> &Node {
                 self.get_name(name).expect("No node with name found")
             }
@@ -425,6 +438,20 @@ mod entity_constructor {
             }
         }
 
+        fn inline(name: &'static str, contents: Vec<Node>) -> Node {
+            Node {
+                name,
+                entity: Cell::new(None),
+                html_data: ParsedData::Element(ElementData {
+                    name: QualName::new(None, ns!(html), name.into()),
+                    attributes: Default::default(),
+                    template_contents: None,
+                }),
+                style: Default::default(),
+                contents,
+            }
+        }
+
         fn text(name: &'static str, text: &'static str) -> Node {
             Node {
                 name,
@@ -450,7 +477,7 @@ mod entity_constructor {
             let html = block("a", vec![block("b", vec![])]);
             let world = html.construct();
             let block_fmt = world.read_storage();
-            let BlockFormattingContext { elements } = block_fmt.get(html["a"].entity()).unwrap();
+            let BlockFormattingContext { elements } = html["a"].get(&block_fmt);
 
             assert_eq!(
                 elements,
@@ -467,9 +494,76 @@ mod entity_constructor {
             let html = text("node1", "Hello World!");
             let world = html.construct();
             let unscanned_texts = world.read_storage();
-            let UnscannedText { characters } = unscanned_texts.get(html["node1"].entity()).unwrap();
+            let UnscannedText { characters } = html["node1"].get(&unscanned_texts);
             assert_eq!(characters, "Hello World!");
         }
 
+        #[test]
+        fn test_anonymous_block_box_for_text_node_creation() {
+            use BlockLevelElement::*;
+
+            let html = block(
+                "div",
+                vec![block("div2", vec![]), text("text", "Hello World!")],
+            );
+            let world = html.construct();
+            let block_fmt = world.read_storage();
+            let BlockFormattingContext { elements } = html["div"].get(&block_fmt);
+
+            assert_eq!(
+                elements,
+                &vec![
+                    ContainerStart(html["div"].entity()),
+                    Leaf(html["div2"].entity()),
+                    Leaf(html["text"].entity()),
+                    ContainerEnd(html["div"].entity()),
+                ]
+            )
+        }
+
+        #[test]
+        fn test_nested_block_level_elements_creation() {
+            use BlockLevelElement::*;
+
+            // <div>
+            //   Something
+            //   <div>
+            //      <p>something nested</p>
+            //   </div>
+            //   something else
+            // </div>
+            let html = block(
+                "div",
+                vec![
+                    text("text1", "Something"),
+                    block("div2", vec![block("p", vec![text("text2", "something nested")])]),
+                    text("text3", "something else"),
+                ],
+            );
+            let world = html.construct();
+            let block_fmt = world.read_storage();
+            let BlockFormattingContext { elements } = html["div"].get(&block_fmt);
+
+            assert_eq!(
+                elements,
+                &vec![
+                    ContainerStart(html["div"].entity()),
+                    Leaf(html["text1"].entity()),
+                    ContainerStart(html["div2"].entity()),
+                    Leaf(html["p"].entity()),
+                    ContainerEnd(html["div2"].entity()),
+                    Leaf(html["text3"].entity()),
+                    ContainerEnd(html["div"].entity()),
+                ]
+            );
+
+            let inline_fmt = world.read_storage();
+            let InlineFormattingContext { elements } = html["p"].get(&inline_fmt);
+
+            assert_eq!(
+                elements,
+                &vec![html["text2"].entity()]
+            )
+        }
     }
 }
