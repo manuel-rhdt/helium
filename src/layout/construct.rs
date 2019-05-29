@@ -316,9 +316,9 @@ pub mod entity_constructor {
     pub mod test {
         use super::*;
 
-        use crate::simple_dom::{div, p, text};
+        use crate::simple_dom::{div, p, text, Quantity::Px};
 
-        use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
+        use crate::style::properties::computed::{ComputedValues, GenericSize};
 
         #[test]
         fn test_block_flow_creation_from_dom_tree() {

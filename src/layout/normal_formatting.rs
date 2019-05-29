@@ -289,8 +289,8 @@ struct Container {
 mod test {
     use super::*;
 
-    use crate::simple_dom::{div, html};
-    use crate::style::properties::computed::PixelLength as Px;
+    use crate::style::properties::computed::PixelLength;
+    use crate::simple_dom::{div, html, Quantity::*};
 
     use shred::System;
     use specs::RunNow;
@@ -307,8 +307,8 @@ mod test {
         let mut world = html.construct();
 
         let mut block_level_layout = BlockLevelLayout {
-            page_width: Px(100.0),
-            page_height: Px(100.0),
+            page_width: PixelLength(100.0),
+            page_height: PixelLength(100.0),
         };
 
         System::setup(&mut block_level_layout, &mut world.res);
@@ -321,19 +321,19 @@ mod test {
         assert_eq!(
             pos1,
             &Position {
-                x: Px(0.0),
-                y: Px(10.0),
-                width: Px(0.0),
-                height: Px(10.0)
+                x: PixelLength(0.0),
+                y: PixelLength(10.0),
+                width: PixelLength(0.0),
+                height: PixelLength(10.0)
             }
         );
         assert_eq!(
             pos2,
             &Position {
-                x: Px(0.0),
-                y: Px(50.0),
-                width: Px(0.0),
-                height: Px(0.0)
+                x: PixelLength(0.0),
+                y: PixelLength(50.0),
+                width: PixelLength(0.0),
+                height: PixelLength(0.0)
             }
         );
     }
@@ -347,8 +347,8 @@ mod test {
         let mut world = html.construct();
 
         let mut block_level_layout = BlockLevelLayout {
-            page_width: Px(100.0),
-            page_height: Px(100.0),
+            page_width: PixelLength(100.0),
+            page_height: PixelLength(100.0),
         };
 
         System::setup(&mut block_level_layout, &mut world.res);
@@ -360,10 +360,10 @@ mod test {
         assert_eq!(
             pos,
             &Position {
-                x: Px(0.0),
-                y: Px(0.0),
-                width: Px(0.0),
-                height: Px(50.0)
+                x: PixelLength(0.0),
+                y: PixelLength(0.0),
+                width: PixelLength(0.0),
+                height: PixelLength(50.0)
             }
         )
     }
@@ -377,8 +377,8 @@ mod test {
         let mut world = html.construct();
 
         let mut block_level_layout = BlockLevelLayout {
-            page_width: Px(100.0),
-            page_height: Px(100.0),
+            page_width: PixelLength(100.0),
+            page_height: PixelLength(100.0),
         };
 
         System::setup(&mut block_level_layout, &mut world.res);
@@ -391,19 +391,19 @@ mod test {
         assert_eq!(
             pos1,
             &Position {
-                x: Px(0.0),
-                y: Px(0.0),
-                width: Px(0.0),
-                height: Px(10.0)
+                x: PixelLength(0.0),
+                y: PixelLength(0.0),
+                width: PixelLength(0.0),
+                height: PixelLength(10.0)
             }
         );
         assert_eq!(
             pos2,
             &Position {
-                x: Px(0.0),
-                y: Px(40.0),
-                width: Px(0.0),
-                height: Px(10.0)
+                x: PixelLength(0.0),
+                y: PixelLength(40.0),
+                width: PixelLength(0.0),
+                height: PixelLength(10.0)
             }
         );
     }

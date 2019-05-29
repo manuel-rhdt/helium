@@ -2,9 +2,9 @@ use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
 use super::specified::{
-    self, BorderStyle, ComputedValue, ParseDeclaration, Percentage, PropertyDeclaration,
+    self, BorderStyle, ComputedValue, ParseDeclaration, PropertyDeclaration,
 };
-pub use super::specified::{Display, FontFamily, FontStyle, FontWeight};
+pub use super::specified::{Display, FontFamily, FontStyle, FontWeight, Percentage};
 
 pub use cssparser::RGBA;
 

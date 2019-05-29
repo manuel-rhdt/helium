@@ -5,7 +5,7 @@ use crate::layout::construct::entity_constructor::{
 };
 use crate::layout::entity::LayoutEntity;
 use crate::parser::{ElementData, ParsedData};
-use crate::style::properties::computed::{ComputedValues, Display, PixelLength};
+use crate::style::properties::computed::{ComputedValues, Display, PixelLength, CssFloat, GenericSize, Percentage};
 
 use html5ever::QualName;
 use specs::{Component, Entity, ReadStorage, World};
@@ -69,27 +69,27 @@ impl Node {
             .expect("Node does not have the needed component")
     }
 
-    pub fn margin_top(mut self, margin_top: PixelLength) -> Self {
+    pub fn margin_top(mut self, margin_top: Quantity) -> Self {
         Arc::make_mut(&mut self.style.position).margin_top = margin_top.into();
         self
     }
 
-    pub fn margin_bottom(mut self, margin_bottom: PixelLength) -> Self {
+    pub fn margin_bottom(mut self, margin_bottom: Quantity) -> Self {
         Arc::make_mut(&mut self.style.position).margin_bottom = margin_bottom.into();
         self
     }
 
-    pub fn margin_left(mut self, margin_left: PixelLength) -> Self {
+    pub fn margin_left(mut self, margin_left: Quantity) -> Self {
         Arc::make_mut(&mut self.style.position).margin_left = margin_left.into();
         self
     }
 
-    pub fn margin_right(mut self, margin_right: PixelLength) -> Self {
+    pub fn margin_right(mut self, margin_right: Quantity) -> Self {
         Arc::make_mut(&mut self.style.position).margin_right = margin_right.into();
         self
     }
 
-    pub fn height(mut self, height: PixelLength) -> Self {
+    pub fn height(mut self, height: Quantity) -> Self {
         Arc::make_mut(&mut self.style.position).height = height.into();
         self
     }
@@ -227,11 +227,31 @@ fn construct_recursive(node: &Node, constructor: &mut EntityConstructor) {
     constructor.build_formatting_context(&node);
 }
 
+pub enum Quantity {
+    Px(CssFloat),
+    Pt(CssFloat),
+    Percent(CssFloat),
+    Auto
+}
+
+impl From<Quantity> for GenericSize {
+    fn from(quantity: Quantity) -> GenericSize {
+        use Quantity::*;
+        match quantity {
+            Px(val) => PixelLength(val).into(),
+            Pt(val) => PixelLength::from_pt(val).into(),
+            Percent(val) => Percentage(val).into(),
+            Auto => GenericSize::Auto
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
-    use crate::style::properties::computed::{GenericSize, PixelLength as Px};
+    use crate::style::properties::computed::{GenericSize, PixelLength};
+    use super::Quantity::*;
 
     #[test]
     fn test_apply_margin_top_and_bottom() {
@@ -240,11 +260,11 @@ mod test {
             .margin_bottom(Px(20.0))]);
         assert_eq!(
             html["div"].style.position.margin_top,
-            GenericSize::from(Px(10.0))
+            GenericSize::from(PixelLength(10.0))
         );
         assert_eq!(
             html["div"].style.position.margin_bottom,
-            GenericSize::from(Px(20.0))
+            GenericSize::from(PixelLength(20.0))
         );
     }
 
