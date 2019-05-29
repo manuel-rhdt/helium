@@ -247,14 +247,16 @@ impl InlineFormatter {
                     return Some(stack);
                 }
             } else {
-                // TODO: Error handling!
-                self.finish_current_line(
+                // TODO: Test this
+                let page_break_after = match self.finish_current_line(
                     data.entities,
                     data.texts,
                     data.inline_pos,
                     data.positions,
-                )
-                .unwrap();
+                ) {
+                    Ok(()) => false,
+                    Err(StackFullError) => true,
+                };
                 let max_height = self.finished_lines.max_height;
                 let stack = std::mem::replace(&mut self.finished_lines, Stack::new(max_height));
                 if stack.is_empty() {
@@ -262,7 +264,7 @@ impl InlineFormatter {
                 }
                 return Some(LineStack {
                     stack,
-                    page_break_after: false,
+                    page_break_after,
                 });
             }
         }

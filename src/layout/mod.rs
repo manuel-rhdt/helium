@@ -10,12 +10,11 @@ pub mod text;
 
 use crate::layout::entity::LayoutContext;
 use crate::style::device::Device;
-use crate::style::properties::computed::PixelLength;
 use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use construct::FlowConstructor;
 
-use specs::{Builder, Dispatcher, DispatcherBuilder, World};
+use specs::{Dispatcher, DispatcherBuilder, World};
 
 pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     // here we set the layout passes
@@ -49,7 +48,7 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     let mut flow_constructor = FlowConstructor::new(world);
     dom.traverse(&mut flow_constructor);
 
-    let mut layout_context = flow_constructor.layout_context();
+    let layout_context = flow_constructor.layout_context();
 
     // perform the layout passes
     dispatcher.dispatch(&layout_context.res);
