@@ -1,3 +1,5 @@
+#![allow(clippy::needless_update)]
+
 #[macro_use]
 extern crate cssparser;
 

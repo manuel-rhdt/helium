@@ -156,7 +156,6 @@ impl<'a> IterChildren<'a> for &'a Node {
 /// This function returns a Node with default element style except it being `display: block;`.
 pub fn block(name: &'static str, contents: Vec<Node>) -> Node {
     use crate::style::properties::computed::Box;
-    use std::sync::Arc;
     Node {
         name,
         entity: Cell::new(None),
