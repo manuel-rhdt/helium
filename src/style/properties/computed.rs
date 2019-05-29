@@ -124,6 +124,18 @@ impl Default for LengthPercentage {
     }
 }
 
+impl From<PixelLength> for LengthPercentage {
+    fn from(px: PixelLength) -> LengthPercentage {
+        LengthPercentage::PixelLength(px)
+    }
+}
+
+impl From<Percentage> for LengthPercentage {
+    fn from(percent: Percentage) -> LengthPercentage {
+        LengthPercentage::Percentage(percent)
+    }
+}
+
 impl LengthPercentage {
     /// If the `LengthPercentage` contains an absolute length, return it.
     pub fn length(&self) -> Option<PixelLength> {
@@ -167,9 +179,7 @@ impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage 
                     style.font.font_size,
                 ))
             }
-            QuantityOrPercentage::Percentage(percentage) => {
-                LengthPercentage::Percentage(*percentage)
-            }
+            QuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
         }
     }
 }
@@ -187,6 +197,18 @@ impl Default for GenericSize {
     }
 }
 
+impl From<PixelLength> for GenericSize {
+    fn from(px: PixelLength) -> GenericSize {
+        GenericSize::LengthPercentage(px.into())
+    }
+}
+
+impl From<Percentage> for GenericSize {
+    fn from(percent: Percentage) -> GenericSize {
+        GenericSize::LengthPercentage(percent.into())
+    }
+}
+
 impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize {
     fn from_specified(
         spec: &specified::AutoOrQuantityOrPercentage,
@@ -194,9 +216,7 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
     ) -> Self {
         match spec {
             specified::AutoOrQuantityOrPercentage::Auto => GenericSize::Auto,
-            specified::AutoOrQuantityOrPercentage::Percentage(percentage) => {
-                GenericSize::LengthPercentage(LengthPercentage::Percentage(*percentage))
-            }
+            specified::AutoOrQuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
             specified::AutoOrQuantityOrPercentage::Quantity(specified::Quantity {
                 value,
                 unit,

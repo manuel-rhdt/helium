@@ -23,7 +23,7 @@ impl Component for ContainingBlock {
 ///
 /// The origin of the coordinate system is usually the parent element's top left
 /// corner.
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct Position {
     /// Horizontal coordinate of the top left corner.
     pub x: PixelLength,

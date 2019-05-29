@@ -98,7 +98,7 @@ impl Traversal<DomRef> for FlowConstructor {
     }
 }
 
-mod entity_constructor {
+pub mod entity_constructor {
     use super::{
         BlockFormattingContext, BlockLevelElement, ComputedValues, Display, DomRef,
         InlineFormattingContext, LayoutEntity, NodeData, ParsedData, Position, TreeLinked,
@@ -108,7 +108,7 @@ mod entity_constructor {
 
     use std::fmt;
 
-    pub(super) trait AssignLayoutEntity {
+    pub trait AssignLayoutEntity {
         fn assign_layout_entity(&mut self, entity: LayoutEntity);
         fn layout_entity(&self) -> Option<LayoutEntity>;
     }
@@ -123,7 +123,7 @@ mod entity_constructor {
         }
     }
 
-    pub(super) trait Styled {
+    pub trait Styled {
         fn style(&self) -> ComputedValues;
     }
 
@@ -133,7 +133,7 @@ mod entity_constructor {
         }
     }
 
-    pub(super) trait HtmlNode: Sized {
+    pub trait HtmlNode: Sized {
         fn html_data(&self) -> &ParsedData;
     }
 
@@ -143,7 +143,7 @@ mod entity_constructor {
         }
     }
 
-    pub(super) trait IterChildren<'a>: Sized {
+    pub trait IterChildren<'a>: Sized {
         type ChildrenIter: 'a + Iterator<Item = Self>;
         fn children(&'a self) -> Self::ChildrenIter;
     }
@@ -155,15 +155,12 @@ mod entity_constructor {
         }
     }
 
-    pub(super) trait AbstractNode<'a>:
-        AssignLayoutEntity + Styled + HtmlNode + IterChildren<'a>
-    {
-    }
+    pub trait AbstractNode<'a>: AssignLayoutEntity + Styled + HtmlNode + IterChildren<'a> {}
 
     impl<'a, T: 'a + AssignLayoutEntity + Styled + HtmlNode + IterChildren<'a>> AbstractNode<'a> for T {}
 
-    pub(super) struct EntityConstructor {
-        pub(super) world: World,
+    pub struct EntityConstructor {
+        pub world: World,
     }
 
     impl fmt::Debug for EntityConstructor {
@@ -173,7 +170,7 @@ mod entity_constructor {
     }
 
     impl EntityConstructor {
-        pub(super) fn new(mut world: World) -> Self {
+        pub fn new(mut world: World) -> Self {
             world.register::<ComputedValues>();
             world.register::<InlineFormattingContext>();
             world.register::<BlockFormattingContext>();
@@ -184,7 +181,7 @@ mod entity_constructor {
 
         // Called on top-down traversal. Takes a node and its style to create a corresponding
         // `LayoutEntity`, and assigns the entity to the node.
-        pub(super) fn build_entity<'a>(&mut self, mut node: impl AbstractNode<'a>) {
+        pub fn build_entity<'a>(&mut self, mut node: impl AbstractNode<'a>) {
             let style = node.style();
 
             if style.box_.display == Display::None {
@@ -232,10 +229,7 @@ mod entity_constructor {
         // Called on bottom-up traversal. Traverses the node's children and decides (based on their
         // computed styles) whether to build a block formatting context or an inline formatting
         // context.
-        pub(super) fn build_formatting_context<'a, Node: AbstractNode<'a>>(
-            &mut self,
-            node: &'a Node,
-        ) {
+        pub fn build_formatting_context<'a, Node: AbstractNode<'a>>(&mut self, node: &'a Node) {
             let is_display_inline = |node: Node| match node.style().box_.display {
                 Display::Inline => true,
                 _ => false,
@@ -319,182 +313,38 @@ mod entity_constructor {
     }
 
     #[cfg(test)]
-    mod test {
+    pub mod test {
         use super::*;
-        use crate::parser::ElementData;
 
-        use html5ever::QualName;
-        use specs::{Component, Entity, ReadStorage};
+        use crate::simple_dom::{div, p, text};
 
-        use std::cell::Cell;
-        use std::ops::Index;
-
-        #[derive(Clone)]
-        struct Node {
-            name: &'static str,
-            entity: Cell<Option<LayoutEntity>>,
-            html_data: ParsedData,
-            style: ComputedValues,
-            contents: Vec<Node>,
-        }
-
-        impl Node {
-            fn construct(&self) -> World {
-                let world = World::new();
-                let mut constructor = EntityConstructor::new(world);
-                construct_recursive(self, &mut constructor);
-                constructor.world
-            }
-
-            fn get_name(&self, name: &str) -> Option<&Node> {
-                if self.name == name {
-                    Some(self)
-                } else {
-                    for child in &self.contents {
-                        if let Some(node) = child.get_name(name) {
-                            return Some(node);
-                        }
-                    }
-                    None
-                }
-            }
-
-            fn entity(&self) -> Entity {
-                self.entity.get().unwrap().0
-            }
-
-            // Retrieve the component corresponding to this node from the given storage.
-            fn get<'a, T: Component>(&self, storage: &'a ReadStorage<'a, T>) -> &'a T {
-                storage
-                    .get(self.entity())
-                    .expect("Node does not have the needed component")
-            }
-        }
-
-        impl<'a> Index<&'a str> for Node {
-            type Output = Node;
-
-            /// Performs a depth-first search for a node with name `name` starting with `self` and
-            /// descending through the children.
-            /// 
-            /// # Panics
-            /// 
-            /// Panics if no node with the given name can be found.
-            fn index(&self, name: &'a str) -> &Node {
-                self.get_name(name).expect("No node with name found")
-            }
-        }
-
-        impl<'a> AssignLayoutEntity for &'a Node {
-            fn assign_layout_entity(&mut self, entity: LayoutEntity) {
-                self.entity.set(Some(entity));
-            }
-
-            fn layout_entity(&self) -> Option<LayoutEntity> {
-                self.entity.get()
-            }
-        }
-
-
-        impl<'a> Styled for &'a Node {
-            fn style(&self) -> ComputedValues {
-                self.style.clone()
-            }
-        }
-
-        impl<'a> HtmlNode for &'a Node {
-            fn html_data(&self) -> &ParsedData {
-                &self.html_data
-            }
-        }
-
-        impl<'a> IterChildren<'a> for &'a Node {
-            type ChildrenIter = std::slice::Iter<'a, Node>;
-            fn children(&'a self) -> Self::ChildrenIter {
-                self.contents.iter()
-            }
-        }
-
-
-        fn block(name: &'static str, contents: Vec<Node>) -> Node {
-            use crate::style::properties::computed::Box;
-            use std::sync::Arc;
-            Node {
-                name,
-                entity: Cell::new(None),
-                html_data: ParsedData::Element(ElementData {
-                    name: QualName::new(None, ns!(html), name.into()),
-                    attributes: Default::default(),
-                    template_contents: None,
-                }),
-                style: ComputedValues {
-                    box_: Arc::new(Box {
-                        display: Display::Block,
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                contents,
-            }
-        }
-
-        fn inline(name: &'static str, contents: Vec<Node>) -> Node {
-            Node {
-                name,
-                entity: Cell::new(None),
-                html_data: ParsedData::Element(ElementData {
-                    name: QualName::new(None, ns!(html), name.into()),
-                    attributes: Default::default(),
-                    template_contents: None,
-                }),
-                style: Default::default(),
-                contents,
-            }
-        }
-
-        fn text(name: &'static str, text: &'static str) -> Node {
-            Node {
-                name,
-                entity: Cell::new(None),
-                html_data: ParsedData::Text(text.to_string().into()),
-                style: Default::default(),
-                contents: vec![],
-            }
-        }
-
-        fn construct_recursive(node: &Node, constructor: &mut EntityConstructor) {
-            constructor.build_entity(node);
-            for child in node.children() {
-                construct_recursive(child, constructor);
-            }
-            constructor.build_formatting_context(&node);
-        }
+        use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
         #[test]
         fn test_block_flow_creation_from_dom_tree() {
             use BlockLevelElement::*;
 
-            let html = block("a", vec![block("b", vec![])]);
+            let html = div(vec![div(vec![])]);
             let world = html.construct();
             let block_fmt = world.read_storage();
-            let BlockFormattingContext { elements } = html["a"].get(&block_fmt);
+            let BlockFormattingContext { elements } = html.get(&block_fmt);
 
             assert_eq!(
                 elements,
                 &vec![
-                    ContainerStart(html["a"].entity()),
-                    Leaf(html["b"].entity()),
-                    ContainerEnd(html["a"].entity()),
+                    ContainerStart(html.entity()),
+                    Leaf(html[0].entity()),
+                    ContainerEnd(html.entity()),
                 ]
             )
         }
 
         #[test]
         fn test_unscanned_text_creation_from_text_node() {
-            let html = text("node1", "Hello World!");
+            let html = text("Hello World!");
             let world = html.construct();
             let unscanned_texts = world.read_storage();
-            let UnscannedText { characters } = html["node1"].get(&unscanned_texts);
+            let UnscannedText { characters } = html.get(&unscanned_texts);
             assert_eq!(characters, "Hello World!");
         }
 
@@ -502,21 +352,18 @@ mod entity_constructor {
         fn test_anonymous_block_box_for_text_node_creation() {
             use BlockLevelElement::*;
 
-            let html = block(
-                "div",
-                vec![block("div2", vec![]), text("text", "Hello World!")],
-            );
+            let html = div(vec![div(vec![]), text("Hello World!")]);
             let world = html.construct();
             let block_fmt = world.read_storage();
-            let BlockFormattingContext { elements } = html["div"].get(&block_fmt);
+            let BlockFormattingContext { elements } = html.get(&block_fmt);
 
             assert_eq!(
                 elements,
                 &vec![
-                    ContainerStart(html["div"].entity()),
-                    Leaf(html["div2"].entity()),
-                    Leaf(html["text"].entity()),
-                    ContainerEnd(html["div"].entity()),
+                    ContainerStart(html.entity()),
+                    Leaf(html[0].entity()),
+                    Leaf(html[1].entity()),
+                    ContainerEnd(html.entity()),
                 ]
             )
         }
@@ -532,38 +379,42 @@ mod entity_constructor {
             //   </div>
             //   something else
             // </div>
-            let html = block(
-                "div",
-                vec![
-                    text("text1", "Something"),
-                    block("div2", vec![block("p", vec![text("text2", "something nested")])]),
-                    text("text3", "something else"),
-                ],
-            );
+            let html = div(vec![
+                text("Something"),
+                div(vec![p(vec![text("something nested")])]),
+                text("something else"),
+            ]);
             let world = html.construct();
             let block_fmt = world.read_storage();
-            let BlockFormattingContext { elements } = html["div"].get(&block_fmt);
+            let BlockFormattingContext { elements } = html.get(&block_fmt);
 
             assert_eq!(
                 elements,
                 &vec![
-                    ContainerStart(html["div"].entity()),
-                    Leaf(html["text1"].entity()),
-                    ContainerStart(html["div2"].entity()),
-                    Leaf(html["p"].entity()),
-                    ContainerEnd(html["div2"].entity()),
-                    Leaf(html["text3"].entity()),
-                    ContainerEnd(html["div"].entity()),
+                    ContainerStart(html.entity()),
+                    Leaf(html[0].entity()),
+                    ContainerStart(html[1].entity()),
+                    Leaf(html[1]["p"].entity()),
+                    ContainerEnd(html[1].entity()),
+                    Leaf(html[2].entity()),
+                    ContainerEnd(html.entity()),
                 ]
             );
 
             let inline_fmt = world.read_storage();
-            let InlineFormattingContext { elements } = html["p"].get(&inline_fmt);
+            let InlineFormattingContext { elements } = html[1]["p"].get(&inline_fmt);
 
-            assert_eq!(
-                elements,
-                &vec![html["text2"].entity()]
-            )
+            assert_eq!(elements, &[html[1]["p"][0].entity()])
+        }
+
+        #[test]
+        fn test_if_styled_node_has_style_component() {
+            let html = div(vec![]).margin_top(Px(10.0));
+            let world = html.construct();
+            let styles = world.read_storage();
+            let style: &ComputedValues = html.get(&styles);
+
+            assert_eq!(style.position.margin_top, GenericSize::from(Px(10.0)))
         }
     }
 }

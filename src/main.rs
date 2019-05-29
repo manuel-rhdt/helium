@@ -24,6 +24,7 @@ pub mod layout;
 pub mod node_data_ref;
 mod parser;
 mod pdf;
+pub mod simple_dom;
 pub mod style;
 mod traverse;
 mod tree;

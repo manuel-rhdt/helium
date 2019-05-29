@@ -1,7 +1,7 @@
 use super::entity::{Decoration, Position, Text, UnscannedText};
 use super::inline::{InlineFormatter, InlineFormatterData, InlineFormattingContext, InlinePos};
 use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
-use crate::style::properties::computed::{ComputedValues, PixelLength};
+use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength};
 
 use shred_derive::SystemData;
 use specs::{Component, DenseVecStorage, Entities, Entity, ReadStorage, System, WriteStorage};
@@ -33,6 +33,16 @@ pub enum BlockLevelElement {
     ContainerStart(Entity),
     Leaf(Entity),
     ContainerEnd(Entity),
+}
+
+impl BlockLevelElement {
+    /// Returns the entity associated with the `BlockLevelElement`.
+    pub fn entity(self) -> Entity {
+        use BlockLevelElement::*;
+        match self {
+            ContainerStart(entity) | Leaf(entity) | ContainerEnd(entity) => entity,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,45 +119,56 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         assert!(self.in_progress_containers.is_empty());
         let mut iter = self.elements.iter();
         for &element in &mut iter {
+            let style = match self.data.computed_values.get(element.entity()) {
+                Some(style) => style,
+                None => continue,
+            };
+
+            let (offset, container_size) = self.current_container_size();
+            let dimensions = calculate_container_dimensions(container_size, &style);
+
+            let Decoration {
+                padding,
+                border,
+                margin,
+                ..
+            } = &dimensions.decoration;
+
+            let position = self
+                .data
+                .positions
+                .entry(element.entity())
+                .unwrap()
+                .or_insert_with(Default::default);
+
+            if let BlockLevelElement::ContainerStart(_) | BlockLevelElement::Leaf(_) = element {
+                self.cursor += padding.top + border.top + margin.top;
+                position.y = self.cursor;
+            } else {
+                position.height = self.cursor - position.y;
+                self.cursor += padding.bottom + border.bottom + margin.bottom;
+            }
+
             match element {
                 BlockLevelElement::ContainerStart(entity) => {
-                    let style = self.data.computed_values.get(entity).unwrap();
-                    let (offset, container_size) = self.current_container_size();
-                    let dimensions = calculate_container_dimensions(container_size, &style);
-
                     let container = Container {
                         entity,
                         inline_offset: offset + dimensions.inline_offset(),
                         dimensions,
                     };
                     self.in_progress_containers.push(container);
-
-                    let Decoration {
-                        padding,
-                        border,
-                        margin,
-                        ..
-                    } = &dimensions.decoration;
-                    self.cursor += padding.top + border.top + margin.top;
                 }
                 BlockLevelElement::Leaf(leaf) => {
-                    while let Err(PageFullError) = self.layout_leaf(leaf) {
+                    while let Err(PageFullError) = self.layout_leaf(leaf, dimensions) {
                         self.new_page()
                     }
+
+                    self.cursor += padding.bottom + border.bottom + margin.bottom;
                 }
                 BlockLevelElement::ContainerEnd(_) => {
-                    let container = self
-                        .in_progress_containers
+                    self.in_progress_containers
                         .pop()
                         .expect("Internal Error: Invalid tree");
-
-                    let Decoration {
-                        padding,
-                        border,
-                        margin,
-                        ..
-                    } = &container.dimensions.decoration;
-                    self.cursor += padding.bottom + border.bottom + margin.bottom;
                 }
             }
 
@@ -159,13 +180,21 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 
     /// Put the leaf at the current cursor position.
+    /// 
+    /// This method may make partial progress. If the current page is full, a `PageFullError` is
+    /// returned. To finish the layout of the `leaf` entity, this method must be called, until it
+    /// no longer returns an Error.
     ///
     /// Returns `Err` if a new page needs to be started to finish the leaf.
-    fn layout_leaf(&mut self, leaf: Entity) -> Result<(), PageFullError> {
+    fn layout_leaf(
+        &mut self,
+        leaf: Entity,
+        dimensions: ContainerDimensions,
+    ) -> Result<(), PageFullError> {
         if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
-            // Initialize an inline formatter if `self.inline_formatter` is `None`.
             let (offset, width) = self.current_container_size();
             let remaining_block_size = self.remaining_block_size();
+            // The following initializes a new inline formatter if self.inline_formatter is None.
             let inline_formatter = self
                 .inline_formatter
                 .get_or_insert_with(|| InlineFormatter::new(width, width, remaining_block_size));
@@ -196,6 +225,19 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 }
             }
         }
+
+        let height = self
+            .data
+            .computed_values
+            .get(leaf)
+            .map(|style| style.position.height);
+        if let Some(GenericSize::LengthPercentage(lp)) = height {
+            let height = lp.absolute(dimensions.inline_size);
+            self.cursor += height;
+            if let Some(pos) = self.data.positions.get_mut(leaf) {
+                pos.height = height;
+            }
+        }
         Ok(())
     }
 
@@ -212,7 +254,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 struct ContainerDimensions {
     decoration: Decoration,
     inline_size: PixelLength,
@@ -241,4 +283,129 @@ struct Container {
     entity: Entity,
     inline_offset: PixelLength,
     dimensions: ContainerDimensions,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use crate::simple_dom::{div, html};
+    use crate::style::properties::computed::PixelLength as Px;
+
+    use shred::System;
+    use specs::RunNow;
+
+    #[test]
+    fn test_vertical_stacking_of_consecutive_containers() {
+        let html = html(vec![
+            div(vec![])
+                .height(Px(10.0))
+                .margin_top(Px(10.0))
+                .margin_bottom(Px(30.0)),
+            div(vec![]),
+        ]);
+        let mut world = html.construct();
+
+        let mut block_level_layout = BlockLevelLayout {
+            page_width: Px(100.0),
+            page_height: Px(100.0),
+        };
+
+        System::setup(&mut block_level_layout, &mut world.res);
+        block_level_layout.run_now(&world.res);
+
+        let positions = world.read_storage();
+        let pos1: &Position = html[0].get(&positions);
+        let pos2: &Position = html[1].get(&positions);
+
+        assert_eq!(
+            pos1,
+            &Position {
+                x: Px(0.0),
+                y: Px(10.0),
+                width: Px(0.0),
+                height: Px(10.0)
+            }
+        );
+        assert_eq!(
+            pos2,
+            &Position {
+                x: Px(0.0),
+                y: Px(50.0),
+                width: Px(0.0),
+                height: Px(0.0)
+            }
+        );
+    }
+
+    #[test]
+    fn test_content_height_of_container_with_simple_children() {
+        let html = html(vec![
+            div(vec![]).height(Px(10.0)),
+            div(vec![]).height(Px(40.0)),
+        ]);
+        let mut world = html.construct();
+
+        let mut block_level_layout = BlockLevelLayout {
+            page_width: Px(100.0),
+            page_height: Px(100.0),
+        };
+
+        System::setup(&mut block_level_layout, &mut world.res);
+        block_level_layout.run_now(&world.res);
+
+        let positions = world.read_storage();
+        let pos: &Position = html.get(&positions);
+
+        assert_eq!(
+            pos,
+            &Position {
+                x: Px(0.0),
+                y: Px(0.0),
+                width: Px(0.0),
+                height: Px(50.0)
+            }
+        )
+    }
+
+    #[test]
+    fn test_margin_collapsing_between_block_level_siblings() {
+        let html = html(vec![
+            div(vec![]).height(Px(10.0)).margin_bottom(Px(30.0)),
+            div(vec![]).height(Px(10.0)).margin_top(Px(10.0)),
+        ]);
+        let mut world = html.construct();
+
+        let mut block_level_layout = BlockLevelLayout {
+            page_width: Px(100.0),
+            page_height: Px(100.0),
+        };
+
+        System::setup(&mut block_level_layout, &mut world.res);
+        block_level_layout.run_now(&world.res);
+
+        let positions = world.read_storage();
+        let pos1: &Position = html[0].get(&positions);
+        let pos2: &Position = html[1].get(&positions);
+
+        assert_eq!(
+            pos1,
+            &Position {
+                x: Px(0.0),
+                y: Px(0.0),
+                width: Px(0.0),
+                height: Px(10.0)
+            }
+        );
+        assert_eq!(
+            pos2,
+            &Position {
+                x: Px(0.0),
+                y: Px(40.0),
+                width: Px(0.0),
+                height: Px(10.0)
+            }
+        );
+    }
+
 }
