@@ -141,12 +141,11 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 .unwrap()
                 .or_insert_with(Default::default);
 
+            position.width = dimensions.inline_size;
+
             if let BlockLevelElement::ContainerStart(_) | BlockLevelElement::Leaf(_) = element {
                 self.cursor += padding.top + border.top + margin.top;
                 position.y = self.cursor;
-            } else {
-                position.height = self.cursor - position.y;
-                self.cursor += padding.bottom + border.bottom + margin.bottom;
             }
 
             match element {
@@ -162,14 +161,18 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     while let Err(PageFullError) = self.layout_leaf(leaf, dimensions) {
                         self.new_page()
                     }
-
-                    self.cursor += padding.bottom + border.bottom + margin.bottom;
                 }
                 BlockLevelElement::ContainerEnd(_) => {
                     self.in_progress_containers
                         .pop()
                         .expect("Internal Error: Invalid tree");
                 }
+            }
+
+            let position = self.data.positions.get_mut(element.entity()).unwrap();
+            if let BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) = element {
+                position.height = self.cursor - position.y;
+                self.cursor += padding.bottom + border.bottom + margin.bottom;
             }
 
             // we have to reset the current inline formatter after an element has finished.
@@ -180,7 +183,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 
     /// Put the leaf at the current cursor position.
-    /// 
+    ///
     /// This method may make partial progress. If the current page is full, a `PageFullError` is
     /// returned. To finish the layout of the `leaf` entity, this method must be called, until it
     /// no longer returns an Error.
@@ -289,11 +292,36 @@ struct Container {
 mod test {
     use super::*;
 
-    use crate::style::properties::computed::PixelLength;
-    use crate::simple_dom::{div, html, Quantity::*};
+    use std::convert::TryInto;
 
+
+    use crate::simple_dom::{div, html, Quantity::*};
+    use crate::style::properties::computed::PixelLength;
     use shred::System;
     use specs::RunNow;
+
+    #[derive(Debug, Copy, Clone)]
+    struct BlockLayoutTest<'a> {
+        html: &'a crate::simple_dom::Node,
+        page_width: crate::simple_dom::Quantity,
+        page_height: crate::simple_dom::Quantity,
+    }
+
+    impl<'a> BlockLayoutTest<'a> {
+        fn layout(self) -> specs::World {
+            let mut world = self.html.construct();
+
+            let mut block_level_layout = BlockLevelLayout {
+                page_width: self.page_width.try_into().unwrap(),
+                page_height: self.page_height.try_into().unwrap(),
+            };
+
+            System::setup(&mut block_level_layout, &mut world.res);
+            block_level_layout.run_now(&world.res);
+
+            world
+        }
+    }
 
     #[test]
     fn test_vertical_stacking_of_consecutive_containers() {
@@ -304,15 +332,13 @@ mod test {
                 .margin_bottom(Px(30.0)),
             div(vec![]),
         ]);
-        let mut world = html.construct();
 
-        let mut block_level_layout = BlockLevelLayout {
-            page_width: PixelLength(100.0),
-            page_height: PixelLength(100.0),
+        let test = BlockLayoutTest {
+            html: &html,
+            page_width: Px(100.0),
+            page_height: Px(100.0),
         };
-
-        System::setup(&mut block_level_layout, &mut world.res);
-        block_level_layout.run_now(&world.res);
+        let world = test.layout();
 
         let positions = world.read_storage();
         let pos1: &Position = html[0].get(&positions);
@@ -323,7 +349,7 @@ mod test {
             &Position {
                 x: PixelLength(0.0),
                 y: PixelLength(10.0),
-                width: PixelLength(0.0),
+                width: PixelLength(100.0),
                 height: PixelLength(10.0)
             }
         );
@@ -332,7 +358,7 @@ mod test {
             &Position {
                 x: PixelLength(0.0),
                 y: PixelLength(50.0),
-                width: PixelLength(0.0),
+                width: PixelLength(100.0),
                 height: PixelLength(0.0)
             }
         );
@@ -344,15 +370,12 @@ mod test {
             div(vec![]).height(Px(10.0)),
             div(vec![]).height(Px(40.0)),
         ]);
-        let mut world = html.construct();
-
-        let mut block_level_layout = BlockLevelLayout {
-            page_width: PixelLength(100.0),
-            page_height: PixelLength(100.0),
+        let test = BlockLayoutTest {
+            html: &html,
+            page_width: Px(100.0),
+            page_height: Px(100.0),
         };
-
-        System::setup(&mut block_level_layout, &mut world.res);
-        block_level_layout.run_now(&world.res);
+        let world = test.layout();
 
         let positions = world.read_storage();
         let pos: &Position = html.get(&positions);
@@ -362,10 +385,47 @@ mod test {
             &Position {
                 x: PixelLength(0.0),
                 y: PixelLength(0.0),
-                width: PixelLength(0.0),
+                width: PixelLength(100.0),
                 height: PixelLength(50.0)
             }
         )
+    }
+
+    #[test]
+    fn test_percentage_in_specified_size() {
+        let html = html(vec![
+            div(vec![]).width(Percent(50.0)),
+            div(vec![]).width(Percent(150.0)),
+        ]);
+        let test = BlockLayoutTest {
+            html: &html,
+            page_width: Px(100.0),
+            page_height: Px(100.0),
+        };
+        let world = test.layout();
+
+        let positions = world.read_storage();
+        let pos1: &Position = html[0].get(&positions);
+        let pos2: &Position = html[1].get(&positions);
+
+        assert_eq!(
+            pos1,
+            &Position {
+                x: PixelLength(0.0),
+                y: PixelLength(0.0),
+                width: PixelLength(50.0),
+                height: PixelLength(0.0)
+            }
+        );
+        assert_eq!(
+            pos2,
+            &Position {
+                x: PixelLength(0.0),
+                y: PixelLength(0.0),
+                width: PixelLength(150.0),
+                height: PixelLength(0.0)
+            }
+        );
     }
 
     #[test]
@@ -374,15 +434,12 @@ mod test {
             div(vec![]).height(Px(10.0)).margin_bottom(Px(30.0)),
             div(vec![]).height(Px(10.0)).margin_top(Px(10.0)),
         ]);
-        let mut world = html.construct();
-
-        let mut block_level_layout = BlockLevelLayout {
-            page_width: PixelLength(100.0),
-            page_height: PixelLength(100.0),
+        let test = BlockLayoutTest {
+            html: &html,
+            page_width: Px(100.0),
+            page_height: Px(100.0),
         };
-
-        System::setup(&mut block_level_layout, &mut world.res);
-        block_level_layout.run_now(&world.res);
+        let world = test.layout();
 
         let positions = world.read_storage();
         let pos1: &Position = html[0].get(&positions);

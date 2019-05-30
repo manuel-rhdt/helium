@@ -13,6 +13,7 @@ use specs::{Component, Entity, ReadStorage, World};
 use std::cell::Cell;
 use std::ops::Index;
 use std::sync::Arc;
+use std::convert::TryFrom;
 
 /// A node of a simple dom tree.
 ///
@@ -20,7 +21,7 @@ use std::sync::Arc;
 /// - an associated style
 /// - associated html_data
 /// - the layout entity created from the node on construction.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Node {
     name: &'static str,
     entity: Cell<Option<LayoutEntity>>,
@@ -86,6 +87,11 @@ impl Node {
 
     pub fn margin_right(mut self, margin_right: Quantity) -> Self {
         Arc::make_mut(&mut self.style.position).margin_right = margin_right.into();
+        self
+    }
+
+    pub fn width(mut self, width: Quantity) -> Self {
+        Arc::make_mut(&mut self.style.position).width = width.into();
         self
     }
 
@@ -227,11 +233,27 @@ fn construct_recursive(node: &Node, constructor: &mut EntityConstructor) {
     constructor.build_formatting_context(&node);
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Quantity {
     Px(CssFloat),
     Pt(CssFloat),
     Percent(CssFloat),
     Auto
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct NotAbsoluteQuantity;
+
+impl TryFrom<Quantity> for PixelLength {
+    type Error = NotAbsoluteQuantity;
+    fn try_from(value: Quantity) -> Result<PixelLength, NotAbsoluteQuantity> {
+        use Quantity::*;
+        match value {
+            Px(value) => Ok(PixelLength(value)),
+            Pt(value) => Ok(PixelLength::from_pt(value)),
+            _ => Err(NotAbsoluteQuantity)
+        }
+    }
 }
 
 impl From<Quantity> for GenericSize {
@@ -240,7 +262,7 @@ impl From<Quantity> for GenericSize {
         match quantity {
             Px(val) => PixelLength(val).into(),
             Pt(val) => PixelLength::from_pt(val).into(),
-            Percent(val) => Percentage(val).into(),
+            Percent(val) => Percentage(val / 100.0).into(),
             Auto => GenericSize::Auto
         }
     }
