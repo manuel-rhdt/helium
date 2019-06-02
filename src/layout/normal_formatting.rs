@@ -325,7 +325,7 @@ mod test {
 
     #[test]
     fn test_vertical_stacking_of_consecutive_containers() {
-        let html = html(vec![
+        let html = &html(vec![
             div(vec![])
                 .height(Px(10.0))
                 .margin_top(Px(10.0))
@@ -334,7 +334,7 @@ mod test {
         ]);
 
         let test = BlockLayoutTest {
-            html: &html,
+            html,
             page_width: Px(100.0),
             page_height: Px(100.0),
         };
@@ -366,12 +366,12 @@ mod test {
 
     #[test]
     fn test_content_height_of_container_with_simple_children() {
-        let html = html(vec![
+        let html = &html(vec![
             div(vec![]).height(Px(10.0)),
             div(vec![]).height(Px(40.0)),
         ]);
         let test = BlockLayoutTest {
-            html: &html,
+            html,
             page_width: Px(100.0),
             page_height: Px(100.0),
         };
@@ -393,12 +393,12 @@ mod test {
 
     #[test]
     fn test_percentage_in_specified_size() {
-        let html = html(vec![
+        let html = &html(vec![
             div(vec![]).width(Percent(50.0)),
             div(vec![]).width(Percent(150.0)),
         ]);
         let test = BlockLayoutTest {
-            html: &html,
+            html,
             page_width: Px(100.0),
             page_height: Px(100.0),
         };
@@ -430,12 +430,12 @@ mod test {
 
     #[test]
     fn test_margin_collapsing_between_block_level_siblings() {
-        let html = html(vec![
+        let html = &html(vec![
             div(vec![]).height(Px(10.0)).margin_bottom(Px(30.0)),
             div(vec![]).height(Px(10.0)).margin_top(Px(10.0)),
         ]);
         let test = BlockLayoutTest {
-            html: &html,
+            html,
             page_width: Px(100.0),
             page_height: Px(100.0),
         };
