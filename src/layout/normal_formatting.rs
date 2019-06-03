@@ -4,7 +4,10 @@ use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength};
 
 use shred_derive::SystemData;
-use specs::{Component, DenseVecStorage, Entities, Entity, ReadStorage, System, WriteStorage};
+use specs::{
+    storage::BTreeStorage, Component, DenseVecStorage, Entities, Entity, ReadStorage, System,
+    Write, WriteStorage,
+};
 
 pub struct BlockLevelLayout {
     pub page_width: PixelLength,
@@ -24,6 +27,7 @@ impl<'data> System<'data> for BlockLevelLayout {
             let mut block_formatter =
                 BlockFormatter::new(&elements, (self.page_width, self.page_height), &mut data);
             block_formatter.layout();
+            *data.pages = Pages(block_formatter.pages);
         }
     }
 }
@@ -67,6 +71,7 @@ impl Component for BlockFragment {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct PageFullError;
 
+/// A struct that holds all data needed for the block layout pass.
 #[derive(SystemData)]
 pub struct BlockFormatterData<'data> {
     pub entities: Entities<'data>,
@@ -76,11 +81,14 @@ pub struct BlockFormatterData<'data> {
     pub texts: WriteStorage<'data, Text>,
     pub inline_pos: WriteStorage<'data, InlinePos>,
     pub unscanned_texts: WriteStorage<'data, UnscannedText>,
+    pub page_data: WriteStorage<'data, Page>,
+    pub pages: Write<'data, Pages>,
 }
 
 pub struct BlockFormatter<'elements, 'data> {
     in_progress_containers: Vec<Container>,
     pub pages: Vec<Entity>,
+    current_page: Page,
     pub elements: &'elements [BlockLevelElement],
     cursor: PixelLength,
     container_size: (PixelLength, PixelLength),
@@ -97,6 +105,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         BlockFormatter {
             in_progress_containers: vec![],
             pages: vec![],
+            current_page: Default::default(),
             elements,
             cursor: PixelLength(0.0),
             container_size,
@@ -179,6 +188,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             self.inline_formatter = None;
         }
         assert!(self.in_progress_containers.is_empty());
+        self.new_page();
         None
     }
 
@@ -220,6 +230,9 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                         .stack
                         .set_positions((offset, self.cursor), &mut self.data.positions);
                     self.cursor += line_stack.stack.height();
+                    self.current_page
+                        .elements
+                        .extend_from_slice(&line_stack.stack.entities());
                     if line_stack.page_break_after {
                         return Err(PageFullError);
                     }
@@ -237,9 +250,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         if let Some(GenericSize::LengthPercentage(lp)) = height {
             let height = lp.absolute(dimensions.inline_size);
             self.cursor += height;
+
+            if self.remaining_block_size() < PixelLength(0.0) {
+                self.new_page();
+            }
+
             if let Some(pos) = self.data.positions.get_mut(leaf) {
                 pos.height = height;
             }
+            self.current_page.append_element(leaf);
         }
         Ok(())
     }
@@ -253,7 +272,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 
     fn new_page(&mut self) {
-        // self.cursor = PixelLength(0.0);
+        self.cursor = PixelLength(0.0);
+        let page = std::mem::replace(&mut self.current_page, Default::default());
+        let page_entity = self
+            .data
+            .entities
+            .build_entity()
+            .with(page, &mut self.data.page_data)
+            .build();
+        self.pages.push(page_entity);
     }
 }
 
@@ -287,6 +314,25 @@ struct Container {
     inline_offset: PixelLength,
     dimensions: ContainerDimensions,
 }
+
+#[derive(Debug, Default, Clone)]
+pub struct Page {
+    elements: Vec<Entity>,
+}
+
+impl Page {
+    pub fn append_element(&mut self, element: Entity) {
+        self.elements.push(element)
+    }
+}
+
+impl Component for Page {
+    type Storage = BTreeStorage<Self>;
+}
+
+/// A resource that holds a sorted vector of all page entities.
+#[derive(Debug, Default, Clone)]
+pub struct Pages(Vec<Entity>);
 
 #[cfg(test)]
 mod test {
@@ -463,6 +509,42 @@ mod test {
                 height: PixelLength(10.0)
             }
         );
+    }
+
+    #[test]
+    fn test_page_is_generated() {
+        let html = &html(vec![div(vec![]).height(Px(10.0))]);
+        let test = BlockLayoutTest {
+            html,
+            page_width: Px(100.0),
+            page_height: Px(100.0),
+        };
+        let world = test.layout();
+
+        let pages = world.read_resource::<Pages>();
+        assert_eq!(pages.0.len(), 1);
+
+        let page_data = world.read_storage::<Page>();
+        let page_data = page_data.get(pages.0[0]).unwrap();
+
+        assert_eq!(page_data.elements[0], html["div"].entity());
+    }
+
+    #[test]
+    fn test_page_break_simple() {
+        let html = &html(vec![
+            div(vec![]).height(Px(75.0)),
+            div(vec![]).height(Px(75.0)),
+        ]);
+        let test = BlockLayoutTest {
+            html,
+            page_width: Px(100.0),
+            page_height: Px(100.0),
+        };
+        let world = test.layout();
+
+        let pages = world.read_resource::<Pages>();
+        assert_eq!(pages.0.len(), 2);
     }
 
 }
