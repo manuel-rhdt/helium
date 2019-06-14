@@ -29,6 +29,7 @@ pub struct InlineFormatterData<'refs, 'system> {
     pub inline_pos: &'refs mut WriteStorage<'system, InlinePos>,
     pub computed_values: &'refs ReadStorage<'system, ComputedValues>,
     pub unscanned_texts: &'refs mut WriteStorage<'system, UnscannedText>,
+    pub line_boxes: &'refs mut WriteStorage<'system, LineBox>,
 }
 
 #[derive(Default, Clone)]
@@ -155,10 +156,11 @@ impl InlineFormatter {
         texts: &WriteStorage<Text>,
         inline_pos: &mut WriteStorage<InlinePos>,
         positions: &mut WriteStorage<Position>,
+        line_boxes: &mut WriteStorage<LineBox>,
     ) -> Result<(), StackFullError> {
         let line = self
             .current_line
-            .build(entities, texts, inline_pos, positions);
+            .build(entities, texts, inline_pos, positions, line_boxes);
         self.current_line.clear();
         self.current_line.inline_size = self.line_width;
         if let Some(line) = line {
@@ -212,7 +214,13 @@ impl InlineFormatter {
 
             if requires_new_line
                 && self
-                    .finish_current_line(data.entities, data.texts, data.inline_pos, data.positions)
+                    .finish_current_line(
+                        data.entities,
+                        data.texts,
+                        data.inline_pos,
+                        data.positions,
+                        data.line_boxes,
+                    )
                     .is_err()
             {
                 // we exceeded the maximum height
@@ -253,6 +261,7 @@ impl InlineFormatter {
                     data.texts,
                     data.inline_pos,
                     data.positions,
+                    data.line_boxes,
                 ) {
                     Ok(()) => false,
                     Err(StackFullError) => true,
@@ -412,6 +421,7 @@ impl LineBuilder {
         texts: impl GenericReadStorage<Component = Text>,
         mut inline_pos: impl GenericWriteStorage<Component = InlinePos>,
         positions: &mut WriteStorage<'_, Position>,
+        line_boxes: &mut WriteStorage<'_, LineBox>,
     ) -> Option<Entity> {
         let line_entity = if self.inline_fragments.is_empty() {
             return None;
@@ -460,6 +470,12 @@ impl LineBuilder {
             ..Default::default() //< Position gets assigned by block formatter.
         };
         positions.insert(line_entity, pos).unwrap();
+        line_boxes.insert(
+            line_entity,
+            LineBox {
+                fragments: self.inline_fragments.clone(),
+            },
+        );
 
         Some(line_entity)
     }
@@ -476,6 +492,15 @@ pub struct InlinePos {
 }
 
 impl Component for InlinePos {
+    type Storage = VecStorage<Self>;
+}
+
+#[derive(Debug, Default)]
+pub struct LineBox {
+    pub fragments: Vec<Entity>,
+}
+
+impl Component for LineBox {
     type Storage = VecStorage<Self>;
 }
 

@@ -1,8 +1,10 @@
 use crate::layout::entity::{Decoration, Position, Text};
+use crate::layout::inline::LineBox;
+use crate::layout::normal_formatting::{Page, Pages};
 use crate::layout::text::{font::GlyphIndex, Font};
 use crate::style::properties::computed::{PixelLength, RGBA};
 
-use specs::{Join, ReadStorage, System};
+use specs::{Join, ReadStorage, RunNow, System};
 
 #[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct Point {
@@ -38,7 +40,7 @@ pub enum DisplayItem {
     Pop,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct DisplayList {
     items: Vec<DisplayItem>,
 }
@@ -65,9 +67,21 @@ impl DisplayList {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct PrintPages {
+    pub pages: Vec<DisplayList>,
+}
+
+impl PrintPages {
+    fn append_page(&mut self, page: DisplayList) {
+        self.pages.push(page)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct DisplayDecoration {
     pub display_list: DisplayList,
+    pub bitset: specs::BitSet,
 }
 
 impl<'a> System<'a> for DisplayDecoration {
@@ -82,7 +96,8 @@ impl<'a> System<'a> for DisplayDecoration {
                 height,
             },
             deco,
-        ) in (&positions, &decorations).join()
+            _,
+        ) in (&positions, &decorations, &self.bitset).join()
         {
             use PixelLength as Px;
 
@@ -158,14 +173,75 @@ impl<'a> System<'a> for DisplayDecoration {
 
 pub struct DisplayText {
     pub display_list: DisplayList,
+    pub bitset: specs::BitSet,
 }
 
 impl<'a> System<'a> for DisplayText {
-    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, Text>);
+    type SystemData = (
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, Text>,
+        ReadStorage<'a, LineBox>,
+    );
 
-    fn run(&mut self, (positions, text): Self::SystemData) {
-        for (&Position { x, y, .. }, text) in (&positions, &text).join() {
-            self.display_list.append_text(Point { x, y }, text)
+    fn run(&mut self, (positions, text, line_boxes): Self::SystemData) {
+        for (line_box, _) in (&line_boxes, &self.bitset).join() {
+            for &fragment in &line_box.fragments {
+                process_fragment(
+                    fragment,
+                    &mut self.display_list,
+                    &positions,
+                    &text,
+                );
+            }
         }
     }
+}
+
+fn process_fragment(
+    fragment: specs::Entity,
+    display_list: &mut DisplayList,
+    positions: &ReadStorage<'_, Position>,
+    texts: &ReadStorage<'_, Text>,
+) -> Option<()> {
+    let text = texts.get(fragment)?;
+    let Position { x, y, .. } = *positions.get(fragment)?;
+    display_list.append_text(Point { x, y }, text);
+    Some(())
+}
+
+pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
+    let pages = world.read_resource::<Pages>();
+    let page_data = world.read_storage::<Page>();
+    let mut print_pages = PrintPages::default();
+    for &page in &pages.0 {
+        let page_data = if let Some(page) = page_data.get(page) {
+            page
+        } else {
+            continue;
+        };
+
+        let display_list = DisplayList::default();
+        let mut bitset = specs::BitSet::new();
+        page_data.add_elements_to_set(&mut bitset);
+
+        let mut decorations_builder = DisplayDecoration {
+            display_list,
+            bitset,
+        };
+        decorations_builder.run_now(&world.res);
+
+        let display_list = decorations_builder.display_list;
+        let bitset = decorations_builder.bitset;
+
+        let mut text_builder = DisplayText {
+            display_list,
+            bitset,
+        };
+        text_builder.run_now(&world.res);
+        let display_list = text_builder.display_list;
+
+        print_pages.append_page(display_list);
+    }
+
+    print_pages
 }

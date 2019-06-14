@@ -5,15 +5,17 @@ use crate::layout::construct::entity_constructor::{
 };
 use crate::layout::entity::LayoutEntity;
 use crate::parser::{ElementData, ParsedData};
-use crate::style::properties::computed::{ComputedValues, Display, PixelLength, CssFloat, GenericSize, Percentage};
+use crate::style::properties::computed::{
+    ComputedValues, CssFloat, Display, GenericSize, Percentage, PixelLength,
+};
 
 use html5ever::QualName;
 use specs::{Component, Entity, ReadStorage, World};
 
 use std::cell::Cell;
+use std::convert::TryFrom;
 use std::ops::Index;
 use std::sync::Arc;
-use std::convert::TryFrom;
 
 /// A node of a simple dom tree.
 ///
@@ -238,7 +240,7 @@ pub enum Quantity {
     Px(CssFloat),
     Pt(CssFloat),
     Percent(CssFloat),
-    Auto
+    Auto,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -251,7 +253,7 @@ impl TryFrom<Quantity> for PixelLength {
         match value {
             Px(value) => Ok(PixelLength(value)),
             Pt(value) => Ok(PixelLength::from_pt(value)),
-            _ => Err(NotAbsoluteQuantity)
+            _ => Err(NotAbsoluteQuantity),
         }
     }
 }
@@ -263,7 +265,7 @@ impl From<Quantity> for GenericSize {
             Px(val) => PixelLength(val).into(),
             Pt(val) => PixelLength::from_pt(val).into(),
             Percent(val) => Percentage(val / 100.0).into(),
-            Auto => GenericSize::Auto
+            Auto => GenericSize::Auto,
         }
     }
 }
@@ -272,8 +274,8 @@ impl From<Quantity> for GenericSize {
 mod test {
     use super::*;
 
-    use crate::style::properties::computed::{GenericSize, PixelLength};
     use super::Quantity::*;
+    use crate::style::properties::computed::{GenericSize, PixelLength};
 
     #[test]
     fn test_apply_margin_top_and_bottom() {

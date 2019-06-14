@@ -83,6 +83,8 @@ pub struct BlockFormatterData<'data> {
     pub unscanned_texts: WriteStorage<'data, UnscannedText>,
     pub page_data: WriteStorage<'data, Page>,
     pub pages: Write<'data, Pages>,
+    pub line_boxes: WriteStorage<'data, super::inline::LineBox>,
+    pub decorations: WriteStorage<'data, Decoration>,
 }
 
 pub struct BlockFormatter<'elements, 'data> {
@@ -220,6 +222,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     inline_pos: &mut self.data.inline_pos,
                     computed_values: &self.data.computed_values,
                     unscanned_texts: &mut self.data.unscanned_texts,
+                    line_boxes: &mut self.data.line_boxes,
                 };
                 let mut iter = inline_formatter.iter(
                     &inline_formatting_context.elements,
@@ -324,6 +327,12 @@ impl Page {
     pub fn append_element(&mut self, element: Entity) {
         self.elements.push(element)
     }
+
+    pub fn add_elements_to_set(&self, set: &mut specs::BitSet) {
+        for &entity in &self.elements {
+            set.add(entity.id());
+        }
+    }
 }
 
 impl Component for Page {
@@ -332,14 +341,13 @@ impl Component for Page {
 
 /// A resource that holds a sorted vector of all page entities.
 #[derive(Debug, Default, Clone)]
-pub struct Pages(Vec<Entity>);
+pub struct Pages(pub Vec<Entity>);
 
 #[cfg(test)]
 mod test {
     use super::*;
 
     use std::convert::TryInto;
-
 
     use crate::simple_dom::{div, html, Quantity::*};
     use crate::style::properties::computed::PixelLength;
@@ -527,7 +535,7 @@ mod test {
         let page_data = world.read_storage::<Page>();
         let page_data = page_data.get(pages.0[0]).unwrap();
 
-        assert_eq!(page_data.elements[0], html["div"].entity());
+        assert_eq!(page_data.elements, [html["div"].entity()]);
     }
 
     #[test]
@@ -545,6 +553,39 @@ mod test {
 
         let pages = world.read_resource::<Pages>();
         assert_eq!(pages.0.len(), 2);
+
+        let page_data = world.read_storage::<Page>();
+        let page0 = page_data.get(pages.0[0]).unwrap();
+        let page1 = page_data.get(pages.0[1]).unwrap();
+
+        assert_eq!(page0.elements, [html[0].entity()]);
+        assert_eq!(page1.elements, [html[1].entity()]);
     }
 
+    #[test]
+    fn test_page_returns_correct_bitset() {
+        let html = &html(vec![
+            div(vec![]).height(Px(25.0)),
+            div(vec![]).height(Px(25.0)),
+            div(vec![]).height(Px(75.0)),
+        ]);
+        let test = BlockLayoutTest {
+            html,
+            page_width: Px(100.0),
+            page_height: Px(100.0),
+        };
+        let world = test.layout();
+
+        let pages = world.read_resource::<Pages>();
+        assert_eq!(pages.0.len(), 2);
+
+        let page_data = world.read_storage::<Page>();
+        let page0 = page_data.get(pages.0[0]).unwrap();
+        let mut bitset = specs::BitSet::new();
+        page0.add_elements_to_set(&mut bitset);
+
+        assert!(bitset.contains(html[0].entity().id()));
+        assert!(bitset.contains(html[1].entity().id()));
+        assert!(!bitset.contains(html[2].entity().id()));
+    }
 }
