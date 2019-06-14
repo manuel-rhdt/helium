@@ -18,6 +18,7 @@ use derive_more::From;
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 pub mod default_cell_ext;
 pub mod display_list;
@@ -36,6 +37,8 @@ use crate::style::device::Device;
 use style::properties::computed::PixelLength;
 
 use specs::RunNow;
+
+use log::info;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "helium")]
@@ -59,7 +62,9 @@ fn main() -> Result<(), Error> {
     let file = fs::read(opt.input)?;
     let html = String::from_utf8_lossy(&file);
 
+    let before_render_tree = Instant::now();
     let dom = generate_render_tree(&html);
+    info!("TIMED: generate_render_tree {:?}", before_render_tree.elapsed());
 
     // a4 paper
     let device = Device {
@@ -67,7 +72,9 @@ fn main() -> Result<(), Error> {
         height: PixelLength(1123.0),
     };
 
+    let before_layout = Instant::now();
     let mut layout_context = layout::layout(dom.clone(), device);
+    info!("TIMED: layout {:?}", before_layout.elapsed());
 
     let mut dotfile = fs::File::create("graph.dot")?;
     dom.serialize_dot_graph(&mut dotfile)?;
