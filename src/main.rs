@@ -76,9 +76,6 @@ fn main() -> Result<(), Error> {
     let mut layout_context = layout::layout(dom.clone(), device);
     info!("TIMED: layout {:?}", before_layout.elapsed());
 
-    let mut dotfile = fs::File::create("graph.dot")?;
-    dom.serialize_dot_graph(&mut dotfile)?;
-
     let display_list = display_list::generate_display_list(&mut layout_context);
 
     pdf::write_pdf(display_list, device, opt.no_filter)?;
