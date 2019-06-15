@@ -1,4 +1,4 @@
-use crate::display_list::{self, DisplayItem, DisplayList, PrintPages, Rect};
+use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::layout::text::{font::GlyphIndex, Font as HFont};
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;

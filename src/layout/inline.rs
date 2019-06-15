@@ -470,12 +470,14 @@ impl LineBuilder {
             ..Default::default() //< Position gets assigned by block formatter.
         };
         positions.insert(line_entity, pos).unwrap();
-        line_boxes.insert(
-            line_entity,
-            LineBox {
-                fragments: self.inline_fragments.clone(),
-            },
-        );
+        line_boxes
+            .insert(
+                line_entity,
+                LineBox {
+                    fragments: self.inline_fragments.clone(),
+                },
+            )
+            .unwrap();
 
         Some(line_entity)
     }

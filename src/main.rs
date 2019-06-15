@@ -18,7 +18,7 @@ use derive_more::From;
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub mod default_cell_ext;
 pub mod display_list;
@@ -35,8 +35,6 @@ mod tree;
 use crate::parser::generate_render_tree;
 use crate::style::device::Device;
 use style::properties::computed::PixelLength;
-
-use specs::RunNow;
 
 use log::info;
 
@@ -64,7 +62,10 @@ fn main() -> Result<(), Error> {
 
     let before_render_tree = Instant::now();
     let dom = generate_render_tree(&html);
-    info!("TIMED: generate_render_tree {:?}", before_render_tree.elapsed());
+    info!(
+        "TIMED: generate_render_tree {:?}",
+        before_render_tree.elapsed()
+    );
 
     // a4 paper
     let device = Device {
