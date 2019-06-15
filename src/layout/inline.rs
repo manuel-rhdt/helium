@@ -357,17 +357,21 @@ impl Stack {
         self.entities.is_empty()
     }
 
-    pub fn set_positions(&self, offset: (Px, Px), positions: &mut WriteStorage<'_, Position>) {
+    pub fn set_positions(
+        &self,
+        offset: (Px, Px),
+        positions: &mut WriteStorage<'_, Position>,
+    ) -> Result<(), specs::error::WrongGeneration> {
         let mut pos_y = offset.1;
         for &stack_element in &self.entities {
             let pos = positions
-                .entry(stack_element)
-                .unwrap()
+                .entry(stack_element)?
                 .or_insert(Default::default());
             pos.x = offset.0;
             pos.y = pos_y;
             pos_y += pos.height;
         }
+        Ok(())
     }
 }
 
