@@ -209,6 +209,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     ) -> Result<(), PageFullError> {
         let mut fragment_height = PixelLength(0.0);
         let container_offset = self.current_container_pos().x;
+        let container_width = self.current_container_pos().width;
         let result = if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
             let remaining_block_size = self.remaining_block_size();
             // The following initializes a new inline formatter if self.inline_formatter is None.
@@ -263,8 +264,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .get(leaf)
             .map(|style| style.position.height);
         if let Some(GenericSize::LengthPercentage(lp)) = height {
-            // TODO: Fix this
-            let height = lp.absolute(dimensions.inline_size);
+            let height = lp.absolute(container_width);
             self.cursor += height;
 
             if self.remaining_block_size() < PixelLength(0.0) {
@@ -366,6 +366,7 @@ struct Container {
     dimensions: ElementDimensions,
 }
 
+// TODO: consider if the vec is needed.
 #[derive(Debug, Default, Clone)]
 pub struct Page {
     elements: Vec<Entity>,

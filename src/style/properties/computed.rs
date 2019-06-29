@@ -189,6 +189,12 @@ pub enum GenericSize {
     Auto,
 }
 
+impl GenericSize {
+    pub fn zero() -> Self {
+        GenericSize::LengthPercentage(LengthPercentage::from(PixelLength(0.0)))
+    }
+}
+
 impl Default for GenericSize {
     fn default() -> Self {
         GenericSize::Auto
@@ -238,7 +244,7 @@ impl GenericSize {
 /// of boxes.
 ///
 /// These properties are _not_ inherited.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Position {
     pub width: GenericSize,
     pub height: GenericSize,
@@ -273,6 +279,31 @@ impl Position {
         }
         if let BorderStyle::None = self.border_right_style {
             self.border_right_width = PixelLength::default();
+        }
+    }
+}
+
+impl Default for Position {
+    fn default() -> Position {
+        Position {
+            width: GenericSize::Auto,
+            height: GenericSize::Auto,
+            margin_top: GenericSize::zero(),
+            margin_bottom: GenericSize::zero(),
+            margin_left: GenericSize::zero(),
+            margin_right: GenericSize::zero(),
+            padding_top: LengthPercentage::default(),
+            padding_bottom: LengthPercentage::default(),
+            padding_left: LengthPercentage::default(),
+            padding_right: LengthPercentage::default(),
+            border_top_width: PixelLength::default(),
+            border_bottom_width: PixelLength::default(),
+            border_left_width: PixelLength::default(),
+            border_right_width: PixelLength::default(),
+            border_top_style: BorderStyle::default(),
+            border_bottom_style: BorderStyle::default(),
+            border_left_style: BorderStyle::default(),
+            border_right_style: BorderStyle::default(),
         }
     }
 }
