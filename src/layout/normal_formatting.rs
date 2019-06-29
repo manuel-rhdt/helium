@@ -88,12 +88,13 @@ pub struct BlockFormatterData<'data> {
 }
 
 pub struct BlockFormatter<'elements, 'data> {
-    in_progress_containers: Vec<Container>,
+    in_progress_containers: Vec<Entity>,
     pub pages: Vec<Entity>,
     current_page: Page,
     pub elements: &'elements [BlockLevelElement],
+    /// A cursor tracking vertical layout progress
     cursor: PixelLength,
-    container_size: (PixelLength, PixelLength),
+    page_size: (PixelLength, PixelLength),
     inline_formatter: Option<InlineFormatter>,
     data: &'elements mut BlockFormatterData<'data>,
 }
@@ -101,7 +102,7 @@ pub struct BlockFormatter<'elements, 'data> {
 impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     pub fn new(
         elements: &'elements [BlockLevelElement],
-        container_size: (PixelLength, PixelLength),
+        page_size: (PixelLength, PixelLength),
         data: &'elements mut BlockFormatterData<'data>,
     ) -> Self {
         BlockFormatter {
@@ -110,7 +111,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             current_page: Default::default(),
             elements,
             cursor: PixelLength(0.0),
-            container_size,
+            page_size,
             inline_formatter: None,
             data,
         }
@@ -118,7 +119,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
     /// Returns the remaining space in the block direction until the current page is full.
     pub fn remaining_block_size(&self) -> PixelLength {
-        self.container_size.1 - self.cursor
+        self.page_size.1 - self.cursor
     }
 
     /// Iterates through the elements of the flow and assigns the leaf positions on the individual
@@ -129,8 +130,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     /// decoration and determining the width of leaves).
     pub fn layout(&mut self) -> Option<()> {
         assert!(self.in_progress_containers.is_empty());
-        let mut iter = self.elements.iter();
-        for &element in &mut iter {
+        for &element in self.elements.iter() {
             self.process_element(element);
         }
         assert!(self.in_progress_containers.is_empty());
@@ -141,8 +141,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     fn process_element(&mut self, element: BlockLevelElement) -> Option<()> {
         let style = self.data.computed_values.get(element.entity())?;
 
-        let (offset, container_size) = self.current_container_size();
-        let dimensions = calculate_container_dimensions(container_size, &style);
+        let container_pos = self.current_container_pos();
+        let dimensions = compute_element_dimensions(container_pos.width, &style);
 
         let Decoration {
             padding,
@@ -158,21 +158,16 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .ok()?
             .or_insert_with(Default::default);
 
-        position.width = dimensions.inline_size;
-
         if let BlockLevelElement::ContainerStart(_) | BlockLevelElement::Leaf(_) = element {
             self.cursor += padding.top + border.top + margin.top;
+            position.x = container_pos.x + dimensions.inline_offset();
             position.y = self.cursor;
+            position.width = dimensions.inline_size;
         }
 
         match element {
             BlockLevelElement::ContainerStart(entity) => {
-                let container = Container {
-                    entity,
-                    inline_offset: offset + dimensions.inline_offset(),
-                    dimensions,
-                };
-                self.in_progress_containers.push(container);
+                self.in_progress_containers.push(entity);
             }
             BlockLevelElement::Leaf(leaf) => {
                 while let Err(PageFullError) = self.layout_leaf(leaf, dimensions) {
@@ -210,11 +205,11 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     fn layout_leaf(
         &mut self,
         leaf: Entity,
-        dimensions: ContainerDimensions,
+        dimensions: ElementDimensions,
     ) -> Result<(), PageFullError> {
         let mut fragment_height = PixelLength(0.0);
+        let container_offset = self.current_container_pos().x;
         let result = if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
-            let (offset, _) = self.current_container_size();
             let remaining_block_size = self.remaining_block_size();
             // The following initializes a new inline formatter if self.inline_formatter is None.
             let inline_formatter = self.inline_formatter.get_or_insert_with(|| {
@@ -243,7 +238,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     line_stack
                         .stack
                         .set_positions(
-                            (offset + dimensions.inline_offset(), self.cursor),
+                            (container_offset + dimensions.inline_offset(), self.cursor),
                             &mut self.data.positions,
                         )
                         .expect("line_stack entities were invalidated while still in use.");
@@ -268,6 +263,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .get(leaf)
             .map(|style| style.position.height);
         if let Some(GenericSize::LengthPercentage(lp)) = height {
+            // TODO: Fix this
             let height = lp.absolute(dimensions.inline_size);
             self.cursor += height;
 
@@ -286,7 +282,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         }
 
         if let Some(pos) = self.data.positions.get_mut(leaf) {
-            pos.x = dimensions.inline_offset();
+            pos.x = container_offset + dimensions.inline_offset();
             pos.width = dimensions.inline_size;
         }
         self.data
@@ -298,12 +294,21 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         result
     }
 
-    fn current_container_size(&self) -> (PixelLength, PixelLength) {
-        self.in_progress_containers
-            .last()
-            .cloned()
-            .map(|container| (container.inline_offset, container.dimensions.inline_size))
-            .unwrap_or((PixelLength(0.0), self.container_size.0))
+    fn current_container(&self) -> Option<Entity> {
+        self.in_progress_containers.last().cloned()
+    }
+
+    fn current_container_pos(&self) -> Position {
+        if let Some(container) = self.current_container() {
+            self.data.positions.get(container).cloned().unwrap()
+        } else {
+            Position {
+                x: PixelLength(0.0),
+                y: PixelLength(0.0),
+                width: self.page_size.0,
+                height: self.page_size.1
+            }
+        }
     }
 
     fn new_page(&mut self) {
@@ -320,24 +325,35 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-struct ContainerDimensions {
+struct ElementDimensions {
     decoration: Decoration,
     inline_size: PixelLength,
 }
 
-impl ContainerDimensions {
+impl ElementDimensions {
+    /// Returns distance between the left edge of the element's content area and the left edge of
+    /// the containing element's content area.
+    ///
+    /// In other words, this function returns the combined length of the left margin, left padding
+    /// and left border width.
     fn inline_offset(self) -> PixelLength {
         self.decoration.border.left + self.decoration.margin.left + self.decoration.padding.left
     }
 }
 
-fn calculate_container_dimensions(
+/// Uses the constraints given by the width, height, margin, padding and border properties to
+/// compute the dimensions of an element.
+///
+/// # Arguments
+/// - `container_size`: the horizontal size of the content area of the containing element
+/// - `style`: the computed css properties of the element
+fn compute_element_dimensions(
     container_size: PixelLength,
     style: &ComputedValues,
-) -> ContainerDimensions {
+) -> ElementDimensions {
     let mut decoration = calculate_padding_and_border(container_size, &style);
     let inline_size = calculate_inline_size(container_size, &mut decoration, &style);
-    ContainerDimensions {
+    ElementDimensions {
         decoration,
         inline_size,
     }
@@ -347,7 +363,7 @@ fn calculate_container_dimensions(
 struct Container {
     entity: Entity,
     inline_offset: PixelLength,
-    dimensions: ContainerDimensions,
+    dimensions: ElementDimensions,
 }
 
 #[derive(Debug, Default, Clone)]
