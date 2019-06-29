@@ -48,14 +48,17 @@ impl InlineFormatterState {
         line_width: Px,
         remaining_inline_space: Px,
         InlineFormatterData {
+            entities,
             computed_values,
             unscanned_texts,
             ..
         }: &mut InlineFormatterData,
     ) -> Option<Entity> {
-        let result = if let Some(entity) = elements.get(self.current_element_index).cloned() {
-            let style = computed_values.get(entity).expect("No style assigned");
-            let text = unscanned_texts.get_mut(entity).expect("No text assigned");
+        let result = if let Some(&entity) = elements.get(self.current_element_index) {
+            let (style, text) = (*computed_values, &mut **unscanned_texts)
+                .join()
+                .get(entity, entities)
+                .expect("No style/text assigned");
             super::text::whitespace::transform_text(&mut text.characters);
             let glyph_metrics_provider = match_font(&style)
                 .expect("Could not find any matching fonts.")
@@ -81,13 +84,25 @@ impl InlineFormatterState {
             .as_ref()
             .expect(
                 "Before calling fragment_iter, the output of \
-                 `InlineFormatterState.next_element` must be checked.",
+                 `InlineFormatterState.next_element(..)` must be checked.",
             )
             .clone()
             .into_iterator(text)
     }
 }
 
+/// An `InlineFormatter` manages the layout of entities corresponding to a single inline formatting
+/// context.
+///
+/// # Discussion
+///
+/// The `InlineFormatter` struct itself stores all the state information associated with the inline
+/// layout. To actually make progress in the inline layout the method `layout_lines()` has to be
+/// called, providing a slice of entities and a mutable reference to `InlineFormatterData`. This
+/// method returns an iterator that yields stacks of lines until all entities are completely laid
+/// out.
+///
+///
 pub struct InlineFormatter {
     current_line: LineBuilder,
     line_width: Px,
@@ -107,6 +122,7 @@ impl InlineFormatter {
         }
     }
 
+    /// Returns the remaining inline-direction space until the current line is completely full.
     pub fn remaining_inline_space(&self) -> Px {
         self.current_line.remaining_inline_space()
     }
@@ -181,11 +197,12 @@ impl InlineFormatter {
         entity: Entity,
         data: &mut InlineFormatterData,
     ) -> Option<LineStack> {
-        let style = data.computed_values.get(entity).expect("No style assigned");
-        let UnscannedText {
-            characters: content,
-        } = data.unscanned_texts.get(entity).unwrap();
-        let font = match_font(&style).unwrap();
+        let (style, unscanned_text) = (data.computed_values, &*data.unscanned_texts)
+            .join()
+            .get(entity, data.entities)?;
+        let content = &unscanned_text.characters;
+        let font = match_font(&style)?;
+
         let font_size = style.font.font_size;
         let font_height = font.font_height(style.font.font_size);
         let Font::BuiltIn(font) = font;
@@ -279,7 +296,7 @@ impl InlineFormatter {
         }
     }
 
-    /// Returns an iterator, returning stacks of lines.
+    /// Returns an iterator which produces stacks of lines.
     pub fn iter<'refs, 'data>(
         &'refs mut self,
         entities: &'refs [Entity],
@@ -349,10 +366,12 @@ impl Stack {
         self.total_height
     }
 
+    /// Returns the number of entities stored in the stack.
     pub fn len(&self) -> usize {
         self.entities.len()
     }
 
+    /// Returns `true` if the stack contains no entities.
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
     }
@@ -530,6 +549,8 @@ impl<'a> System<'a> for InlinePositionAssign {
     }
 }
 
+/// A `LineStack` contains a list of lines that should be laid out vertically (block-direction) one
+/// after the other.
 #[derive(Debug, Clone)]
 pub struct LineStack {
     pub stack: Stack,

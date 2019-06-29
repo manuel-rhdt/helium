@@ -4,7 +4,7 @@ use crate::layout::normal_formatting::{Page, Pages};
 use crate::layout::text::{font::GlyphIndex, Font};
 use crate::style::properties::computed::{PixelLength, RGBA};
 
-use specs::{Join, ReadStorage, RunNow, System};
+use specs::{Entities, Join, ReadStorage, RunNow, System};
 
 #[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct Point {
@@ -178,35 +178,22 @@ pub struct DisplayText {
 
 impl<'a> System<'a> for DisplayText {
     type SystemData = (
+        Entities<'a>,
         ReadStorage<'a, Position>,
         ReadStorage<'a, Text>,
         ReadStorage<'a, LineBox>,
     );
 
-    fn run(&mut self, (positions, text, line_boxes): Self::SystemData) {
+    fn run(&mut self, (entities, positions, text, line_boxes): Self::SystemData) {
         for (line_box, _) in (&line_boxes, &self.bitset).join() {
             for &fragment in &line_box.fragments {
-                process_fragment(
-                    fragment,
-                    &mut self.display_list,
-                    &positions,
-                    &text,
-                );
+                let joint_comps = (&positions, &text).join().get(fragment, &entities);
+                if let Some((&Position { x, y, .. }, text)) = joint_comps {
+                    self.display_list.append_text(Point { x, y }, text)
+                }
             }
         }
     }
-}
-
-fn process_fragment(
-    fragment: specs::Entity,
-    display_list: &mut DisplayList,
-    positions: &ReadStorage<'_, Position>,
-    texts: &ReadStorage<'_, Text>,
-) -> Option<()> {
-    let text = texts.get(fragment)?;
-    let Position { x, y, .. } = *positions.get(fragment)?;
-    display_list.append_text(Point { x, y }, text);
-    Some(())
 }
 
 pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
