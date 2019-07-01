@@ -86,8 +86,9 @@ pub struct BlockFormatter<'elements, 'data> {
     in_progress_containers: Vec<Entity>,
     pub pages: Vec<Entity>,
     current_page: Page,
+    /// The slice of elements that have to be processed
     pub elements: &'elements [BlockLevelElement],
-    /// A cursor tracking vertical layout progress
+    /// A cursor tracking vertical layout position
     cursor: PixelLength,
     page_size: (PixelLength, PixelLength),
     inline_formatter: Option<InlineFormatter>,
@@ -176,7 +177,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             }
         }
 
-        let position = self.data.positions.get_mut(element.entity())?;
         if let BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) = element {
             position.height = self.cursor - position.y;
             self.cursor += padding.bottom + border.bottom + margin.bottom;
@@ -361,7 +361,7 @@ struct Container {
     dimensions: ElementDimensions,
 }
 
-// TODO: consider if the vec is needed.
+// TODO: consider if the vec is needed (we could replace it by a bitset).
 #[derive(Debug, Default, Clone)]
 pub struct Page {
     elements: Vec<Entity>,
@@ -557,6 +557,32 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(0.0),
                 width: PixelLength(150.0),
+                height: PixelLength(0.0)
+            }
+        );
+    }
+
+    #[test]
+    fn test_margin_top_offsets_first_element() {
+        let html = &html(vec![
+            div(vec![]).margin_top(Px(10.0)),
+        ]);
+        let test = BlockLayoutTest {
+            html,
+            page_width: Px(100.0),
+            page_height: Px(100.0),
+        };
+        let world = test.layout();
+
+        let positions = world.read_storage();
+        let pos: &Position = html[0].get(&positions);
+
+        assert_eq!(
+            pos,
+            &Position {
+                x: PixelLength(0.0),
+                y: PixelLength(10.0),
+                width: PixelLength(100.0),
                 height: PixelLength(0.0)
             }
         );
