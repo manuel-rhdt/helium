@@ -14,7 +14,7 @@ use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use construct::FlowConstructor;
 
-use specs::{Dispatcher, DispatcherBuilder, World};
+use specs::{Dispatcher, DispatcherBuilder, World, WorldExt};
 
 pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     // here we set the layout passes
@@ -44,14 +44,14 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
         .build();
 
     let mut world = World::new();
-    dispatcher.setup(&mut world.res);
+    dispatcher.setup(&mut world);
     let mut flow_constructor = FlowConstructor::new(world);
     dom.traverse(&mut flow_constructor);
 
     let layout_context = flow_constructor.layout_context();
 
     // perform the layout passes
-    dispatcher.dispatch(&layout_context.res);
+    dispatcher.dispatch(&layout_context);
 
     layout_context
 }

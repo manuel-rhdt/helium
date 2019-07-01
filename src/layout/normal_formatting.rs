@@ -3,11 +3,8 @@ use super::inline::{InlineFormatter, InlineFormatterData, InlineFormattingContex
 use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength};
 
-use shred_derive::SystemData;
-use specs::{
-    storage::BTreeStorage, Component, DenseVecStorage, Entities, Entity, ReadStorage, System,
-    Write, WriteStorage,
-};
+use specs::prelude::*;
+use specs::storage::BTreeStorage;
 
 pub struct BlockLevelLayout {
     pub page_width: PixelLength,
@@ -21,8 +18,6 @@ impl<'data> System<'data> for BlockLevelLayout {
     );
 
     fn run(&mut self, (mut data, block_formatting_contexts): Self::SystemData) {
-        use specs::Join;
-
         for BlockFormattingContext { elements } in block_formatting_contexts.join() {
             let mut block_formatter =
                 BlockFormatter::new(&elements, (self.page_width, self.page_height), &mut data);
@@ -400,8 +395,7 @@ mod test {
 
     use crate::simple_dom::{div, html, Quantity::*};
     use crate::style::properties::computed::PixelLength;
-    use shred::System;
-    use specs::RunNow;
+    use specs::{RunNow, System};
 
     #[derive(Debug, Copy, Clone)]
     struct BlockLayoutTest<'a> {
@@ -419,8 +413,8 @@ mod test {
                 page_height: self.page_height.try_into().unwrap(),
             };
 
-            System::setup(&mut block_level_layout, &mut world.res);
-            block_level_layout.run_now(&world.res);
+            System::setup(&mut block_level_layout, &mut world);
+            block_level_layout.run_now(&mut world);
 
             world
         }

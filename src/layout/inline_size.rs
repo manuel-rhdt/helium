@@ -2,9 +2,7 @@ use super::entity::{ContainingBlock, Decoration, Position};
 use crate::style::device::Device;
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
-use specs::{Entities, Entity, ReadStorage, System, WriteStorage};
-
-use shred_derive::SystemData;
+use specs::prelude::*;
 
 #[derive(SystemData)]
 pub struct InlineSizeResources<'a> {
@@ -54,8 +52,6 @@ impl<'a> System<'a> for InlineSizeContext {
     type SystemData = InlineSizeResources<'a>;
 
     fn run(&mut self, mut resources: Self::SystemData) {
-        use specs::Join;
-
         // We need a sorted list of all entities. We currently cheat by assuming
         // the list is correctly sorted given the order we construct the entities.
         let sorted_entities: Vec<_> = resources.entities.join().collect();

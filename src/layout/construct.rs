@@ -104,7 +104,7 @@ pub mod entity_constructor {
         InlineFormattingContext, LayoutEntity, NodeData, ParsedData, Position, TreeLinked,
         UnscannedText,
     };
-    use specs::World;
+    use specs::{World, WorldExt};
 
     use std::fmt;
 

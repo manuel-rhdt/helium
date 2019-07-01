@@ -10,7 +10,7 @@ use crate::style::properties::computed::{
 };
 
 use html5ever::QualName;
-use specs::{Component, Entity, ReadStorage, World};
+use specs::{Component, Entity, ReadStorage, World, WorldExt};
 
 use std::cell::Cell;
 use std::convert::TryFrom;

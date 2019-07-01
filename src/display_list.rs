@@ -4,7 +4,7 @@ use crate::layout::normal_formatting::{Page, Pages};
 use crate::layout::text::{font::GlyphIndex, Font};
 use crate::style::properties::computed::{PixelLength, RGBA};
 
-use specs::{Entities, Join, ReadStorage, RunNow, System};
+use specs::prelude::*;
 
 #[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct Point {
@@ -215,7 +215,7 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
             display_list,
             bitset,
         };
-        decorations_builder.run_now(&world.res);
+        decorations_builder.run_now(world);
 
         let display_list = decorations_builder.display_list;
         let bitset = decorations_builder.bitset;
@@ -224,7 +224,7 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
             display_list,
             bitset,
         };
-        text_builder.run_now(&world.res);
+        text_builder.run_now(world);
         let display_list = text_builder.display_list;
 
         print_pages.append_page(display_list);
