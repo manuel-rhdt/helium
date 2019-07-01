@@ -1,8 +1,5 @@
-mod assign_heights;
-// pub mod block_size;
 pub mod construct;
 pub mod entity;
-// mod global_transform;
 pub mod inline;
 pub mod inline_size;
 pub mod normal_formatting;
@@ -27,15 +24,6 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
             "layout",
             &[],
         )
-        // Assign widths.
-        // .with(inline_size_context, "inline-size", &[])
-        // Assign heights to all entities where it does not depend on their children.
-        // .with(assign_heights::AssignHeights, "assign-heights", &["inline-size"])
-        // block formatting
-        // .with(block_formatting_context::BlockFormattingContextBuilder::new(), "block-formatting", &["assign-heights"])
-        // Assign heights to the remaining entities.
-        // .with(block_size::BlockSizeContext {}, "block-size", &["block-formatting"])
-        // Calculate positions relative to the parent line
         .with(
             inline::InlinePositionAssign,
             "inline-position-assign",
