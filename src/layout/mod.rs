@@ -36,10 +36,11 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     let mut flow_constructor = FlowConstructor::new(world);
     dom.traverse(&mut flow_constructor);
 
-    let layout_context = flow_constructor.layout_context();
+    let mut layout_context = flow_constructor.layout_context();
 
     // perform the layout passes
     dispatcher.dispatch(&layout_context);
+    layout_context.maintain();
 
     layout_context
 }

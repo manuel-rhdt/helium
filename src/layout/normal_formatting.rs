@@ -80,6 +80,7 @@ pub struct BlockFormatterData<'data> {
     pub pages: Write<'data, Pages>,
     pub line_boxes: WriteStorage<'data, super::inline::LineBox>,
     pub decorations: WriteStorage<'data, Decoration>,
+    pub fragments: WriteStorage<'data, Fragments>,
 }
 
 pub struct BlockFormatter<'elements, 'data> {
@@ -163,6 +164,10 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
         match element {
             BlockLevelElement::ContainerStart(entity) => {
+                self.data
+                    .decorations
+                    .insert(entity, dimensions.decoration)
+                    .ok()?;
                 self.in_progress_containers.push(entity);
             }
             BlockLevelElement::Leaf(leaf) => {
@@ -171,12 +176,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 }
             }
             BlockLevelElement::ContainerEnd(_) => {
-                self.in_progress_containers
+                let container = self
+                    .in_progress_containers
                     .pop()
                     .expect("Internal Error: Invalid tree");
+                self.current_page.append_element(container);
             }
         }
 
+        let position = self.data.positions.get_mut(element.entity())?;
         if let BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) = element {
             position.height = self.cursor - position.y;
             self.cursor += padding.bottom + border.bottom + margin.bottom;
@@ -301,13 +309,37 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 x: PixelLength(0.0),
                 y: PixelLength(0.0),
                 width: self.page_size.0,
-                height: self.page_size.1
+                height: self.page_size.1,
             }
         }
     }
 
     fn new_page(&mut self) {
+        // split containers:
+        // - add `Fragments` component to container
+        // - create two fragments
+        // - add the first fragment to the current page
+        for &container in &self.in_progress_containers {
+            let decoration = self
+                .data
+                .decorations
+                .remove(container)
+                .expect("expected component");
+            let mut pos = *self.data.positions.get(container).unwrap();
+            pos.height = self.cursor - pos.y;
+            let fragment1 = self
+                .data
+                .entities
+                .build_entity()
+                .with(decoration, &mut self.data.decorations)
+                .with(pos, &mut self.data.positions)
+                .build();
+            self.data.fragments.insert(container, Fragments { fragments: vec![fragment1] }).unwrap();
+            self.current_page.append_element(fragment1);
+        }
+
         self.cursor = PixelLength(0.0);
+
         let page = std::mem::replace(&mut self.current_page, Default::default());
         let page_entity = self
             .data
@@ -380,6 +412,16 @@ impl Page {
 }
 
 impl Component for Page {
+    type Storage = BTreeStorage<Self>;
+}
+
+/// If an entity has this component, it is made up of two or more block layout fragment.
+#[derive(Debug, Default, Clone)]
+pub struct Fragments {
+    fragments: Vec<Entity>,
+}
+
+impl Component for Fragments {
     type Storage = BTreeStorage<Self>;
 }
 
@@ -564,9 +606,7 @@ mod test {
 
     #[test]
     fn test_margin_top_offsets_first_element() {
-        let html = &html(vec![
-            div(vec![]).margin_top(Px(10.0)),
-        ]);
+        let html = &html(vec![div(vec![]).margin_top(Px(10.0))]);
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
