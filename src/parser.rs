@@ -154,7 +154,7 @@ impl DomAccess for NodeRef<NodeData> {
 
 pub struct Sink {
     document_node: NodeRef<NodeData>,
-    on_parse_error: Option<Box<FnMut(Cow<'static, str>)>>,
+    on_parse_error: Option<Box<dyn FnMut(Cow<'static, str>)>>,
 }
 
 impl TreeSink for Sink {
