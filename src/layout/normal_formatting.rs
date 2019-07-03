@@ -1,4 +1,4 @@
-use super::entity::{Decoration, Position, Text, UnscannedText};
+use super::entity::{Decoration, Position, Text, UnscannedText, ZIndex};
 use super::inline::{InlineFormatter, InlineFormatterData, InlineFormattingContext, InlinePos};
 use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength};
@@ -213,6 +213,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let mut fragment_height = PixelLength(0.0);
         let container_offset = self.current_container_pos().x;
         let container_width = self.current_container_pos().width;
+        let z_index = ZIndex(-(self.in_progress_containers.len() as i64));
         let result = if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
             let remaining_block_size = self.remaining_block_size();
             // The following initializes a new inline formatter if self.inline_formatter is None.
@@ -242,7 +243,11 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     line_stack
                         .stack
                         .set_positions(
-                            (container_offset + dimensions.inline_offset(), self.cursor),
+                            (
+                                container_offset + dimensions.inline_offset(),
+                                self.cursor,
+                                ZIndex(z_index.0 - 1),
+                            ),
                             &mut self.data.positions,
                         )
                         .expect("line_stack entities were invalidated while still in use.");
@@ -287,6 +292,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         if let Some(pos) = self.data.positions.get_mut(leaf) {
             pos.x = container_offset + dimensions.inline_offset();
             pos.width = dimensions.inline_size;
+            pos.z = z_index;
         }
         self.data
             .decorations
@@ -310,6 +316,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 y: PixelLength(0.0),
                 width: self.page_size.0,
                 height: self.page_size.1,
+                z: Default::default(),
             }
         }
     }
@@ -334,7 +341,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 .with(decoration, &mut self.data.decorations)
                 .with(pos, &mut self.data.positions)
                 .build();
-            self.data.fragments.insert(container, Fragments { fragments: vec![fragment1] }).unwrap();
+            self.data
+                .fragments
+                .insert(
+                    container,
+                    Fragments {
+                        fragments: vec![fragment1],
+                    },
+                )
+                .unwrap();
             self.current_page.append_element(fragment1);
         }
 
@@ -489,7 +504,8 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(10.0),
                 width: PixelLength(100.0),
-                height: PixelLength(10.0)
+                height: PixelLength(10.0),
+                z: ZIndex(0)
             }
         );
         assert_eq!(
@@ -498,7 +514,8 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(50.0),
                 width: PixelLength(100.0),
-                height: PixelLength(0.0)
+                height: PixelLength(0.0),
+                z: ZIndex(0)
             }
         );
     }
@@ -525,7 +542,8 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(0.0),
                 width: PixelLength(100.0),
-                height: PixelLength(50.0)
+                height: PixelLength(50.0),
+                z: ZIndex(0)
             }
         )
     }
@@ -552,7 +570,8 @@ mod test {
                 x: PixelLength(20.0),
                 y: PixelLength(0.0),
                 width: PixelLength(80.0),
-                height: PixelLength(0.0)
+                height: PixelLength(0.0),
+                z: ZIndex(0)
             }
         );
 
@@ -562,7 +581,8 @@ mod test {
                 x: PixelLength(35.0),
                 y: PixelLength(0.0),
                 width: PixelLength(65.0),
-                height: PixelLength(0.0)
+                height: PixelLength(0.0),
+                z: ZIndex(0)
             }
         );
     }
@@ -590,7 +610,8 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(0.0),
                 width: PixelLength(50.0),
-                height: PixelLength(0.0)
+                height: PixelLength(0.0),
+                z: ZIndex(0)
             }
         );
         assert_eq!(
@@ -599,7 +620,8 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(0.0),
                 width: PixelLength(150.0),
-                height: PixelLength(0.0)
+                height: PixelLength(0.0),
+                z: ZIndex(0)
             }
         );
     }
@@ -623,7 +645,8 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(10.0),
                 width: PixelLength(100.0),
-                height: PixelLength(0.0)
+                height: PixelLength(0.0),
+                z: ZIndex(0)
             }
         );
     }
@@ -651,7 +674,8 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(0.0),
                 width: PixelLength(100.0),
-                height: PixelLength(10.0)
+                height: PixelLength(10.0),
+                z: ZIndex(0)
             }
         );
         assert_eq!(
@@ -660,7 +684,8 @@ mod test {
                 x: PixelLength(0.0),
                 y: PixelLength(40.0),
                 width: PixelLength(100.0),
-                height: PixelLength(10.0)
+                height: PixelLength(10.0),
+                z: ZIndex(0)
             }
         );
     }

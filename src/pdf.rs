@@ -25,7 +25,7 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
     let file = BufWriter::new(File::create("test_working.pdf")?);
     let mut context = Context::with_writer(file, Version::Pdf1_7)?;
 
-    for display_list in print_pages.pages {
+    for mut display_list in print_pages.pages {
         let mut page = Page::new();
         page.set_media_box(MediaBox::new(
             Pt(0.0),

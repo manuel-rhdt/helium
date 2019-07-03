@@ -1,4 +1,4 @@
-use crate::layout::entity::{Decoration, Position, Text};
+use crate::layout::entity::{Decoration, Position, Text, ZIndex};
 use crate::layout::inline::LineBox;
 use crate::layout::normal_formatting::{Page, Pages};
 use crate::layout::text::{font::GlyphIndex, Font};
@@ -40,30 +40,40 @@ pub enum DisplayItem {
     Pop,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct DisplayElement {
+    z_index: ZIndex,
+    item: DisplayItem,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DisplayList {
-    items: Vec<DisplayItem>,
+    items: Vec<DisplayElement>,
 }
 
 impl DisplayList {
-    pub fn append(&mut self, item: DisplayItem) {
-        self.items.push(item)
+    pub fn append(&mut self, item: DisplayItem, z_index: ZIndex) {
+        self.items.push(DisplayElement { item, z_index })
     }
 
-    pub fn items(&self) -> impl ExactSizeIterator<Item = &DisplayItem> {
-        self.items.iter()
+    pub fn items(&mut self) -> impl ExactSizeIterator<Item = &DisplayItem> {
+        self.items.sort_by_key(|elem| ZIndex(-elem.z_index.0));
+        self.items.iter().map(|elem| &elem.item)
     }
 
-    fn append_text(&mut self, pos: Point, text: &Text) {
-        self.append(DisplayItem::Text(
-            Point {
-                y: pos.y + text.baseline,
-                ..pos
-            },
-            text.font_size,
-            text.font.clone(),
-            text.glyphs.clone(),
-        ));
+    fn append_text(&mut self, pos: Point, text: &Text, z_index: ZIndex) {
+        self.append(
+            DisplayItem::Text(
+                Point {
+                    y: pos.y + text.baseline,
+                    ..pos
+                },
+                text.font_size,
+                text.font.clone(),
+                text.glyphs.clone(),
+            ),
+            z_index,
+        );
     }
 }
 
@@ -94,6 +104,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 y,
                 width,
                 height,
+                z
             },
             deco,
             _,
@@ -113,16 +124,16 @@ impl<'a> System<'a> for DisplayDecoration {
             } = deco;
 
             if background_color != RGBA::transparent() {
-                self.display_list.append(DisplayItem::Push);
+                self.display_list.append(DisplayItem::Push, z);
                 self.display_list
-                    .append(DisplayItem::Color(background_color));
+                    .append(DisplayItem::Color(background_color), z);
                 self.display_list.append(DisplayItem::FilledRect(Rect {
                     x: x - padding.left,
                     y: y - padding.top,
                     width: width + padding.left + padding.right,
                     height: height + padding.top + padding.bottom,
-                }));
-                self.display_list.append(DisplayItem::Pop);
+                }), z);
+                self.display_list.append(DisplayItem::Pop, z);
             }
 
             let hbt = border.top / 2.0;
@@ -141,7 +152,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 self.display_list.append(DisplayItem::LineString {
                     points: vec![pt1, pt2],
                     line_width: border.top,
-                });
+                }, z);
             }
             if border.bottom > Px(0.0) {
                 let pt1 = Point::new(xmin, ymax - hbb);
@@ -149,7 +160,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 self.display_list.append(DisplayItem::LineString {
                     points: vec![pt1, pt2],
                     line_width: border.bottom,
-                });
+                }, z);
             }
             if border.left > Px(0.0) {
                 let pt1 = Point::new(xmin + hbl, ymin);
@@ -157,7 +168,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 self.display_list.append(DisplayItem::LineString {
                     points: vec![pt1, pt2],
                     line_width: border.left,
-                });
+                }, z);
             }
             if border.right > Px(0.0) {
                 let pt1 = Point::new(xmax - hbr, ymin);
@@ -165,7 +176,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 self.display_list.append(DisplayItem::LineString {
                     points: vec![pt1, pt2],
                     line_width: border.right,
-                });
+                }, z);
             }
         }
     }
@@ -188,8 +199,8 @@ impl<'a> System<'a> for DisplayText {
         for (line_box, _) in (&line_boxes, &self.bitset).join() {
             for &fragment in &line_box.fragments {
                 let joint_comps = (&positions, &text).join().get(fragment, &entities);
-                if let Some((&Position { x, y, .. }, text)) = joint_comps {
-                    self.display_list.append_text(Point { x, y }, text)
+                if let Some((&Position { x, y, z, .. }, text)) = joint_comps {
+                    self.display_list.append_text(Point { x, y }, text, z)
                 }
             }
         }

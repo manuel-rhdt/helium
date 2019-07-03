@@ -1,5 +1,5 @@
 use derive_more::From;
-use specs::{Component, DenseVecStorage, Entity, NullStorage, VecStorage, World};
+use specs::{Component, DenseVecStorage, Entity, NullStorage, World};
 
 use super::text::font::GlyphIndex;
 use crate::style::properties::computed::{ComputedValues, PixelLength};
@@ -33,6 +33,8 @@ pub struct Position {
     pub width: PixelLength,
     /// Height of the box.
     pub height: PixelLength,
+    /// Z-Index
+    pub z: ZIndex,
 }
 
 impl Component for Position {
@@ -60,7 +62,7 @@ pub struct UnscannedText {
 }
 
 impl Component for UnscannedText {
-    type Storage = VecStorage<Self>;
+    type Storage = DenseVecStorage<Self>;
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -74,7 +76,7 @@ pub struct Text {
 }
 
 impl Component for Text {
-    type Storage = VecStorage<Self>;
+    type Storage = DenseVecStorage<Self>;
 }
 
 /// A component that indicates that an entity is considered a collapsible margin.
@@ -93,6 +95,7 @@ pub struct EdgeValues<T> {
     pub right: T,
 }
 
+/// Contains information needed to draw the background and outline of an element.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Decoration {
     pub padding: EdgeValues<PixelLength>,
@@ -114,5 +117,9 @@ impl Default for Decoration {
 }
 
 impl Component for Decoration {
-    type Storage = VecStorage<Self>;
+    type Storage = DenseVecStorage<Self>;
 }
+
+/// Entities with smaller `ZIndex` are drawn on top of elements with higher `ZIndex`.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub struct ZIndex(pub i64);

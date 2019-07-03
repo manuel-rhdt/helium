@@ -1,4 +1,4 @@
-use super::entity::{Position, Text, UnscannedText};
+use super::entity::{Position, Text, UnscannedText, ZIndex};
 use super::text::{
     font::{match_font, GlyphMetricsProvide},
     Font, InlineFragment, InlineFragmentIteratorState, LineIsFullError,
@@ -189,7 +189,7 @@ impl InlineFormatter {
         Ok(())
     }
 
-    /// Processes an element, splitting it into inline fragments and distributing across lines.
+    /// Processes an element, splitting it into inline fragments and distributing them across lines.
     ///
     /// Returns `Some(...)` if
     pub fn layout_element(
@@ -378,7 +378,7 @@ impl Stack {
 
     pub fn set_positions(
         &self,
-        offset: (Px, Px),
+        offset: (Px, Px, ZIndex),
         positions: &mut WriteStorage<'_, Position>,
     ) -> Result<(), specs::error::WrongGeneration> {
         let mut pos_y = offset.1;
@@ -389,6 +389,7 @@ impl Stack {
             pos.x = offset.0;
             pos.y = pos_y;
             pos_y += pos.height;
+            pos.z = offset.2;
         }
         Ok(())
     }
@@ -540,11 +541,18 @@ impl<'a> System<'a> for InlinePositionAssign {
 
     fn run(&mut self, (entities, mut positions, inline_pos): Self::SystemData) {
         for (entity, &InlinePos { line }) in (&entities, &inline_pos).join() {
-            let line_pos = positions.get(line).cloned().unwrap();
-            let self_pos = positions.get_mut(entity).unwrap();
-
-            self_pos.x += line_pos.x;
-            self_pos.y += line_pos.y;
+            // This closure is for convenience (we can use the `?` operator).
+            let assign_pos = |positions: &mut WriteStorage<Position>| {
+                let parent_pos = *positions.get(line)?;
+                let child_pos = positions.get_mut(entity)?;
+                child_pos.x += parent_pos.x;
+                child_pos.y += parent_pos.y;
+                child_pos.z = parent_pos.z;
+                Some(())
+            };
+            assign_pos(&mut positions).expect(
+                "Internal Error: cannot assign position to inline fragment.",
+            )
         }
     }
 }
