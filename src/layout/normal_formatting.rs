@@ -471,7 +471,7 @@ mod test {
             };
 
             System::setup(&mut block_level_layout, &mut world);
-            block_level_layout.run_now(&mut world);
+            block_level_layout.run_now(&world);
 
             world
         }
