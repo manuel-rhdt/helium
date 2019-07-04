@@ -160,6 +160,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             position.x = container_pos.x + dimensions.inline_offset();
             position.y = self.cursor;
             position.width = dimensions.inline_size;
+            position.z = ZIndex(-(self.in_progress_containers.len() as i64));
         }
 
         match element {
@@ -213,7 +214,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let mut fragment_height = PixelLength(0.0);
         let container_offset = self.current_container_pos().x;
         let container_width = self.current_container_pos().width;
-        let z_index = ZIndex(-(self.in_progress_containers.len() as i64));
+        let z_index = self.z_index();
         let result = if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
             let remaining_block_size = self.remaining_block_size();
             // The following initializes a new inline formatter if self.inline_formatter is None.
@@ -364,6 +365,10 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .build();
         self.pages.push(page_entity);
     }
+
+    fn z_index(&self) -> ZIndex {
+        ZIndex(-(self.in_progress_containers.len() as i64))
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -498,26 +503,8 @@ mod test {
         let pos1: &Position = html[0].get(&positions);
         let pos2: &Position = html[1].get(&positions);
 
-        assert_eq!(
-            pos1,
-            &Position {
-                x: PixelLength(0.0),
-                y: PixelLength(10.0),
-                width: PixelLength(100.0),
-                height: PixelLength(10.0),
-                z: ZIndex(0)
-            }
-        );
-        assert_eq!(
-            pos2,
-            &Position {
-                x: PixelLength(0.0),
-                y: PixelLength(50.0),
-                width: PixelLength(100.0),
-                height: PixelLength(0.0),
-                z: ZIndex(0)
-            }
-        );
+        assert_eq!(pos1.y, PixelLength(10.0));
+        assert_eq!(pos2.y, PixelLength(50.0));
     }
 
     #[test]
@@ -571,7 +558,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(80.0),
                 height: PixelLength(0.0),
-                z: ZIndex(0)
+                z: ZIndex(-1)
             }
         );
 
@@ -582,7 +569,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(65.0),
                 height: PixelLength(0.0),
-                z: ZIndex(0)
+                z: ZIndex(-2)
             }
         );
     }
@@ -611,7 +598,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(50.0),
                 height: PixelLength(0.0),
-                z: ZIndex(0)
+                z: ZIndex(-1)
             }
         );
         assert_eq!(
@@ -621,7 +608,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(150.0),
                 height: PixelLength(0.0),
-                z: ZIndex(0)
+                z: ZIndex(-1)
             }
         );
     }
@@ -646,7 +633,7 @@ mod test {
                 y: PixelLength(10.0),
                 width: PixelLength(100.0),
                 height: PixelLength(0.0),
-                z: ZIndex(0)
+                z: ZIndex(-1)
             }
         );
     }
@@ -706,7 +693,7 @@ mod test {
         let page_data = world.read_storage::<Page>();
         let page_data = page_data.get(pages.0[0]).unwrap();
 
-        assert_eq!(page_data.elements, [html["div"].entity()]);
+        assert!(page_data.elements.contains(&html["div"].entity()));
     }
 
     #[test]
@@ -729,8 +716,8 @@ mod test {
         let page0 = page_data.get(pages.0[0]).unwrap();
         let page1 = page_data.get(pages.0[1]).unwrap();
 
-        assert_eq!(page0.elements, [html[0].entity()]);
-        assert_eq!(page1.elements, [html[1].entity()]);
+        assert!(page0.elements.contains(&html[0].entity()));
+        assert!(page1.elements.contains(&html[1].entity()));
     }
 
     #[test]
