@@ -57,7 +57,7 @@ impl DisplayList {
     }
 
     pub fn items(&mut self) -> impl ExactSizeIterator<Item = &DisplayItem> {
-        self.items.sort_by_key(|elem| ZIndex(-elem.z_index.0));
+        self.items.sort_by_key(|elem| ZIndex(elem.z_index.0));
         self.items.iter().map(|elem| &elem.item)
     }
 

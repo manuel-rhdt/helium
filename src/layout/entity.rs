@@ -120,6 +120,6 @@ impl Component for Decoration {
     type Storage = DenseVecStorage<Self>;
 }
 
-/// Entities with smaller `ZIndex` are drawn on top of elements with higher `ZIndex`.
+/// Entities with bigger `ZIndex` are drawn on top of elements with lower `ZIndex`.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub struct ZIndex(pub i64);

@@ -160,7 +160,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             position.x = container_pos.x + dimensions.inline_offset();
             position.y = self.cursor;
             position.width = dimensions.inline_size;
-            position.z = ZIndex(-(self.in_progress_containers.len() as i64));
+            position.z = ZIndex(self.in_progress_containers.len() as i64);
         }
 
         match element {
@@ -247,7 +247,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                             (
                                 container_offset + dimensions.inline_offset(),
                                 self.cursor,
-                                ZIndex(z_index.0 - 1),
+                                ZIndex(z_index.0 + 1),
                             ),
                             &mut self.data.positions,
                         )
@@ -367,7 +367,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 
     fn z_index(&self) -> ZIndex {
-        ZIndex(-(self.in_progress_containers.len() as i64))
+        ZIndex(self.in_progress_containers.len() as i64)
     }
 }
 
@@ -558,7 +558,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(80.0),
                 height: PixelLength(0.0),
-                z: ZIndex(-1)
+                z: ZIndex(1)
             }
         );
 
@@ -569,7 +569,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(65.0),
                 height: PixelLength(0.0),
-                z: ZIndex(-2)
+                z: ZIndex(2)
             }
         );
     }
@@ -598,7 +598,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(50.0),
                 height: PixelLength(0.0),
-                z: ZIndex(-1)
+                z: ZIndex(1)
             }
         );
         assert_eq!(
@@ -608,7 +608,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(150.0),
                 height: PixelLength(0.0),
-                z: ZIndex(-1)
+                z: ZIndex(1)
             }
         );
     }
@@ -633,7 +633,7 @@ mod test {
                 y: PixelLength(10.0),
                 width: PixelLength(100.0),
                 height: PixelLength(0.0),
-                z: ZIndex(-1)
+                z: ZIndex(1)
             }
         );
     }
