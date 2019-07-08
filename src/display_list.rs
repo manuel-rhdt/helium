@@ -104,7 +104,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 y,
                 width,
                 height,
-                z
+                z,
             },
             deco,
             _,
@@ -127,12 +127,15 @@ impl<'a> System<'a> for DisplayDecoration {
                 self.display_list.append(DisplayItem::Push, z);
                 self.display_list
                     .append(DisplayItem::Color(background_color), z);
-                self.display_list.append(DisplayItem::FilledRect(Rect {
-                    x: x - padding.left,
-                    y: y - padding.top,
-                    width: width + padding.left + padding.right,
-                    height: height + padding.top + padding.bottom,
-                }), z);
+                self.display_list.append(
+                    DisplayItem::FilledRect(Rect {
+                        x: x - padding.left,
+                        y: y - padding.top,
+                        width: width + padding.left + padding.right,
+                        height: height + padding.top + padding.bottom,
+                    }),
+                    z,
+                );
                 self.display_list.append(DisplayItem::Pop, z);
             }
 
@@ -149,34 +152,46 @@ impl<'a> System<'a> for DisplayDecoration {
             if border.top > Px(0.0) {
                 let pt1 = Point::new(xmin, ymin + hbt);
                 let pt2 = Point::new(xmax, ymin + hbt);
-                self.display_list.append(DisplayItem::LineString {
-                    points: vec![pt1, pt2],
-                    line_width: border.top,
-                }, z);
+                self.display_list.append(
+                    DisplayItem::LineString {
+                        points: vec![pt1, pt2],
+                        line_width: border.top,
+                    },
+                    z,
+                );
             }
             if border.bottom > Px(0.0) {
                 let pt1 = Point::new(xmin, ymax - hbb);
                 let pt2 = Point::new(xmax, ymax - hbb);
-                self.display_list.append(DisplayItem::LineString {
-                    points: vec![pt1, pt2],
-                    line_width: border.bottom,
-                }, z);
+                self.display_list.append(
+                    DisplayItem::LineString {
+                        points: vec![pt1, pt2],
+                        line_width: border.bottom,
+                    },
+                    z,
+                );
             }
             if border.left > Px(0.0) {
                 let pt1 = Point::new(xmin + hbl, ymin);
                 let pt2 = Point::new(xmin + hbl, ymax);
-                self.display_list.append(DisplayItem::LineString {
-                    points: vec![pt1, pt2],
-                    line_width: border.left,
-                }, z);
+                self.display_list.append(
+                    DisplayItem::LineString {
+                        points: vec![pt1, pt2],
+                        line_width: border.left,
+                    },
+                    z,
+                );
             }
             if border.right > Px(0.0) {
                 let pt1 = Point::new(xmax - hbr, ymin);
                 let pt2 = Point::new(xmax - hbr, ymax);
-                self.display_list.append(DisplayItem::LineString {
-                    points: vec![pt1, pt2],
-                    line_width: border.right,
-                }, z);
+                self.display_list.append(
+                    DisplayItem::LineString {
+                        points: vec![pt1, pt2],
+                        line_width: border.right,
+                    },
+                    z,
+                );
             }
         }
     }
