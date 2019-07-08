@@ -97,6 +97,7 @@ pub struct BlockFormatter<'elements, 'data> {
 }
 
 impl<'elements, 'data> BlockFormatter<'elements, 'data> {
+    /// Creates a new `BlockFormatter` that manages the layout of `elements` into pages.
     pub fn new(
         elements: &'elements [BlockLevelElement],
         page_size: (PixelLength, PixelLength),
@@ -161,14 +162,14 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             position.y = self.cursor;
             position.width = dimensions.inline_size;
             position.z = ZIndex(self.in_progress_containers.len() as i64);
+            self.data
+                .decorations
+                .insert(element.entity(), dimensions.decoration)
+                .ok()?;
         }
 
         match element {
             BlockLevelElement::ContainerStart(entity) => {
-                self.data
-                    .decorations
-                    .insert(entity, dimensions.decoration)
-                    .ok()?;
                 self.in_progress_containers.push(entity);
             }
             BlockLevelElement::Leaf(leaf) => {
@@ -279,26 +280,10 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             if self.remaining_block_size() < PixelLength(0.0) {
                 return Err(PageFullError);
             }
-
-            if let Some(pos) = self.data.positions.get_mut(leaf) {
-                pos.height = height;
-            }
         } else {
             self.cursor += fragment_height;
-            if let Some(pos) = self.data.positions.get_mut(leaf) {
-                pos.height = fragment_height;
-            }
         }
-
-        if let Some(pos) = self.data.positions.get_mut(leaf) {
-            pos.x = container_offset + dimensions.inline_offset();
-            pos.width = dimensions.inline_size;
-            pos.z = z_index;
-        }
-        self.data
-            .decorations
-            .insert(leaf, dimensions.decoration)
-            .unwrap();
+        
         self.current_page.append_element(leaf);
 
         result
