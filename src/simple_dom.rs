@@ -6,7 +6,7 @@ use crate::layout::construct::entity_constructor::{
 use crate::layout::entity::LayoutEntity;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::properties::computed::{
-    ComputedValues, CssFloat, Display, GenericSize, Percentage, PixelLength,
+    ComputedValues, CssFloat, Display, GenericSize, Percentage, PixelLength, LengthPercentage
 };
 
 use html5ever::QualName;
@@ -70,6 +70,15 @@ impl Node {
         storage
             .get(self.entity())
             .expect("Node does not have the needed component")
+    }
+
+    pub fn padding(mut self, padding: Quantity) -> Self {
+        let pos = Arc::make_mut(&mut self.style.position);
+        pos.padding_top = padding.into();
+        pos.padding_bottom = padding.into();
+        pos.padding_left = padding.into();
+        pos.padding_right = padding.into();
+        self
     }
 
     pub fn margin_top(mut self, margin_top: Quantity) -> Self {
@@ -191,6 +200,10 @@ pub fn div(contents: Vec<Node>) -> Node {
     block("div", contents)
 }
 
+pub fn body(contents: Vec<Node>) -> Node {
+    block("body", contents)
+}
+
 pub fn p(contents: Vec<Node>) -> Node {
     block("p", contents)
 }
@@ -266,6 +279,18 @@ impl From<Quantity> for GenericSize {
             Pt(val) => PixelLength::from_pt(val).into(),
             Percent(val) => Percentage(val / 100.0).into(),
             Auto => GenericSize::Auto,
+        }
+    }
+}
+
+impl From<Quantity> for LengthPercentage {
+    fn from(quantity: Quantity) -> LengthPercentage {
+        use Quantity::*;
+        match quantity {
+            Px(val) => PixelLength(val).into(),
+            Pt(val) => PixelLength::from_pt(val).into(),
+            Percent(val) => Percentage(val / 100.0).into(),
+            Auto => panic!("LengthPercentage cannot be `Auto`!"),
         }
     }
 }

@@ -137,8 +137,40 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 
     fn process_element(&mut self, element: BlockLevelElement) -> Option<()> {
-        let style = self.data.computed_values.get(element.entity())?;
+        if let BlockLevelElement::ContainerStart(_) | BlockLevelElement::Leaf(_) = element {
+            self.start_element(element.entity())?
+        }
 
+        match element {
+            BlockLevelElement::ContainerStart(entity) => {
+                self.in_progress_containers.push(entity);
+            }
+            BlockLevelElement::Leaf(leaf) => {
+                while let Err(PageFullError) = self.layout_leaf(leaf) {
+                    self.new_page()
+                }
+                // we have to reset the current inline formatter after an element has finished.
+                self.inline_formatter = None;
+            }
+            BlockLevelElement::ContainerEnd(entity) => {
+                let container = self
+                    .in_progress_containers
+                    .pop()
+                    .expect("Internal Error: Invalid tree");
+                assert_eq!(container, entity);
+                self.current_page.append_element(container);
+            }
+        }
+
+        if let BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) = element {
+            self.end_element(element.entity())?
+        }
+
+        Some(())
+    }
+
+    fn start_element(&mut self, element: Entity) -> Option<()> {
+        let style = self.data.computed_values.get(element)?;
         let container_pos = self.current_container_pos();
         let dimensions = compute_element_dimensions(container_pos.width, &style);
 
@@ -149,52 +181,39 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             ..
         } = &dimensions.decoration;
 
+        self.cursor += padding.top + border.top + margin.top;
+
         let position = self
             .data
             .positions
-            .entry(element.entity())
+            .entry(element)
             .ok()?
             .or_insert_with(Default::default);
 
-        if let BlockLevelElement::ContainerStart(_) | BlockLevelElement::Leaf(_) = element {
-            self.cursor += padding.top + border.top + margin.top;
-            position.x = container_pos.x + dimensions.inline_offset();
-            position.y = self.cursor;
-            position.width = dimensions.inline_size;
-            position.z = ZIndex(self.in_progress_containers.len() as i64);
-            self.data
-                .decorations
-                .insert(element.entity(), dimensions.decoration)
-                .ok()?;
-        }
+        position.x = container_pos.x + dimensions.inline_offset();
+        position.y = self.cursor;
+        position.width = dimensions.inline_size;
+        position.z = ZIndex(self.in_progress_containers.len() as i64);
+        self.data
+            .decorations
+            .insert(element, dimensions.decoration)
+            .ok()?;
 
-        match element {
-            BlockLevelElement::ContainerStart(entity) => {
-                self.in_progress_containers.push(entity);
-            }
-            BlockLevelElement::Leaf(leaf) => {
-                while let Err(PageFullError) = self.layout_leaf(leaf, dimensions) {
-                    self.new_page()
-                }
-            }
-            BlockLevelElement::ContainerEnd(_) => {
-                let container = self
-                    .in_progress_containers
-                    .pop()
-                    .expect("Internal Error: Invalid tree");
-                self.current_page.append_element(container);
-            }
-        }
+        Some(())
+    }
 
-        let position = self.data.positions.get_mut(element.entity())?;
-        if let BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) = element {
-            position.height = self.cursor - position.y;
-            self.cursor += padding.bottom + border.bottom + margin.bottom;
-        }
+    fn end_element(&mut self, element: Entity) -> Option<()> {
+        // TODO: handle multi-page elements
+        let Decoration {
+            padding,
+            border,
+            margin,
+            ..
+        } = self.data.decorations.get(element)?;
+        let position = self.data.positions.get_mut(element)?;
 
-        // we have to reset the current inline formatter after an element has finished.
-        self.inline_formatter = None;
-
+        position.height = self.cursor - position.y;
+        self.cursor += padding.bottom + border.bottom + margin.bottom;
         Some(())
     }
 
@@ -207,25 +226,17 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     ///
     /// Returns `Err` if a new page needs to be started to finish the leaf. If the return value is
     /// `Ok(())` the leaf is completely laid out.
-    fn layout_leaf(
-        &mut self,
-        leaf: Entity,
-        dimensions: ElementDimensions,
-    ) -> Result<(), PageFullError> {
+    fn layout_leaf(&mut self, leaf: Entity) -> Result<(), PageFullError> {
+        let &Position { x, width, .. } = self.data.positions.get(leaf).unwrap();
         let mut fragment_height = PixelLength(0.0);
-        let container_offset = self.current_container_pos().x;
         let container_width = self.current_container_pos().width;
         let z_index = self.z_index();
         let result = if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
             let remaining_block_size = self.remaining_block_size();
             // The following initializes a new inline formatter if self.inline_formatter is None.
-            let inline_formatter = self.inline_formatter.get_or_insert_with(|| {
-                InlineFormatter::new(
-                    dimensions.inline_size,
-                    dimensions.inline_size,
-                    remaining_block_size,
-                )
-            });
+            let inline_formatter = self
+                .inline_formatter
+                .get_or_insert_with(|| InlineFormatter::new(width, width, remaining_block_size));
 
             loop {
                 let mut inline_formatter_data = InlineFormatterData {
@@ -245,11 +256,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     line_stack
                         .stack
                         .set_positions(
-                            (
-                                container_offset + dimensions.inline_offset(),
-                                self.cursor,
-                                ZIndex(z_index.0 + 1),
-                            ),
+                            (x, self.cursor, ZIndex(z_index.0 + 1)),
                             &mut self.data.positions,
                         )
                         .expect("line_stack entities were invalidated while still in use.");
@@ -283,7 +290,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         } else {
             self.cursor += fragment_height;
         }
-        
         self.current_page.append_element(leaf);
 
         result
@@ -440,7 +446,7 @@ mod test {
 
     use std::convert::TryInto;
 
-    use crate::simple_dom::{div, html, Quantity::*};
+    use crate::simple_dom::{body, div, html, Quantity::*};
     use crate::style::properties::computed::PixelLength;
     use specs::{RunNow, System};
 
@@ -518,6 +524,41 @@ mod test {
                 z: ZIndex(0)
             }
         )
+    }
+
+    const EPSILON: PixelLength = PixelLength(1e-5);
+
+    #[test]
+    fn test_nested_elements_are_positioned_correctly() {
+        let child = div(vec![]).height(Px(20.0)).margin_bottom(Px(30.0));
+        let html = &html(vec![body(vec![div(vec![child.clone(), child])
+            .padding(Px(10.0))
+            .margin_top(Px(5.0))])
+        .margin_left(Px(10.0))]);
+        let test = BlockLayoutTest {
+            html,
+            page_width: Px(100.0),
+            page_height: Px(200.0),
+        };
+        let world = test.layout();
+
+        let positions = world.read_storage();
+        let container_pos: &Position = html["body"][0].get(&positions);
+
+        assert_eq!(
+            (container_pos.x, container_pos.y),
+            (PixelLength(20.0), PixelLength(15.0))
+        );
+
+        let child1_pos = html["body"][0][0].get(&positions);
+        assert!((child1_pos.x - container_pos.x).abs() <= EPSILON);
+        assert!((child1_pos.y - container_pos.y).abs() <= EPSILON);
+        assert!(child1_pos.height == PixelLength(20.0));
+
+        let child2_pos = html["body"][0][1].get(&positions);
+        assert!((child2_pos.x - container_pos.x).abs() <= EPSILON);
+        assert!((child2_pos.y - child1_pos.y - PixelLength(50.0)).abs() <= EPSILON);
+        assert!(child2_pos.height == PixelLength(20.0));
     }
 
     #[test]

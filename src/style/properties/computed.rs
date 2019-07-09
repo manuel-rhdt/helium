@@ -23,6 +23,10 @@ impl PixelLength {
     pub fn max(self, other: PixelLength) -> PixelLength {
         PixelLength(self.0.max(other.0))
     }
+    
+    pub fn abs(self) -> PixelLength {
+        PixelLength(self.0.abs())
+    }
 
     #[inline]
     pub fn from_val_unit(val: f32, unit: super::specified::Unit, font_size: PixelLength) -> Self {
