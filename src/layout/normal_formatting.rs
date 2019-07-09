@@ -89,8 +89,7 @@ pub struct BlockFormatter<'elements, 'data> {
     current_page: Page,
     /// The slice of elements that have to be processed
     pub elements: &'elements [BlockLevelElement],
-    /// A cursor tracking vertical layout position
-    cursor: PixelLength,
+    layout_state: BlockLayoutState,
     page_size: (PixelLength, PixelLength),
     inline_formatter: Option<InlineFormatter>,
     data: &'elements mut BlockFormatterData<'data>,
@@ -108,7 +107,11 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             pages: vec![],
             current_page: Default::default(),
             elements,
-            cursor: PixelLength(0.0),
+            layout_state: BlockLayoutState {
+                vertical_pos: PixelLength(0.0),
+                page_height: page_size.1,
+                collapse_margin: None,
+            },
             page_size,
             inline_formatter: None,
             data,
@@ -117,7 +120,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
     /// Returns the remaining space in the block direction until the current page is full.
     pub fn remaining_block_size(&self) -> PixelLength {
-        self.page_size.1 - self.cursor
+        self.layout_state.remaining_block_size()
     }
 
     /// Iterates through the elements of the flow and assigns the leaf positions on the individual
@@ -181,7 +184,9 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             ..
         } = &dimensions.decoration;
 
-        self.cursor += padding.top + border.top + margin.top;
+        self.layout_state.add_margin(margin.top);
+        self.layout_state.add_content(border.top);
+        self.layout_state.add_content(padding.top);
 
         let position = self
             .data
@@ -191,7 +196,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .or_insert_with(Default::default);
 
         position.x = container_pos.x + dimensions.inline_offset();
-        position.y = self.cursor;
+        position.y = self.layout_state.vertical_pos();
         position.width = dimensions.inline_size;
         position.z = ZIndex(self.in_progress_containers.len() as i64);
         self.data
@@ -212,8 +217,10 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         } = self.data.decorations.get(element)?;
         let position = self.data.positions.get_mut(element)?;
 
-        position.height = self.cursor - position.y;
-        self.cursor += padding.bottom + border.bottom + margin.bottom;
+        position.height = self.layout_state.vertical_pos() - position.y;
+        self.layout_state.add_content(padding.bottom);
+        self.layout_state.add_content(border.bottom);
+        self.layout_state.add_margin(margin.bottom);
         Some(())
     }
 
@@ -256,7 +263,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     line_stack
                         .stack
                         .set_positions(
-                            (x, self.cursor, ZIndex(z_index.0 + 1)),
+                            (x, self.layout_state.vertical_pos(), ZIndex(z_index.0 + 1)),
                             &mut self.data.positions,
                         )
                         .expect("line_stack entities were invalidated while still in use.");
@@ -282,13 +289,13 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .map(|style| style.position.height);
         if let Some(GenericSize::LengthPercentage(lp)) = height {
             let height = lp.absolute(container_width);
-            self.cursor += height;
+            self.layout_state.add_content(height);
 
             if self.remaining_block_size() < PixelLength(0.0) {
                 return Err(PageFullError);
             }
         } else {
-            self.cursor += fragment_height;
+            self.layout_state.add_content(fragment_height);
         }
         self.current_page.append_element(leaf);
 
@@ -325,7 +332,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 .remove(container)
                 .expect("expected component");
             let mut pos = *self.data.positions.get(container).unwrap();
-            pos.height = self.cursor - pos.y;
+            pos.height = self.layout_state.vertical_pos() - pos.y;
             let fragment1 = self
                 .data
                 .entities
@@ -345,7 +352,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             self.current_page.append_element(fragment1);
         }
 
-        self.cursor = PixelLength(0.0);
+        self.layout_state.reset();
 
         let page = std::mem::replace(&mut self.current_page, Default::default());
         let page_entity = self
@@ -359,6 +366,51 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
     fn z_index(&self) -> ZIndex {
         ZIndex(self.in_progress_containers.len() as i64)
+    }
+}
+
+struct BlockLayoutState {
+    vertical_pos: PixelLength,
+    page_height: PixelLength,
+    /// Contains `Some(margin)` if the previous space was a margin.
+    collapse_margin: Option<PixelLength>,
+}
+
+impl BlockLayoutState {
+    fn reset(&mut self) {
+        self.vertical_pos = PixelLength(0.0);
+        self.collapse_margin = None;
+    }
+
+    fn remaining_block_size(&self) -> PixelLength {
+        self.page_height - self.vertical_pos
+    }
+
+    fn add_content(&mut self, content: PixelLength) {
+        if content == PixelLength(0.0) {
+            return;
+        }
+        self.collapse_margin = None;
+        self.vertical_pos += content;
+    }
+
+    fn add_margin(&mut self, margin: PixelLength) {
+        if margin == PixelLength(0.0) {
+            return
+        }
+        if let Some(prev_margin) = self.collapse_margin {
+            let margin = prev_margin.max(margin);
+            self.collapse_margin = Some(margin);
+            let additional_margin = margin - prev_margin;
+            self.vertical_pos += additional_margin;
+        } else {
+            self.collapse_margin = Some(margin);
+            self.vertical_pos += margin;
+        }
+    }
+
+    fn vertical_pos(&self) -> PixelLength {
+        self.vertical_pos
     }
 }
 
@@ -678,29 +730,9 @@ mod test {
         let world = test.layout();
 
         let positions = world.read_storage();
-        let pos1: &Position = html[0].get(&positions);
         let pos2: &Position = html[1].get(&positions);
 
-        assert_eq!(
-            pos1,
-            &Position {
-                x: PixelLength(0.0),
-                y: PixelLength(0.0),
-                width: PixelLength(100.0),
-                height: PixelLength(10.0),
-                z: ZIndex(0)
-            }
-        );
-        assert_eq!(
-            pos2,
-            &Position {
-                x: PixelLength(0.0),
-                y: PixelLength(40.0),
-                width: PixelLength(100.0),
-                height: PixelLength(10.0),
-                z: ZIndex(0)
-            }
-        );
+        assert_eq!(pos2.y, PixelLength(40.0));
     }
 
     #[test]
