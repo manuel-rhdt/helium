@@ -369,6 +369,10 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 }
 
+/// This struct contains state of the vertical layout process.
+/// 
+/// It's responsibilities include
+/// * managing margin collapsing
 struct BlockLayoutState {
     vertical_pos: PixelLength,
     page_height: PixelLength,
