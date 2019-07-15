@@ -87,7 +87,7 @@ pub struct BlockFormatter<'elements, 'data> {
     in_progress_containers: Vec<Container>,
     pub pages: Vec<Entity>,
     current_page: Page,
-    /// The slice of elements that have to be processed
+    /// The slice of elements that have to be processed.
     pub elements: &'elements [BlockLevelElement],
     layout_state: BlockLayoutState,
     page_size: (PixelLength, PixelLength),
@@ -120,26 +120,24 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 
     /// Returns the remaining space in the block direction until the current page is full.
-    pub fn remaining_block_size(&self) -> PixelLength {
+    fn remaining_block_size(&self) -> PixelLength {
         self.layout_state.remaining_block_size()
     }
 
-    /// Iterates through the elements of the flow and assigns the leaf positions on the individual
+    /// Iterate through the elements of the flow and assigns the leaf positions on the individual
     /// pages.
-    ///
-    /// The container elements are not yet split into fragments. However we need to keep track of
-    /// their sizes to correctly layout the leaves (i.e. leaving space for vertical margins and
-    /// decoration and determining the width of leaves).
     pub fn layout(&mut self) -> Option<()> {
         assert!(self.in_progress_containers.is_empty());
         for &element in self.elements.iter() {
-            self.process_element(element);
+            self.process_element(element)
+                .expect("Could not process element");
         }
         assert!(self.in_progress_containers.is_empty());
         self.new_page();
         None
     }
 
+    /// Create a new container from an Entity describing the root container node.
     fn new_container(&self, entity: Entity) -> Container {
         let fragment = self.data.entities.create();
         Container {
@@ -148,47 +146,12 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         }
     }
 
-    fn process_element(&mut self, element: BlockLevelElement) -> Option<()> {
-        let style = self.data.computed_values.get(element.entity())?.clone();
-
-        match element {
-            BlockLevelElement::ContainerStart(entity) => {
-                let container = self.new_container(entity);
-                self.start_element(container.current_fragment, &style, false)?;
-                self.in_progress_containers.push(container);
-            }
-            BlockLevelElement::Leaf(leaf) => {
-                self.start_element(leaf, &style, false)?;
-                while let Err(PageFullError) = self.layout_leaf(leaf) {
-                    self.end_element(leaf, true)?;
-                    self.new_page()
-                }
-                // we have to reset the current inline formatter after an element has finished.
-                self.inline_formatter = None;
-                self.end_element(leaf, false)?;
-            }
-            BlockLevelElement::ContainerEnd(entity) => {
-                let container = self
-                    .in_progress_containers
-                    .pop()
-                    .expect("Internal Error: Invalid tree");
-                assert_eq!(container.root_entity, entity);
-                self.end_element(container.current_fragment, false)?;
-            }
-        }
-
-        Some(())
-    }
-
     fn start_element(
         &mut self,
         element: Entity,
         style: &ComputedValues,
         page_start: bool,
     ) -> Option<()> {
-        if self.remaining_block_size() < PixelLength(0.0) {
-            self.new_page();
-        }
         let container_pos = self.current_container_pos();
         let mut dimensions = compute_element_dimensions(container_pos.width, &style);
 
@@ -252,6 +215,40 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         Some(())
     }
 
+    fn process_element(&mut self, element: BlockLevelElement) -> Option<()> {
+        let style = self.data.computed_values.get(element.entity())?.clone();
+
+        match element {
+            BlockLevelElement::ContainerStart(entity) => {
+                let container = self.new_container(entity);
+                self.start_element(container.current_fragment, &style, false)?;
+                self.in_progress_containers.push(container);
+            }
+            BlockLevelElement::Leaf(leaf) => {
+                let container = self.new_container(leaf);
+                self.start_element(container.current_fragment, &style, false)?;
+                self.in_progress_containers.push(container);
+
+                while let Err(PageFullError) = self.layout_leaf(container) {
+                    self.new_page().expect("Internal error while creating new page");
+                }
+                // we have to reset the current inline formatter after an element has finished.
+                self.inline_formatter = None;
+
+                let container = self.in_progress_containers.pop().expect("Internal error");
+                assert_eq!(container.root_entity, leaf);
+                self.end_element(container.current_fragment, false)?;
+            }
+            BlockLevelElement::ContainerEnd(entity) => {
+                let container = self.in_progress_containers.pop().expect("Internal Error");
+                assert_eq!(container.root_entity, entity);
+                self.end_element(container.current_fragment, false)?;
+            }
+        }
+
+        Some(())
+    }
+
     /// Put the leaf at the current cursor position.
     ///
     /// This method may make partial progress. If the current page is full, a `PageFullError` is
@@ -261,11 +258,13 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     ///
     /// Returns `Err` if a new page needs to be started to finish the leaf. If the return value is
     /// `Ok(())` the leaf is completely laid out.
-    fn layout_leaf(&mut self, leaf: Entity) -> Result<(), PageFullError> {
-        let &Position { x, width, .. } = self.data.positions.get(leaf).unwrap();
+    fn layout_leaf(&mut self, leaf: Container) -> Result<(), PageFullError> {
+        let &Position { x, width, .. } = self.data.positions.get(leaf.current_fragment).unwrap();
         let container_width = self.current_container_pos().width;
         let z_index = self.z_index();
-        let result = if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
+        let result = if let Some(inline_formatting_context) =
+            self.data.inline_contexts.get(leaf.root_entity)
+        {
             let remaining_block_size = self.remaining_block_size();
             // The following initializes a new inline formatter if self.inline_formatter is None.
             let inline_formatter = self
@@ -312,7 +311,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let height = self
             .data
             .computed_values
-            .get(leaf)
+            .get(leaf.root_entity)
             .map(|style| style.position.height);
         if let Some(GenericSize::LengthPercentage(lp)) = height {
             let height = lp.absolute(container_width);
@@ -322,7 +321,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 return Err(PageFullError);
             }
         }
-        self.current_page.append_element(leaf);
 
         result
     }
@@ -349,7 +347,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         }
     }
 
-    fn new_page(&mut self) {
+    fn new_page(&mut self) -> Option<()> {
         // split containers:
         // - add `Fragments` component to container
         // - create two fragments
@@ -358,8 +356,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let in_progress_containers = self.in_progress_containers.clone();
         self.in_progress_containers.clear();
         for container in in_progress_containers.iter().rev() {
-            self.end_element(container.current_fragment, true).unwrap();
-            self.current_page.append_element(container.current_fragment);
+            self.end_element(container.current_fragment, true)?;
         }
 
         self.layout_state.reset();
@@ -375,19 +372,19 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             inline_formatter.reset(self.page_size.1);
         }
 
-        for mut container in in_progress_containers {
+        for container in in_progress_containers {
             // create a new fragment for the current container
-            container.current_fragment = self.data.entities.create();
+            let container = self.new_container(container.root_entity);
             let style = self
                 .data
                 .computed_values
-                .get(container.root_entity)
-                .unwrap()
+                .get(container.root_entity)?
                 .clone();
-            self.start_element(container.current_fragment, &style, true)
-                .unwrap();
+            self.start_element(container.current_fragment, &style, true)?;
             self.in_progress_containers.push(container);
         }
+
+        Some(())
     }
 
     fn z_index(&self) -> ZIndex {
@@ -498,6 +495,12 @@ pub struct Page {
 
 impl Page {
     pub fn append_element(&mut self, element: Entity) {
+        if cfg!(debug_assertions) && self.elements.contains(&element) {
+            panic!(
+                "Tried to append the entity {:?} to the page although it already existed",
+                element
+            )
+        }
         self.elements.push(element)
     }
 
