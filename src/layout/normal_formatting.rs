@@ -155,21 +155,16 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let container_pos = self.current_container_pos();
         let mut dimensions = compute_element_dimensions(container_pos.width, &style);
 
-        let Decoration {
-            padding,
-            border,
-            margin,
-            ..
-        } = &mut dimensions.decoration;
+        let deco = &mut dimensions.decoration;
 
         if page_start {
-            padding.top = PixelLength(0.0);
-            border.top = PixelLength(0.0);
-            margin.top = PixelLength(0.0);
+            deco.padding.top = PixelLength(0.0);
+            deco.border.top = PixelLength(0.0);
+            deco.margin.top = PixelLength(0.0);
         } else {
-            self.layout_state.add_margin(margin.top);
-            self.layout_state.add_content(border.top);
-            self.layout_state.add_content(padding.top);
+            self.layout_state.add_margin(deco.margin.top);
+            self.layout_state.add_content(deco.border.top);
+            self.layout_state.add_content(deco.padding.top);
         }
 
         let position = self
@@ -199,22 +194,17 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     /// - `page_end`: if true this function assumes that the fragment should end abruptly (without
     ///    adding bottom padding and border)
     fn end_element(&mut self, fragment: Entity, page_end: bool) -> Option<()> {
-        let Decoration {
-            padding,
-            border,
-            margin,
-            ..
-        } = self.data.decorations.get_mut(fragment).unwrap();
-        let position = self.data.positions.get_mut(fragment).unwrap();
+        let deco = self.data.decorations.get_mut(fragment)?;
+        let position = self.data.positions.get_mut(fragment)?;
 
         position.height = self.layout_state.vertical_pos() - position.y;
         if page_end {
-            padding.bottom = PixelLength(0.0);
-            border.bottom = PixelLength(0.0);
+            deco.padding.bottom = PixelLength(0.0);
+            deco.border.bottom = PixelLength(0.0);
         } else {
-            self.layout_state.add_content(padding.bottom);
-            self.layout_state.add_content(border.bottom);
-            self.layout_state.add_margin(margin.bottom);
+            self.layout_state.add_content(deco.padding.bottom);
+            self.layout_state.add_content(deco.border.bottom);
+            self.layout_state.add_margin(deco.margin.bottom);
         }
         self.current_page.append_element(fragment);
 
