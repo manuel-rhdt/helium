@@ -156,9 +156,9 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let mut dimensions = compute_element_dimensions(container_pos.width, &style);
 
         let Decoration {
-            mut padding,
-            mut border,
-            mut margin,
+            padding,
+            border,
+            margin,
             ..
         } = &mut dimensions.decoration;
 
@@ -192,14 +192,20 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         Some(())
     }
 
-    fn end_element(&mut self, element: Entity, page_end: bool) -> Option<()> {
+    /// End an element fragment and adds appends it to the current page.
+    ///
+    /// # Arguments
+    /// - `fragment` specifies the entity index of the fragment
+    /// - `page_end`: if true this function assumes that the fragment should end abruptly (without
+    ///    adding bottom padding and border)
+    fn end_element(&mut self, fragment: Entity, page_end: bool) -> Option<()> {
         let Decoration {
-            mut padding,
-            mut border,
+            padding,
+            border,
             margin,
             ..
-        } = self.data.decorations.get_mut(element).unwrap();
-        let position = self.data.positions.get_mut(element).unwrap();
+        } = self.data.decorations.get_mut(fragment).unwrap();
+        let position = self.data.positions.get_mut(fragment).unwrap();
 
         position.height = self.layout_state.vertical_pos() - position.y;
         if page_end {
@@ -210,7 +216,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             self.layout_state.add_content(border.bottom);
             self.layout_state.add_margin(margin.bottom);
         }
-        self.current_page.append_element(element);
+        self.current_page.append_element(fragment);
 
         Some(())
     }
@@ -230,7 +236,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 self.in_progress_containers.push(container);
 
                 while let Err(PageFullError) = self.layout_leaf(container) {
-                    self.new_page().expect("Internal error while creating new page");
+                    self.new_page()
+                        .expect("Internal error while creating new page");
                 }
                 // we have to reset the current inline formatter after an element has finished.
                 self.inline_formatter = None;
