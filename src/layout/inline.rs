@@ -315,6 +315,10 @@ impl InlineFormatter {
         }
         self.current_line.clear();
     }
+
+    pub fn reset(&mut self, max_height: Px) {
+        self.finished_lines.max_height = max_height;
+    }
 }
 
 pub struct InlineFormatterIter<'refs, 'data> {

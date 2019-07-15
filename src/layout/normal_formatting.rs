@@ -66,7 +66,7 @@ impl Component for BlockFragment {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct PageFullError;
 
-/// A struct that holds all storages and resources needed for the block layout pass.
+/// A struct that holds all component storages and resources needed for the block layout pass.
 #[derive(SystemData)]
 pub struct BlockFormatterData<'data> {
     pub entities: Entities<'data>,
@@ -84,7 +84,7 @@ pub struct BlockFormatterData<'data> {
 }
 
 pub struct BlockFormatter<'elements, 'data> {
-    in_progress_containers: Vec<Entity>,
+    in_progress_containers: Vec<Container>,
     pub pages: Vec<Entity>,
     current_page: Page,
     /// The slice of elements that have to be processed
@@ -92,6 +92,7 @@ pub struct BlockFormatter<'elements, 'data> {
     layout_state: BlockLayoutState,
     page_size: (PixelLength, PixelLength),
     inline_formatter: Option<InlineFormatter>,
+    /// A reference to all the component storages needed for layout.
     data: &'elements mut BlockFormatterData<'data>,
 }
 
@@ -139,54 +140,74 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         None
     }
 
-    fn process_element(&mut self, element: BlockLevelElement) -> Option<()> {
-        if let BlockLevelElement::ContainerStart(_) | BlockLevelElement::Leaf(_) = element {
-            self.start_element(element.entity())?
+    fn new_container(&self, entity: Entity) -> Container {
+        let fragment = self.data.entities.create();
+        Container {
+            root_entity: entity,
+            current_fragment: fragment,
         }
+    }
+
+    fn process_element(&mut self, element: BlockLevelElement) -> Option<()> {
+        let style = self.data.computed_values.get(element.entity())?.clone();
 
         match element {
             BlockLevelElement::ContainerStart(entity) => {
-                self.in_progress_containers.push(entity);
+                let container = self.new_container(entity);
+                self.start_element(container.current_fragment, &style, false)?;
+                self.in_progress_containers.push(container);
             }
             BlockLevelElement::Leaf(leaf) => {
+                self.start_element(leaf, &style, false)?;
                 while let Err(PageFullError) = self.layout_leaf(leaf) {
+                    self.end_element(leaf, true)?;
                     self.new_page()
                 }
                 // we have to reset the current inline formatter after an element has finished.
                 self.inline_formatter = None;
+                self.end_element(leaf, false)?;
             }
             BlockLevelElement::ContainerEnd(entity) => {
                 let container = self
                     .in_progress_containers
                     .pop()
                     .expect("Internal Error: Invalid tree");
-                assert_eq!(container, entity);
-                self.current_page.append_element(container);
+                assert_eq!(container.root_entity, entity);
+                self.end_element(container.current_fragment, false)?;
             }
-        }
-
-        if let BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) = element {
-            self.end_element(element.entity())?
         }
 
         Some(())
     }
 
-    fn start_element(&mut self, element: Entity) -> Option<()> {
-        let style = self.data.computed_values.get(element)?;
+    fn start_element(
+        &mut self,
+        element: Entity,
+        style: &ComputedValues,
+        page_start: bool,
+    ) -> Option<()> {
+        if self.remaining_block_size() < PixelLength(0.0) {
+            self.new_page();
+        }
         let container_pos = self.current_container_pos();
-        let dimensions = compute_element_dimensions(container_pos.width, &style);
+        let mut dimensions = compute_element_dimensions(container_pos.width, &style);
 
         let Decoration {
-            padding,
-            border,
-            margin,
+            mut padding,
+            mut border,
+            mut margin,
             ..
-        } = &dimensions.decoration;
+        } = &mut dimensions.decoration;
 
-        self.layout_state.add_margin(margin.top);
-        self.layout_state.add_content(border.top);
-        self.layout_state.add_content(padding.top);
+        if page_start {
+            padding.top = PixelLength(0.0);
+            border.top = PixelLength(0.0);
+            margin.top = PixelLength(0.0);
+        } else {
+            self.layout_state.add_margin(margin.top);
+            self.layout_state.add_content(border.top);
+            self.layout_state.add_content(padding.top);
+        }
 
         let position = self
             .data
@@ -199,28 +220,35 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         position.y = self.layout_state.vertical_pos();
         position.width = dimensions.inline_size;
         position.z = ZIndex(self.in_progress_containers.len() as i64);
+
         self.data
             .decorations
             .insert(element, dimensions.decoration)
-            .ok()?;
+            .expect("Error: The element already had a decoration!");
 
         Some(())
     }
 
-    fn end_element(&mut self, element: Entity) -> Option<()> {
-        // TODO: handle multi-page elements
+    fn end_element(&mut self, element: Entity, page_end: bool) -> Option<()> {
         let Decoration {
-            padding,
-            border,
+            mut padding,
+            mut border,
             margin,
             ..
-        } = self.data.decorations.get(element)?;
-        let position = self.data.positions.get_mut(element)?;
+        } = self.data.decorations.get_mut(element).unwrap();
+        let position = self.data.positions.get_mut(element).unwrap();
 
         position.height = self.layout_state.vertical_pos() - position.y;
-        self.layout_state.add_content(padding.bottom);
-        self.layout_state.add_content(border.bottom);
-        self.layout_state.add_margin(margin.bottom);
+        if page_end {
+            padding.bottom = PixelLength(0.0);
+            border.bottom = PixelLength(0.0);
+        } else {
+            self.layout_state.add_content(padding.bottom);
+            self.layout_state.add_content(border.bottom);
+            self.layout_state.add_margin(margin.bottom);
+        }
+        self.current_page.append_element(element);
+
         Some(())
     }
 
@@ -235,7 +263,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     /// `Ok(())` the leaf is completely laid out.
     fn layout_leaf(&mut self, leaf: Entity) -> Result<(), PageFullError> {
         let &Position { x, width, .. } = self.data.positions.get(leaf).unwrap();
-        let mut fragment_height = PixelLength(0.0);
         let container_width = self.current_container_pos().width;
         let z_index = self.z_index();
         let result = if let Some(inline_formatting_context) = self.data.inline_contexts.get(leaf) {
@@ -267,7 +294,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                             &mut self.data.positions,
                         )
                         .expect("line_stack entities were invalidated while still in use.");
-                    fragment_height += line_stack.stack.height();
+                    self.layout_state.add_content(line_stack.stack.height());
                     self.current_page
                         .elements
                         .extend_from_slice(&line_stack.stack.entities());
@@ -294,21 +321,23 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             if self.remaining_block_size() < PixelLength(0.0) {
                 return Err(PageFullError);
             }
-        } else {
-            self.layout_state.add_content(fragment_height);
         }
         self.current_page.append_element(leaf);
 
         result
     }
 
-    fn current_container(&self) -> Option<Entity> {
+    fn current_container(&self) -> Option<Container> {
         self.in_progress_containers.last().cloned()
     }
 
     fn current_container_pos(&self) -> Position {
         if let Some(container) = self.current_container() {
-            self.data.positions.get(container).cloned().unwrap()
+            self.data
+                .positions
+                .get(container.current_fragment)
+                .cloned()
+                .unwrap()
         } else {
             Position {
                 x: PixelLength(0.0),
@@ -325,35 +354,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         // - add `Fragments` component to container
         // - create two fragments
         // - add the first fragment to the current page
-        for &container in &self.in_progress_containers {
-            let decoration = self
-                .data
-                .decorations
-                .remove(container)
-                .expect("expected component");
-            let mut pos = *self.data.positions.get(container).unwrap();
-            pos.height = self.layout_state.vertical_pos() - pos.y;
-            let fragment1 = self
-                .data
-                .entities
-                .build_entity()
-                .with(decoration, &mut self.data.decorations)
-                .with(pos, &mut self.data.positions)
-                .build();
-            self.data
-                .fragments
-                .insert(
-                    container,
-                    Fragments {
-                        fragments: vec![fragment1],
-                    },
-                )
-                .unwrap();
-            self.current_page.append_element(fragment1);
+
+        let in_progress_containers = self.in_progress_containers.clone();
+        self.in_progress_containers.clear();
+        for container in in_progress_containers.iter().rev() {
+            self.end_element(container.current_fragment, true).unwrap();
+            self.current_page.append_element(container.current_fragment);
         }
 
         self.layout_state.reset();
-
         let page = std::mem::replace(&mut self.current_page, Default::default());
         let page_entity = self
             .data
@@ -362,6 +371,23 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .with(page, &mut self.data.page_data)
             .build();
         self.pages.push(page_entity);
+        if let Some(inline_formatter) = self.inline_formatter.as_mut() {
+            inline_formatter.reset(self.page_size.1);
+        }
+
+        for mut container in in_progress_containers {
+            // create a new fragment for the current container
+            container.current_fragment = self.data.entities.create();
+            let style = self
+                .data
+                .computed_values
+                .get(container.root_entity)
+                .unwrap()
+                .clone();
+            self.start_element(container.current_fragment, &style, true)
+                .unwrap();
+            self.in_progress_containers.push(container);
+        }
     }
 
     fn z_index(&self) -> ZIndex {
@@ -369,8 +395,19 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     }
 }
 
-/// This struct contains state of the vertical layout process.
-/// 
+/// Describes a container element.
+///
+/// It has the following fields:
+/// * `root_entity` – The entity that describes the entire container.
+/// * `current_fragment` – A fragment of the container that is currently under construction.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+struct Container {
+    root_entity: Entity,
+    current_fragment: Entity,
+}
+
+/// Contains state of the vertical layout process.
+///
 /// Its responsibilities include
 /// * managing margin collapsing
 struct BlockLayoutState {
@@ -400,7 +437,7 @@ impl BlockLayoutState {
 
     fn add_margin(&mut self, margin: PixelLength) {
         if margin == PixelLength(0.0) {
-            return
+            return;
         }
         if let Some(prev_margin) = self.collapse_margin {
             let margin = prev_margin.max(margin);
@@ -451,13 +488,6 @@ fn compute_element_dimensions(
         decoration,
         inline_size,
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-struct Container {
-    entity: Entity,
-    inline_offset: PixelLength,
-    dimensions: ElementDimensions,
 }
 
 // TODO: consider if the vec is needed (we could replace it by a bitset).

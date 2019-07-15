@@ -207,8 +207,7 @@ pub mod entity_constructor {
         fn build_block_entity(&mut self, style: ComputedValues) -> LayoutEntity {
             use specs::Builder;
 
-            let entity_builer = self.world.create_entity().with(style);
-            entity_builer.with(Position::default()).build().into()
+            self.world.create_entity().with(style).build().into()
         }
 
         /// builds an anonymous block box for text nodes
