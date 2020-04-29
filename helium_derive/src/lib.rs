@@ -28,8 +28,10 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
     let name = &ast.ident;
     let generics = &ast.generics;
     let mut generics_appended = ast.generics.clone();
-    generics_appended.params.push(syn::parse2(quote!{ 'i }).unwrap());
-    let computed_values = ast
+    generics_appended
+        .params
+        .push(syn::parse2(quote! { 'i }).unwrap());
+    let computed_values_type = ast
         .attrs
         .iter()
         .rev()
@@ -81,7 +83,7 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
                 property_cases.push(quote! {
                     #name::#ident(val) => {
                         let computed_value = val.computed_value(&*computed);
-                        std::convert::AsMut::<#computed_values>::as_mut(computed).#ident_snake = computed_value;
+                        std::convert::AsMut::<#computed_values_type>::as_mut(computed).#ident_snake = computed_value;
                     }
                 });
             } else {
@@ -114,13 +116,14 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
     let trait_impl = quote! {
         impl #generics_appended ParseDeclaration<'i> for #name #generics {
             type Error = ();
-            type Computed = #computed_values;
 
             fn parse_declaration(name: cssparser::CowRcStr<'i>, input: &mut cssparser::Parser<'i, '_>) -> Result<Self, ParseError<'i, Self::Error>> {
                 #(#if_clauses)*
                 Err(input.new_custom_error(()))
             }
+        }
 
+        impl #generics ApplyToComputedValues for #name #generics {
             fn apply_to(&self, computed: &mut super::computed::ComputedValues) {
                 match self {
                     #(#property_cases),*

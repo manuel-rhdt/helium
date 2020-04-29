@@ -6,14 +6,15 @@ use helium_derive::{ParseDeclaration, PropertyValue};
 
 pub trait ParseDeclaration<'i> {
     type Error: 'i;
-    type Computed: 'static;
     fn parse_declaration(
         name: CowRcStr<'i>,
         input: &mut Parser<'i, '_>,
     ) -> Result<Self, ParseError<'i, Self::Error>>
     where
         Self: Sized;
+}
 
+pub trait ApplyToComputedValues {
     fn apply_to(&self, computed: &mut super::computed::ComputedValues);
 }
 
@@ -21,7 +22,9 @@ pub trait PropertyValue<'i>: Sized {
     type Error: 'i;
     fn from_css_property_value(
         input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>>;
+    ) -> Result<Self, ParseError<'i, Self::Error>>
+    where
+        Self: Sized;
 
     fn computed_value<T>(&self, computed_values: &super::computed::ComputedValues) -> T
     where
@@ -241,6 +244,15 @@ pub enum Background {
     /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
     #[property]
     BackgroundColor(Color),
+}
+
+#[derive(Debug, Clone, ParseDeclaration)]
+#[computed = "super::computed::Page"]
+pub enum Page {
+    #[property]
+    Orphans(usize),
+    #[property]
+    Widows(usize),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
@@ -531,6 +543,26 @@ impl<'i> PropertyValue<'i> for Color {
         input: &mut Parser<'i, '_>,
     ) -> Result<Self, ParseError<'i, Self::Error>> {
         Color::parse(input).map_err(Into::into)
+    }
+}
+
+impl<'i> PropertyValue<'i> for usize {
+    type Error = ();
+
+    fn from_css_property_value(
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        let token = input.next()?;
+        match token {
+            Token::Number {
+                int_value: Some(val),
+                ..
+            } => Ok(*val as usize),
+            _ => {
+                let token = token.clone();
+                Err(input.new_unexpected_token_error(token))
+            }
+        }
     }
 }
 

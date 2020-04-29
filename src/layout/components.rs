@@ -23,7 +23,7 @@ impl Component for ContainingBlock {
 ///
 /// The origin of the coordinate system is usually the parent element's top left
 /// corner.
-#[derive(Debug, Copy, Clone, Default, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Position {
     /// Horizontal coordinate of the top left corner.
     pub x: PixelLength,
@@ -35,6 +35,8 @@ pub struct Position {
     pub height: PixelLength,
     /// Z-Index
     pub z: ZIndex,
+    /// page number,
+    pub page: usize,
 }
 
 impl Component for Position {
@@ -57,15 +59,6 @@ impl Component for ComputedValues {
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct UnscannedText {
-    pub characters: String,
-}
-
-impl Component for UnscannedText {
-    type Storage = DenseVecStorage<Self>;
-}
-
-#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Text {
     pub glyphs: Vec<GlyphIndex>,
     pub font: super::text::Font,
@@ -76,6 +69,20 @@ pub struct Text {
 }
 
 impl Component for Text {
+    type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TextRun {
+    pub text: String,
+    pub font: super::text::Font,
+    /// Size of an EM box.
+    pub font_size: PixelLength,
+    pub line_height: PixelLength,
+    pub baseline: PixelLength,
+}
+
+impl Component for TextRun {
     type Storage = DenseVecStorage<Self>;
 }
 
@@ -123,3 +130,33 @@ impl Component for Decoration {
 /// Entities with bigger `ZIndex` are drawn on top of elements with lower `ZIndex`.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub struct ZIndex(pub i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Breakpoint {
+    offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineBreakPossibilities {
+    pub breakpoints: Vec<Breakpoint>,
+}
+
+impl Component for LineBreakPossibilities {
+    type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextOperator {
+    ChangeFont(super::text::Font, PixelLength),
+    Glyphs(Vec<GlyphIndex>),
+    NewLine { leading: PixelLength },
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Paragraph {
+    pub ops: Vec<TextOperator>,
+}
+
+impl Component for Paragraph {
+    type Storage = DenseVecStorage<Self>;
+}

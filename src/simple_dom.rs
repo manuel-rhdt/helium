@@ -1,12 +1,12 @@
 //! A simple implementation of a dom tree that is mostly useful for tests right now.
 
-use crate::layout::construct::entity_constructor::{
+use crate::layout::components::LayoutEntity;
+use crate::layout::construct::{
     AssignLayoutEntity, EntityConstructor, HtmlNode, IterChildren, Styled,
 };
-use crate::layout::entity::LayoutEntity;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::properties::computed::{
-    ComputedValues, CssFloat, Display, GenericSize, Percentage, PixelLength, LengthPercentage
+    self, ComputedValues, CssFloat, Display, GenericSize, LengthPercentage, Percentage, PixelLength,
 };
 
 use html5ever::QualName;
@@ -172,7 +172,6 @@ impl<'a> IterChildren<'a> for &'a Node {
 ///
 /// This function returns a Node with default element style except it being `display: block;`.
 pub fn block(name: &'static str, contents: Vec<Node>) -> Node {
-    use crate::style::properties::computed::Box;
     Node {
         name,
         entity: Cell::new(None),
@@ -182,7 +181,7 @@ pub fn block(name: &'static str, contents: Vec<Node>) -> Node {
             template_contents: None,
         }),
         style: ComputedValues {
-            box_: Arc::new(Box {
+            box_: Arc::new(computed::Box {
                 display: Display::Block,
                 ..Default::default()
             }),
@@ -316,5 +315,4 @@ mod test {
             GenericSize::from(PixelLength(20.0))
         );
     }
-
 }

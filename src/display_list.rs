@@ -1,6 +1,6 @@
-use crate::layout::entity::{Decoration, Position, Text, ZIndex};
+use crate::layout::components::{self, Decoration, Paragraph, Position, ZIndex};
 use crate::layout::inline::LineBox;
-use crate::layout::normal_formatting::{Page, Pages};
+use crate::layout::normal_formatting::Pages;
 use crate::layout::text::{font::GlyphIndex, Font};
 use crate::style::properties::computed::{PixelLength, RGBA};
 
@@ -35,6 +35,7 @@ pub enum DisplayItem {
     FilledRect(Rect),
     Color(RGBA),
     Text(Point, PixelLength, Font, Vec<GlyphIndex>),
+    Paragraph((PixelLength, PixelLength), Paragraph),
     Translate(PixelLength, PixelLength),
     Push,
     Pop,
@@ -61,7 +62,7 @@ impl DisplayList {
         self.items.iter().map(|elem| &elem.item)
     }
 
-    fn append_text(&mut self, pos: Point, text: &Text, z_index: ZIndex) {
+    fn append_text(&mut self, pos: Point, text: &components::Text, z_index: ZIndex) {
         self.append(
             DisplayItem::Text(
                 Point {
@@ -105,6 +106,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 width,
                 height,
                 z,
+                ..
             },
             deco,
             _,
@@ -204,38 +206,30 @@ pub struct DisplayText {
 
 impl<'a> System<'a> for DisplayText {
     type SystemData = (
-        Entities<'a>,
         ReadStorage<'a, Position>,
-        ReadStorage<'a, Text>,
-        ReadStorage<'a, LineBox>,
+        ReadStorage<'a, Paragraph>,
     );
 
-    fn run(&mut self, (entities, positions, text, line_boxes): Self::SystemData) {
-        for (line_box, _) in (&line_boxes, &self.bitset).join() {
-            for &fragment in &line_box.fragments {
-                let joint_comps = (&positions, &text).join().get(fragment, &entities);
-                if let Some((&Position { x, y, z, .. }, text)) = joint_comps {
-                    self.display_list.append_text(Point { x, y }, text, z)
-                }
-            }
+    fn run(&mut self, (positions, paragraphs): Self::SystemData) {
+        for (pos, paragraph, _) in (&positions, &paragraphs, &self.bitset).join() {
+            self.display_list.append(
+                DisplayItem::Paragraph((pos.x, pos.y), paragraph.clone()),
+                pos.z,
+            )
         }
     }
 }
 
 pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
-    let pages = world.read_resource::<Pages>();
-    let page_data = world.read_storage::<Page>();
-    let mut print_pages = PrintPages::default();
-    for &page in &pages.0 {
-        let page_data = if let Some(page) = page_data.get(page) {
-            page
-        } else {
-            continue;
-        };
+    <DisplayText as System>::SystemData::setup(world);
 
+    let pages = world.read_resource::<Option<Pages>>();
+    let pages = pages.as_ref().unwrap();
+    let mut print_pages = PrintPages::default();
+    for page in pages.iter() {
         let display_list = DisplayList::default();
         let mut bitset = specs::BitSet::new();
-        page_data.add_elements_to_set(&mut bitset);
+        page.add_elements_to_set(&mut bitset);
 
         let mut decorations_builder = DisplayDecoration {
             display_list,

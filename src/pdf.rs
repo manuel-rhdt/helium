@@ -1,4 +1,5 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
+use crate::layout::components::TextOperator;
 use crate::layout::text::{font::GlyphIndex, Font as HFont};
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
@@ -83,16 +84,16 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                         page_context.line_width(line_width.into())?;
                         page_context.stroke_path()?;
                     }
-                    DisplayItem::FilledRect(Rect {
+                    &DisplayItem::FilledRect(Rect {
                         x,
                         y,
                         width,
                         height,
                     }) => {
-                        let x = Pt::from(*x);
-                        let y = Pt::from(device.height - *y - *height);
-                        let width = Pt::from(*width);
-                        let height = Pt::from(*height);
+                        let x = Pt::from(x);
+                        let y = Pt::from(device.height - y - height);
+                        let width = Pt::from(width);
+                        let height = Pt::from(height);
 
                         page_context.rect(x, y, width, height)?;
                         page_context.fill_path()?;
@@ -115,6 +116,39 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                         page_context.set_font(font_key, font_size.into())?;
                         page_context.set_position(x.into(), y.into())?;
                         page_context.draw_simple_glyphs(&encode_glyphs_simple(text, font))?;
+                        page_context.end_text()?;
+                    }
+                    DisplayItem::Paragraph((x, y), par) => {
+                        let x = *x;
+                        let y = device.height - *y;
+
+                        page_context.begin_text()?;
+                        page_context.set_position(x.into(), y.into())?;
+
+                        let mut current_font = None;
+                        for op in &par.ops {
+                            match op {
+                                TextOperator::ChangeFont(font, size) => {
+                                    if font_map.get(font).is_none() {
+                                        let val = add_font(page_context, font)?;
+                                        font_map.insert(font.clone(), val);
+                                    }
+                                    let (font_key, font) = &font_map[&font];
+                                    page_context.set_font(font_key, (*size).into())?;
+                                    current_font = Some(font.clone());
+                                }
+                                TextOperator::Glyphs(glyphs) => {
+                                    page_context.draw_simple_glyphs(&encode_glyphs_simple(
+                                        glyphs,
+                                        current_font.as_ref().unwrap(),
+                                    ))?;
+                                }
+                                &TextOperator::NewLine { leading } => {
+                                    page_context.set_position(Pt(0.0), (-leading).into())?;
+                                }
+                            }
+                        }
+
                         page_context.end_text()?;
                     }
                 }

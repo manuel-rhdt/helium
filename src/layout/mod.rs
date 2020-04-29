@@ -1,46 +1,44 @@
+pub mod components;
 pub mod construct;
-pub mod entity;
 pub mod inline;
 pub mod inline_size;
 pub mod normal_formatting;
+pub(crate) mod paragraph;
 pub mod text;
 
-use crate::layout::entity::LayoutContext;
+use crate::layout::components::LayoutContext;
 use crate::style::device::Device;
 use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use construct::FlowConstructor;
 
-use specs::{Dispatcher, DispatcherBuilder, World, WorldExt};
+use specs::{RunNow, World, WorldExt};
 
 pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     // here we set the layout passes
-    let mut dispatcher: Dispatcher = DispatcherBuilder::new()
-        .with(
-            normal_formatting::BlockLevelLayout {
-                page_width: device.width,
-                page_height: device.height,
-            },
-            "layout",
-            &[],
-        )
-        .with(
-            inline::InlinePositionAssign,
-            "inline-position-assign",
-            &["layout"],
-        )
-        .build();
-
-    let mut world = World::new();
-    dispatcher.setup(&mut world);
+    let world = World::new();
     let mut flow_constructor = FlowConstructor::new(world);
     dom.traverse(&mut flow_constructor);
 
     let mut layout_context = flow_constructor.layout_context();
 
+    let mut break_points_finder = inline::FindPossibleLineBreaks;
+    break_points_finder.run_now(&layout_context);
+
     // perform the layout passes
-    dispatcher.dispatch(&layout_context);
-    layout_context.maintain();
+    let mut block_layout = normal_formatting::BlockLevelLayout {
+        page_width: device.width,
+        page_height: device.height,
+        world: &layout_context,
+    };
+    block_layout.run();
+
+    let mut line_box_creator = inline::LineBoxCreator;
+    line_box_creator.setup(&mut layout_context);
+    line_box_creator.run_now(&layout_context);
+
+    normal_formatting::PagesCreate.setup(&mut layout_context);
+    normal_formatting::PagesCreate.run_now(&layout_context);
 
     layout_context
 }

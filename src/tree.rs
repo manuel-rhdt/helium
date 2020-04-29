@@ -318,7 +318,7 @@ pub struct NodeData {
 
     computed_values: Cell<Option<ComputedValues>>,
 
-    pub layout_entity: Cell<Option<crate::layout::entity::LayoutEntity>>,
+    pub layout_entity: Cell<Option<crate::layout::components::LayoutEntity>>,
 }
 
 impl Clone for NodeData {

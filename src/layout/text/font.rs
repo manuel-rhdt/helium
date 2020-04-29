@@ -108,3 +108,5 @@ pub trait GlyphMetricsProvide {
     fn char_to_glyph_index(&self, ch: char) -> GlyphIndex;
     fn glyph_advance(&self, glyph: GlyphIndex) -> PixelLength;
 }
+
+impl super::FontLike for Font {}

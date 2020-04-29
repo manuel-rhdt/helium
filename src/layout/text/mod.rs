@@ -6,3 +6,5 @@ pub use builtin::{
     InlineFragment, InlineFragmentIterator, InlineFragmentIteratorState, LineIsFullError,
 };
 pub use font::Font;
+
+pub trait FontLike {}

@@ -1,4 +1,4 @@
-use super::entity::{ContainingBlock, Decoration, Position};
+use super::components::{ContainingBlock, Decoration, Position};
 use crate::style::device::Device;
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 

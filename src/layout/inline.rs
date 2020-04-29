@@ -1,339 +1,460 @@
-use super::entity::{Position, Text, UnscannedText, ZIndex};
-use super::text::{
-    font::{match_font, GlyphMetricsProvide},
-    Font, InlineFragment, InlineFragmentIteratorState, LineIsFullError,
-};
-use crate::style::properties::computed::{ComputedValues, LineHeight, PixelLength as Px};
+use super::components::{self, Paragraph, TextOperator};
+use super::text::font::GlyphIndex;
+use crate::style::properties::computed::PixelLength as Px;
 
-use specs::{
-    storage::{GenericReadStorage, GenericWriteStorage},
-    Component, Entity, VecStorage,
-};
+use specs::{Component, DenseVecStorage, Entity, VecStorage};
 use specs::{Entities, Join, ReadStorage, System, WriteStorage};
 
-use std::rc::Rc;
+#[derive(Debug, Copy, Clone)]
+pub struct Line {
+    pub height: Px,
+    pub baseline: Px,
+    pub from_break: usize,
+    pub to_break: usize,
+    pub entity: Entity,
+}
 
 #[derive(Debug, Clone)]
 pub struct InlineFormattingContext {
     pub elements: Vec<Entity>,
+    pub break_points: Vec<BreakPoint>,
+    pub lines: Vec<Line>,
 }
 
 impl Component for InlineFormattingContext {
     type Storage = VecStorage<Self>;
 }
 
-pub struct InlineFormatterData<'refs, 'system> {
-    pub entities: &'refs Entities<'system>,
-    pub positions: &'refs mut WriteStorage<'system, Position>,
-    pub texts: &'refs mut WriteStorage<'system, Text>,
-    pub inline_pos: &'refs mut WriteStorage<'system, InlinePos>,
-    pub computed_values: &'refs ReadStorage<'system, ComputedValues>,
-    pub unscanned_texts: &'refs mut WriteStorage<'system, UnscannedText>,
-    pub line_boxes: &'refs mut WriteStorage<'system, LineBox>,
+pub struct FindPossibleLineBreaks;
+
+#[derive(Debug, Copy, Clone)]
+pub struct BreakPoint {
+    pub entity: Entity,
+    pub char_index: usize,
+    pub advance_before: Px,
+    pub advance_after: Px,
+    pub line_height: Px,
+    pub baseline: Px,
 }
 
-#[derive(Default, Clone)]
-struct InlineFormatterState {
-    /// An index into the elements array of the `InlineFormattingContext`, pointing to the current
-    /// element.
-    current_element_index: usize,
-    /// Additional state associated with the current element.
-    inline_fragment_iter_state: Option<InlineFragmentIteratorState<Rc<dyn GlyphMetricsProvide>>>,
-}
+// TODO: test this
+impl<'a> System<'a> for FindPossibleLineBreaks {
+    type SystemData = (
+        WriteStorage<'a, InlineFormattingContext>,
+        ReadStorage<'a, components::TextRun>,
+    );
 
-impl InlineFormatterState {
-    pub fn next_element(
-        &mut self,
-        elements: &[Entity],
-        line_width: Px,
-        remaining_inline_space: Px,
-        InlineFormatterData {
-            entities,
-            computed_values,
-            unscanned_texts,
+    fn run(&mut self, (mut inline_formatting_contexts, text_runs): Self::SystemData) {
+        for InlineFormattingContext {
+            elements,
+            break_points,
             ..
-        }: &mut InlineFormatterData,
-    ) -> Option<Entity> {
-        let result = if let Some(&entity) = elements.get(self.current_element_index) {
-            let (style, text) = (*computed_values, &mut **unscanned_texts)
-                .join()
-                .get(entity, entities)
-                .expect("No style/text assigned");
-            super::text::whitespace::transform_text(&mut text.characters);
-            let glyph_metrics_provider = match_font(&style)
-                .expect("Could not find any matching fonts.")
-                .glyph_metrics_provider(style.font.font_size);
-            self.inline_fragment_iter_state = Some(InlineFragmentIteratorState::new(
-                glyph_metrics_provider,
-                line_width,
-                remaining_inline_space,
-            ));
-            Some(entity)
-        } else {
-            None
-        };
-        self.current_element_index += 1;
-        result
-    }
+        } in (&mut inline_formatting_contexts).join()
+        {
+            let mut advance = Px(0.0);
 
-    pub fn fragment_iter<'a>(
-        &self,
-        text: &'a str,
-    ) -> impl 'a + Iterator<Item = Result<InlineFragment, LineIsFullError>> {
-        self.inline_fragment_iter_state
-            .as_ref()
-            .expect(
-                "Before calling fragment_iter, the output of \
-                 `InlineFormatterState.next_element(..)` must be checked.",
-            )
-            .clone()
-            .into_iterator(text)
-    }
-}
-
-/// An `InlineFormatter` manages the layout of entities corresponding to a single inline formatting
-/// context.
-///
-/// # Discussion
-///
-/// The `InlineFormatter` struct itself stores all the state information associated with the inline
-/// layout. To actually make progress in the inline layout the method `layout_lines()` has to be
-/// called, providing a slice of entities and a mutable reference to `InlineFormatterData`. This
-/// method returns an iterator that yields stacks of lines until all entities are completely laid
-/// out.
-///
-///
-pub struct InlineFormatter {
-    current_line: LineBuilder,
-    line_width: Px,
-    finished_lines: Stack,
-    saved_state: Option<InlineFormatterState>,
-    state: InlineFormatterState,
-}
-
-impl InlineFormatter {
-    pub fn new(line_width: Px, remaining_line_width: Px, max_height: Px) -> Self {
-        InlineFormatter {
-            current_line: LineBuilder::new(remaining_line_width),
-            line_width,
-            finished_lines: Stack::new(max_height),
-            saved_state: Default::default(),
-            state: Default::default(),
-        }
-    }
-
-    /// Returns the remaining inline-direction space until the current line is completely full.
-    pub fn remaining_inline_space(&self) -> Px {
-        self.current_line.remaining_inline_space()
-    }
-
-    /// Add the specified fragment to the current line.
-    #[allow(clippy::too_many_arguments)]
-    pub fn append_fragment(
-        &mut self,
-        fragment: InlineFragment,
-        line_height: Px,
-        font: Font,
-        font_size: Px,
-        entities: &Entities,
-        positions: &mut WriteStorage<Position>,
-        texts: &mut WriteStorage<Text>,
-    ) {
-        let line_gap = line_height - font.font_height(font_size);
-        let pos = Position {
-            width: fragment.advance,
-            height: line_height,
-            ..Default::default() //< position gets assigned by `LineBuilder`.
-        };
-
-        let entity = entities
-            .build_entity()
-            .with(pos, positions)
-            .with(
-                Text {
-                    glyphs: fragment.glyph_indices,
-                    font: font.clone(),
-                    font_size,
-                    baseline: font.ascender(font_size) + line_gap / 2.0,
-                },
-                texts,
-            )
-            .build();
-
-        self.current_line.append_fragment(entity, positions);
-    }
-
-    /// Creates a new line and adds it to the list of `finished_lines`.
-    ///
-    /// Returns an Error if the new line exceeds the max block height (i.e. a page break is needed).
-    fn finish_current_line(
-        &mut self,
-        entities: &Entities,
-        texts: &WriteStorage<Text>,
-        inline_pos: &mut WriteStorage<InlinePos>,
-        positions: &mut WriteStorage<Position>,
-        line_boxes: &mut WriteStorage<LineBox>,
-    ) -> Result<(), StackFullError> {
-        let line = self
-            .current_line
-            .build(entities, texts, inline_pos, positions, line_boxes);
-        self.current_line.clear();
-        self.current_line.inline_size = self.line_width;
-        if let Some(line) = line {
-            let pos = positions.get(line).unwrap();
-            self.finished_lines.push(line, pos.height)?;
-        }
-
-        // save state at new line
-        self.saved_state = Some(self.state.clone());
-        Ok(())
-    }
-
-    /// Processes an element, splitting it into inline fragments and distributing them across lines.
-    ///
-    /// Returns `Some(...)` if
-    pub fn layout_element(
-        &mut self,
-        entity: Entity,
-        data: &mut InlineFormatterData,
-    ) -> Option<LineStack> {
-        let (style, unscanned_text) = (data.computed_values, &*data.unscanned_texts)
-            .join()
-            .get(entity, data.entities)?;
-        let content = &unscanned_text.characters;
-        let font = match_font(&style)?;
-
-        let font_size = style.font.font_size;
-        let font_height = font.font_height(style.font.font_size);
-        let Font::BuiltIn(font) = font;
-        let line_height = match style.font.line_height {
-            LineHeight::Normal => font_height * 1.2,
-            LineHeight::LengthPercentage(lp) => lp.absolute(style.font.font_size),
-        };
-
-        for fragment in self.state.fragment_iter(&content) {
-            let requires_new_line = match fragment {
-                Ok(fragment) => {
-                    let new_line_after = fragment.new_line_after;
-                    self.append_fragment(
-                        fragment,
-                        line_height,
-                        Font::BuiltIn(font),
-                        font_size,
-                        data.entities,
-                        data.positions,
-                        data.texts,
-                    );
-                    new_line_after
-                }
-                Err(LineIsFullError) => true,
-            };
-
-            if requires_new_line
-                && self
-                    .finish_current_line(
-                        data.entities,
-                        data.texts,
-                        data.inline_pos,
-                        data.positions,
-                        data.line_boxes,
-                    )
-                    .is_err()
+            for (entity, text_run) in elements
+                .iter()
+                .filter_map(|&entity| Some((entity, text_runs.get(entity)?)))
             {
-                // we exceeded the maximum height
-                self.undo_current_line();
+                let glyph_metrics_provider =
+                    text_run.font.glyph_metrics_provider(text_run.font_size);
+                for (index, chr) in text_run.text.char_indices() {
+                    // insert first breakpoint at beginning
+                    if break_points.is_empty() {
+                        break_points.push(BreakPoint {
+                            entity,
+                            char_index: 0,
+                            advance_before: Px(0.0),
+                            advance_after: Px(0.0),
+                            line_height: text_run.line_height,
+                            baseline: text_run.baseline,
+                        })
+                    }
 
-                let max_height = self.finished_lines.max_height;
-                let finished_lines =
-                    std::mem::replace(&mut self.finished_lines, Stack::new(max_height));
-                return Some(LineStack {
-                    stack: finished_lines,
-                    page_break_after: true,
-                });
+                    let glyph = glyph_metrics_provider.char_to_glyph_index(chr);
+                    // TODO: make this properly support non-breaking spaces, etc.
+                    if chr.is_whitespace() {
+                        let advance_before = advance;
+                        advance += glyph_metrics_provider.glyph_advance(glyph);
+                        let advance_after = advance;
+                        break_points.push(BreakPoint {
+                            entity,
+                            char_index: index,
+                            advance_before,
+                            advance_after,
+                            line_height: text_run.line_height,
+                            baseline: text_run.baseline,
+                        })
+                    } else {
+                        advance += glyph_metrics_provider.glyph_advance(glyph);
+                    }
+                }
+            }
+
+            if let Some(&entity) = elements.last() {
+                if let Some(text_run) = text_runs.get(entity) {
+                    break_points.push(BreakPoint {
+                        entity,
+                        char_index: text_run.text.len(),
+                        advance_before: advance,
+                        advance_after: advance,
+                        line_height: Px(0.0),
+                        baseline: Px(0.0),
+                    })
+                }
             }
         }
-
-        None
     }
+}
 
-    fn layout_lines(
+pub struct LineBoxCreator;
+
+impl<'a> System<'a> for LineBoxCreator {
+    type SystemData = (
+        Entities<'a>,
+        ReadStorage<'a, InlineFormattingContext>,
+        ReadStorage<'a, components::TextRun>,
+        WriteStorage<'a, components::Position>,
+        WriteStorage<'a, Paragraph>,
+    );
+
+    fn run(
         &mut self,
-        entities: &[Entity],
-        data: &mut InlineFormatterData,
-    ) -> Option<LineStack> {
-        loop {
-            if let Some(elem) = self.state.next_element(
-                entities,
-                self.line_width,
-                self.remaining_inline_space(),
-                data,
-            ) {
-                if let Some(stack) = self.layout_element(elem, data) {
-                    return Some(stack);
+        (entities, inline_formatting_contexts, text_runs, mut positions, mut paragraphs): Self::SystemData,
+    ) {
+        for InlineFormattingContext {
+            break_points,
+            lines,
+            ..
+        } in inline_formatting_contexts.join()
+        {
+            let mut ops: Vec<TextOperator> = vec![];
+            let mut previous_font: Option<(super::text::Font, Px)> = None;
+            let mut paragraph_pos: Option<components::Position> = None;
+            for line in lines {
+                let mut from = line.from_break;
+                let to = line.to_break;
+
+                let line_pos = *positions
+                    .get(line.entity)
+                    .expect("every line should have been assigned a position by now");
+
+                if paragraph_pos.map(|pos| pos.page) != Some(line_pos.page) {
+                    if let Some(pos) = paragraph_pos {
+                        entities
+                            .build_entity()
+                            .with(pos, &mut positions)
+                            .with(Paragraph { ops: ops.clone() }, &mut paragraphs)
+                            .build();
+                    }
+                    ops.clear();
+                    if let Some(previous_font) = &previous_font {
+                        ops.push(TextOperator::ChangeFont(
+                            previous_font.0.clone(),
+                            previous_font.1,
+                        ))
+                    }
+                    paragraph_pos = Some(components::Position {
+                        y: line_pos.y + line.baseline,
+                        height: Px(0.0),
+                        ..line_pos
+                    });
                 }
-            } else {
-                // TODO: Test this
-                let page_break_after = match self.finish_current_line(
-                    data.entities,
-                    data.texts,
-                    data.inline_pos,
-                    data.positions,
-                    data.line_boxes,
-                ) {
-                    Ok(()) => false,
-                    Err(StackFullError) => true,
-                };
-                let max_height = self.finished_lines.max_height;
-                let stack = std::mem::replace(&mut self.finished_lines, Stack::new(max_height));
-                if stack.is_empty() {
-                    return None;
+
+                while from < to {
+                    let from_break = break_points[from];
+                    let to_break = break_points[to];
+
+                    if let Some(run) = text_runs.get(from_break.entity) {
+                        if previous_font != Some((run.font.clone(), run.font_size)) {
+                            ops.push(TextOperator::ChangeFont(run.font.clone(), run.font_size));
+                            previous_font = Some((run.font.clone(), run.font_size));
+                        }
+
+                        let from_char = if run.text.as_bytes()[from_break.char_index] == b' ' {
+                            from_break.char_index + 1
+                        } else {
+                            from_break.char_index
+                        };
+                        let characters = if from_break.entity == to_break.entity {
+                            from = to;
+                            &run.text[from_char..to_break.char_index]
+                        } else {
+                            from += 1;
+                            &run.text[from_char..]
+                        };
+
+                        let glyph_metrics_provider = run.font.glyph_metrics_provider(run.font_size);
+                        let glyphs = characters
+                            .chars()
+                            .map(|ch| glyph_metrics_provider.char_to_glyph_index(ch))
+                            .collect();
+                        ops.push(TextOperator::Glyphs(glyphs));
+                    } else {
+                        from += 1;
+                    }
                 }
-                return Some(LineStack {
-                    stack,
-                    page_break_after,
+
+                ops.push(TextOperator::NewLine {
+                    leading: line.height,
                 });
+            }
+            if let Some(pos) = paragraph_pos {
+                entities
+                    .build_entity()
+                    .with(pos, &mut positions)
+                    .with(Paragraph { ops: ops.clone() }, &mut paragraphs)
+                    .build();
             }
         }
     }
-
-    /// Returns an iterator which produces stacks of lines.
-    pub fn iter<'refs, 'data>(
-        &'refs mut self,
-        entities: &'refs [Entity],
-        data: &'refs mut InlineFormatterData<'refs, 'data>,
-    ) -> InlineFormatterIter<'refs, 'data> {
-        InlineFormatterIter {
-            inline_formatter: self,
-            entities,
-            data,
-        }
-    }
-
-    fn undo_current_line(&mut self) {
-        if let Some(saved_state) = self.saved_state.take() {
-            self.state = saved_state;
-        }
-        self.current_line.clear();
-    }
-
-    pub fn reset(&mut self, max_height: Px) {
-        self.finished_lines.max_height = max_height;
-    }
 }
 
-pub struct InlineFormatterIter<'refs, 'data> {
-    inline_formatter: &'refs mut InlineFormatter,
-    entities: &'refs [Entity],
-    data: &'refs mut InlineFormatterData<'refs, 'data>,
-}
+// impl InlineFormatterState {
+//     pub fn next_element(
+//         &mut self,
+//         elements: &[Entity],
+//         line_width: Px,
+//         remaining_inline_space: Px,
+//         InlineFormatterData {
+//             entities,
+//             computed_values,
+//             unscanned_texts,
+//             ..
+//         }: &mut InlineFormatterData,
+//     ) -> Option<Entity> {
+//         let result = if let Some(&entity) = elements.get(self.current_element_index) {
+//             let (style, text) = (*computed_values, &mut **unscanned_texts)
+//                 .join()
+//                 .get(entity, entities)
+//                 .expect("No style/text assigned");
+//             super::text::whitespace::transform_text(&mut text.characters);
+//             let glyph_metrics_provider = match_font(&style)
+//                 .expect("Could not find any matching fonts.")
+//                 .glyph_metrics_provider(style.font.font_size);
+//             self.inline_fragment_iter_state = Some(InlineFragmentIteratorState::new(
+//                 glyph_metrics_provider,
+//                 line_width,
+//                 remaining_inline_space,
+//             ));
+//             Some(entity)
+//         } else {
+//             None
+//         };
+//         self.current_element_index += 1;
+//         result
+//     }
 
-impl<'refs, 'data> Iterator for InlineFormatterIter<'refs, 'data> {
-    type Item = LineStack;
+//     pub fn fragment_iter<'a>(
+//         &self,
+//         text: &'a str,
+//     ) -> impl 'a + Iterator<Item = Result<InlineFragment, LineIsFullError>> {
+//         self.inline_fragment_iter_state
+//             .as_ref()
+//             .expect(
+//                 "Before calling fragment_iter, the output of \
+//                  `InlineFormatterState.next_element(..)` must be checked.",
+//             )
+//             .clone()
+//             .into_iterator(text)
+//     }
+// }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inline_formatter.layout_lines(self.entities, self.data)
-    }
-}
+/// Add the specified fragment to the current line.
+// #[allow(clippy::too_many_arguments)]
+// pub fn append_fragment(
+//     &mut self,
+//     fragment: InlineFragment,
+//     line_height: Px,
+//     font: Font,
+//     font_size: Px,
+//     entities: &Entities,
+//     positions: &mut WriteStorage<Position>,
+//     texts: &mut WriteStorage<Text>,
+// ) {
+//     let line_gap = line_height - font.font_height(font_size);
+//     let pos = Position {
+//         width: fragment.advance,
+//         height: line_height,
+//         ..Default::default() //< position gets assigned by `LineBuilder`.
+//     };
+
+//     let entity = entities
+//         .build_entity()
+//         .with(pos, positions)
+//         .with(
+//             Text {
+//                 glyphs: fragment.glyph_indices,
+//                 font: font.clone(),
+//                 font_size,
+//                 baseline: font.ascender(font_size) + line_gap / 2.0,
+//             },
+//             texts,
+//         )
+//         .build();
+
+//     self.current_line.append_fragment(entity, positions);
+// }
+
+/// Creates a new line and adds it to the list of `finished_lines`.
+///
+/// Returns an Error if the new line exceeds the max block height (i.e. a page break is needed).
+// fn finish_current_line(
+//     &mut self,
+//     entities: &Entities,
+//     texts: &WriteStorage<Text>,
+//     inline_pos: &mut WriteStorage<InlinePos>,
+//     positions: &mut WriteStorage<Position>,
+//     line_boxes: &mut WriteStorage<LineBox>,
+// ) -> Result<(), StackFullError> {
+//     let line = self
+//         .current_line
+//         .build(entities, texts, inline_pos, positions, line_boxes);
+//     self.current_line.clear();
+//     self.current_line.inline_size = self.line_width;
+//     if let Some(line) = line {
+//         let pos = positions.get(line).unwrap();
+//         self.finished_lines.push(line, pos.height)?;
+//     }
+
+//     // save state at new line
+//     self.saved_state = Some(self.state.clone());
+//     Ok(())
+// }
+
+/// Processes an element, splitting it into inline fragments and distributing them across lines.
+///
+/// Returns `Some(...)` if
+// pub fn layout_element(
+//     &mut self,
+//     entity: Entity,
+//     data: &mut InlineFormatterData,
+// ) -> Option<LineStack> {
+//     let (style, unscanned_text) = (data.computed_values, &*data.unscanned_texts)
+//         .join()
+//         .get(entity, data.entities)?;
+//     let content = &unscanned_text.characters;
+//     let font = match_font(&style)?;
+
+//     let font_size = style.font.font_size;
+//     let font_height = font.font_height(style.font.font_size);
+//     let Font::BuiltIn(font) = font;
+//     let line_height = match style.font.line_height {
+//         LineHeight::Normal => font_height * 1.2,
+//         LineHeight::LengthPercentage(lp) => lp.absolute(style.font.font_size),
+//     };
+
+//     for fragment in self.state.fragment_iter(&content) {
+//         let requires_new_line = match fragment {
+//             Ok(fragment) => {
+//                 let new_line_after = fragment.new_line_after;
+//                 self.append_fragment(
+//                     fragment,
+//                     line_height,
+//                     Font::BuiltIn(font),
+//                     font_size,
+//                     data.entities,
+//                     data.positions,
+//                     data.texts,
+//                 );
+//                 new_line_after
+//             }
+//             Err(LineIsFullError) => true,
+//         };
+
+//         if requires_new_line
+//             && self
+//                 .finish_current_line(
+//                     data.entities,
+//                     data.texts,
+//                     data.inline_pos,
+//                     data.positions,
+//                     data.line_boxes,
+//                 )
+//                 .is_err()
+//         {
+//             // we exceeded the maximum height
+//             self.undo_current_line();
+
+//             let max_height = self.finished_lines.max_height;
+//             let finished_lines =
+//                 std::mem::replace(&mut self.finished_lines, Stack::new(max_height));
+//             return Some(LineStack {
+//                 stack: finished_lines,
+//                 page_break_after: true,
+//             });
+//         }
+//     }
+
+//     None
+// }
+
+// fn layout_lines(
+//     &mut self,
+//     entities: &[Entity],
+//     data: &mut InlineFormatterData,
+// ) -> Option<LineStack> {
+//     loop {
+//         if let Some(elem) = self.state.next_element(
+//             entities,
+//             self.line_width,
+//             self.remaining_inline_space(),
+//             data,
+//         ) {
+//             if let Some(stack) = self.layout_element(elem, data) {
+//                 return Some(stack);
+//             }
+//         } else {
+//             // TODO: Test this
+//             let page_break_after = match self.finish_current_line(
+//                 data.entities,
+//                 data.texts,
+//                 data.inline_pos,
+//                 data.positions,
+//                 data.line_boxes,
+//             ) {
+//                 Ok(()) => false,
+//                 Err(StackFullError) => true,
+//             };
+//             let max_height = self.finished_lines.max_height;
+//             let stack = std::mem::replace(&mut self.finished_lines, Stack::new(max_height));
+//             if stack.is_empty() {
+//                 return None;
+//             }
+//             return Some(LineStack {
+//                 stack,
+//                 page_break_after,
+//             });
+//         }
+//     }
+// }
+
+// /// Returns an iterator which produces stacks of lines.
+// pub fn iter<'refs, 'data>(
+//     &'refs mut self,
+//     entities: &'refs [Entity],
+//     data: &'refs mut InlineFormatterData<'refs, 'data>,
+// ) -> InlineFormatterIter<'refs, 'data> {
+//     InlineFormatterIter {
+//         inline_formatter: self,
+//         entities,
+//         data,
+//     }
+// }
+
+// pub struct InlineFormatterIter<'refs> {
+//     inline_formatter: &'refs mut InlineFormatter,
+//     entities: &'refs [Entity],
+// }
+
+// impl<'refs, 'data> Iterator for InlineFormatterIter<'refs> {
+//     type Item = LineStack;
+
+//     fn next(&mut self) -> Option<Self::Item> {
+//         self.inline_formatter.layout_lines(self.entities, self.data)
+//     }
+// }
 
 /// Contains entities and keeps track of their total height.
 #[derive(Debug, Clone, PartialEq)]
@@ -380,23 +501,23 @@ impl Stack {
         self.entities.is_empty()
     }
 
-    pub fn set_positions(
-        &self,
-        offset: (Px, Px, ZIndex),
-        positions: &mut WriteStorage<'_, Position>,
-    ) -> Result<(), specs::error::WrongGeneration> {
-        let mut pos_y = offset.1;
-        for &stack_element in &self.entities {
-            let pos = positions
-                .entry(stack_element)?
-                .or_insert(Default::default());
-            pos.x = offset.0;
-            pos.y = pos_y;
-            pos_y += pos.height;
-            pos.z = offset.2;
-        }
-        Ok(())
-    }
+    // pub fn set_positions(
+    //     &self,
+    //     offset: (Px, Px, ZIndex),
+    //     positions: &mut WriteStorage<'_, Position>,
+    // ) -> Result<(), specs::error::WrongGeneration> {
+    //     let mut pos_y = offset.1;
+    //     for &stack_element in &self.entities {
+    //         let pos = positions
+    //             .entry(stack_element)?
+    //             .or_insert(Default::default());
+    //         pos.x = offset.0;
+    //         pos.y = pos_y;
+    //         pos_y += pos.height;
+    //         pos.z = offset.2;
+    //     }
+    //     Ok(())
+    // }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -429,86 +550,86 @@ impl LineBuilder {
     /// Panics if `positions` contains no entry for `fragment`.
     ///
     /// N.B. reads `position.width` and sets `position.x`.
-    pub fn append_fragment(
-        &mut self,
-        fragment: Entity,
-        positions: &mut WriteStorage<'_, Position>,
-    ) {
-        let position = positions
-            .get_mut(fragment)
-            .expect("Inline fragment needs to have an assigned Position");
-        self.inline_fragments.push(fragment);
-        position.x = self.cursor;
-        self.cursor += position.width;
-    }
+    // pub fn append_fragment(
+    //     &mut self,
+    //     fragment: Entity,
+    //     positions: &mut WriteStorage<'_, Position>,
+    // ) {
+    //     let position = positions
+    //         .get_mut(fragment)
+    //         .expect("Inline fragment needs to have an assigned Position");
+    //     self.inline_fragments.push(fragment);
+    //     position.x = self.cursor;
+    //     self.cursor += position.width;
+    // }
 
     /// Finish the line construction and set the final positions of the line fragments.
-    pub fn build(
-        &self,
-        entities: &Entities<'_>,
-        texts: impl GenericReadStorage<Component = Text>,
-        mut inline_pos: impl GenericWriteStorage<Component = InlinePos>,
-        positions: &mut WriteStorage<'_, Position>,
-        line_boxes: &mut WriteStorage<'_, LineBox>,
-    ) -> Option<Entity> {
-        let line_entity = if self.inline_fragments.is_empty() {
-            return None;
-        } else {
-            entities.create()
-        };
+    // pub fn build(
+    //     &self,
+    //     entities: &Entities<'_>,
+    //     texts: impl GenericReadStorage<Component = Text>,
+    //     mut inline_pos: impl GenericWriteStorage<Component = InlinePos>,
+    //     positions: &mut WriteStorage<'_, Position>,
+    //     line_boxes: &mut WriteStorage<'_, LineBox>,
+    // ) -> Option<Entity> {
+    //     let line_entity = if self.inline_fragments.is_empty() {
+    //         return None;
+    //     } else {
+    //         entities.create()
+    //     };
 
-        // Align the fragments along the baseline.
-        // First find max ascender and max descender...
-        let get_ascent = |entity, positions: &WriteStorage<'_, _>| {
-            let &Position { height, .. } = positions.get(entity).unwrap();
-            texts.get(entity).map(|t| t.baseline).unwrap_or(height)
-        };
-        let get_descent = |entity, positions: &WriteStorage<'_, _>| {
-            let &Position { height, .. } = positions.get(entity).unwrap();
-            texts
-                .get(entity)
-                .map(|t| height - t.baseline)
-                .unwrap_or(Px(0.0))
-        };
-        let mut max_ascent = Px(0.0);
-        let mut max_descent = Px(0.0);
-        for &fragment in &self.inline_fragments {
-            inline_pos
-                .insert(fragment, InlinePos { line: line_entity })
-                .unwrap();
+    //     // Align the fragments along the baseline.
+    //     // First find max ascender and max descender...
+    //     let get_ascent = |entity, positions: &WriteStorage<'_, _>| {
+    //         let &Position { height, .. } = positions.get(entity).unwrap();
+    //         texts.get(entity).map(|t| t.baseline).unwrap_or(height)
+    //     };
+    //     let get_descent = |entity, positions: &WriteStorage<'_, _>| {
+    //         let &Position { height, .. } = positions.get(entity).unwrap();
+    //         texts
+    //             .get(entity)
+    //             .map(|t| height - t.baseline)
+    //             .unwrap_or(Px(0.0))
+    //     };
+    //     let mut max_ascent = Px(0.0);
+    //     let mut max_descent = Px(0.0);
+    //     for &fragment in &self.inline_fragments {
+    //         inline_pos
+    //             .insert(fragment, InlinePos { line: line_entity })
+    //             .unwrap();
 
-            if get_ascent(fragment, &positions) > max_ascent {
-                max_ascent = get_ascent(fragment, &positions)
-            }
-            if get_descent(fragment, &positions) > max_descent {
-                max_descent = get_descent(fragment, &positions)
-            }
-        }
+    //         if get_ascent(fragment, &positions) > max_ascent {
+    //             max_ascent = get_ascent(fragment, &positions)
+    //         }
+    //         if get_descent(fragment, &positions) > max_descent {
+    //             max_descent = get_descent(fragment, &positions)
+    //         }
+    //     }
 
-        // ...then shift the individual fragments to align at the baseline.
-        for &fragment in &self.inline_fragments {
-            let ascent = get_ascent(fragment, &positions);
-            let pos = positions.get_mut(fragment).unwrap();
-            pos.y = max_ascent - ascent;
-        }
+    //     // ...then shift the individual fragments to align at the baseline.
+    //     for &fragment in &self.inline_fragments {
+    //         let ascent = get_ascent(fragment, &positions);
+    //         let pos = positions.get_mut(fragment).unwrap();
+    //         pos.y = max_ascent - ascent;
+    //     }
 
-        let pos = Position {
-            height: max_ascent + max_descent,
-            width: self.cursor,
-            ..Default::default() //< Position gets assigned by block formatter.
-        };
-        positions.insert(line_entity, pos).unwrap();
-        line_boxes
-            .insert(
-                line_entity,
-                LineBox {
-                    fragments: self.inline_fragments.clone(),
-                },
-            )
-            .unwrap();
+    //     let pos = Position {
+    //         height: max_ascent + max_descent,
+    //         width: self.cursor,
+    //         ..Default::default() //< Position gets assigned by block formatter.
+    //     };
+    //     positions.insert(line_entity, pos).unwrap();
+    //     line_boxes
+    //         .insert(
+    //             line_entity,
+    //             LineBox {
+    //                 fragments: self.inline_fragments.clone(),
+    //             },
+    //         )
+    //         .unwrap();
 
-        Some(line_entity)
-    }
+    //     Some(line_entity)
+    // }
 
     pub fn clear(&mut self) {
         self.inline_fragments.clear();
@@ -534,32 +655,39 @@ impl Component for LineBox {
     type Storage = VecStorage<Self>;
 }
 
+pub struct InlineLayoutPrepare;
+
+impl<'a> System<'a> for InlineLayoutPrepare {
+    type SystemData = ();
+
+    fn run(&mut self, _: Self::SystemData) {}
+}
+
 pub struct InlinePositionAssign;
 
-impl<'a> System<'a> for InlinePositionAssign {
-    type SystemData = (
-        Entities<'a>,
-        WriteStorage<'a, Position>,
-        ReadStorage<'a, InlinePos>,
-    );
+// impl<'a> System<'a> for InlinePositionAssign {
+//     type SystemData = (
+//         Entities<'a>,
+//         WriteStorage<'a, Position>,
+//         ReadStorage<'a, InlinePos>,
+//     );
 
-    fn run(&mut self, (entities, mut positions, inline_pos): Self::SystemData) {
-        for (entity, &InlinePos { line }) in (&entities, &inline_pos).join() {
-            // This closure is for convenience (we can use the `?` operator).
-            let assign_pos = |positions: &mut WriteStorage<Position>| {
-                let parent_pos = *positions.get(line)?;
-                let child_pos = positions.get_mut(entity)?;
-                child_pos.x += parent_pos.x;
-                child_pos.y += parent_pos.y;
-                child_pos.z = parent_pos.z;
-                Some(())
-            };
-            assign_pos(&mut positions).expect(
-                "Internal Error: cannot assign position to inline fragment.",
-            )
-        }
-    }
-}
+//     fn run(&mut self, (entities, mut positions, inline_pos): Self::SystemData) {
+//         for (entity, &InlinePos { line }) in (&entities, &inline_pos).join() {
+//             // This closure is for convenience (we can use the `?` operator).
+//             let assign_pos = |positions: &mut WriteStorage<Position>| {
+//                 let parent_pos = *positions.get(line)?;
+//                 let child_pos = positions.get_mut(entity)?;
+//                 child_pos.x += parent_pos.x;
+//                 child_pos.y += parent_pos.y;
+//                 child_pos.z = parent_pos.z;
+//                 Some(())
+//             };
+//             assign_pos(&mut positions)
+//                 .expect("Internal Error: cannot assign position to inline fragment.")
+//         }
+//     }
+// }
 
 /// A `LineStack` contains a list of lines that should be laid out vertically (block-direction) one
 /// after the other.

@@ -1,7 +1,7 @@
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
-use super::specified::{self, BorderStyle, ComputedValue, ParseDeclaration, PropertyDeclaration};
+use super::specified::{self, ApplyToComputedValues, BorderStyle, ComputedValue};
 pub use super::specified::{Display, FontFamily, FontStyle, FontWeight, Percentage};
 
 pub use cssparser::RGBA;
@@ -23,7 +23,6 @@ impl PixelLength {
     pub fn max(self, other: PixelLength) -> PixelLength {
         PixelLength(self.0.max(other.0))
     }
-    
     pub fn abs(self) -> PixelLength {
         PixelLength(self.0.abs())
     }
@@ -323,6 +322,7 @@ pub struct ComputedValues {
     pub font: Arc<Font>,
     pub text: Arc<Text>,
     pub background: Arc<Background>,
+    pub page: Arc<Page>,
 }
 
 impl AsMut<Box> for ComputedValues {
@@ -350,6 +350,11 @@ impl AsMut<Background> for ComputedValues {
         Arc::make_mut(&mut self.background)
     }
 }
+impl AsMut<Page> for ComputedValues {
+    fn as_mut(&mut self) -> &mut Page {
+        Arc::make_mut(&mut self.page)
+    }
+}
 
 impl ComputedValues {
     fn fixup(&mut self) {
@@ -364,8 +369,10 @@ pub struct StyleBuilder {
 
 impl StyleBuilder {
     pub fn new(inherited_values: ComputedValues) -> Self {
+        // Here we define which CSS property values are inherited
         let inherited = ComputedValues {
-            font: inherited_values.font.clone(),
+            font: inherited_values.font,
+            page: inherited_values.page,
             ..Default::default()
         };
         StyleBuilder {
@@ -373,7 +380,7 @@ impl StyleBuilder {
         }
     }
 
-    pub fn add_declaration(&mut self, decl: PropertyDeclaration) {
+    pub fn add_declaration(&mut self, decl: &dyn ApplyToComputedValues) {
         decl.apply_to(&mut self.new_values)
     }
 
@@ -423,6 +430,21 @@ impl Default for Background {
     fn default() -> Self {
         Background {
             background_color: cssparser::Color::RGBA(RGBA::transparent()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Page {
+    pub widows: usize,
+    pub orphans: usize,
+}
+
+impl Default for Page {
+    fn default() -> Self {
+        Page {
+            widows: 2,
+            orphans: 2,
         }
     }
 }

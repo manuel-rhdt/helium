@@ -204,6 +204,38 @@ impl<'a, Font: Deref<Target = T>, T: ?Sized + GlyphMetricsProvide> Iterator
     }
 }
 
+struct GlyphInfo {
+    index: GlyphIndex,
+    advance: PixelLength,
+    cluster: usize,
+}
+
+fn shape(text: &str, font: FontInstance) -> Vec<GlyphInfo> {
+    text.chars()
+        .enumerate()
+        .map(|(character_index, character)| {
+            let index = font.char_to_glyph_index(character);
+            let advance = font.glyph_advance(index);
+            GlyphInfo {
+                index,
+                advance,
+                cluster: character_index,
+            }
+        })
+        .collect()
+}
+
+/// Returns an iterator over line break indices
+fn line_breaks(text: &str) -> impl '_ + Iterator<Item = usize> {
+    text.char_indices().filter_map(|(char_index, character)| {
+        if character == ' ' {
+            Some(char_index + 1)
+        } else {
+            None
+        }
+    })
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
