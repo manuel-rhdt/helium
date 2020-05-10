@@ -14,6 +14,8 @@ use construct::FlowConstructor;
 
 use specs::{RunNow, World, WorldExt};
 
+pub type FontMap = std::collections::HashMap<String, text::Font>;
+
 pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     // here we set the layout passes
     let world = World::new();

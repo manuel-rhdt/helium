@@ -1,9 +1,9 @@
 use super::components::{self, Paragraph, TextOperator};
-use super::text::font::GlyphIndex;
+use super::FontMap;
 use crate::style::properties::computed::PixelLength as Px;
 
 use specs::{Component, DenseVecStorage, Entity, VecStorage};
-use specs::{Entities, Join, ReadStorage, System, WriteStorage};
+use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
 
 #[derive(Debug, Copy, Clone)]
 pub struct Line {
@@ -22,7 +22,7 @@ pub struct InlineFormattingContext {
 }
 
 impl Component for InlineFormattingContext {
-    type Storage = VecStorage<Self>;
+    type Storage = DenseVecStorage<Self>;
 }
 
 pub struct FindPossibleLineBreaks;
@@ -42,9 +42,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
     type SystemData = (
         WriteStorage<'a, InlineFormattingContext>,
         ReadStorage<'a, components::TextRun>,
+        Read<'a, FontMap>,
     );
 
-    fn run(&mut self, (mut inline_formatting_contexts, text_runs): Self::SystemData) {
+    fn run(&mut self, (mut inline_formatting_contexts, text_runs, font_map): Self::SystemData) {
         for InlineFormattingContext {
             elements,
             break_points,
@@ -57,8 +58,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 .iter()
                 .filter_map(|&entity| Some((entity, text_runs.get(entity)?)))
             {
-                let glyph_metrics_provider =
-                    text_run.font.glyph_metrics_provider(text_run.font_size);
+                let font = &font_map[&text_run.font_name];
+                let mut glyph_metrics_provider = font.glyph_metrics_provider(text_run.font_size);
                 for (index, chr) in text_run.text.char_indices() {
                     // insert first breakpoint at beginning
                     if break_points.is_empty() {
@@ -117,11 +118,12 @@ impl<'a> System<'a> for LineBoxCreator {
         ReadStorage<'a, components::TextRun>,
         WriteStorage<'a, components::Position>,
         WriteStorage<'a, Paragraph>,
+        Read<'a, FontMap>,
     );
 
     fn run(
         &mut self,
-        (entities, inline_formatting_contexts, text_runs, mut positions, mut paragraphs): Self::SystemData,
+        (entities, inline_formatting_contexts, text_runs, mut positions, mut paragraphs, font_map): Self::SystemData,
     ) {
         for InlineFormattingContext {
             break_points,
@@ -130,7 +132,7 @@ impl<'a> System<'a> for LineBoxCreator {
         } in inline_formatting_contexts.join()
         {
             let mut ops: Vec<TextOperator> = vec![];
-            let mut previous_font: Option<(super::text::Font, Px)> = None;
+            let mut previous_font: Option<(String, Px)> = None;
             let mut paragraph_pos: Option<components::Position> = None;
             for line in lines {
                 let mut from = line.from_break;
@@ -150,7 +152,7 @@ impl<'a> System<'a> for LineBoxCreator {
                     }
                     ops.clear();
                     if let Some(previous_font) = &previous_font {
-                        ops.push(TextOperator::ChangeFont(
+                        ops.push(TextOperator::SetFont(
                             previous_font.0.clone(),
                             previous_font.1,
                         ))
@@ -167,9 +169,9 @@ impl<'a> System<'a> for LineBoxCreator {
                     let to_break = break_points[to];
 
                     if let Some(run) = text_runs.get(from_break.entity) {
-                        if previous_font != Some((run.font.clone(), run.font_size)) {
-                            ops.push(TextOperator::ChangeFont(run.font.clone(), run.font_size));
-                            previous_font = Some((run.font.clone(), run.font_size));
+                        if previous_font != Some((run.font_name.clone(), run.font_size)) {
+                            ops.push(TextOperator::SetFont(run.font_name.clone(), run.font_size));
+                            previous_font = Some((run.font_name.clone(), run.font_size));
                         }
 
                         let from_char = if run.text.as_bytes()[from_break.char_index] == b' ' {
@@ -185,7 +187,8 @@ impl<'a> System<'a> for LineBoxCreator {
                             &run.text[from_char..]
                         };
 
-                        let glyph_metrics_provider = run.font.glyph_metrics_provider(run.font_size);
+                        let font = &font_map[&run.font_name];
+                        let glyph_metrics_provider = font.glyph_metrics_provider(run.font_size);
                         let glyphs = characters
                             .chars()
                             .map(|ch| glyph_metrics_provider.char_to_glyph_index(ch))

@@ -5,14 +5,15 @@ use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
 use lemon_pdf::content::PageContext;
-use lemon_pdf::font::builtin::BuiltInFont;
-use lemon_pdf::font::encoding::{EncodingEntry, PredefinedEncoding};
-use lemon_pdf::font::Font;
+use lemon_pdf::font::encoding::{EncodingEntry, PredefinedEncoding, WIN_ANSI_ENCODING};
+use lemon_pdf::font::type0::{CIDFont, CIDFontType, CIDSystemInfo, CompositeFont};
+use lemon_pdf::font::{Font, FontType};
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::stream::StreamFilter;
-use lemon_pdf::{Context, Page, Pt, Version};
+use lemon_pdf::{DocumentContext, Page, Pt, Version};
 
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::fs::File;
 use std::io::{BufWriter, Error};
 
@@ -24,7 +25,16 @@ impl From<PixelLength> for Pt {
 
 pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Result<(), Error> {
     let file = BufWriter::new(File::create("test_working.pdf")?);
-    let mut context = Context::with_writer(file, Version::Pdf1_7)?;
+    let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
+
+    let mut font_map = HashMap::new();
+    for (font_name, font) in &print_pages.font_map {
+        if !font.glyph_advances.lock().unwrap().is_empty() {
+            let font = font.embed_into_pdf(&mut context)?;
+            let font = context.write_object(font)?;
+            font_map.insert(font_name.clone(), font);
+        }
+    }
 
     for mut display_list in print_pages.pages {
         let mut page = Page::new();
@@ -42,8 +52,6 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
         };
 
         page.add_content(&mut context, filter, |page_context| {
-            let mut font_map = HashMap::new();
-
             for item in display_list.items() {
                 match item {
                     DisplayItem::Push => page_context.save_graphics_state()?,
@@ -104,18 +112,18 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                         ref font,
                         ref text,
                     ) => {
-                        if font_map.get(font).is_none() {
-                            let val = add_font(page_context, font)?;
-                            font_map.insert(font.clone(), val);
-                        }
-                        let (font_key, font) = &font_map[&font];
+                        // if font_map.get(font).is_none() {
+                        //     let val = add_font(page_context, font)?;
+                        //     font_map.insert(font.clone(), val);
+                        // }
+                        // let (font_key, font) = &font_map[&font];
 
                         let x = x;
                         let y = device.height - y;
                         page_context.begin_text()?;
-                        page_context.set_font(font_key, font_size.into())?;
+                        // page_context.set_font(font_key, font_size.into())?;
                         page_context.set_position(x.into(), y.into())?;
-                        page_context.draw_simple_glyphs(&encode_glyphs_simple(text, font))?;
+                        // page_context.draw_simple_glyphs(&encode_glyphs_simple(text, font))?;
                         page_context.end_text()?;
                     }
                     DisplayItem::Paragraph((x, y), par) => {
@@ -125,23 +133,17 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                         page_context.begin_text()?;
                         page_context.set_position(x.into(), y.into())?;
 
-                        let mut current_font = None;
                         for op in &par.ops {
                             match op {
-                                TextOperator::ChangeFont(font, size) => {
-                                    if font_map.get(font).is_none() {
-                                        let val = add_font(page_context, font)?;
-                                        font_map.insert(font.clone(), val);
-                                    }
-                                    let (font_key, font) = &font_map[&font];
-                                    page_context.set_font(font_key, (*size).into())?;
-                                    current_font = Some(font.clone());
+                                TextOperator::SetFont(font_name, size) => {
+                                    let font_ref = font_map[font_name];
+                                    let key = page_context.add_font(font_ref);
+                                    page_context.set_font(&key, (*size).into())?;
                                 }
                                 TextOperator::Glyphs(glyphs) => {
-                                    page_context.draw_simple_glyphs(&encode_glyphs_simple(
-                                        glyphs,
-                                        current_font.as_ref().unwrap(),
-                                    ))?;
+                                    page_context.draw_cid_glyphs(
+                                        glyphs.iter().map(|gl| u16::try_from(gl.0).unwrap()),
+                                    )?;
                                 }
                                 &TextOperator::NewLine { leading } => {
                                     page_context.set_position(Pt(0.0), (-leading).into())?;
@@ -164,32 +166,38 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
     Ok(())
 }
 
-fn add_font(
-    context: &mut PageContext<impl std::io::Write>,
-    font: &HFont,
-) -> Result<(String, Font), std::io::Error> {
-    let mut font = match font {
-        HFont::BuiltIn(font) => font.font(&mut context.pdf_context)?,
-    };
-    font.encoding = Some(EncodingEntry::Predefined(
-        PredefinedEncoding::WinAnsiEncoding,
-    ));
-    let font_ref = context
-        .pdf_context
-        .write_object(Font::Simple(font.clone()))?;
+// fn add_font(
+//     context: &mut PageContext<impl std::io::Write>,
+//     font: &HFont,
+// ) -> Result<(String, Font), std::io::Error> {
+//     let mut pdf_font = match font {
+//         HFont::BuiltIn(font) => font.font(&mut context.pdf_context)?,
+//     };
+//     pdf_font.encoding = Some(EncodingEntry::Predefined(
+//         PredefinedEncoding::WinAnsiEncoding,
+//     ));
 
-    Ok((context.add_font(font_ref), Font::Simple(font)))
-}
+//     pdf_font.widths = WIN_ANSI_ENCODING
+//         .iter()
+//         .filter(|entry| !entry.is_empty())
+//         .map(|&entry| font);
 
-fn encode_glyphs_simple(glyphs: &[GlyphIndex], font: &Font) -> Vec<u8> {
-    let Font::Simple(font) = font;
-    let encoding = font.encoding.as_ref().unwrap();
-    let metrics = BuiltInFont::Helvetica.metrics();
-    glyphs
-        .iter()
-        .flat_map(|&glyph| {
-            let char_name = metrics.char_metrics[glyph.0 as usize].name;
-            encoding.encode(char_name)
-        })
-        .collect()
-}
+//     let font_ref = context
+//         .pdf_context
+//         .write_object(Font::Simple(pdf_font.clone()))?;
+
+//     Ok((context.add_font(font_ref), Font::Simple(pdf_font)))
+// }
+
+// fn encode_glyphs_simple(glyphs: &[GlyphIndex], font: &Font) -> Vec<u8> {
+//     let Font::Simple(font) = font;
+//     let encoding = font.encoding.as_ref().unwrap();
+//     let metrics = BuiltInFont::Helvetica.metrics();
+//     glyphs
+//         .iter()
+//         .flat_map(|&glyph| {
+//             let char_name = metrics.char_metrics[glyph.0 as usize].name;
+//             encoding.encode(char_name)
+//         })
+//         .collect()
+// }

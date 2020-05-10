@@ -242,8 +242,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             page: self.layout_state.page_num,
         };
 
-        positions.insert(fragment, position);
-        decorations.insert(fragment, dimensions.decoration).ok()?;
+        positions.insert(fragment, position).unwrap();
+        decorations.insert(fragment, dimensions.decoration).unwrap();
         Some(position)
     }
 
@@ -280,82 +280,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             }
         }
     }
-
-    /// Put the leaf at the current cursor position.
-    ///
-    /// This method may make partial progress. If the current page is full, a `PageFullError` is
-    /// returned. This signals to the caller that a new page has to be started before calling this
-    /// function again. To finish the layout of the `leaf` entity, this method must be called, until
-    /// it no longer returns an Error.
-    ///
-    /// Returns `Err` if a new page needs to be started to finish the leaf. If the return value is
-    /// `Ok(())` the leaf is completely laid out.
-    // fn layout_leaf(&mut self, leaf: ContainerData) -> Result<(), PageFullError> {
-    //     let &Position { x, width, .. } = self.data.positions.get(leaf.current_fragment).unwrap();
-    //     let container_width = self.current_container_pos().width;
-    //     let z_index = self.z_index();
-    //     let result = if let Some(inline_formatting_context) =
-    //         self.data.inline_contexts.get(leaf.root_entity)
-    //     {
-    //         let remaining_block_size = self.remaining_block_size();
-    //         // The following initializes a new inline formatter if self.inline_formatter is None.
-    //         let inline_formatter = self
-    //             .inline_formatter
-    //             .get_or_insert_with(|| InlineFormatter::new(width, width, remaining_block_size));
-
-    //         loop {
-    //             let mut inline_formatter_data = InlineFormatterData {
-    //                 entities: &self.data.entities,
-    //                 positions: &mut self.data.positions,
-    //                 texts: &mut self.data.texts,
-    //                 inline_pos: &mut self.data.inline_pos,
-    //                 computed_values: &self.data.computed_values,
-    //                 unscanned_texts: &mut self.data.unscanned_texts,
-    //                 line_boxes: &mut self.data.line_boxes,
-    //             };
-    //             let mut iter = inline_formatter.iter(
-    //                 &inline_formatting_context.elements,
-    //                 &mut inline_formatter_data,
-    //             );
-    //             if let Some(line_stack) = iter.next() {
-    //                 line_stack
-    //                     .stack
-    //                     .set_positions(
-    //                         (x, self.layout_state.vertical_pos(), ZIndex(z_index.0 + 1)),
-    //                         &mut self.data.positions,
-    //                     )
-    //                     .expect("line_stack entities were invalidated while still in use.");
-    //                 self.layout_state.add_content(line_stack.stack.height());
-    //                 self.current_page
-    //                     .elements
-    //                     .extend_from_slice(&line_stack.stack.entities());
-    //                 if line_stack.page_break_after {
-    //                     break Err(PageFullError);
-    //                 }
-    //             } else {
-    //                 break Ok(());
-    //             }
-    //         }
-    //     } else {
-    //         Ok(())
-    //     };
-
-    //     let height = self
-    //         .data
-    //         .computed_values
-    //         .get(leaf.root_entity)
-    //         .map(|style| style.position.height);
-    //     if let Some(GenericSize::LengthPercentage(lp)) = height {
-    //         let height = lp.absolute(container_width);
-    //         self.layout_state.add_content(height);
-
-    //         if self.remaining_block_size() < PixelLength(0.0) {
-    //             return Err(PageFullError);
-    //         }
-    //     }
-
-    //     result
-    // }
 
     fn parent_container(&self) -> Option<ContainerData> {
         let num_cont = self.in_progress_containers.len();
@@ -595,8 +519,6 @@ fn compute_element_dimensions(
 }
 
 /// A struct that represents a page. Contains a list of all entities that are displayed on the page.
-
-// TODO: consider if the vec is needed (we could replace it by a bitset).
 #[derive(Debug, Default, Clone)]
 pub struct Page {
     elements: specs::BitSet,

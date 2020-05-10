@@ -1,5 +1,4 @@
 use crate::layout::components::{self, Decoration, Paragraph, Position, ZIndex};
-use crate::layout::inline::LineBox;
 use crate::layout::normal_formatting::Pages;
 use crate::layout::text::{font::GlyphIndex, Font};
 use crate::style::properties::computed::{PixelLength, RGBA};
@@ -26,7 +25,7 @@ impl Point {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum DisplayItem {
     LineString {
         points: Vec<Point>,
@@ -41,13 +40,13 @@ pub enum DisplayItem {
     Pop,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 struct DisplayElement {
     z_index: ZIndex,
     item: DisplayItem,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct DisplayList {
     items: Vec<DisplayElement>,
 }
@@ -62,24 +61,25 @@ impl DisplayList {
         self.items.iter().map(|elem| &elem.item)
     }
 
-    fn append_text(&mut self, pos: Point, text: &components::Text, z_index: ZIndex) {
-        self.append(
-            DisplayItem::Text(
-                Point {
-                    y: pos.y + text.baseline,
-                    ..pos
-                },
-                text.font_size,
-                text.font.clone(),
-                text.glyphs.clone(),
-            ),
-            z_index,
-        );
-    }
+    // fn append_text(&mut self, pos: Point, text: &components::Text, z_index: ZIndex) {
+    //     self.append(
+    //         DisplayItem::Text(
+    //             Point {
+    //                 y: pos.y + text.baseline,
+    //                 ..pos
+    //             },
+    //             text.font_size,
+    //             text.font.clone(),
+    //             text.glyphs.clone(),
+    //         ),
+    //         z_index,
+    //     );
+    // }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct PrintPages {
+    pub font_map: crate::layout::FontMap,
     pub pages: Vec<DisplayList>,
 }
 
@@ -205,10 +205,7 @@ pub struct DisplayText {
 }
 
 impl<'a> System<'a> for DisplayText {
-    type SystemData = (
-        ReadStorage<'a, Position>,
-        ReadStorage<'a, Paragraph>,
-    );
+    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, Paragraph>);
 
     fn run(&mut self, (positions, paragraphs): Self::SystemData) {
         for (pos, paragraph, _) in (&positions, &paragraphs, &self.bitset).join() {
@@ -225,7 +222,7 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
 
     let pages = world.read_resource::<Option<Pages>>();
     let pages = pages.as_ref().unwrap();
-    let mut print_pages = PrintPages::default();
+    let mut page_vec = vec![];
     for page in pages.iter() {
         let display_list = DisplayList::default();
         let mut bitset = specs::BitSet::new();
@@ -247,8 +244,11 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         text_builder.run_now(world);
         let display_list = text_builder.display_list;
 
-        print_pages.append_page(display_list);
+        page_vec.push(display_list);
     }
 
-    print_pages
+    PrintPages {
+        font_map: (*world.read_resource::<crate::layout::FontMap>()).clone(),
+        pages: page_vec,
+    }
 }

@@ -1,6 +1,7 @@
 use super::components::{self, LayoutEntity, Position};
 use super::inline::InlineFormattingContext;
 use super::normal_formatting::{BlockFormattingContext, BlockLevelElement};
+use super::FontMap;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
 use crate::style::properties::computed::{ComputedValues, Display, LineHeight, StyleBuilder};
@@ -167,6 +168,7 @@ impl EntityConstructor {
         world.register::<Position>();
         world.register::<components::TextRun>();
         world.register::<components::Decoration>();
+        world.insert(FontMap::new());
         EntityConstructor { world }
     }
 
@@ -213,14 +215,19 @@ impl EntityConstructor {
             LineHeight::LengthPercentage(lp) => lp.absolute(style.font.font_size),
         };
         let line_gap = line_height - font_height;
-        let baseline = font.ascender(font_size) + line_gap / 2.0;
+        let baseline = font.ascent(font_size) + line_gap / 2.0;
+
+        let font_name = font.postscript_name();
+        self.world
+            .write_resource::<FontMap>()
+            .insert(font.postscript_name(), font);
 
         let entity = self
             .world
             .create_entity()
             .with(style)
             .with(components::TextRun {
-                font,
+                font_name,
                 text,
                 font_size,
                 line_height,

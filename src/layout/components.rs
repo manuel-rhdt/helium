@@ -58,24 +58,24 @@ impl Component for ComputedValues {
     type Storage = DenseVecStorage<Self>;
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Text {
-    pub glyphs: Vec<GlyphIndex>,
-    pub font: super::text::Font,
-    /// Size of an EM box.
-    pub font_size: PixelLength,
-    /// Distance from the top content edge of the box to the baseline of the text.
-    pub baseline: PixelLength,
-}
+// #[derive(Debug, Clone, Default)]
+// pub struct Text {
+//     pub glyphs: Vec<GlyphIndex>,
+//     pub font: super::text::Font,
+//     /// Size of an EM box.
+//     pub font_size: PixelLength,
+//     /// Distance from the top content edge of the box to the baseline of the text.
+//     pub baseline: PixelLength,
+// }
 
-impl Component for Text {
-    type Storage = DenseVecStorage<Self>;
-}
+// impl Component for Text {
+//     type Storage = DenseVecStorage<Self>;
+// }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TextRun {
     pub text: String,
-    pub font: super::text::Font,
+    pub font_name: String,
     /// Size of an EM box.
     pub font_size: PixelLength,
     pub line_height: PixelLength,
@@ -145,14 +145,14 @@ impl Component for LineBreakPossibilities {
     type Storage = DenseVecStorage<Self>;
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum TextOperator {
-    ChangeFont(super::text::Font, PixelLength),
+    SetFont(String, PixelLength),
     Glyphs(Vec<GlyphIndex>),
     NewLine { leading: PixelLength },
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone)]
 pub struct Paragraph {
     pub ops: Vec<TextOperator>,
 }
