@@ -579,10 +579,11 @@ dependencies = [
 [[package]]
 name = "font_parse"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/font_parse#6a0610a23c87af5543993444b861b708d36aff2a"
+source = "git+https://github.com/manuel-rhdt/font_parse#fe25589d24227d9e23835a1bdc1b12e568eaade8"
 dependencies = [
  "derive_more 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "font-kit 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 4.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.110 (registry+https://github.com/rust-lang/crates.io-index)",

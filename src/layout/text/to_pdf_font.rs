@@ -11,7 +11,7 @@ use lemon_pdf::object::{IndirectReference, Object};
 use lemon_pdf::stream::Stream;
 use lemon_pdf::DocumentContext;
 
-use font_parse::Font as ParsedFont;
+use font_parse::{write_font, FontKitFont, OpentypeTableAccess, Tag};
 
 use std::io::{Read, Result};
 
@@ -28,24 +28,28 @@ impl Font {
     pub fn pdf_font_stream(&self) -> Result<Option<Stream>> {
         match &self.font_data {
             FontData::External(font) => {
-                // lot of copying here :(
-                let handle = font.handle().unwrap();
+                let wrapped_font = FontKitFont::new(font);
                 let mut font_bytes = vec![];
-                match handle {
-                    font_kit::handle::Handle::Path { path, font_index } => {
-                        let mut font_data = vec![];
-                        std::fs::File::open(path)?.read_to_end(&mut font_data)?;
-                        let pf = ParsedFont::from_bytes(&font_data, font_index).unwrap();
-                        pf.write_to(&mut font_bytes)?;
-                    }
-                    font_kit::handle::Handle::Memory { bytes, font_index } => {
-                        let pf = ParsedFont::from_bytes(&bytes, font_index).unwrap();
-                        pf.write_to(&mut font_bytes)?;
-                    }
+
+                if wrapped_font.has_table(Tag(*b"glyf")) {
+                    let tables = vec![
+                        Tag(*b"head"),
+                        Tag(*b"hhea"),
+                        Tag(*b"loca"),
+                        Tag(*b"maxp"),
+                        Tag(*b"cvt "),
+                        Tag(*b"prep"),
+                        Tag(*b"glyf"),
+                        Tag(*b"hmtx"),
+                        Tag(*b"fpgm"),
+                    ];
+                    write_font(&wrapped_font, Tag([0, 1, 0, 0]), &tables, &mut font_bytes)?;
+                } else {
+                    let tables = &[Tag(*b"head"), Tag(*b"CFF ")];
+                    write_font(&wrapped_font, Tag([0, 1, 0, 0]), tables, &mut font_bytes)?;
                 }
 
-                let mut stream = Stream::with_bytes(Vec::clone(&font_bytes), None);
-
+                let mut stream = Stream::with_bytes(font_bytes, None);
                 stream.add_key_value("Subtype".to_owned(), Box::new("OpenType"));
 
                 Ok(Some(stream))
