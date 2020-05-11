@@ -68,6 +68,13 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                         let blue = floatize(color.blue);
                         page_context.device_rgb_fill_color(red, green, blue)?;
                     }
+                    &DisplayItem::StrokeColor(color) => {
+                        let floatize = |val: u8| f64::from(val) / f64::from(u8::max_value());
+                        let red = floatize(color.red);
+                        let green = floatize(color.green);
+                        let blue = floatize(color.blue);
+                        page_context.device_rgb_stroke_color(red, green, blue)?;
+                    }
                     &DisplayItem::LineString {
                         ref points,
                         line_width,

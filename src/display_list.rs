@@ -1,4 +1,4 @@
-use crate::layout::components::{self, Decoration, Paragraph, Position, ZIndex};
+use crate::layout::components::{Decoration, Paragraph, Position, ZIndex};
 use crate::layout::normal_formatting::Pages;
 use crate::layout::text::{font::GlyphIndex, Font};
 use crate::style::properties::computed::{PixelLength, RGBA};
@@ -33,6 +33,7 @@ pub enum DisplayItem {
     },
     FilledRect(Rect),
     Color(RGBA),
+    StrokeColor(RGBA),
     Text(Point, PixelLength, Font, Vec<GlyphIndex>),
     Paragraph((PixelLength, PixelLength), Paragraph),
     Translate(PixelLength, PixelLength),
@@ -61,6 +62,25 @@ impl DisplayList {
         self.items.iter().map(|elem| &elem.item)
     }
 
+    fn stroked_line(
+        &mut self,
+        start: Point,
+        end: Point,
+        width: PixelLength,
+        color: RGBA,
+        z: ZIndex,
+    ) {
+        self.append(DisplayItem::StrokeColor(color), z);
+        self.append(
+            DisplayItem::LineString {
+                points: vec![start, end],
+                line_width: width,
+            },
+            z,
+        );
+        self.append(DisplayItem::Pop, z);
+    }
+
     // fn append_text(&mut self, pos: Point, text: &components::Text, z_index: ZIndex) {
     //     self.append(
     //         DisplayItem::Text(
@@ -84,7 +104,7 @@ pub struct PrintPages {
 }
 
 impl PrintPages {
-    fn append_page(&mut self, page: DisplayList) {
+    pub fn append_page(&mut self, page: DisplayList) {
         self.pages.push(page)
     }
 }
@@ -122,6 +142,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 padding,
                 border,
                 background_color,
+                border_color,
                 ..
             } = deco;
 
@@ -154,46 +175,27 @@ impl<'a> System<'a> for DisplayDecoration {
             if border.top > Px(0.0) {
                 let pt1 = Point::new(xmin, ymin + hbt);
                 let pt2 = Point::new(xmax, ymin + hbt);
-                self.display_list.append(
-                    DisplayItem::LineString {
-                        points: vec![pt1, pt2],
-                        line_width: border.top,
-                    },
-                    z,
-                );
+
+                self.display_list
+                    .stroked_line(pt1, pt2, border.top, border_color.top, z);
             }
             if border.bottom > Px(0.0) {
                 let pt1 = Point::new(xmin, ymax - hbb);
                 let pt2 = Point::new(xmax, ymax - hbb);
-                self.display_list.append(
-                    DisplayItem::LineString {
-                        points: vec![pt1, pt2],
-                        line_width: border.bottom,
-                    },
-                    z,
-                );
+                self.display_list
+                    .stroked_line(pt1, pt2, border.bottom, border_color.bottom, z);
             }
             if border.left > Px(0.0) {
                 let pt1 = Point::new(xmin + hbl, ymin);
                 let pt2 = Point::new(xmin + hbl, ymax);
-                self.display_list.append(
-                    DisplayItem::LineString {
-                        points: vec![pt1, pt2],
-                        line_width: border.left,
-                    },
-                    z,
-                );
+                self.display_list
+                    .stroked_line(pt1, pt2, border.left, border_color.left, z);
             }
             if border.right > Px(0.0) {
                 let pt1 = Point::new(xmax - hbr, ymin);
                 let pt2 = Point::new(xmax - hbr, ymax);
-                self.display_list.append(
-                    DisplayItem::LineString {
-                        points: vec![pt1, pt2],
-                        line_width: border.right,
-                    },
-                    z,
-                );
+                self.display_list
+                    .stroked_line(pt1, pt2, border.right, border_color.right, z);
             }
         }
     }

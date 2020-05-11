@@ -184,20 +184,39 @@ pub enum Position<'a> {
     BorderStyle(List<'a, BorderStyle>),
 
     #[property]
+    BorderTopColor(Color),
+    #[property]
+    BorderBottomColor(Color),
+    #[property]
+    BorderLeftColor(Color),
+    #[property]
+    BorderRightColor(Color),
+    #[property]
+    #[shorthand("border-top-color", method = "top")]
+    #[shorthand("border-bottom-color", method = "bottom")]
+    #[shorthand("border-left-color", method = "left")]
+    #[shorthand("border-right-color", method = "right")]
+    BorderColor(List<'a, Color>),
+
+    #[property]
     #[shorthand("border-top-width", method = "width")]
     #[shorthand("border-top-style", method = "style")]
+    #[shorthand("border-top-color", method = "color")]
     BorderTop(List<'a, Border>),
     #[property]
     #[shorthand("border-bottom-width", method = "width")]
     #[shorthand("border-bottom-style", method = "style")]
+    #[shorthand("border-bottom-color", method = "color")]
     BorderBottom(List<'a, Border>),
     #[property]
     #[shorthand("border-left-width", method = "width")]
     #[shorthand("border-left-style", method = "style")]
+    #[shorthand("border-left-color", method = "color")]
     BorderLeft(List<'a, Border>),
     #[property]
     #[shorthand("border-right-width", method = "width")]
     #[shorthand("border-right-style", method = "style")]
+    #[shorthand("border-right-color", method = "color")]
     BorderRight(List<'a, Border>),
 
     #[property]
@@ -570,6 +589,7 @@ impl<'i> PropertyValue<'i> for usize {
 pub enum Border {
     Width(BorderWidth),
     Style(BorderStyle),
+    Color(Color),
 }
 
 impl<'a> List<'a, Border> {
@@ -595,6 +615,18 @@ impl<'a> List<'a, Border> {
             })
             .next()
             .unwrap_or_default()
+    }
+
+    fn color(&self) -> Color {
+        self.elements
+            .iter()
+            .rev()
+            .filter_map(|border| match border {
+                Border::Color(color) => Some(*color),
+                _ => None,
+            })
+            .next()
+            .unwrap_or(Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)))
     }
 }
 

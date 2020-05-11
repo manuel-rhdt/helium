@@ -102,11 +102,26 @@ pub struct EdgeValues<T> {
     pub right: T,
 }
 
+impl<T> EdgeValues<T> {
+    pub fn all(fill: T) -> Self
+    where
+        T: Clone,
+    {
+        EdgeValues {
+            top: fill.clone(),
+            left: fill.clone(),
+            bottom: fill.clone(),
+            right: fill,
+        }
+    }
+}
+
 /// Contains information needed to draw the background and outline of an element.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Decoration {
     pub padding: EdgeValues<PixelLength>,
     pub border: EdgeValues<PixelLength>,
+    pub border_color: EdgeValues<crate::style::properties::computed::RGBA>,
     pub margin: EdgeValues<PixelLength>,
     pub background_color: crate::style::properties::computed::RGBA,
 }
@@ -118,6 +133,7 @@ impl Default for Decoration {
             padding: Default::default(),
             border: Default::default(),
             margin: Default::default(),
+            border_color: EdgeValues::all(RGBA::transparent()),
             background_color: RGBA::transparent(),
         }
     }

@@ -109,11 +109,19 @@ pub fn calculate_padding_and_border(
 
     // TODO: Do this elsewhere?
     use cssparser::{Color, RGBA};
-    deco.background_color = match background.background_color {
-        // TODO: CurrentColor
-        Color::CurrentColor => RGBA::transparent(),
-        Color::RGBA(rgba) => rgba,
-    };
+    fn get_color(col: Color) -> RGBA {
+        match col {
+            // TODO: CurrentColor
+            Color::CurrentColor => RGBA::transparent(),
+            Color::RGBA(rgba) => rgba,
+        }
+    }
+
+    deco.background_color = get_color(background.background_color);
+    deco.border_color.top = get_color(position.border_top_color);
+    deco.border_color.bottom = get_color(position.border_bottom_color);
+    deco.border_color.left = get_color(position.border_left_color);
+    deco.border_color.right = get_color(position.border_right_color);
 
     deco
 }

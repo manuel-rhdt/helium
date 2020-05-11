@@ -267,6 +267,10 @@ pub struct Position {
     pub border_bottom_style: BorderStyle,
     pub border_left_style: BorderStyle,
     pub border_right_style: BorderStyle,
+    pub border_top_color: cssparser::Color,
+    pub border_bottom_color: cssparser::Color,
+    pub border_left_color: cssparser::Color,
+    pub border_right_color: cssparser::Color,
 }
 
 impl Position {
@@ -307,6 +311,10 @@ impl Default for Position {
             border_bottom_style: BorderStyle::default(),
             border_left_style: BorderStyle::default(),
             border_right_style: BorderStyle::default(),
+            border_top_color: cssparser::Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)),
+            border_bottom_color: cssparser::Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)),
+            border_left_color: cssparser::Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)),
+            border_right_color: cssparser::Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)),
         }
     }
 }
