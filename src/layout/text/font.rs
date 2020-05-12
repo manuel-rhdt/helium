@@ -24,7 +24,7 @@ pub struct GlyphIndex(pub u32);
 
 #[derive(Debug)]
 pub struct Font {
-    pub(crate) glyph_advances: Mutex<BTreeMap<GlyphIndex, f32>>,
+    pub(crate) glyph_advances: Mutex<BTreeMap<GlyphIndex, FontUnit>>,
     pub(crate) font_data: FontData,
 }
 
@@ -76,6 +76,33 @@ impl Font {
         match &self.font_data {
             FontData::BuiltIn(font) => scale(font.metrics().descender, font_size),
             FontData::External(font) => scale_ext(font, font_size, font.metrics().descent),
+        }
+    }
+
+    pub fn advance(&self, glyph: GlyphIndex) -> FontUnit {
+        let result = match &self.font_data {
+            FontData::BuiltIn(font) => {
+                font.metrics()
+                    .char_metrics
+                    .get(glyph.0 as usize)
+                    .unwrap()
+                    .advance_width
+            }
+            FontData::External(font) => FontUnit(
+                font.advance(glyph.0).unwrap().x() as f64 * 1000.0f64
+                    / font.metrics().units_per_em as f64,
+            ),
+        };
+        self.glyph_advances.lock().unwrap().insert(glyph, result);
+        result
+    }
+
+    pub fn scale_to_px(&self, val: i32, font_size: PixelLength) -> PixelLength {
+        match &self.font_data {
+            FontData::BuiltIn(_) => FontUnit(val as f64).into(),
+            FontData::External(font) => {
+                PixelLength(val as f32) * font_size / font.metrics().units_per_em as f32
+            }
         }
     }
 
@@ -190,14 +217,14 @@ pub fn match_font_builtin(style: &ComputedValues) -> Option<Font> {
 #[derive(Debug)]
 pub(super) struct FontInstance<'font, Font: 'font> {
     pub font: Font,
-    pub glyph_map: MutexGuard<'font, BTreeMap<GlyphIndex, f32>>,
+    pub glyph_map: MutexGuard<'font, BTreeMap<GlyphIndex, FontUnit>>,
     pub size: PixelLength,
 }
 
 impl<'font, Font: 'font> FontInstance<'font, Font> {
     pub(super) fn new(
         font: Font,
-        glyph_map: MutexGuard<'font, BTreeMap<GlyphIndex, f32>>,
+        glyph_map: MutexGuard<'font, BTreeMap<GlyphIndex, FontUnit>>,
         size: PixelLength,
     ) -> Self {
         Self {
@@ -219,11 +246,13 @@ impl<'font> GlyphMetricsProvide for FontInstance<'font, &'font font_kit::font::F
     }
     fn glyph_advance(&mut self, glyph: GlyphIndex) -> PixelLength {
         let font = self.font;
-        let unscaled_advance = *self
-            .glyph_map
-            .entry(glyph)
-            .or_insert_with(|| font.advance(glyph.0).unwrap().x());
-        scale_ext(self.font, self.size, unscaled_advance)
+        let unscaled_advance = *self.glyph_map.entry(glyph).or_insert_with(|| {
+            FontUnit(
+                font.advance(glyph.0).unwrap().x() as f64 * 1000f64
+                    / font.metrics().units_per_em as f64,
+            )
+        });
+        self.size * PixelLength::from(unscaled_advance)
     }
 }
 

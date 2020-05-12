@@ -207,8 +207,8 @@ impl EntityConstructor {
         // TODO: handle error
         let font = crate::layout::text::font::match_font(&style)
             .expect("Could not find any matching fonts.");
+            
         let font_size = style.font.font_size;
-
         let font_height = font.font_height(style.font.font_size);
         let line_height = match style.font.line_height {
             LineHeight::Normal => font_height * 1.2,

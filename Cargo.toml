@@ -16,8 +16,10 @@ selectors = "0.21.0"
 specs = { version = "0.15.0", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
+lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
 arrayvec = "^0.5"
+harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
 
 [dev-dependencies]
 assert_cmd = "0.11.1"

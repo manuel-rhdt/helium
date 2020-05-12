@@ -70,6 +70,7 @@ impl DisplayList {
         color: RGBA,
         z: ZIndex,
     ) {
+        self.append(DisplayItem::Push, z);
         self.append(DisplayItem::StrokeColor(color), z);
         self.append(
             DisplayItem::LineString {

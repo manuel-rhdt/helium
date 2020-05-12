@@ -32,9 +32,8 @@ impl<'font> GlyphMetricsProvide for FontInstance<'font, BuiltInFont> {
                 .get(glyph.0 as usize)
                 .unwrap()
                 .advance_width
-                .0 as f32
         });
-        scale(FontUnit(unscaled_advance as f64), self.size)
+        scale(unscaled_advance, self.size)
     }
 }
 

@@ -13,7 +13,7 @@ use lemon_pdf::DocumentContext;
 
 use font_parse::{write_font, FontKitFont, OpentypeTableAccess, Tag};
 
-use std::io::{Read, Result};
+use std::io::Result;
 
 impl Font {
     pub fn is_truetype(&self) -> bool {
@@ -45,7 +45,13 @@ impl Font {
                     ];
                     write_font(&wrapped_font, Tag([0, 1, 0, 0]), &tables, &mut font_bytes)?;
                 } else {
-                    let tables = &[Tag(*b"head"), Tag(*b"CFF ")];
+                    let tables = &[
+                        Tag(*b"head"),
+                        Tag(*b"CFF "),
+                        Tag(*b"hhea"),
+                        Tag(*b"hmtx"),
+                        Tag(*b"maxp"),
+                    ];
                     write_font(&wrapped_font, Tag([0, 1, 0, 0]), tables, &mut font_bytes)?;
                 }
 
@@ -76,7 +82,7 @@ impl Font {
                     self.to_font_unit(bbox.max_y()),
                 ];
 
-                let mut fd = FontDescriptor {
+                FontDescriptor {
                     font_name: self.postscript_name().clone(),
                     font_family: font.family_name().as_bytes().to_owned(),
                     font_b_box: bbox,
@@ -84,12 +90,9 @@ impl Font {
                     x_height: self.to_font_unit(font.metrics().x_height),
                     ascent: self.to_font_unit(font.metrics().ascent),
                     descent: self.to_font_unit(font.metrics().descent),
+                    font_file3: font_data,
                     ..Default::default()
-                };
-
-                fd.font_file3 = font_data;
-
-                fd
+                }
             }
             _ => todo!(),
         }
@@ -112,7 +115,6 @@ impl Font {
         let mut metrics_h = vec![];
         let mut unfinished_entry: Option<MetricsEntry> = None;
         for (&glyph, &advance) in &*self.glyph_advances.lock().unwrap() {
-            let advance = self.to_font_unit(advance);
             unfinished_entry = match unfinished_entry.take() {
                 Some(MetricsEntry::Range {
                     from,
@@ -183,19 +185,30 @@ impl Font {
             } else {
                 CIDFontType::CIDFontType0
             },
-            base_font: self.postscript_name().clone(),
+            base_font: self.postscript_name(),
             font_descriptor: fd,
             dw: None,
             w: Some(Object::Indirect(metrics_h)),
             dw2: None,
             w2: None,
-            cid_to_gid_map: "Identity".to_string(),
+            cid_to_gid_map: if self.is_truetype() {
+                "Identity".to_string()
+            } else {
+                String::new()
+            },
             ..Default::default()
         };
         let cid_font = pdf_context.write_object(cid_font)?;
+
+        let base_name = if self.is_truetype() {
+            self.postscript_name()
+        } else {
+            format!("{}-Identity-H", &self.postscript_name())
+        };
+
         let font = CompositeFont {
             subtype: FontType::Type0,
-            base_font: self.postscript_name().clone(),
+            base_font: base_name,
             encoding: "Identity-H".to_string(),
             descendant_fonts: [cid_font],
             to_unicode: None,

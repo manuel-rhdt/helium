@@ -1,7 +1,11 @@
 use super::components::{self, Paragraph, TextOperator};
-use super::FontMap;
+use super::{text::font::GlyphIndex, FontMap};
 use crate::style::properties::computed::PixelLength as Px;
 
+use crate::layout::text::shape;
+
+use components::{Glyphs, KernedGlyphs};
+use lemon_pdf::font::FontUnit;
 use specs::{Component, DenseVecStorage, Entity, VecStorage};
 use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
 
@@ -59,8 +63,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 .filter_map(|&entity| Some((entity, text_runs.get(entity)?)))
             {
                 let font = &font_map[&text_run.font_name];
-                let mut glyph_metrics_provider = font.glyph_metrics_provider(text_run.font_size);
-                for (index, chr) in text_run.text.char_indices() {
+                let shaped = shape(&text_run.text, font);
+                for (pos, glyph_info) in &shaped {
                     // insert first breakpoint at beginning
                     if break_points.is_empty() {
                         break_points.push(BreakPoint {
@@ -73,22 +77,21 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         })
                     }
 
-                    let glyph = glyph_metrics_provider.char_to_glyph_index(chr);
-                    // TODO: make this properly support non-breaking spaces, etc.
-                    if chr.is_whitespace() {
+                    let cur_char = &text_run.text[glyph_info.cluster as usize..];
+                    if cur_char.starts_with(|chr: char| chr.is_whitespace()) {
                         let advance_before = advance;
-                        advance += glyph_metrics_provider.glyph_advance(glyph);
+                        advance += font.scale_to_px(pos.x_advance, text_run.font_size);
                         let advance_after = advance;
                         break_points.push(BreakPoint {
                             entity,
-                            char_index: index,
+                            char_index: glyph_info.cluster as usize,
                             advance_before,
                             advance_after,
                             line_height: text_run.line_height,
                             baseline: text_run.baseline,
                         })
                     } else {
-                        advance += glyph_metrics_provider.glyph_advance(glyph);
+                        advance += font.scale_to_px(pos.x_advance, text_run.font_size);
                     }
                 }
             }
@@ -188,12 +191,22 @@ impl<'a> System<'a> for LineBoxCreator {
                         };
 
                         let font = &font_map[&run.font_name];
-                        let glyph_metrics_provider = font.glyph_metrics_provider(run.font_size);
-                        let glyphs = characters
-                            .chars()
-                            .map(|ch| glyph_metrics_provider.char_to_glyph_index(ch))
-                            .collect();
-                        ops.push(TextOperator::Glyphs(glyphs));
+                        let shaped = shape(characters, font);
+
+                        let mut kerned_glyphs = vec![];
+                        let mut glyphs = Vec::with_capacity(shaped.len());
+                        for (pos, glyph_info) in shaped {
+                            let kern = font.advance(GlyphIndex(glyph_info.codepoint))
+                                - FontUnit(pos.x_advance as f64 * 1000f64 / font.upem() as f64);
+                            if (kern.0 as i64).abs() >= 1 {
+                                kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs.clone())));
+                                glyphs.clear();
+                                kerned_glyphs.push(KernedGlyphs::Kern(-kern.0 as i64));
+                            }
+                            glyphs.push(GlyphIndex(glyph_info.codepoint))
+                        }
+                        kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs)));
+                        ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
                     } else {
                         from += 1;
                     }

@@ -1,8 +1,9 @@
 use derive_more::From;
 use specs::{Component, DenseVecStorage, Entity, NullStorage, World};
 
-use super::text::font::GlyphIndex;
+use super::text::font::{FontUnit, GlyphIndex};
 use crate::style::properties::computed::{ComputedValues, PixelLength};
+use lemon_pdf_derive::PdfFormat;
 
 pub type LayoutContext = World;
 
@@ -162,9 +163,35 @@ impl Component for LineBreakPossibilities {
 }
 
 #[derive(Debug, Clone)]
+pub struct Glyphs(pub Vec<GlyphIndex>);
+
+impl lemon_pdf::PdfFormat for Glyphs {
+    fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
+        use lemon_pdf::object::WriteEscaped;
+        use std::io::Write;
+
+        if !self.0.is_empty() {
+            write!(f, "<")?;
+            for GlyphIndex(glyph) in &self.0 {
+                f.write_hex_escaped(&(*glyph as u16).to_be_bytes())?;
+            }
+            write!(f, ">")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PdfFormat)]
+pub enum KernedGlyphs {
+    Glyphs(Glyphs),
+    Kern(i64),
+}
+
+#[derive(Debug, Clone)]
 pub enum TextOperator {
     SetFont(String, PixelLength),
-    Glyphs(Vec<GlyphIndex>),
+    Glyphs(Glyphs),
+    KernedGlyphs(Vec<KernedGlyphs>),
     NewLine { leading: PixelLength },
 }
 

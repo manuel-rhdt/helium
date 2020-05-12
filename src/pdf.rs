@@ -1,13 +1,8 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::layout::components::TextOperator;
-use crate::layout::text::{font::GlyphIndex, Font as HFont};
 use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
-use lemon_pdf::content::PageContext;
-use lemon_pdf::font::encoding::{EncodingEntry, PredefinedEncoding, WIN_ANSI_ENCODING};
-use lemon_pdf::font::type0::{CIDFont, CIDFontType, CIDSystemInfo, CompositeFont};
-use lemon_pdf::font::{Font, FontType};
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::{DocumentContext, Page, Pt, Version};
@@ -148,9 +143,12 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                                     page_context.set_font(&key, (*size).into())?;
                                 }
                                 TextOperator::Glyphs(glyphs) => {
-                                    page_context.draw_cid_glyphs(
-                                        glyphs.iter().map(|gl| u16::try_from(gl.0).unwrap()),
-                                    )?;
+                                    page_context.push_operand(glyphs)?;
+                                    page_context.apply_operator("Tj")?;
+                                }
+                                TextOperator::KernedGlyphs(glyphs) => {
+                                    page_context.push_operand(glyphs)?;
+                                    page_context.apply_operator("TJ")?;
                                 }
                                 &TextOperator::NewLine { leading } => {
                                     page_context.set_position(Pt(0.0), (-leading).into())?;
