@@ -1,5 +1,3 @@
-use super::builtin::scale;
-
 pub use super::builtin::{BuiltInFont, FontUnit};
 
 use crate::style::properties::computed::{
@@ -14,9 +12,9 @@ use font_kit::source::SystemSource;
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
-fn scale_ext(font: &font_kit::font::Font, font_size: PixelLength, metric: f32) -> PixelLength {
-    let upem = font.metrics().units_per_em as f32;
-    font_size * PixelLength(metric / upem)
+fn scale_ext(font: &font_kit::font::Font, metric: f32) -> FontUnit {
+    let upem = font.metrics().units_per_em as f64;
+    FontUnit(metric as f64 * 1000f64 / upem)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -65,17 +63,17 @@ impl Font {
         }
     }
 
-    pub fn ascent(&self, font_size: PixelLength) -> PixelLength {
+    pub fn ascent(&self) -> FontUnit {
         match &self.font_data {
-            FontData::BuiltIn(font) => scale(font.metrics().ascender, font_size),
-            FontData::External(font) => scale_ext(font, font_size, font.metrics().ascent),
+            FontData::BuiltIn(font) => font.metrics().ascender,
+            FontData::External(font) => scale_ext(font, font.metrics().ascent),
         }
     }
 
-    pub fn descent(&self, font_size: PixelLength) -> PixelLength {
+    pub fn descent(&self) -> FontUnit {
         match &self.font_data {
-            FontData::BuiltIn(font) => scale(font.metrics().descender, font_size),
-            FontData::External(font) => scale_ext(font, font_size, font.metrics().descent),
+            FontData::BuiltIn(font) => font.metrics().descender,
+            FontData::External(font) => scale_ext(font, font.metrics().descent),
         }
     }
 
@@ -101,8 +99,8 @@ impl Font {
         PixelLength::from(val) * font_size
     }
 
-    pub fn font_height(&self, font_size: PixelLength) -> PixelLength {
-        self.ascent(font_size) - self.descent(font_size)
+    pub fn font_height(&self) -> FontUnit {
+        self.ascent() - self.descent()
     }
 
     pub fn glyph_metrics_provider<'font>(
