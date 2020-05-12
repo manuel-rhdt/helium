@@ -5,7 +5,6 @@ use crate::style::properties::computed::PixelLength as Px;
 use crate::layout::text::shape;
 
 use components::{Glyphs, KernedGlyphs};
-use lemon_pdf::font::FontUnit;
 use specs::{Component, DenseVecStorage, Entity, VecStorage};
 use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
 
@@ -196,8 +195,8 @@ impl<'a> System<'a> for LineBoxCreator {
                         let mut kerned_glyphs = vec![];
                         let mut glyphs = Vec::with_capacity(shaped.len());
                         for (pos, glyph_info) in shaped {
-                            let kern = font.advance(GlyphIndex(glyph_info.codepoint))
-                                - FontUnit(pos.x_advance as f64 * 1000f64 / font.upem() as f64);
+                            let kern =
+                                font.advance(GlyphIndex(glyph_info.codepoint)) - pos.x_advance;
                             if (kern.0 as i64).abs() >= 1 {
                                 kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs.clone())));
                                 glyphs.clear();

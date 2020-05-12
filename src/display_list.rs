@@ -1,6 +1,5 @@
-use crate::layout::components::{Decoration, Paragraph, Position, ZIndex};
+use crate::layout::components::{Decoration, Paragraph, Position, ZIndex, Glyphs};
 use crate::layout::normal_formatting::Pages;
-use crate::layout::text::{font::GlyphIndex, Font};
 use crate::style::properties::computed::{PixelLength, RGBA};
 
 use specs::prelude::*;
@@ -34,7 +33,7 @@ pub enum DisplayItem {
     FilledRect(Rect),
     Color(RGBA),
     StrokeColor(RGBA),
-    Text(Point, PixelLength, Font, Vec<GlyphIndex>),
+    Text(Point, PixelLength, String, Glyphs),
     Paragraph((PixelLength, PixelLength), Paragraph),
     Translate(PixelLength, PixelLength),
     Push,

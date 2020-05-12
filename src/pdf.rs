@@ -8,7 +8,6 @@ use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::{DocumentContext, Page, Pt, Version};
 
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::fs::File;
 use std::io::{BufWriter, Error};
 
@@ -111,21 +110,18 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                     &DisplayItem::Text(
                         display_list::Point { x, y },
                         font_size,
-                        ref font,
-                        ref text,
+                        ref font_name,
+                        ref glyphs,
                     ) => {
-                        // if font_map.get(font).is_none() {
-                        //     let val = add_font(page_context, font)?;
-                        //     font_map.insert(font.clone(), val);
-                        // }
-                        // let (font_key, font) = &font_map[&font];
-
                         let x = x;
                         let y = device.height - y;
                         page_context.begin_text()?;
-                        // page_context.set_font(font_key, font_size.into())?;
+                        let font_ref = font_map[font_name];
+                        let key = page_context.add_font(font_ref);
+                        page_context.set_font(&key, font_size.into())?;
                         page_context.set_position(x.into(), y.into())?;
-                        // page_context.draw_simple_glyphs(&encode_glyphs_simple(text, font))?;
+                        page_context.push_operand(glyphs)?;
+                        page_context.apply_operator("Tj")?;
                         page_context.end_text()?;
                     }
                     DisplayItem::Paragraph((x, y), par) => {

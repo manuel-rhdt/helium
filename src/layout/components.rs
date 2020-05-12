@@ -1,7 +1,7 @@
 use derive_more::From;
 use specs::{Component, DenseVecStorage, Entity, NullStorage, World};
 
-use super::text::font::{FontUnit, GlyphIndex};
+use super::text::font::GlyphIndex;
 use crate::style::properties::computed::{ComputedValues, PixelLength};
 use lemon_pdf_derive::PdfFormat;
 

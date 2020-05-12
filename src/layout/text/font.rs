@@ -97,13 +97,8 @@ impl Font {
         result
     }
 
-    pub fn scale_to_px(&self, val: i32, font_size: PixelLength) -> PixelLength {
-        match &self.font_data {
-            FontData::BuiltIn(_) => FontUnit(val as f64).into(),
-            FontData::External(font) => {
-                PixelLength(val as f32) * font_size / font.metrics().units_per_em as f32
-            }
-        }
+    pub fn scale_to_px(&self, val: FontUnit, font_size: PixelLength) -> PixelLength {
+        PixelLength::from(val) * font_size
     }
 
     pub fn font_height(&self, font_size: PixelLength) -> PixelLength {
