@@ -302,7 +302,7 @@ fn shape_piece(
     }
     ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
 
-    font.to_unicode.lock().unwrap().append(&mut to_unicode_map)
+    font.to_unicode.lock().append(&mut to_unicode_map)
 }
 
 // impl InlineFormatterState {

@@ -20,6 +20,7 @@ lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
 arrayvec = "^0.5"
 harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
+parking_lot = "0.10.2"
 
 [dev-dependencies]
 assert_cmd = "0.11.1"

@@ -10,7 +10,7 @@ use font_kit::properties::Properties;
 use font_kit::source::SystemSource;
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, MutexGuard};
+use parking_lot::{Mutex, MutexGuard};
 
 fn scale_ext(font: &font_kit::font::Font, metric: f32) -> FontUnit {
     let upem = font.metrics().units_per_em as f64;
@@ -30,8 +30,8 @@ pub struct Font {
 impl Clone for Font {
     fn clone(&self) -> Self {
         Font {
-            glyph_advances: Mutex::new(self.glyph_advances.lock().unwrap().clone()),
-            to_unicode: Mutex::new(self.to_unicode.lock().unwrap().clone()),
+            glyph_advances: Mutex::new(self.glyph_advances.lock().clone()),
+            to_unicode: Mutex::new(self.to_unicode.lock().clone()),
             font_data: self.font_data.clone(),
         }
     }
@@ -90,7 +90,7 @@ impl Font {
             }
             FontData::External(font) => scale_ext(font, font.advance(glyph.0).unwrap().x()),
         };
-        self.glyph_advances.lock().unwrap().insert(glyph, result);
+        self.glyph_advances.lock().insert(glyph, result);
         result
     }
 
@@ -109,12 +109,12 @@ impl Font {
         match &self.font_data {
             FontData::BuiltIn(builtin) => Box::new(FontInstance::new(
                 *builtin,
-                self.glyph_advances.lock().unwrap(),
+                self.glyph_advances.lock(),
                 font_size,
             )),
             FontData::External(font) => Box::new(FontInstance::new(
                 font,
-                self.glyph_advances.lock().unwrap(),
+                self.glyph_advances.lock(),
                 font_size,
             )),
         }

@@ -114,7 +114,7 @@ impl Font {
 
         let mut metrics_h = vec![];
         let mut unfinished_entry: Option<MetricsEntry> = None;
-        for (&glyph, &advance) in &*self.glyph_advances.lock().unwrap() {
+        for (&glyph, &advance) in &*self.glyph_advances.lock() {
             unfinished_entry = match unfinished_entry.take() {
                 Some(MetricsEntry::Range {
                     from,
@@ -215,7 +215,7 @@ endcodespacerange
         )
         .into_bytes();
 
-        let to_unicode = self.to_unicode.lock().unwrap();
+        let to_unicode = self.to_unicode.lock();
         let to_unicode_len = to_unicode.len();
 
         writeln!(to_unicode_stream, "{} beginbfchar", to_unicode_len)?;
