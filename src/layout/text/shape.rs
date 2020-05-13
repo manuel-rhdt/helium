@@ -65,8 +65,9 @@ pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
             let face: Owned<HbFace<'static>> = HbFace::new(blob, index);
             let hb_font = HbFont::new(face);
 
-            let mut buffer = UnicodeBuffer::new().add_str(text);
-            buffer.set_cluster_level(ClusterLevel::MonotoneCharacters);
+            let buffer = UnicodeBuffer::new()
+                .add_str(text)
+                .set_cluster_level(ClusterLevel::MonotoneCharacters);
 
             let result = hb_shape(&hb_font, buffer, &[]);
 

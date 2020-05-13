@@ -386,14 +386,18 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
         ifm.lines = break_point_sequence
             .windows(2)
-            .enumerate()
-            .map(|(index, window)| super::inline::Line {
-                from_break: window[0],
-                to_break: window[1],
-                height: breakpoints[index].line_height,
-                baseline: breakpoints[index].baseline,
-                entity: entities.create(),
-                justify: window[1] < breakpoints.len() - 1,
+            .map(|window| {
+                let (baseline, height) = ifm
+                    .line_height(window[0], window[1], self.world.read_storage())
+                    .unwrap_or_default();
+                super::inline::Line {
+                    from_break: window[0],
+                    to_break: window[1],
+                    height,
+                    baseline,
+                    entity: entities.create(),
+                    justify: window[1] < breakpoints.len() - 1,
+                }
             })
             .collect();
 

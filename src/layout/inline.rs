@@ -31,6 +31,34 @@ pub struct InlineFormattingContext {
     pub lines: Vec<Line>,
 }
 
+impl InlineFormattingContext {
+    pub fn line_height(
+        &self,
+        from_index: usize,
+        to_index: usize,
+        text_runs: ReadStorage<components::TextRun>,
+    ) -> Option<(Px, Px)> {
+        let from = self.break_points[from_index];
+        let to = self.break_points[to_index];
+
+        let start = self.elements.iter().position(|&elem| elem == from.entity)?;
+        let end = self.elements.iter().position(|&elem| elem == to.entity)?;
+
+        let (max_height, max_depth) = self.elements[start..=end]
+            .iter()
+            .filter_map(|&ent| text_runs.get(ent))
+            .map(|text_run| (text_run.baseline, text_run.line_height - text_run.baseline))
+            .fold(
+                (Px(0.0), Px(0.0)),
+                |(height, depth), (new_height, new_depth)| {
+                    (height.max(new_height), depth.max(new_depth))
+                },
+            );
+
+        Some((max_height, max_height + max_depth))
+    }
+}
+
 impl Component for InlineFormattingContext {
     type Storage = DenseVecStorage<Self>;
 }
@@ -43,8 +71,6 @@ pub struct BreakPoint {
     pub char_index: usize,
     pub advance_before: Px,
     pub advance_after: Px,
-    pub line_height: Px,
-    pub baseline: Px,
 }
 
 // TODO: test this
@@ -75,8 +101,6 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         char_index: 0,
                         advance_before: Px(0.0),
                         advance_after: Px(0.0),
-                        line_height: text_run.line_height,
-                        baseline: text_run.baseline,
                     })
                 }
 
@@ -93,8 +117,6 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             char_index: glyph_info.cluster as usize + 1,
                             advance_before,
                             advance_after,
-                            line_height: text_run.line_height,
-                            baseline: text_run.baseline,
                         })
                     } else {
                         advance += font.scale_to_px(pos.x_advance, text_run.font_size);
@@ -109,8 +131,6 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         char_index: text_run.text.len(),
                         advance_before: advance,
                         advance_after: advance,
-                        line_height: text_run.line_height,
-                        baseline: text_run.baseline,
                     })
                 }
             }
@@ -152,7 +172,7 @@ impl<'a> System<'a> for LineBoxCreator {
             let mut ops: Vec<TextOperator> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
             let mut paragraph_pos: Option<components::Position> = None;
-            for line in lines {
+            for (line_num, line) in lines.iter().enumerate() {
                 let from = line.from_break;
                 let to = line.to_break;
 
@@ -238,9 +258,11 @@ impl<'a> System<'a> for LineBoxCreator {
                     }
                 }
 
-                ops.push(TextOperator::NewLine {
-                    leading: line.height,
-                });
+                if let Some(next_line) = lines.get(line_num + 1) {
+                    ops.push(TextOperator::NewLine {
+                        leading: (line.height - line.baseline) + next_line.baseline,
+                    });
+                }
             }
             if let Some(pos) = paragraph_pos {
                 entities
