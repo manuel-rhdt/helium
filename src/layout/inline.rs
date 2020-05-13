@@ -1,5 +1,8 @@
 use super::components::{self, Paragraph, TextOperator};
-use super::{text::font::GlyphIndex, FontMap};
+use super::{
+    text::{font::GlyphIndex, Font},
+    FontMap,
+};
 use crate::style::properties::computed::PixelLength as Px;
 
 use crate::layout::text::shape;
@@ -8,6 +11,8 @@ use components::{Glyphs, KernedGlyphs};
 use lemon_pdf::font::FontUnit;
 use specs::{Component, DenseVecStorage, Entity, VecStorage};
 use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
+
+use std::collections::BTreeMap;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Line {
@@ -148,22 +153,22 @@ impl<'a> System<'a> for LineBoxCreator {
             let mut previous_font: Option<(String, Px)> = None;
             let mut paragraph_pos: Option<components::Position> = None;
             for line in lines {
-                let mut from = line.from_break;
+                let from = line.from_break;
                 let to = line.to_break;
 
                 let line_pos = *positions
                     .get(line.entity)
                     .expect("every line should have been assigned a position by now");
 
-                // the ideal and maximal width of the line
-                let wanted_width = line_pos.width;
-                // the number of stretchable spaces in the current line (needed for justification)
-                let num_spaces = to - from - 1;
-                // the actual width of the unstretched characters in the line
-                let line_width = break_points[to].advance_before - break_points[from].advance_after;
-
                 // if we want to justify the text we have to add word-spacing
                 let word_spacing: Px = if line.justify {
+                    // the ideal and maximal width of the line
+                    let wanted_width = line_pos.width;
+                    // the number of stretchable spaces in the current line (needed for justification)
+                    let num_spaces = to - from - 1;
+                    // the actual width of the unstretched characters in the line
+                    let line_width =
+                        break_points[to].advance_before - break_points[from].advance_after;
                     (wanted_width - line_width) / num_spaces as f32
                 } else {
                     // no adjustment needed since this line should not be justified
@@ -218,54 +223,9 @@ impl<'a> System<'a> for LineBoxCreator {
                         };
 
                         let characters = &run.text[start..end];
-
                         let font = &font_map[&run.font_name];
-                        let shaped = shape(characters, font);
 
-                        let mut kerned_glyphs = vec![];
-                        let mut glyphs = Vec::with_capacity(shaped.len());
-
-                        // TODO: We currently rely on the first glyph having cluster value 0
-                        let mut previous_cluster = 0xFFFF;
-                        let mut cluster_starting_glyph = 0xFFFF;
-                        for (pos, glyph_info) in shaped {
-                            if glyph_info.cluster != previous_cluster {
-                                // a new cluster began
-                                if previous_cluster < glyph_info.cluster {
-                                    let text = &characters
-                                        [previous_cluster as usize..glyph_info.cluster as usize];
-                                    font.to_unicode.lock().unwrap().insert(
-                                        GlyphIndex(cluster_starting_glyph),
-                                        text.to_owned(),
-                                    );
-                                }
-                                cluster_starting_glyph = glyph_info.codepoint;
-                                previous_cluster = glyph_info.cluster;
-                            }
-
-                            glyphs.push(GlyphIndex(glyph_info.codepoint));
-                            let mut kern =
-                                font.advance(GlyphIndex(glyph_info.codepoint)) - pos.x_advance;
-
-                            // adjust kerning of space glyphs to allow text justification
-                            if characters[glyph_info.cluster as usize..]
-                                .starts_with(char::is_whitespace)
-                            {
-                                let word_spacing =
-                                    FontUnit((word_spacing / run.font_size.0).0 as f64 * 1000.0);
-                                kern.0 -= word_spacing.0;
-                            }
-
-                            if kern.0.abs() >= 0.1 {
-                                kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs.clone())));
-                                kerned_glyphs.push(KernedGlyphs::Kern(kern));
-                                glyphs.clear();
-                            }
-                        }
-                        if !glyphs.is_empty() {
-                            kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs)));
-                        }
-                        ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
+                        shape_piece(characters, font, run.font_size, word_spacing, &mut ops);
                     }
 
                     if entity == to_break.entity {
@@ -273,7 +233,7 @@ impl<'a> System<'a> for LineBoxCreator {
                     } else {
                         entity = match elements_iter.next() {
                             Some(&ent) => ent,
-                            None => break
+                            None => break,
                         }
                     }
                 }
@@ -291,6 +251,58 @@ impl<'a> System<'a> for LineBoxCreator {
             }
         }
     }
+}
+
+fn shape_piece(
+    characters: &str,
+    font: &Font,
+    font_size: Px,
+    word_spacing: Px,
+    ops: &mut Vec<TextOperator>,
+) {
+    let shaped = shape(characters, font);
+
+    let mut kerned_glyphs = vec![];
+    let mut glyphs = Vec::with_capacity(shaped.len());
+
+    // TODO: We currently rely on the first glyph having cluster value 0
+    let mut previous_cluster = 0xFFFF;
+    let mut cluster_starting_glyph = 0xFFFF;
+
+    let mut to_unicode_map = BTreeMap::new();
+
+    for (pos, glyph_info) in shaped {
+        if glyph_info.cluster != previous_cluster {
+            // a new cluster began
+            if previous_cluster < glyph_info.cluster {
+                let text = &characters[previous_cluster as usize..glyph_info.cluster as usize];
+                to_unicode_map.insert(GlyphIndex(cluster_starting_glyph), text.to_owned());
+            }
+            cluster_starting_glyph = glyph_info.codepoint;
+            previous_cluster = glyph_info.cluster;
+        }
+
+        glyphs.push(GlyphIndex(glyph_info.codepoint));
+        let mut kern = font.advance(GlyphIndex(glyph_info.codepoint)) - pos.x_advance;
+
+        // adjust kerning of space glyphs to allow text justification
+        if characters[glyph_info.cluster as usize..].starts_with(char::is_whitespace) {
+            let word_spacing = FontUnit((word_spacing / font_size.0).0 as f64 * 1000.0);
+            kern.0 -= word_spacing.0;
+        }
+
+        if kern.0.abs() >= 0.1 {
+            kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs.clone())));
+            kerned_glyphs.push(KernedGlyphs::Kern(kern));
+            glyphs.clear();
+        }
+    }
+    if !glyphs.is_empty() {
+        kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs)));
+    }
+    ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
+
+    font.to_unicode.lock().unwrap().append(&mut to_unicode_map)
 }
 
 // impl InlineFormatterState {
