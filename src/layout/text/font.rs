@@ -23,6 +23,7 @@ pub struct GlyphIndex(pub u32);
 #[derive(Debug)]
 pub struct Font {
     pub(crate) glyph_advances: Mutex<BTreeMap<GlyphIndex, FontUnit>>,
+    pub(crate) to_unicode: Mutex<BTreeMap<GlyphIndex, String>>,
     pub(crate) font_data: FontData,
 }
 
@@ -30,6 +31,7 @@ impl Clone for Font {
     fn clone(&self) -> Self {
         Font {
             glyph_advances: Mutex::new(self.glyph_advances.lock().unwrap().clone()),
+            to_unicode: Mutex::new(self.to_unicode.lock().unwrap().clone()),
             font_data: self.font_data.clone(),
         }
     }
@@ -86,17 +88,14 @@ impl Font {
                     .unwrap()
                     .advance_width
             }
-            FontData::External(font) => FontUnit(
-                font.advance(glyph.0).unwrap().x() as f64 * 1000.0f64
-                    / font.metrics().units_per_em as f64,
-            ),
+            FontData::External(font) => scale_ext(font, font.advance(glyph.0).unwrap().x()),
         };
         self.glyph_advances.lock().unwrap().insert(glyph, result);
         result
     }
 
     pub fn scale_to_px(&self, val: FontUnit, font_size: PixelLength) -> PixelLength {
-        PixelLength::from(val) * font_size
+        val.0 as f32 * font_size / 1000.0f32
     }
 
     pub fn font_height(&self) -> FontUnit {
@@ -126,6 +125,7 @@ impl Default for Font {
     fn default() -> Self {
         Font {
             glyph_advances: Mutex::new(BTreeMap::new()),
+            to_unicode: Default::default(),
             font_data: FontData::BuiltIn(BuiltInFont::Helvetica),
         }
     }
@@ -245,7 +245,7 @@ impl<'font> GlyphMetricsProvide for FontInstance<'font, &'font font_kit::font::F
                     / font.metrics().units_per_em as f64,
             )
         });
-        self.size * PixelLength::from(unscaled_advance)
+        self.size * (unscaled_advance.0 / 1000f64) as f32
     }
 }
 

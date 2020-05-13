@@ -35,7 +35,7 @@ impl<'font> GlyphMetricsProvide for FontInstance<'font, BuiltInFont> {
         });
 
         fn scale(fu: FontUnit, font_size: PixelLength) -> PixelLength {
-            font_size * PixelLength::from(fu)
+            font_size * fu.0 as f32 / 1000f32
         }
 
         scale(unscaled_advance, self.size)

@@ -1,6 +1,6 @@
 use harfbuzz_rs::{
     shape as hb_shape, Blob, Face as HbFace, Font as HbFont, GlyphInfo as HbGlyphInfo, Owned,
-    UnicodeBuffer,
+    UnicodeBuffer, ClusterLevel
 };
 
 use super::{
@@ -23,9 +23,11 @@ impl From<HbGlyphInfo> for GlyphInfo {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct GlyphPosition {
     pub x_advance: FontUnit,
+    pub x_offset: FontUnit,
+    pub y_offset: FontUnit,
 }
 
 pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
@@ -39,7 +41,10 @@ pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
                     as u32;
                 let advance = font.advance(GlyphIndex(index));
                 (
-                    GlyphPosition { x_advance: advance },
+                    GlyphPosition {
+                        x_advance: advance,
+                        ..Default::default()
+                    },
                     GlyphInfo {
                         codepoint: index,
                         cluster: character_index as u32,
@@ -53,17 +58,20 @@ pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
             let face: Owned<HbFace<'static>> = HbFace::new(blob, 0);
             let hb_font = HbFont::new(face);
 
-            let buffer = UnicodeBuffer::new().add_str(text);
+            let mut buffer = UnicodeBuffer::new().add_str(text);
+            buffer.set_cluster_level(ClusterLevel::MonotoneCharacters);
 
             let result = hb_shape(&hb_font, buffer, &[]);
+
+            let scale = |val| FontUnit(val as f64 * (1000f64 / font.metrics().units_per_em as f64));
 
             result
                 .get_glyph_positions()
                 .iter()
                 .map(|gp| GlyphPosition {
-                    x_advance: FontUnit(
-                        gp.x_advance as f64 * 1000f64 / font.metrics().units_per_em as f64,
-                    ),
+                    x_advance: scale(gp.x_advance),
+                    x_offset: scale(gp.x_offset),
+                    y_offset: scale(gp.y_offset),
                 })
                 .zip(result.get_glyph_infos().iter().map(|&gi| gi.into()))
                 .collect()

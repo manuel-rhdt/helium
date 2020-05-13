@@ -13,7 +13,7 @@ use lemon_pdf::DocumentContext;
 
 use font_parse::{write_font, FontKitFont, OpentypeTableAccess, Tag};
 
-use std::io::Result;
+use std::io::{Result, Write};
 
 impl Font {
     pub fn is_truetype(&self) -> bool {
@@ -200,6 +200,43 @@ impl Font {
         };
         let cid_font = pdf_context.write_object(cid_font)?;
 
+        let mut to_unicode_stream = format!(
+            r"/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (FontSpecific) /Ordering ({0}) /Supplement 0 >> def
+/CMapName /FontSpecific-{0} def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+",
+            self.postscript_name()
+        )
+        .into_bytes();
+
+        let to_unicode = self.to_unicode.lock().unwrap();
+        let to_unicode_len = to_unicode.len();
+
+        writeln!(to_unicode_stream, "{} beginbfchar", to_unicode_len)?;
+        for (glyph, uni) in to_unicode.iter() {
+            write!(to_unicode_stream, "<{:04X}>\t<", glyph.0 as u16)?;
+            for chr in uni.chars() {
+                write!(to_unicode_stream, "{:04X}", chr as u32)?;
+            }
+            writeln!(to_unicode_stream, ">")?;
+        }
+        writeln!(to_unicode_stream, "endbfchar")?;
+        writeln!(
+            to_unicode_stream,
+            r"endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end"
+        )?;
+        let to_unicode_stream = Stream::with_bytes(to_unicode_stream, None);
+        let to_unicode_stream = pdf_context.write_object(to_unicode_stream)?;
+
         let base_name = if self.is_truetype() {
             self.postscript_name()
         } else {
@@ -211,7 +248,7 @@ impl Font {
             base_font: base_name,
             encoding: "Identity-H".to_string(),
             descendant_fonts: [cid_font],
-            to_unicode: None,
+            to_unicode: Some(to_unicode_stream),
         };
         Ok(PdfFont::Composite(font))
     }

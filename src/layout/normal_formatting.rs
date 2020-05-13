@@ -392,6 +392,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 height: breakpoints[0].line_height,
                 baseline: breakpoints[0].baseline,
                 entity: entities.create(),
+                justify: window[1] < breakpoints.len() - 1,
             })
             .collect();
 

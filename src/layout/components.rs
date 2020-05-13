@@ -4,6 +4,7 @@ use specs::{Component, DenseVecStorage, Entity, NullStorage, World};
 use super::text::font::GlyphIndex;
 use crate::style::properties::computed::{ComputedValues, PixelLength};
 use lemon_pdf_derive::PdfFormat;
+use lemon_pdf::font::FontUnit;
 
 pub type LayoutContext = World;
 
@@ -184,7 +185,7 @@ impl lemon_pdf::PdfFormat for Glyphs {
 #[derive(Debug, Clone, PdfFormat)]
 pub enum KernedGlyphs {
     Glyphs(Glyphs),
-    Kern(i64),
+    Kern(FontUnit),
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +193,7 @@ pub enum TextOperator {
     SetFont(String, PixelLength),
     Glyphs(Glyphs),
     KernedGlyphs(Vec<KernedGlyphs>),
+    SetWordSpacing(PixelLength),
     NewLine { leading: PixelLength },
 }
 

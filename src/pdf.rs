@@ -24,6 +24,7 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
     let mut font_map = HashMap::new();
     for (font_name, font) in &print_pages.font_map {
         if !font.glyph_advances.lock().unwrap().is_empty() {
+            log::info!("Embedding font {} into PDF file.", font_name);
             let font = font.embed_into_pdf(&mut context)?;
             let font = context.write_object(font)?;
             font_map.insert(font_name.clone(), font);
@@ -148,6 +149,10 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                                 }
                                 &TextOperator::NewLine { leading } => {
                                     page_context.set_position(Pt(0.0), (-leading).into())?;
+                                }
+                                &TextOperator::SetWordSpacing(spacing) => {
+                                    page_context.push_operand(Pt::from(spacing))?;
+                                    page_context.apply_operator("Tw")?;
                                 }
                             }
                         }

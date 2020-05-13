@@ -5,6 +5,7 @@ use crate::style::properties::computed::PixelLength as Px;
 use crate::layout::text::shape;
 
 use components::{Glyphs, KernedGlyphs};
+use lemon_pdf::font::FontUnit;
 use specs::{Component, DenseVecStorage, Entity, VecStorage};
 use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
 
@@ -15,6 +16,7 @@ pub struct Line {
     pub from_break: usize,
     pub to_break: usize,
     pub entity: Entity,
+    pub justify: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -83,7 +85,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         let advance_after = advance;
                         break_points.push(BreakPoint {
                             entity,
-                            char_index: glyph_info.cluster as usize,
+                            char_index: glyph_info.cluster as usize + 1,
                             advance_before,
                             advance_after,
                             line_height: text_run.line_height,
@@ -144,6 +146,24 @@ impl<'a> System<'a> for LineBoxCreator {
                     .get(line.entity)
                     .expect("every line should have been assigned a position by now");
 
+                // the ideal and maximal width of the line
+                let wanted_width = line_pos.width;
+                // the number of stretchable spaces in the current line (needed for justification)
+                let num_spaces = to - from - 1;
+                // the actual width of the unstretched characters in the line
+                let line_width = break_points[to].advance_before - break_points[from].advance_after;
+
+                // if we want to justify the text we have to add word-spacing
+                let word_spacing: Px = if line.justify {
+                    (wanted_width - line_width) / num_spaces as f32
+                } else {
+                    // no adjustment needed since this line should not be justified
+                    Px(0.0)
+                };
+
+                // Check if a page break happened between this line and the previous. If a page
+                // break happend we have to add the existing (partial) paragraph to the previous
+                // page and create a fresh paragraph for the remaining lines.
                 if paragraph_pos.map(|pos| pos.page) != Some(line_pos.page) {
                     if let Some(pos) = paragraph_pos {
                         entities
@@ -176,17 +196,13 @@ impl<'a> System<'a> for LineBoxCreator {
                             previous_font = Some((run.font_name.clone(), run.font_size));
                         }
 
-                        let from_char = if run.text.as_bytes()[from_break.char_index] == b' ' {
-                            from_break.char_index + 1
-                        } else {
-                            from_break.char_index
-                        };
+                        // get the string slice of the current text fragment
                         let characters = if from_break.entity == to_break.entity {
                             from = to;
-                            &run.text[from_char..to_break.char_index]
+                            &run.text[from_break.char_index..to_break.char_index]
                         } else {
                             from += 1;
-                            &run.text[from_char..]
+                            &run.text[from_break.char_index..]
                         };
 
                         let font = &font_map[&run.font_name];
@@ -194,17 +210,47 @@ impl<'a> System<'a> for LineBoxCreator {
 
                         let mut kerned_glyphs = vec![];
                         let mut glyphs = Vec::with_capacity(shaped.len());
+
+                        // TODO: We currently rely on the first glyph having cluster value 0
+                        let mut previous_cluster = 0xFFFF;
+                        let mut cluster_starting_glyph = 0xFFFF;
                         for (pos, glyph_info) in shaped {
-                            let kern =
-                                font.advance(GlyphIndex(glyph_info.codepoint)) - pos.x_advance;
-                            if (kern.0 as i64).abs() >= 1 {
-                                kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs.clone())));
-                                glyphs.clear();
-                                kerned_glyphs.push(KernedGlyphs::Kern(-kern.0 as i64));
+                            if glyph_info.cluster != previous_cluster {
+                                // a new cluster began
+                                if previous_cluster < glyph_info.cluster {
+                                    let text = &characters
+                                        [previous_cluster as usize..glyph_info.cluster as usize];
+                                    font.to_unicode.lock().unwrap().insert(
+                                        GlyphIndex(cluster_starting_glyph),
+                                        text.to_owned(),
+                                    );
+                                }
+                                cluster_starting_glyph = glyph_info.codepoint;
+                                previous_cluster = glyph_info.cluster;
                             }
-                            glyphs.push(GlyphIndex(glyph_info.codepoint))
+
+                            glyphs.push(GlyphIndex(glyph_info.codepoint));
+                            let mut kern =
+                                font.advance(GlyphIndex(glyph_info.codepoint)) - pos.x_advance;
+
+                            // adjust kerning of space glyphs to allow text justification
+                            if characters[glyph_info.cluster as usize..]
+                                .starts_with(char::is_whitespace)
+                            {
+                                let word_spacing =
+                                    FontUnit((word_spacing / run.font_size.0).0 as f64 * 1000.0);
+                                kern.0 -= word_spacing.0;
+                            }
+
+                            if kern.0.abs() >= 0.1 {
+                                kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs.clone())));
+                                kerned_glyphs.push(KernedGlyphs::Kern(kern));
+                                glyphs.clear();
+                            }
                         }
-                        kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs)));
+                        if !glyphs.is_empty() {
+                            kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs)));
+                        }
                         ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
                     } else {
                         from += 1;
