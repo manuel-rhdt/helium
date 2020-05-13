@@ -1,7 +1,9 @@
 use harfbuzz_rs::{
-    shape as hb_shape, Blob, Face as HbFace, Font as HbFont, GlyphInfo as HbGlyphInfo, Owned,
-    UnicodeBuffer, ClusterLevel
+    shape as hb_shape, Blob, ClusterLevel, Face as HbFace, Font as HbFont,
+    GlyphInfo as HbGlyphInfo, Owned, UnicodeBuffer,
 };
+
+use font_kit::handle::Handle;
 
 use super::{
     font::{FontUnit, GlyphIndex},
@@ -54,8 +56,13 @@ pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
             .collect(),
         super::font::FontData::External(font) => {
             let font_bytes = font.copy_font_data().unwrap();
+            let handle = font.handle().unwrap();
+            let index = match handle {
+                Handle::Memory { font_index, .. } => font_index,
+                Handle::Path { font_index, .. } => font_index,
+            };
             let blob = Blob::with_bytes_owned(font_bytes, |b| &*b);
-            let face: Owned<HbFace<'static>> = HbFace::new(blob, 0);
+            let face: Owned<HbFace<'static>> = HbFace::new(blob, index);
             let hb_font = HbFont::new(face);
 
             let mut buffer = UnicodeBuffer::new().add_str(text);

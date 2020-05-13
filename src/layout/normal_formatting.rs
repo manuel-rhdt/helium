@@ -386,11 +386,12 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
         ifm.lines = break_point_sequence
             .windows(2)
-            .map(|window| super::inline::Line {
+            .enumerate()
+            .map(|(index, window)| super::inline::Line {
                 from_break: window[0],
                 to_break: window[1],
-                height: breakpoints[0].line_height,
-                baseline: breakpoints[0].baseline,
+                height: breakpoints[index].line_height,
+                baseline: breakpoints[index].baseline,
                 entity: entities.create(),
                 justify: window[1] < breakpoints.len() - 1,
             })

@@ -131,6 +131,16 @@ impl Default for Font {
     }
 }
 
+impl<'a> From<&'a ComputedValues> for Properties {
+    fn from(computed_values: &'a ComputedValues) -> Properties {
+        let mut props = Properties::new();
+        props
+            .style(computed_values.font.font_style.clone().into())
+            .weight(computed_values.font.font_weight.clone().into());
+        props
+    }
+}
+
 pub fn match_font(style: &ComputedValues) -> Option<Font> {
     if let Some(_) = option_env!("PREFER_BUILTIN") {
         match_font_builtin(style)
@@ -142,7 +152,7 @@ pub fn match_font(style: &ComputedValues) -> Option<Font> {
             .map(|fam| FamilyName::from(fam.clone()))
             .collect::<Vec<_>>();
         let font = SystemSource::new()
-            .select_best_match(&families, &Properties::new())
+            .select_best_match(&families, &style.into())
             .ok()?
             .load()
             .ok()?;
@@ -258,6 +268,25 @@ impl From<FontFamily> for FamilyName {
             FontFamily::SansSerif => FamilyName::SansSerif,
             FontFamily::Serif => FamilyName::Serif,
             FontFamily::Named(name) => FamilyName::Title(name),
+        }
+    }
+}
+
+impl From<FontStyle> for font_kit::properties::Style {
+    fn from(style: FontStyle) -> font_kit::properties::Style {
+        match style {
+            FontStyle::Normal => font_kit::properties::Style::Normal,
+            FontStyle::Italic => font_kit::properties::Style::Italic,
+            FontStyle::Oblique => font_kit::properties::Style::Oblique,
+        }
+    }
+}
+
+impl From<FontWeight> for font_kit::properties::Weight {
+    fn from(weight: FontWeight) -> font_kit::properties::Weight {
+        match weight {
+            FontWeight::Normal => font_kit::properties::Weight::NORMAL,
+            FontWeight::Bold => font_kit::properties::Weight::BOLD,
         }
     }
 }

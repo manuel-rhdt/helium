@@ -63,21 +63,21 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 .iter()
                 .filter_map(|&entity| Some((entity, text_runs.get(entity)?)))
             {
+                // insert first breakpoint at beginning
+                if break_points.is_empty() {
+                    break_points.push(BreakPoint {
+                        entity,
+                        char_index: 0,
+                        advance_before: Px(0.0),
+                        advance_after: Px(0.0),
+                        line_height: text_run.line_height,
+                        baseline: text_run.baseline,
+                    })
+                }
+
                 let font = &font_map[&text_run.font_name];
                 let shaped = shape(&text_run.text, font);
                 for (pos, glyph_info) in &shaped {
-                    // insert first breakpoint at beginning
-                    if break_points.is_empty() {
-                        break_points.push(BreakPoint {
-                            entity,
-                            char_index: 0,
-                            advance_before: Px(0.0),
-                            advance_after: Px(0.0),
-                            line_height: text_run.line_height,
-                            baseline: text_run.baseline,
-                        })
-                    }
-
                     let cur_char = &text_run.text[glyph_info.cluster as usize..];
                     if cur_char.starts_with(|chr: char| chr.is_whitespace()) {
                         let advance_before = advance;
@@ -104,8 +104,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         char_index: text_run.text.len(),
                         advance_before: advance,
                         advance_after: advance,
-                        line_height: Px(0.0),
-                        baseline: Px(0.0),
+                        line_height: text_run.line_height,
+                        baseline: text_run.baseline,
                     })
                 }
             }
@@ -132,9 +132,18 @@ impl<'a> System<'a> for LineBoxCreator {
         for InlineFormattingContext {
             break_points,
             lines,
+            elements,
             ..
         } in inline_formatting_contexts.join()
         {
+            let mut elements_iter = elements.iter();
+
+            let mut entity = if let Some(&e) = elements_iter.next() {
+                e
+            } else {
+                break;
+            };
+
             let mut ops: Vec<TextOperator> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
             let mut paragraph_pos: Option<components::Position> = None;
@@ -186,24 +195,29 @@ impl<'a> System<'a> for LineBoxCreator {
                     });
                 }
 
-                while from < to {
-                    let from_break = break_points[from];
-                    let to_break = break_points[to];
+                let from_break = break_points[from];
+                let to_break = break_points[to];
 
-                    if let Some(run) = text_runs.get(from_break.entity) {
+                loop {
+                    if let Some(run) = text_runs.get(entity) {
                         if previous_font != Some((run.font_name.clone(), run.font_size)) {
                             ops.push(TextOperator::SetFont(run.font_name.clone(), run.font_size));
                             previous_font = Some((run.font_name.clone(), run.font_size));
                         }
 
                         // get the string slice of the current text fragment
-                        let characters = if from_break.entity == to_break.entity {
-                            from = to;
-                            &run.text[from_break.char_index..to_break.char_index]
+                        let start = if entity == from_break.entity {
+                            from_break.char_index
                         } else {
-                            from += 1;
-                            &run.text[from_break.char_index..]
+                            0
                         };
+                        let end = if entity == to_break.entity {
+                            to_break.char_index
+                        } else {
+                            run.text.len()
+                        };
+
+                        let characters = &run.text[start..end];
 
                         let font = &font_map[&run.font_name];
                         let shaped = shape(characters, font);
@@ -252,8 +266,15 @@ impl<'a> System<'a> for LineBoxCreator {
                             kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs)));
                         }
                         ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
+                    }
+
+                    if entity == to_break.entity {
+                        break;
                     } else {
-                        from += 1;
+                        entity = match elements_iter.next() {
+                            Some(&ent) => ent,
+                            None => break
+                        }
                     }
                 }
 
