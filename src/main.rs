@@ -79,7 +79,7 @@ fn main() -> Result<(), Error> {
 
     let display_list = display_list::generate_display_list(&mut layout_context);
 
-    pdf::write_pdf(display_list, device, opt.no_filter)?;
+    pdf::write_pdf(display_list, opt.no_filter)?;
 
     Ok(())
 }

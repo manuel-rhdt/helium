@@ -2,7 +2,7 @@ use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
 use super::specified::{self, ApplyToComputedValues, BorderStyle, ComputedValue};
-pub use super::specified::{Display, FontFamily, FontStyle, FontWeight, Percentage};
+pub use super::specified::{Display, FontFamily, FontStyle, FontWeight, Percentage, TextAlign};
 
 pub use cssparser::RGBA;
 
@@ -169,7 +169,6 @@ impl LengthPercentage {
 impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage {
     fn from_specified(
         spec: &super::specified::QuantityOrPercentage,
-        _computed_font_size: PixelLength,
         style: &ComputedValues,
     ) -> Self {
         use super::specified::{Quantity, QuantityOrPercentage};
@@ -220,8 +219,6 @@ impl From<Percentage> for GenericSize {
 impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize {
     fn from_specified(
         spec: &specified::AutoOrQuantityOrPercentage,
-
-        _computed_font_size: PixelLength,
         style: &ComputedValues,
     ) -> Self {
         match spec {
@@ -431,6 +428,7 @@ impl Default for Font {
 pub struct Text {
     pub white_space: specified::WhiteSpace,
     pub text_indent: LengthPercentage,
+    pub text_align: specified::TextAlign,
 }
 
 #[derive(Debug, Clone)]
@@ -476,14 +474,16 @@ impl Default for LineHeight {
 impl ComputedValue<specified::LineHeight> for LineHeight {
     fn from_specified(
         lh: &specified::LineHeight,
-        _computed_font_size: PixelLength,
         style: &super::computed::ComputedValues,
     ) -> Self {
         match lh {
             specified::LineHeight::Normal => LineHeight::Normal,
             specified::LineHeight::QuantityOrPercentage(qp) => LineHeight::LengthPercentage(
-                LengthPercentage::from_specified(qp, style.font.font_size, style),
+                LengthPercentage::from_specified(qp, style),
             ),
+            specified::LineHeight::Number(num) => {
+                LineHeight::LengthPercentage(LengthPercentage::Percentage(Percentage(*num)))
+            }
         }
     }
 }

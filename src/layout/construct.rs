@@ -334,6 +334,7 @@ impl EntityConstructor {
             elements: vec![],
             break_points: vec![],
             lines: vec![],
+            text_align: node.style().text.text_align,
         };
         for child_entity in node
             .children()

@@ -1,6 +1,5 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::layout::components::TextOperator;
-use crate::style::device::Device;
 use crate::style::properties::computed::PixelLength;
 
 use lemon_pdf::pagetree::MediaBox;
@@ -17,7 +16,7 @@ impl From<PixelLength> for Pt {
     }
 }
 
-pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Result<(), Error> {
+pub fn write_pdf(print_pages: PrintPages, no_filter: bool) -> Result<(), Error> {
     let file = BufWriter::new(File::create("test_working.pdf")?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
@@ -33,14 +32,16 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
 
     log::info!("Write {} pages.", print_pages.pages.len());
 
-    for mut display_list in print_pages.pages {
+    for mut print_page in print_pages.pages {
         let mut page = Page::new();
         page.set_media_box(MediaBox::new(
             Pt(0.0),
             Pt(0.0),
-            device.width.into(),
-            device.height.into(),
+            print_page.width.into(),
+            print_page.height.into(),
         ));
+
+        let page_height = print_page.height;
 
         let filter = if no_filter {
             None
@@ -49,7 +50,7 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
         };
 
         page.add_content(&mut context, filter, |page_context| {
-            for item in display_list.items() {
+            for item in print_page.display_list.items() {
                 match item {
                     DisplayItem::Push => page_context.save_graphics_state()?,
                     DisplayItem::Pop => page_context.restore_graphics_state()?,
@@ -79,7 +80,7 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                         let mut point_iter =
                             points.iter().map(|&crate::display_list::Point { x, y }| {
                                 let x = Pt::from(x);
-                                let y = Pt::from(device.height - y);
+                                let y = Pt::from(page_height - y);
                                 (x, y)
                             });
 
@@ -103,7 +104,7 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                         height,
                     }) => {
                         let x = Pt::from(x);
-                        let y = Pt::from(device.height - y - height);
+                        let y = Pt::from(page_height - y - height);
                         let width = Pt::from(width);
                         let height = Pt::from(height);
 
@@ -117,7 +118,7 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                         ref glyphs,
                     ) => {
                         let x = x;
-                        let y = device.height - y;
+                        let y = page_height - y;
                         page_context.begin_text()?;
                         let font_ref = font_map[font_name];
                         let key = page_context.add_font(font_ref);
@@ -129,7 +130,7 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                     }
                     DisplayItem::Paragraph((x, y), par) => {
                         let x = *x;
-                        let y = device.height - *y;
+                        let y = page_height - *y;
 
                         page_context.begin_text()?;
                         page_context.set_position(x.into(), y.into())?;
@@ -150,7 +151,8 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                                     page_context.apply_operator("TJ")?;
                                 }
                                 &TextOperator::NewLine { x_offset, leading } => {
-                                    page_context.set_position(x_offset.into(), (-leading).into())?;
+                                    page_context
+                                        .set_position(x_offset.into(), (-leading).into())?;
                                 }
                                 &TextOperator::SetWordSpacing(spacing) => {
                                     page_context.push_operand(Pt::from(spacing))?;

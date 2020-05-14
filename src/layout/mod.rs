@@ -51,6 +51,8 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
             .margin_right
             .absolute(Default::default(), device.width),
     };
+    let page_width = style.position.width.absolute(device.width, device.width);
+    let page_height = style.position.height.absolute(device.width, device.width);
 
     let mut layout_context = flow_constructor.layout_context();
 
@@ -59,8 +61,8 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
 
     // perform the layout passes
     let mut block_layout = normal_formatting::BlockLevelLayout {
-        page_width: device.width,
-        page_height: device.height,
+        page_width,
+        page_height,
         margin,
         world: &layout_context,
     };
@@ -70,8 +72,12 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     line_box_creator.setup(&mut layout_context);
     line_box_creator.run_now(&layout_context);
 
-    normal_formatting::PagesCreate.setup(&mut layout_context);
-    normal_formatting::PagesCreate.run_now(&layout_context);
+    let mut pages_create = normal_formatting::PagesCreate {
+        page_width,
+        page_height,
+    };
+    pages_create.setup(&mut layout_context);
+    pages_create.run_now(&layout_context);
 
     layout_context
 }

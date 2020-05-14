@@ -1,6 +1,6 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
-use super::properties::specified::{ParseDeclaration, PropertyDeclaration};
+use super::properties::specified::{Font, ParseDeclaration, PropertyDeclaration};
 use crate::tree::ElementRef;
 
 use cssparser::{
@@ -106,8 +106,16 @@ impl PropertyDeclarationBlock {
         Default::default()
     }
 
-    pub fn declarations(&self) -> impl ExactSizeIterator<Item = &PropertyDeclaration> {
-        self.declarations.iter()
+    pub fn declarations(&self) -> impl Iterator<Item = &PropertyDeclaration> {
+        let iter1 = self.declarations.iter().filter(|decl| match decl {
+            PropertyDeclaration::Font(Font::FontSize(_)) => true,
+            _ => false,
+        });
+        let iter2 = self.declarations.iter().filter(|decl| match decl {
+            PropertyDeclaration::Font(Font::FontSize(_)) => false,
+            _ => true,
+        });
+        iter1.chain(iter2)
     }
 }
 

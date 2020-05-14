@@ -1,6 +1,6 @@
 use super::components::{Decoration, EdgeValues, Position, ZIndex};
 use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
-use crate::style::properties::computed::{ComputedValues, PixelLength};
+use crate::style::properties::computed::{ComputedValues, PixelLength, TextAlign};
 
 use std::collections::BTreeMap;
 
@@ -398,7 +398,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let mut break_point_sequence =
             super::paragraph::compute_breakpoints(breakpoints.len(), &mut weight);
 
-        if !break_point_sequence.is_empty() {
+        if !breakpoints.is_empty() {
             break_point_sequence.insert(0, 0);
             break_point_sequence.push(breakpoints.len() - 1);
         }
@@ -415,16 +415,25 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     height,
                     baseline,
                     entity: entities.create(),
-                    justify: window[1] < breakpoints.len() - 1,
                 }
             })
             .collect();
 
         for (line_num, &line) in ifm.lines.iter().enumerate() {
+            let content_width = breakpoints[line.to_break].advance_before
+                - breakpoints[line.from_break].advance_after;
+
             let (x, width) = if line_num == 0 {
                 (line_start + indent, line_width - indent)
             } else {
                 (line_start, line_width)
+            };
+
+            let (x, width) = match ifm.text_align {
+                TextAlign::Left => (x, content_width),
+                TextAlign::Justify => (x, width),
+                TextAlign::Center => (x + (width - content_width) / 2.0, content_width),
+                TextAlign::Right => (x + width - content_width, content_width),
             };
 
             if line.height > self.remaining_block_size() {
@@ -551,12 +560,20 @@ fn compute_element_dimensions(
 }
 
 /// A struct that represents a page. Contains a list of all entities that are displayed on the page.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Page {
+    pub size: (PixelLength, PixelLength),
     elements: specs::BitSet,
 }
 
 impl Page {
+    pub fn new(width: PixelLength, height: PixelLength) -> Self {
+        Page {
+            size: (width, height),
+            elements: Default::default(),
+        }
+    }
+
     pub fn append_element(&mut self, element: Entity) {
         if cfg!(debug_assertions) && self.elements.contains(element.id()) {
             panic!(
@@ -606,7 +623,10 @@ impl Pages {
     }
 }
 
-pub struct PagesCreate;
+pub struct PagesCreate {
+    pub page_width: PixelLength,
+    pub page_height: PixelLength,
+}
 
 impl<'a> System<'a> for PagesCreate {
     type SystemData = (
@@ -618,7 +638,11 @@ impl<'a> System<'a> for PagesCreate {
     fn run(&mut self, (entities, positions, mut pages): Self::SystemData) {
         let mut page_list = Pages::default();
         for (entity, Position { page, .. }) in (&entities, &positions).join() {
-            page_list.0.entry(*page).or_default().append_element(entity)
+            page_list
+                .0
+                .entry(*page)
+                .or_insert_with(|| Page::new(self.page_width, self.page_height))
+                .append_element(entity)
         }
         *pages = Some(page_list);
     }
@@ -643,18 +667,24 @@ mod test {
     impl<'a> BlockLayoutTest<'a> {
         fn layout(self) -> specs::World {
             let mut world = self.html.construct();
+            let page_width = self.page_width.try_into().unwrap();
+            let page_height = self.page_height.try_into().unwrap();
 
             let mut block_level_layout = BlockLevelLayout {
-                page_width: self.page_width.try_into().unwrap(),
-                page_height: self.page_height.try_into().unwrap(),
+                page_width,
+                page_height,
                 margin: EdgeValues::all(PixelLength(0.0)),
                 world: &world,
             };
 
             block_level_layout.run();
 
-            System::setup(&mut PagesCreate, &mut world);
-            PagesCreate.run_now(&world);
+            let mut pages_create = PagesCreate {
+                page_width,
+                page_height,
+            };
+            System::setup(&mut pages_create, &mut world);
+            pages_create.run_now(&world);
 
             world
         }

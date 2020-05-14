@@ -31,14 +31,13 @@ pub trait PropertyValue<'i>: Sized {
     where
         T: ComputedValue<Self>,
     {
-        T::from_specified(self, computed_values.font.font_size, computed_values)
+        T::from_specified(self, computed_values)
     }
 }
 
 pub trait ComputedValue<T>: Sized {
     fn from_specified(
         specified_value: &T,
-        computed_font_size: PixelLength,
         computed_values: &super::computed::ComputedValues,
     ) -> Self;
 }
@@ -84,7 +83,6 @@ where
 {
     fn from_specified(
         specified_value: &Specified,
-        _computed_font_size: PixelLength,
         _: &super::computed::ComputedValues,
     ) -> Computed {
         specified_value.clone().into()
@@ -260,6 +258,8 @@ pub enum Text {
     WhiteSpace(WhiteSpace),
     #[property]
     TextIndent(QuantityOrPercentage),
+    #[property]
+    TextAlign(TextAlign),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -417,7 +417,6 @@ impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for CommaSeparated<T> {
 impl<T: Clone> ComputedValue<CommaSeparated<T>> for Vec<T> {
     fn from_specified(
         comma_separated: &CommaSeparated<T>,
-        _computed_font_size: PixelLength,
         _: &super::computed::ComputedValues,
     ) -> Self {
         comma_separated.elements.clone()
@@ -514,7 +513,6 @@ impl Default for BorderWidth {
 impl ComputedValue<BorderWidth> for super::computed::PixelLength {
     fn from_specified(
         bw: &BorderWidth,
-        _computed_font_size: PixelLength,
         style: &super::computed::ComputedValues,
     ) -> Self {
         match bw {
@@ -539,16 +537,15 @@ pub enum FontSize {
 impl ComputedValue<FontSize> for super::computed::PixelLength {
     fn from_specified(
         font_size: &FontSize,
-        computed_font_size: PixelLength,
         style: &super::computed::ComputedValues,
     ) -> Self {
         match *font_size {
             FontSize::Quantity(Quantity { value, unit }) => {
                 PixelLength::from_val_unit(value, unit, style.font.font_size)
             }
-            FontSize::Percentage(percentage) => percentage.0 * computed_font_size,
-            FontSize::Smaller => 0.8 * computed_font_size,
-            FontSize::Larger => 1.2 * computed_font_size,
+            FontSize::Percentage(percentage) => percentage.0 * style.font.font_size,
+            FontSize::Smaller => 0.8 * style.font.font_size,
+            FontSize::Larger => 1.2 * style.font.font_size,
         }
     }
 }
@@ -561,6 +558,20 @@ pub enum WhiteSpace {
 impl Default for WhiteSpace {
     fn default() -> Self {
         WhiteSpace::Normal
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum TextAlign {
+    Left,
+    Justify,
+    Center,
+    Right
+}
+
+impl Default for TextAlign {
+    fn default() -> Self {
+        TextAlign::Left
     }
 }
 
@@ -583,6 +594,26 @@ impl<'i> PropertyValue<'i> for Color {
         input: &mut Parser<'i, '_>,
     ) -> Result<Self, ParseError<'i, Self::Error>> {
         Color::parse(input).map_err(Into::into)
+    }
+}
+
+impl<'i> PropertyValue<'i> for f32 {
+    type Error = ();
+
+    fn from_css_property_value(
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        let token = input.next()?;
+        match token {
+            Token::Number {
+                value,
+                ..
+            } => Ok(*value),
+            _ => {
+                let token = token.clone();
+                Err(input.new_unexpected_token_error(token))
+            }
+        }
     }
 }
 
@@ -654,6 +685,7 @@ impl<'a> List<'a, Border> {
 #[derive(Debug, Copy, Clone, PropertyValue)]
 pub enum LineHeight {
     QuantityOrPercentage(QuantityOrPercentage),
+    Number(f32),
     Normal,
 }
 

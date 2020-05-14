@@ -1,4 +1,4 @@
-use crate::layout::components::{Decoration, Paragraph, Position, ZIndex, Glyphs};
+use crate::layout::components::{Decoration, Glyphs, Paragraph, Position, ZIndex};
 use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{PixelLength, RGBA};
 
@@ -98,13 +98,19 @@ impl DisplayList {
 }
 
 #[derive(Debug, Clone)]
+pub struct PrintPage {
+    pub display_list: DisplayList,
+    pub width: PixelLength,
+    pub height: PixelLength,
+}
+
 pub struct PrintPages {
     pub font_map: crate::layout::FontMap,
-    pub pages: Vec<DisplayList>,
+    pub pages: Vec<PrintPage>,
 }
 
 impl PrintPages {
-    pub fn append_page(&mut self, page: DisplayList) {
+    pub fn append_page(&mut self, page: PrintPage) {
         self.pages.push(page)
     }
 }
@@ -246,7 +252,11 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         text_builder.run_now(world);
         let display_list = text_builder.display_list;
 
-        page_vec.push(display_list);
+        page_vec.push(PrintPage {
+            display_list,
+            width: page.size.0,
+            height: page.size.1,
+        });
     }
 
     PrintPages {

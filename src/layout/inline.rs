@@ -3,7 +3,7 @@ use super::{
     text::{font::GlyphIndex, Font},
     FontMap,
 };
-use crate::style::properties::computed::PixelLength as Px;
+use crate::style::properties::computed::{PixelLength as Px, TextAlign};
 
 use crate::layout::text::shape;
 
@@ -21,11 +21,11 @@ pub struct Line {
     pub from_break: usize,
     pub to_break: usize,
     pub entity: Entity,
-    pub justify: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct InlineFormattingContext {
+    pub text_align: crate::style::properties::specified::TextAlign,
     pub elements: Vec<Entity>,
     pub break_points: Vec<BreakPoint>,
     pub lines: Vec<Line>,
@@ -88,10 +88,21 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             ..
         } in (&mut inline_formatting_contexts).join()
         {
+            // insert first breakpoint at beginning
+            if let Some(&entity) = elements.first() {
+                break_points.push(BreakPoint {
+                    entity,
+                    char_index: 0,
+                    advance_before: Px(0.0),
+                    advance_after: Px(0.0),
+                })
+            }
+
             let mut advance = Px(0.0);
 
             let mut last_whitespace = true;
-            for &entity in elements.iter() {
+
+            for (index, &entity) in elements.iter().enumerate() {
                 let text_run = match text_runs.get_mut(entity) {
                     Some(text_run) => text_run,
                     None => continue,
@@ -103,15 +114,9 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 } else {
                     last_whitespace = false;
                 }
-
-                // insert first breakpoint at beginning
-                if break_points.is_empty() {
-                    break_points.push(BreakPoint {
-                        entity,
-                        char_index: 0,
-                        advance_before: Px(0.0),
-                        advance_after: Px(0.0),
-                    })
+                if index == elements.len() - 1 && last_whitespace {
+                    let new_len = text_run.text.trim_end().len();
+                    text_run.text.truncate(new_len);
                 }
 
                 let font = &font_map[&text_run.font_name];
@@ -134,6 +139,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 }
             }
 
+            // insert last breakpoint at the end
             if let Some(&entity) = elements.last() {
                 if let Some(text_run) = text_runs.get(entity) {
                     break_points.push(BreakPoint {
@@ -168,6 +174,7 @@ impl<'a> System<'a> for LineBoxCreator {
             break_points,
             lines,
             elements,
+            text_align,
             ..
         } in inline_formatting_contexts.join()
         {
@@ -191,7 +198,8 @@ impl<'a> System<'a> for LineBoxCreator {
                     .expect("every line should have been assigned a position by now");
 
                 // if we want to justify the text we have to add word-spacing
-                let word_spacing: Px = if line.justify {
+                let is_last_line = line_num == lines.len() - 1;
+                let word_spacing: Px = if (!is_last_line) && *text_align == TextAlign::Justify  {
                     // the ideal and maximal width of the line
                     let wanted_width = line_pos.width;
                     // the number of stretchable spaces in the current line (needed for justification)
