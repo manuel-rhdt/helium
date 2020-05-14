@@ -1,4 +1,4 @@
-use super::components::{Decoration, Position, ZIndex};
+use super::components::{Decoration, EdgeValues, Position, ZIndex};
 use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
 use crate::style::properties::computed::{ComputedValues, PixelLength};
 
@@ -10,6 +10,7 @@ use specs::storage::BTreeStorage;
 pub struct BlockLevelLayout<'world> {
     pub page_width: PixelLength,
     pub page_height: PixelLength,
+    pub margin: EdgeValues<PixelLength>,
     pub world: &'world World,
 }
 
@@ -17,8 +18,12 @@ impl<'world> BlockLevelLayout<'world> {
     pub fn run(&mut self) {
         let block_formatting_contexts = self.world.read_storage();
         for BlockFormattingContext { elements } in block_formatting_contexts.join() {
-            let mut block_formatter =
-                BlockFormatter::new(&elements, (self.page_width, self.page_height), &self.world);
+            let mut block_formatter = BlockFormatter::new(
+                &elements,
+                (self.page_width, self.page_height),
+                self.margin,
+                &self.world,
+            );
             block_formatter.layout();
         }
     }
@@ -104,6 +109,7 @@ pub struct BlockFormatter<'elements, 'data> {
     pub elements: &'elements [BlockLevelElement],
     layout_state: BlockLayoutState,
     page_size: (PixelLength, PixelLength),
+    page_margin: EdgeValues<PixelLength>,
     world: &'data World,
 }
 
@@ -112,13 +118,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     pub fn new(
         elements: &'elements [BlockLevelElement],
         page_size: (PixelLength, PixelLength),
+        page_margin: EdgeValues<PixelLength>,
         world: &'data World,
     ) -> Self {
         BlockFormatter {
             in_progress_containers: ContainerStack::default(),
             elements,
-            layout_state: BlockLayoutState::new(),
+            layout_state: BlockLayoutState::new(page_margin.top),
             page_size,
+            page_margin,
             world,
         }
     }
@@ -134,7 +142,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 .expect("Could not process element");
         }
         assert!(self.in_progress_containers.is_empty());
-        self.layout_state.new_page();
+        self.layout_state.new_page(self.page_margin.top);
         None
     }
 
@@ -153,22 +161,19 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     false,
                     positions,
                     decorations,
-                )
-                .unwrap();
+                );
             }
             BlockLevelElement::Leaf(leaf) => {
                 let container = self
                     .in_progress_containers
                     .start_container(leaf, &entities_res);
-                let pos = self
-                    .start_container_fragment(
-                        container.current_fragment,
-                        style,
-                        false,
-                        positions,
-                        decorations,
-                    )
-                    .unwrap();
+                let pos = self.start_container_fragment(
+                    container.current_fragment,
+                    style,
+                    false,
+                    positions,
+                    decorations,
+                );
 
                 let mut inline_formatting_contexts = self.world.write_storage();
                 if let Some(inline_formatting_context) = inline_formatting_contexts.get_mut(leaf) {
@@ -217,7 +222,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         new_page: bool,
         positions: &mut WriteStorage<Position>,
         decorations: &mut WriteStorage<Decoration>,
-    ) -> Option<Position> {
+    ) -> Position {
         let container_pos = self.parent_container_pos(positions);
         let mut dimensions = compute_element_dimensions(container_pos.width, &style);
 
@@ -228,6 +233,10 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             deco.border.top = PixelLength(0.0);
             deco.margin.top = PixelLength(0.0);
         } else {
+            if deco.margin.top + deco.border.top + deco.padding.top > self.remaining_block_size() {
+                self.new_page(positions, decorations)
+            }
+
             self.layout_state.add_margin(deco.margin.top);
             self.layout_state.add_content(deco.border.top);
             self.layout_state.add_content(deco.padding.top);
@@ -244,12 +253,12 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
         positions.insert(fragment, position).unwrap();
         decorations.insert(fragment, dimensions.decoration).unwrap();
-        Some(position)
+        position
     }
 
     /// Returns the remaining space in the block direction until the current page is full.
     fn remaining_block_size(&self) -> PixelLength {
-        self.page_size.1 - self.layout_state.vertical_pos()
+        self.page_size.1 - self.page_margin.bottom - self.layout_state.vertical_pos()
     }
 
     /// Ends the current fragment of an element and appends it to the current page.
@@ -298,10 +307,10 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             pos
         } else {
             Position {
-                x: PixelLength(0.0),
-                y: PixelLength(0.0),
-                width: self.page_size.0,
-                height: self.page_size.1,
+                x: self.page_margin.left,
+                y: self.page_margin.top,
+                width: self.page_size.0 - self.page_margin.left - self.page_margin.right,
+                height: self.remaining_block_size(),
                 z: Default::default(),
                 page: self.layout_state.page_num,
             }
@@ -312,7 +321,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         &mut self,
         positions: &mut WriteStorage<Position>,
         decorations: &mut WriteStorage<Decoration>,
-    ) -> Option<()> {
+    ) {
         // split containers:
         // - add `Fragments` component to container
         // - create two fragments
@@ -325,14 +334,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             self.end_container_fragment(container.current_fragment, true, positions, decorations);
         }
 
-        self.layout_state.new_page();
+        self.layout_state.new_page(self.page_margin.top);
 
         for container in in_progress_containers.stack {
             // create a new fragment for the current container
             let style = self
                 .world
                 .read_storage::<ComputedValues>()
-                .get(container.root_entity)?
+                .get(container.root_entity)
+                .expect("no style assigned to root entity")
                 .clone();
             let new_container = self
                 .in_progress_containers
@@ -345,8 +355,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 decorations,
             );
         }
-
-        Some(())
     }
 
     fn z_index(&self) -> ZIndex {
@@ -403,7 +411,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
         for &line in &ifm.lines {
             if line.height > self.remaining_block_size() {
-                self.new_page(positions, decorations).unwrap()
+                self.new_page(positions, decorations)
             }
             let pos = Position {
                 x: line_start,
@@ -445,16 +453,17 @@ struct BlockLayoutState {
 }
 
 impl BlockLayoutState {
-    fn new() -> Self {
+    fn new(margin_top: PixelLength) -> Self {
         BlockLayoutState {
             is_at_page_start: true,
+            vertical_pos: margin_top,
             ..Default::default()
         }
     }
 
-    fn new_page(&mut self) {
+    fn new_page(&mut self, margin_top: PixelLength) {
         self.page_num += 1;
-        self.vertical_pos = PixelLength(0.0);
+        self.vertical_pos = margin_top;
         self.collapse_margin = None;
         self.is_at_page_start = true;
     }
@@ -621,6 +630,7 @@ mod test {
             let mut block_level_layout = BlockLevelLayout {
                 page_width: self.page_width.try_into().unwrap(),
                 page_height: self.page_height.try_into().unwrap(),
+                margin: EdgeValues::all(PixelLength(0.0)),
                 world: &world,
             };
 

@@ -14,7 +14,7 @@ use specs::{Builder, World, WorldExt};
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
 pub struct FlowConstructor {
-    styles: Styles,
+    pub(crate) styles: Styles,
     entity_constructor: EntityConstructor,
 }
 

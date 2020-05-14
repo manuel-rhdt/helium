@@ -2,6 +2,10 @@
  * https://www.w3.org/TR/html5/rendering.html
  */
 
+ @page {
+   margin: 2cm;
+ }
+
 [hidden],
 area,
 base,

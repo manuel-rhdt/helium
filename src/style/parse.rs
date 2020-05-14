@@ -4,8 +4,8 @@ use super::properties::specified::{ParseDeclaration, PropertyDeclaration};
 use crate::tree::ElementRef;
 
 use cssparser::{
-    AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, QualifiedRuleParser, RuleListParser,
-    SourceLocation, ToCss,
+    AtRuleParser, AtRuleType, CowRcStr, ParseError, Parser, ParserInput, QualifiedRuleParser,
+    RuleListParser, SourceLocation, ToCss,
 };
 use html5ever::{LocalName, Namespace};
 use log::error;
@@ -54,15 +54,21 @@ impl Styles {
 }
 
 #[derive(Debug)]
+pub enum GeneralizedSelector {
+    AtPage,
+    Selectors(SelectorList<Selectors>),
+}
+
+#[derive(Debug)]
 pub struct QualifiedRule {
-    selectors: SelectorList<Selectors>,
+    selectors: GeneralizedSelector,
     pub properties: PropertyDeclarationBlock,
 }
 
 impl QualifiedRule {
     pub fn new(selectors: SelectorList<Selectors>, properties: PropertyDeclarationBlock) -> Self {
         QualifiedRule {
-            selectors,
+            selectors: GeneralizedSelector::Selectors(selectors),
             properties,
         }
     }
@@ -74,7 +80,19 @@ impl QualifiedRule {
             None,
             QuirksMode::NoQuirks,
         );
-        matching::matches_selector_list(&self.selectors, elem, &mut context)
+        if let GeneralizedSelector::Selectors(list) = &self.selectors {
+            matching::matches_selector_list(list, elem, &mut context)
+        } else {
+            false
+        }
+    }
+
+    pub fn is_page_declaration(&self) -> bool {
+        if let GeneralizedSelector::AtPage = &self.selectors {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -134,11 +152,50 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
     }
 }
 
-impl<'a> AtRuleParser<'a> for TopLevelParser {
+impl<'i> AtRuleParser<'i> for TopLevelParser {
     type PreludeNoBlock = ();
     type PreludeBlock = ();
     type AtRule = QualifiedRule;
     type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<AtRuleType<Self::PreludeNoBlock, Self::PreludeBlock>, ParseError<'i, Self::Error>>
+    {
+        if name.eq_ignore_ascii_case("page") {
+            Ok(AtRuleType::WithBlock(()))
+        } else {
+            let _ = input;
+            Err(input.new_error(cssparser::BasicParseErrorKind::AtRuleInvalid(name)))
+        }
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        _prelude: Self::PreludeBlock,
+        _location: SourceLocation,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::AtRule, ParseError<'i, Self::Error>> {
+        let declaration_parser = StyleDeclarationParser {};
+        let declaration_list_parser =
+            cssparser::DeclarationListParser::new(input, declaration_parser);
+
+        let mut declaration_block = PropertyDeclarationBlock::new();
+
+        for declaration in declaration_list_parser {
+            match declaration {
+                Ok(declaration) => declaration_block.declarations.push(declaration),
+                Err(err) => error!("Error while parsing declaration: {:?}", err),
+            };
+        }
+
+        Ok(QualifiedRule {
+            selectors: GeneralizedSelector::AtPage,
+            properties: declaration_block,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -264,7 +321,7 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
     }
 }
 
-pub struct StyleDeclarationParser {}
+struct StyleDeclarationParser {}
 
 impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
     type Declaration = PropertyDeclaration<'static>;
