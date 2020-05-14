@@ -234,6 +234,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             deco.margin.top = PixelLength(0.0);
         } else {
             if deco.margin.top + deco.border.top + deco.padding.top > self.remaining_block_size() {
+                // we can always insert a page break in between block-level elements
                 self.new_page(positions, decorations)
             }
 

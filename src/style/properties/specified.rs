@@ -636,7 +636,7 @@ pub enum LineHeight {
     Normal,
 }
 
-#[derive(Debug, Clone, PropertyValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum FontFamily {
     SansSerif,
     Serif,
@@ -644,7 +644,7 @@ pub enum FontFamily {
     Named(String),
 }
 
-#[derive(Debug, Clone, PropertyValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum FontStyle {
     Normal,
     Italic,
@@ -657,7 +657,7 @@ impl Default for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, PropertyValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum FontWeight {
     Normal,
     Bold,

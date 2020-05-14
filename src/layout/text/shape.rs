@@ -54,9 +54,9 @@ pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
                 )
             })
             .collect(),
-        super::font::FontData::External(font) => {
-            let font_bytes = font.copy_font_data().unwrap();
-            let handle = font.handle().unwrap();
+        super::font::FontData::External(ext_font) => {
+            let font_bytes = ext_font.copy_font_data().unwrap();
+            let handle = ext_font.handle().unwrap();
             let index = match handle {
                 Handle::Memory { font_index, .. } => font_index,
                 Handle::Path { font_index, .. } => font_index,
@@ -71,7 +71,7 @@ pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
 
             let result = hb_shape(&hb_font, buffer, &[]);
 
-            let scale = |val| FontUnit(val as f64 * (1000f64 / font.metrics().units_per_em as f64));
+            let scale = |val| FontUnit(val as f64 * (1000f64 / font.upem as f64));
 
             result
                 .get_glyph_positions()

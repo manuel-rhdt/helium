@@ -10,6 +10,7 @@ use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
 use specs::{Builder, World, WorldExt};
+use std::collections::HashMap;
 
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
@@ -150,7 +151,25 @@ pub trait AbstractNode<'a>: AssignLayoutEntity + Styled + HtmlNode + IterChildre
 
 impl<'a, T: 'a + AssignLayoutEntity + Styled + HtmlNode + IterChildren<'a>> AbstractNode<'a> for T {}
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FontSelector {
+    families: Vec<crate::style::properties::computed::FontFamily>,
+    weight: crate::style::properties::computed::FontWeight,
+    style: crate::style::properties::computed::FontStyle,
+}
+
+impl FontSelector {
+    fn from_style(style: &ComputedValues) -> Self {
+        FontSelector {
+            families: style.font.font_family.clone(),
+            weight: style.font.font_weight.clone(),
+            style: style.font.font_style.clone(),
+        }
+    }
+}
+
 pub struct EntityConstructor {
+    font_match_cache: HashMap<FontSelector, String>,
     pub world: World,
 }
 
@@ -169,7 +188,10 @@ impl EntityConstructor {
         world.register::<components::TextRun>();
         world.register::<components::Decoration>();
         world.insert(FontMap::new());
-        EntityConstructor { world }
+        EntityConstructor {
+            world,
+            font_match_cache: Default::default(),
+        }
     }
 
     // Called on top-down traversal. Takes a node and its style to create a corresponding
@@ -205,8 +227,23 @@ impl EntityConstructor {
         let mut text = text.to_owned();
         crate::layout::text::whitespace::transform_text(&mut text);
         // TODO: handle error
-        let font = crate::layout::text::font::match_font(&style)
-            .expect("Could not find any matching fonts.");
+        let font_selector = FontSelector::from_style(&style);
+        let mut font_map = self.world.write_resource::<FontMap>();
+        let font_name = self
+            .font_match_cache
+            .entry(font_selector)
+            .or_insert_with(|| {
+                let font = crate::layout::text::font::match_font(&style)
+                    .expect("Could not find any matching fonts.");
+                let font_name = font.postscript_name();
+                font_map.insert(font_name.clone(), font);
+                font_name
+            })
+            .clone();
+        let font = &font_map[&font_name];
+
+        // let font = crate::layout::text::font::match_font(&style)
+        //     .expect("Could not find any matching fonts.");
 
         let font_size = style.font.font_size;
         let font_height = font.scale_to_px(font.font_height(), font_size);
@@ -217,11 +254,8 @@ impl EntityConstructor {
         let line_gap = line_height - font_height;
         let baseline = font.scale_to_px(font.ascent(), font_size) + line_gap / 2.0;
 
-        let font_name = font.postscript_name();
-        self.world
-            .write_resource::<FontMap>()
-            .insert(font.postscript_name(), font);
-
+        // needed for borrow checker
+        std::mem::drop(font_map);
         let entity = self
             .world
             .create_entity()

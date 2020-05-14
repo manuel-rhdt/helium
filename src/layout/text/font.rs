@@ -9,11 +9,11 @@ use font_kit::family_name::FamilyName;
 use font_kit::properties::Properties;
 use font_kit::source::SystemSource;
 
-use std::collections::BTreeMap;
 use parking_lot::{Mutex, MutexGuard};
+use std::collections::BTreeMap;
 
-fn scale_ext(font: &font_kit::font::Font, metric: f32) -> FontUnit {
-    let upem = font.metrics().units_per_em as f64;
+fn scale_ext(upem: u32, metric: f32) -> FontUnit {
+    let upem = upem as f64;
     FontUnit(metric as f64 * 1000f64 / upem)
 }
 
@@ -22,6 +22,7 @@ pub struct GlyphIndex(pub u32);
 
 #[derive(Debug)]
 pub struct Font {
+    pub(crate) upem: u32,
     pub(crate) glyph_advances: Mutex<BTreeMap<GlyphIndex, FontUnit>>,
     pub(crate) to_unicode: Mutex<BTreeMap<GlyphIndex, String>>,
     pub(crate) font_data: FontData,
@@ -30,6 +31,7 @@ pub struct Font {
 impl Clone for Font {
     fn clone(&self) -> Self {
         Font {
+            upem: self.upem,
             glyph_advances: Mutex::new(self.glyph_advances.lock().clone()),
             to_unicode: Mutex::new(self.to_unicode.lock().clone()),
             font_data: self.font_data.clone(),
@@ -46,13 +48,16 @@ pub enum FontData {
 impl Font {
     fn built_in(val: BuiltInFont) -> Self {
         Font {
+            upem: 1000,
             font_data: FontData::BuiltIn(val),
             ..Default::default()
         }
     }
 
     fn external(val: font_kit::font::Font) -> Self {
+        let upem = val.metrics().units_per_em;
         Font {
+            upem,
             font_data: FontData::External(val),
             ..Default::default()
         }
@@ -68,14 +73,14 @@ impl Font {
     pub fn ascent(&self) -> FontUnit {
         match &self.font_data {
             FontData::BuiltIn(font) => font.metrics().ascender,
-            FontData::External(font) => scale_ext(font, font.metrics().ascent),
+            FontData::External(font) => scale_ext(self.upem, font.metrics().ascent),
         }
     }
 
     pub fn descent(&self) -> FontUnit {
         match &self.font_data {
             FontData::BuiltIn(font) => font.metrics().descender,
-            FontData::External(font) => scale_ext(font, font.metrics().descent),
+            FontData::External(font) => scale_ext(self.upem, font.metrics().descent),
         }
     }
 
@@ -88,7 +93,9 @@ impl Font {
                     .unwrap()
                     .advance_width
             }
-            FontData::External(font) => scale_ext(font, font.advance(glyph.0).unwrap().x()),
+            FontData::External(font) => {
+                scale_ext(self.upem, font.advance(glyph.0).unwrap().x())
+            }
         };
         self.glyph_advances.lock().insert(glyph, result);
         result
@@ -124,6 +131,7 @@ impl Font {
 impl Default for Font {
     fn default() -> Self {
         Font {
+            upem: 1000,
             glyph_advances: Mutex::new(BTreeMap::new()),
             to_unicode: Default::default(),
             font_data: FontData::BuiltIn(BuiltInFont::Helvetica),
