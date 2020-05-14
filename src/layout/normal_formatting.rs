@@ -169,7 +169,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     .start_container(leaf, &entities_res);
                 let pos = self.start_container_fragment(
                     container.current_fragment,
-                    style,
+                    style.clone(),
                     false,
                     positions,
                     decorations,
@@ -179,6 +179,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 if let Some(inline_formatting_context) = inline_formatting_contexts.get_mut(leaf) {
                     self.layout_inline_formatting_context(
                         inline_formatting_context,
+                        &style,
                         pos.x,
                         pos.width,
                         positions,
@@ -365,6 +366,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     fn layout_inline_formatting_context(
         &mut self,
         ifm: &mut super::inline::InlineFormattingContext,
+        style: &ComputedValues,
         line_start: PixelLength,
         line_width: PixelLength,
         positions: &mut WriteStorage<Position>,
@@ -374,8 +376,13 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
         let breakpoints = &ifm.break_points;
 
+        // TODO: percentage relative to parent container
+        let indent = style.text.text_indent.absolute(line_width);
+
         let mut weight = |from: usize, to: usize| {
+            let indent = if from == 0 { indent } else { PixelLength(0.0) };
             let advance = breakpoints[to].advance_before - breakpoints[from].advance_after;
+            let line_width = line_width - indent;
             if to == breakpoints.len() - 1 && advance <= line_width {
                 // the last line does not need to be justified
                 0.0
@@ -390,8 +397,11 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
         let mut break_point_sequence =
             super::paragraph::compute_breakpoints(breakpoints.len(), &mut weight);
-        break_point_sequence.insert(0, 0);
-        break_point_sequence.push(breakpoints.len() - 1);
+
+        if !break_point_sequence.is_empty() {
+            break_point_sequence.insert(0, 0);
+            break_point_sequence.push(breakpoints.len() - 1);
+        }
 
         ifm.lines = break_point_sequence
             .windows(2)
@@ -410,14 +420,20 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             })
             .collect();
 
-        for &line in &ifm.lines {
+        for (line_num, &line) in ifm.lines.iter().enumerate() {
+            let (x, width) = if line_num == 0 {
+                (line_start + indent, line_width - indent)
+            } else {
+                (line_start, line_width)
+            };
+
             if line.height > self.remaining_block_size() {
                 self.new_page(positions, decorations)
             }
             let pos = Position {
-                x: line_start,
+                x,
                 y: self.layout_state.vertical_pos(),
-                width: line_width,
+                width,
                 height: line.height,
                 z: self.z_index(),
                 page: self.layout_state.page_num,

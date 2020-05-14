@@ -149,8 +149,8 @@ pub fn write_pdf(print_pages: PrintPages, device: Device, no_filter: bool) -> Re
                                     page_context.push_operand(glyphs)?;
                                     page_context.apply_operator("TJ")?;
                                 }
-                                &TextOperator::NewLine { leading } => {
-                                    page_context.set_position(Pt(0.0), (-leading).into())?;
+                                &TextOperator::NewLine { x_offset, leading } => {
+                                    page_context.set_position(x_offset.into(), (-leading).into())?;
                                 }
                                 &TextOperator::SetWordSpacing(spacing) => {
                                     page_context.push_operand(Pt::from(spacing))?;

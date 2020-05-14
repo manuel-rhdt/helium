@@ -4,8 +4,8 @@ fn is_whitespace(ch: char) -> bool {
         _ => false,
     }
 }
-pub fn transform_text(text: &mut String) {
-    let mut last_whitespace = true;
+pub fn transform_text(text: &mut String, after_whitespace: bool) {
+    let mut last_whitespace = after_whitespace;
     for i in 0..text.len() {
         if !text.is_char_boundary(i) {
             continue;
@@ -29,7 +29,7 @@ mod test {
 
     #[quickcheck]
     fn text_transform_removes_consecutive_whitespace(mut string: String) -> bool {
-        transform_text(&mut string);
+        transform_text(&mut string, true);
         let mut last_character_was_whitespace = true;
         for ch in string.chars() {
             if is_whitespace(ch) && last_character_was_whitespace {

@@ -1,6 +1,7 @@
 use std::borrow::{Cow, ToOwned};
 use std::str::FromStr;
 
+use super::computed::PixelLength;
 use cssparser::{match_ignore_ascii_case, Color, CowRcStr, ParseError, Parser, Token};
 use helium_derive::{ParseDeclaration, PropertyValue};
 
@@ -30,13 +31,14 @@ pub trait PropertyValue<'i>: Sized {
     where
         T: ComputedValue<Self>,
     {
-        T::from_specified(self, computed_values)
+        T::from_specified(self, computed_values.font.font_size, computed_values)
     }
 }
 
 pub trait ComputedValue<T>: Sized {
     fn from_specified(
         specified_value: &T,
+        computed_font_size: PixelLength,
         computed_values: &super::computed::ComputedValues,
     ) -> Self;
 }
@@ -82,6 +84,7 @@ where
 {
     fn from_specified(
         specified_value: &Specified,
+        _computed_font_size: PixelLength,
         _: &super::computed::ComputedValues,
     ) -> Computed {
         specified_value.clone().into()
@@ -255,6 +258,8 @@ pub enum Text {
     /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
     #[property]
     WhiteSpace(WhiteSpace),
+    #[property]
+    TextIndent(QuantityOrPercentage),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -412,6 +417,7 @@ impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for CommaSeparated<T> {
 impl<T: Clone> ComputedValue<CommaSeparated<T>> for Vec<T> {
     fn from_specified(
         comma_separated: &CommaSeparated<T>,
+        _computed_font_size: PixelLength,
         _: &super::computed::ComputedValues,
     ) -> Self {
         comma_separated.elements.clone()
@@ -430,20 +436,25 @@ impl<'i> PropertyValue<'i> for Quantity {
     fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
         let token = input.next()?;
         let (value, unit) = match token {
-            Token::Dimension { value, unit, .. } => (*value, unit),
+            Token::Dimension { value, unit, .. } => (*value, unit.parse()),
+            Token::Number {
+                int_value: Some(val),
+                ..
+            } if *val == 0 => (0.0, Ok(Unit::Px)),
             _ => {
                 let token = token.clone();
                 return Err(input.new_unexpected_token_error(token));
             }
         };
 
-        let unit = match unit.parse() {
-            Ok(unit) => unit,
+        let unit = match unit {
             Err(_) => {
                 let token = token.clone();
-                return Err(input.new_unexpected_token_error(token));
+                return Err(input.new_unexpected_token_error(token.clone()));
             }
+            Ok(unit) => unit,
         };
+
         Ok(Quantity { value, unit })
     }
 }
@@ -501,9 +512,11 @@ impl Default for BorderWidth {
 }
 
 impl ComputedValue<BorderWidth> for super::computed::PixelLength {
-    fn from_specified(bw: &BorderWidth, style: &super::computed::ComputedValues) -> Self {
-        use super::computed::PixelLength;
-
+    fn from_specified(
+        bw: &BorderWidth,
+        _computed_font_size: PixelLength,
+        style: &super::computed::ComputedValues,
+    ) -> Self {
         match bw {
             BorderWidth::Thin => PixelLength(1.0),
             BorderWidth::Medium => PixelLength(3.0),
@@ -518,16 +531,24 @@ impl ComputedValue<BorderWidth> for super::computed::PixelLength {
 #[derive(Debug, Copy, Clone, PropertyValue)]
 pub enum FontSize {
     Quantity(Quantity),
+    Percentage(Percentage),
+    Smaller,
+    Larger,
 }
 
 impl ComputedValue<FontSize> for super::computed::PixelLength {
-    fn from_specified(font_size: &FontSize, style: &super::computed::ComputedValues) -> Self {
-        use super::computed::PixelLength;
-
+    fn from_specified(
+        font_size: &FontSize,
+        computed_font_size: PixelLength,
+        style: &super::computed::ComputedValues,
+    ) -> Self {
         match *font_size {
             FontSize::Quantity(Quantity { value, unit }) => {
                 PixelLength::from_val_unit(value, unit, style.font.font_size)
             }
+            FontSize::Percentage(percentage) => percentage.0 * computed_font_size,
+            FontSize::Smaller => 0.8 * computed_font_size,
+            FontSize::Larger => 1.2 * computed_font_size,
         }
     }
 }

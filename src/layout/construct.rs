@@ -224,8 +224,6 @@ impl EntityConstructor {
     }
 
     fn build_text_entity(&mut self, style: ComputedValues, text: &str) -> LayoutEntity {
-        let mut text = text.to_owned();
-        crate::layout::text::whitespace::transform_text(&mut text);
         // TODO: handle error
         let font_selector = FontSelector::from_style(&style);
         let mut font_map = self.world.write_resource::<FontMap>();
@@ -262,7 +260,7 @@ impl EntityConstructor {
             .with(style)
             .with(components::TextRun {
                 font_name,
-                text,
+                text: text.to_owned(),
                 font_size,
                 line_height,
                 baseline,

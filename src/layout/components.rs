@@ -194,7 +194,7 @@ pub enum TextOperator {
     Glyphs(Glyphs),
     KernedGlyphs(Vec<KernedGlyphs>),
     SetWordSpacing(PixelLength),
-    NewLine { leading: PixelLength },
+    NewLine { x_offset: PixelLength, leading: PixelLength },
 }
 
 #[derive(Debug, Default, Clone)]

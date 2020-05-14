@@ -77,11 +77,11 @@ pub struct BreakPoint {
 impl<'a> System<'a> for FindPossibleLineBreaks {
     type SystemData = (
         WriteStorage<'a, InlineFormattingContext>,
-        ReadStorage<'a, components::TextRun>,
+        WriteStorage<'a, components::TextRun>,
         Read<'a, FontMap>,
     );
 
-    fn run(&mut self, (mut inline_formatting_contexts, text_runs, font_map): Self::SystemData) {
+    fn run(&mut self, (mut inline_formatting_contexts, mut text_runs, font_map): Self::SystemData) {
         for InlineFormattingContext {
             elements,
             break_points,
@@ -90,10 +90,20 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
         {
             let mut advance = Px(0.0);
 
-            for (entity, text_run) in elements
-                .iter()
-                .filter_map(|&entity| Some((entity, text_runs.get(entity)?)))
-            {
+            let mut last_whitespace = true;
+            for &entity in elements.iter() {
+                let text_run = match text_runs.get_mut(entity) {
+                    Some(text_run) => text_run,
+                    None => continue,
+                };
+
+                super::text::whitespace::transform_text(&mut text_run.text, last_whitespace);
+                if text_run.text.ends_with(char::is_whitespace) {
+                    last_whitespace = true;
+                } else {
+                    last_whitespace = false;
+                }
+
                 // insert first breakpoint at beginning
                 if break_points.is_empty() {
                     break_points.push(BreakPoint {
@@ -259,7 +269,9 @@ impl<'a> System<'a> for LineBoxCreator {
                 }
 
                 if let Some(next_line) = lines.get(line_num + 1) {
+                    let next_line_pos = *positions.get(next_line.entity).unwrap();
                     ops.push(TextOperator::NewLine {
+                        x_offset: next_line_pos.x - line_pos.x,
                         leading: (line.height - line.baseline) + next_line.baseline,
                     });
                 }

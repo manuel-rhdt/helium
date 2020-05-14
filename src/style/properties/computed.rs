@@ -169,6 +169,7 @@ impl LengthPercentage {
 impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage {
     fn from_specified(
         spec: &super::specified::QuantityOrPercentage,
+        _computed_font_size: PixelLength,
         style: &ComputedValues,
     ) -> Self {
         use super::specified::{Quantity, QuantityOrPercentage};
@@ -219,6 +220,8 @@ impl From<Percentage> for GenericSize {
 impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize {
     fn from_specified(
         spec: &specified::AutoOrQuantityOrPercentage,
+
+        _computed_font_size: PixelLength,
         style: &ComputedValues,
     ) -> Self {
         match spec {
@@ -427,6 +430,7 @@ impl Default for Font {
 #[derive(Debug, Default, Clone)]
 pub struct Text {
     pub white_space: specified::WhiteSpace,
+    pub text_indent: LengthPercentage,
 }
 
 #[derive(Debug, Clone)]
@@ -470,12 +474,16 @@ impl Default for LineHeight {
 }
 
 impl ComputedValue<specified::LineHeight> for LineHeight {
-    fn from_specified(lh: &specified::LineHeight, style: &super::computed::ComputedValues) -> Self {
+    fn from_specified(
+        lh: &specified::LineHeight,
+        _computed_font_size: PixelLength,
+        style: &super::computed::ComputedValues,
+    ) -> Self {
         match lh {
             specified::LineHeight::Normal => LineHeight::Normal,
-            specified::LineHeight::QuantityOrPercentage(qp) => {
-                LineHeight::LengthPercentage(LengthPercentage::from_specified(qp, style))
-            }
+            specified::LineHeight::QuantityOrPercentage(qp) => LineHeight::LengthPercentage(
+                LengthPercentage::from_specified(qp, style.font.font_size, style),
+            ),
         }
     }
 }
