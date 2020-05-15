@@ -3,6 +3,7 @@ pub mod construct;
 pub mod inline;
 pub mod inline_size;
 pub mod normal_formatting;
+mod paginate;
 pub(crate) mod paragraph;
 pub mod text;
 
@@ -12,7 +13,7 @@ use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use construct::FlowConstructor;
 
-use components::EdgeValues;
+use components::{TextList, EdgeValues};
 use specs::{RunNow, World, WorldExt};
 
 pub type FontMap = std::collections::HashMap<String, text::Font>;
@@ -60,6 +61,7 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     break_points_finder.run_now(&layout_context);
 
     // perform the layout passes
+    layout_context.insert(TextList::default());
     let mut block_layout = normal_formatting::BlockLevelLayout {
         page_width,
         page_height,
@@ -67,6 +69,9 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
         world: &layout_context,
     };
     block_layout.run();
+
+    let mut paginator = paginate::Paginator { page_height, margin };
+    paginator.run_now(&layout_context);
 
     let mut line_box_creator = inline::LineBoxCreator;
     line_box_creator.setup(&mut layout_context);

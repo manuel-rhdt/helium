@@ -1,6 +1,6 @@
-use super::components::{self, LayoutEntity, Position};
+use super::components::{self, LayoutEntity, Position, BlockLevelElement};
 use super::inline::InlineFormattingContext;
-use super::normal_formatting::{BlockFormattingContext, BlockLevelElement};
+use super::normal_formatting::BlockFormattingContext;
 use super::FontMap;
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
@@ -305,9 +305,11 @@ impl EntityConstructor {
                 } else {
                     // insert anonymous block level box
                     // see https://www.w3.org/TR/CSS22/visuren.html#anonymous-block-level
-                    block_formatting_context
-                        .elements
-                        .push(BlockLevelElement::Leaf(child_entity));
+                    block_formatting_context.elements.extend_from_slice(&[
+                        BlockLevelElement::ContainerStart(child_entity),
+                        BlockLevelElement::Leaf(child_entity),
+                        BlockLevelElement::ContainerEnd(child_entity),
+                    ]);
                 }
             }
         }

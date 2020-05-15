@@ -2,7 +2,9 @@ use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
 use super::specified::{self, ApplyToComputedValues, BorderStyle, ComputedValue};
-pub use super::specified::{Display, FontFamily, FontStyle, FontWeight, Percentage, TextAlign};
+pub use super::specified::{
+    Display, FontFamily, FontStyle, FontWeight, PageBreak, Percentage, TextAlign,
+};
 
 pub use cssparser::RGBA;
 
@@ -448,6 +450,8 @@ impl Default for Background {
 pub struct Page {
     pub widows: usize,
     pub orphans: usize,
+    pub page_break_after: PageBreak,
+    pub page_break_before: PageBreak,
 }
 
 impl Default for Page {
@@ -455,6 +459,8 @@ impl Default for Page {
         Page {
             widows: 2,
             orphans: 2,
+            page_break_after: PageBreak::Auto,
+            page_break_before: PageBreak::Auto,
         }
     }
 }
@@ -472,15 +478,12 @@ impl Default for LineHeight {
 }
 
 impl ComputedValue<specified::LineHeight> for LineHeight {
-    fn from_specified(
-        lh: &specified::LineHeight,
-        style: &super::computed::ComputedValues,
-    ) -> Self {
+    fn from_specified(lh: &specified::LineHeight, style: &super::computed::ComputedValues) -> Self {
         match lh {
             specified::LineHeight::Normal => LineHeight::Normal,
-            specified::LineHeight::QuantityOrPercentage(qp) => LineHeight::LengthPercentage(
-                LengthPercentage::from_specified(qp, style),
-            ),
+            specified::LineHeight::QuantityOrPercentage(qp) => {
+                LineHeight::LengthPercentage(LengthPercentage::from_specified(qp, style))
+            }
             specified::LineHeight::Number(num) => {
                 LineHeight::LengthPercentage(LengthPercentage::Percentage(Percentage(*num)))
             }

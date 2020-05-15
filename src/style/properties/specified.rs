@@ -98,6 +98,7 @@ pub enum PropertyDeclaration<'a> {
     Box(Box),
     Text(Text),
     Background(Background),
+    Page(Page)
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -277,6 +278,10 @@ pub enum Page {
     Orphans(usize),
     #[property]
     Widows(usize),
+    #[property]
+    PageBreakAfter(PageBreak),
+    #[property]
+    PageBreakBefore(PageBreak),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
@@ -720,4 +725,10 @@ impl Default for FontWeight {
     fn default() -> FontWeight {
         FontWeight::Normal
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum PageBreak {
+    Auto,
+    Always,
 }

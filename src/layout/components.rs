@@ -3,8 +3,8 @@ use specs::{Component, DenseVecStorage, Entity, NullStorage, World};
 
 use super::text::font::GlyphIndex;
 use crate::style::properties::computed::{ComputedValues, PixelLength};
-use lemon_pdf_derive::PdfFormat;
 use lemon_pdf::font::FontUnit;
+use lemon_pdf_derive::PdfFormat;
 
 pub type LayoutContext = World;
 
@@ -194,7 +194,10 @@ pub enum TextOperator {
     Glyphs(Glyphs),
     KernedGlyphs(Vec<KernedGlyphs>),
     SetWordSpacing(PixelLength),
-    NewLine { x_offset: PixelLength, leading: PixelLength },
+    NewLine {
+        x_offset: PixelLength,
+        leading: PixelLength,
+    },
 }
 
 #[derive(Debug, Default, Clone)]
@@ -204,4 +207,26 @@ pub struct Paragraph {
 
 impl Component for Paragraph {
     type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum BlockLevelElement {
+    ContainerStart(Entity),
+    Leaf(Entity),
+    ContainerEnd(Entity),
+}
+
+impl BlockLevelElement {
+    /// Returns the entity associated with the `BlockLevelElement`.
+    pub fn entity(self) -> Entity {
+        use BlockLevelElement::*;
+        match self {
+            ContainerStart(entity) | Leaf(entity) | ContainerEnd(entity) => entity,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TextList {
+    pub list: Vec<BlockLevelElement>,
 }
