@@ -28,7 +28,8 @@ impl<'world> System<'world> for Paginator {
 
         while let Some(elem) = page_state.take_element() {
             let style = computed_values.get(elem.entity());
-            let page_break_before = style.map(|s| s.page.page_break_before);
+            let page_break_before = style.map(|s| s.page.page_break_before).unwrap_or_default();
+            let page_break_after = style.map(|s| s.page.page_break_after).unwrap_or_default();
 
             match elem {
                 BlockLevelElement::ContainerStart(start) => {
@@ -38,7 +39,7 @@ impl<'world> System<'world> for Paginator {
                     page_state.add_content(decoration.padding.top);
 
                     if page_state.vertical_pos() > self.content_height()
-                        || page_break_before == Some(PageBreak::Always)
+                        || page_break_before == PageBreak::Always
                     {
                         page_state.new_page()
                     }
@@ -54,7 +55,9 @@ impl<'world> System<'world> for Paginator {
                     page_state.add_content(decoration.border.bottom);
                     page_state.add_margin(decoration.margin.bottom);
 
-                    if page_state.vertical_pos() > self.content_height() {
+                    if page_state.vertical_pos() > self.content_height()
+                        || page_break_after == PageBreak::Always
+                    {
                         page_state.new_page()
                     }
 

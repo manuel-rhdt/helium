@@ -732,3 +732,9 @@ pub enum PageBreak {
     Auto,
     Always,
 }
+
+impl Default for PageBreak {
+    fn default() -> Self {
+        PageBreak::Auto
+    }
+}
