@@ -26,7 +26,7 @@ impl<'world> System<'world> for Paginator {
     fn run(&mut self, (text_list, mut positions, decorations, computed_values): Self::SystemData) {
         let mut page_state = PageState::new(&text_list.list);
 
-        for elem in page_state.take_element() {
+        while let Some(elem) = page_state.take_element() {
             let style = computed_values.get(elem.entity());
             let page_break_before = style.map(|s| s.page.page_break_before);
 
@@ -57,6 +57,9 @@ impl<'world> System<'world> for Paginator {
                     if page_state.vertical_pos() > self.content_height() {
                         page_state.new_page()
                     }
+
+                    let position = positions.get_mut(end).unwrap();
+                    position.height = page_state.vertical_pos - position.y;
 
                     let container = page_state.in_progress_containers.end_container();
                     assert_eq!(container.unwrap().root_entity, end);

@@ -85,7 +85,8 @@ impl ContainerStack {
 }
 
 pub struct BlockFormatter<'elements, 'data> {
-    layout_state: BlockLayoutState<'elements>,
+    elements: &'elements [BlockLevelElement],
+    container_stack: ContainerStack,
     page_size: (PixelLength, PixelLength),
     page_margin: EdgeValues<PixelLength>,
     world: &'data World,
@@ -103,26 +104,25 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         world: &'data World,
     ) -> Self {
         BlockFormatter {
-            layout_state: BlockLayoutState::new(elements, page_margin.top),
+            elements,
             page_size,
             page_margin,
             world,
             positions: world.write_storage(),
             decorations: world.write_storage(),
             text_list: Write::fetch(world),
+            container_stack: Default::default(),
         }
     }
 
     /// Iterate through the elements of the flow and assigns the leaf positions on the individual
     /// pages.
     fn layout(&mut self) {
-        assert!(self.layout_state.in_progress_containers.is_empty());
         let computed_values = self.world.read_storage::<ComputedValues>();
-        while let Some(element) = self.layout_state.take_element() {
+        for element in self.elements.iter() {
             let style = computed_values.get(element.entity()).unwrap().clone();
-            self.process_element(element, style);
+            self.process_element(*element, style);
         }
-        assert!(self.layout_state.in_progress_containers.is_empty());
     }
 
     // fn change_state(&mut self)
@@ -130,19 +130,11 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     fn process_element(&mut self, element: BlockLevelElement, style: ComputedValues) {
         match element {
             BlockLevelElement::ContainerStart(entity) => {
-                let container = self
-                    .layout_state
-                    .in_progress_containers
-                    .start_container(entity);
+                let container = self.container_stack.start_container(entity);
                 self.start_container_fragment(container.root_entity, style);
             }
             BlockLevelElement::Leaf(leaf) => {
-                let container = self
-                    .layout_state
-                    .in_progress_containers
-                    .stack
-                    .last()
-                    .unwrap();
+                let container = self.container_stack.stack.last().unwrap();
                 assert_eq!(container.root_entity, leaf);
                 let pos = *self.positions.get(container.root_entity).unwrap();
 
@@ -158,8 +150,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             }
             BlockLevelElement::ContainerEnd(entity) => {
                 let container = self
-                    .layout_state
-                    .in_progress_containers
+                    .container_stack
                     .end_container()
                     .expect("Internal Error");
                 assert_eq!(container.root_entity, entity);
@@ -170,21 +161,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
     fn start_container_fragment(&mut self, fragment: Entity, style: ComputedValues) {
         let container_pos = self.parent_container_pos();
-        let mut dimensions = compute_element_dimensions(container_pos.width, &style);
-
-        let deco = &mut dimensions.decoration;
-
-        self.layout_state.add_margin(deco.margin.top);
-        self.layout_state.add_content(deco.border.top);
-        self.layout_state.add_content(deco.padding.top);
+        let dimensions = compute_element_dimensions(container_pos.width, &style);
 
         let position = Position {
             x: container_pos.x + dimensions.inline_offset(),
-            y: self.layout_state.vertical_pos(),
+            y: PixelLength(0.0),
             width: dimensions.inline_size,
             height: PixelLength(0.0),
             z: self.z_index(),
-            page: self.layout_state.page_num,
+            page: 0,
         };
 
         self.positions.insert(fragment, position).unwrap();
@@ -204,25 +189,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     /// - `page_end`: if true this function assumes that the fragment should end abruptly (without
     ///    adding bottom padding and border)
     fn end_container_fragment(&mut self, fragment: Entity) {
-        if let Some(position) = self.positions.get_mut(fragment) {
-            position.height = self.layout_state.vertical_pos() - position.y;
-        }
-
-        if let Some(deco) = self.decorations.get_mut(fragment) {
-            self.layout_state.add_content(deco.padding.bottom);
-            self.layout_state.add_content(deco.border.bottom);
-            self.layout_state.add_margin(deco.margin.bottom);
-        }
-
         self.text_list
             .list
             .push(BlockLevelElement::ContainerEnd(fragment));
     }
 
     fn parent_container(&self) -> Option<ContainerData> {
-        let num_cont = self.layout_state.in_progress_containers.len();
+        let num_cont = self.container_stack.len();
         if num_cont >= 2 {
-            Some(self.layout_state.in_progress_containers.stack[num_cont - 2])
+            Some(self.container_stack.stack[num_cont - 2])
         } else {
             None
         }
@@ -241,13 +216,13 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 width: self.page_size.0 - self.page_margin.left - self.page_margin.right,
                 height: PixelLength(0.0),
                 z: Default::default(),
-                page: self.layout_state.page_num,
+                page: 0,
             }
         }
     }
 
     fn z_index(&self) -> ZIndex {
-        ZIndex(self.layout_state.in_progress_containers.len() as i64)
+        ZIndex(self.container_stack.len() as i64)
     }
 
     fn layout_inline_formatting_context(
@@ -323,16 +298,17 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
             let pos = Position {
                 x,
-                y: self.layout_state.vertical_pos(),
+                y: PixelLength(0.0),
                 width,
                 height: line.height,
                 z: self.z_index(),
-                page: self.layout_state.page_num,
+                page: 0,
             };
             self.positions.insert(line.entity, pos).unwrap();
 
-            self.layout_state.add_content(line.height);
-            self.text_list.list.push(BlockLevelElement::Leaf(line.entity));
+            self.text_list
+                .list
+                .push(BlockLevelElement::Leaf(line.entity));
         }
     }
 }
@@ -345,68 +321,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ContainerData {
     pub root_entity: Entity,
-}
-
-/// Contains state of the vertical layout process.
-///
-/// Its responsibilities include
-/// * managing margin collapsing
-#[derive(Debug, Clone, Default)]
-struct BlockLayoutState<'elements> {
-    in_progress_containers: ContainerStack,
-    /// The slice of elements that have to be processed.
-    elements: &'elements [BlockLevelElement],
-    page_num: usize,
-    vertical_pos: PixelLength,
-    /// Contains `Some(margin)` if the previous space was a margin.
-    collapse_margin: Option<PixelLength>,
-    is_at_page_start: bool,
-}
-
-impl<'elements> BlockLayoutState<'elements> {
-    fn new(elements: &'elements [BlockLevelElement], margin_top: PixelLength) -> Self {
-        BlockLayoutState {
-            is_at_page_start: true,
-            vertical_pos: margin_top,
-            elements,
-            ..Default::default()
-        }
-    }
-
-    fn take_element(&mut self) -> Option<BlockLevelElement> {
-        let (&first, remaining) = self.elements.split_first()?;
-        self.elements = remaining;
-        Some(first)
-    }
-
-    fn add_content(&mut self, content: PixelLength) {
-        self.is_at_page_start = false;
-        if content == PixelLength(0.0) {
-            return;
-        }
-        self.collapse_margin = None;
-        self.vertical_pos += content;
-    }
-
-    fn add_margin(&mut self, margin: PixelLength) {
-        self.is_at_page_start = false;
-        if margin == PixelLength(0.0) {
-            return;
-        }
-        if let Some(prev_margin) = self.collapse_margin {
-            let margin = prev_margin.max(margin);
-            self.collapse_margin = Some(margin);
-            let additional_margin = margin - prev_margin;
-            self.vertical_pos += additional_margin;
-        } else {
-            self.collapse_margin = Some(margin);
-            self.vertical_pos += margin;
-        }
-    }
-
-    fn vertical_pos(&self) -> PixelLength {
-        self.vertical_pos
-    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
