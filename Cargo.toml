@@ -10,7 +10,7 @@ derive_more = "^0.99"
 font-kit = "0.7.0"
 html5ever = "0.25.1"
 log = "0.4.6"
-simple_logger = "1.3.0"
+simple_logger = "^1.6.0"
 cssparser = "0.27.2"
 selectors = "0.22.0"
 specs = { version = "0.16.0", features = ["shred-derive", "specs-derive"] }

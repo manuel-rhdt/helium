@@ -1,4 +1,4 @@
-use super::components::{self, LayoutEntity, Position, BlockLevelElement};
+use super::components::{self, BlockLevelElement, LayoutEntity, MathExpression, Position};
 use super::inline::InlineFormattingContext;
 use super::normal_formatting::BlockFormattingContext;
 use super::FontMap;
@@ -9,7 +9,9 @@ use crate::traverse::Traversal;
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
+use math_render::{mathmlparser, Field};
 use specs::{Builder, World, WorldExt};
+
 use std::collections::HashMap;
 
 /// tracks state while traversing the html document and builds a flow tree.
@@ -170,6 +172,7 @@ impl FontSelector {
 
 pub struct EntityConstructor {
     font_match_cache: HashMap<FontSelector, String>,
+    mathml_context: Option<mathmlparser::ParseContext>,
     pub world: World,
 }
 
@@ -187,10 +190,12 @@ impl EntityConstructor {
         world.register::<Position>();
         world.register::<components::TextRun>();
         world.register::<components::Decoration>();
+        world.register::<MathExpression>();
         world.insert(FontMap::new());
         EntityConstructor {
             world,
             font_match_cache: Default::default(),
+            mathml_context: None,
         }
     }
 
@@ -204,7 +209,13 @@ impl EntityConstructor {
         }
 
         let entity = match node.html_data() {
-            ParsedData::Element(_) => self.build_default_entity(style),
+            ParsedData::Element(element_data) => {
+                if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
+                    self.mathml_context = Some(mathmlparser::ParseContext::default());
+                }
+
+                self.build_default_entity(style)
+            }
             ParsedData::Document(_) => self.build_root_entity(),
             ParsedData::Text(string) => self.build_text_entity(style, &string.borrow()),
             _ => self.build_default_entity(style),
@@ -273,6 +284,11 @@ impl EntityConstructor {
     // computed styles) whether to build a block formatting context or an inline formatting
     // context.
     pub fn build_formatting_context<'a, Node: AbstractNode<'a>>(&mut self, node: &'a Node) {
+        if self.mathml_context.is_some() {
+            self.build_math_expression(node);
+            return
+        }
+
         let is_display_inline = |node: Node| match node.style().box_.display {
             Display::Inline => true,
             _ => false,
@@ -362,6 +378,57 @@ impl EntityConstructor {
                     .insert(self_entity, inline_formatting_context)
                     .unwrap();
             }
+        }
+    }
+
+    // called on bottom-up traversal
+    fn build_math_expression<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+        match node.html_data() {
+            ParsedData::Element(element_data) => {
+                let elem =
+                    mathmlparser::match_math_element(element_data.name.local.as_ref().as_bytes())
+                        .unwrap();
+
+                let attributes = element_data.attributes.borrow();
+                let attr_iter = attributes.values().map(|attr| {
+                    let name = attr.name.local.as_ref();
+                    let value = attr.value.as_ref();
+                    (name, value)
+                });
+
+                let world = &mut self.world;
+                let children = node.children().filter_map(|child| {
+                    if let ParsedData::Text(string) = child.html_data() {
+                        let field = Field::Unicode(string.borrow().clone());
+                        return Some(mathmlparser::Child::Field(field));
+                    }
+                    let LayoutEntity(entity) = child.layout_entity().unwrap();
+                    if let Some(MathExpression(inner)) =
+                        world.write_storage::<MathExpression>().remove(entity)
+                    {
+                        Some(mathmlparser::Child::Expression(inner))
+                    } else {
+                        None
+                    }
+                });
+
+                let expr = mathmlparser::build_element(
+                    elem,
+                    attr_iter,
+                    children,
+                    self.mathml_context.as_mut().unwrap(),
+                );
+
+                world
+                    .write_storage()
+                    .insert(node.layout_entity().unwrap().0, MathExpression(expr))
+                    .unwrap();
+
+                if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
+                    self.mathml_context = None;
+                }
+            }
+            _ => {},
         }
     }
 }

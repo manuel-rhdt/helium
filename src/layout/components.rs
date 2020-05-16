@@ -230,3 +230,9 @@ impl BlockLevelElement {
 pub struct TextList {
     pub list: Vec<BlockLevelElement>,
 }
+
+pub struct MathExpression(pub math_render::MathExpression);
+
+impl Component for MathExpression {
+    type Storage = DenseVecStorage<Self>;
+}
