@@ -78,15 +78,6 @@ impl selectors::Element for ElementRef {
     }
 
     #[inline]
-    fn local_name(&self) -> &LocalName {
-        &self.name.local
-    }
-    #[inline]
-    fn namespace(&self) -> &Namespace {
-        &self.name.ns
-    }
-
-    #[inline]
     fn is_link(&self) -> bool {
         self.name.ns == ns!(html)
             && (self.name.local == local_name!("a")
@@ -179,5 +170,26 @@ impl selectors::Element for ElementRef {
                     ))
             }
         }
+    }
+    fn is_pseudo_element(&self) -> bool {
+        false
+    }
+    fn has_local_name(&self, local_name: &LocalName) -> bool {
+        &self.name.local == local_name
+    }
+    fn has_namespace(&self, ns: &Namespace) -> bool {
+        &self.name.ns == ns
+    }
+    fn is_same_type(&self, _other: &Self) -> bool {
+        false
+    }
+    fn exported_part(&self, _name: &LocalName) -> Option<LocalName> {
+        todo!()
+    }
+    fn imported_part(&self, _name: &LocalName) -> Option<LocalName> {
+        todo!()
+    }
+    fn is_part(&self, _name: &LocalName) -> bool {
+        false
     }
 }

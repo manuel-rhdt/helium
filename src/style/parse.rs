@@ -223,6 +223,7 @@ impl SelectorImpl for Selectors {
     type PseudoElement = PseudoElement;
 
     type ExtraMatchingData = ();
+    type PartName = LocalName;
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -247,6 +248,12 @@ impl NonTSPseudoClass for PseudoClass {
             PseudoClass::Active | PseudoClass::Hover => true,
             _ => false,
         }
+    }
+    fn is_user_action_state(&self) -> bool {
+        false
+    }
+    fn has_zero_specificity(&self) -> bool {
+        false
     }
 }
 

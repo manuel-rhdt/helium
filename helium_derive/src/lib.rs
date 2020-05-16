@@ -6,7 +6,7 @@ use inflector::cases::kebabcase::to_kebab_case;
 use inflector::cases::pascalcase::to_pascal_case;
 use inflector::cases::snakecase::to_snake_case;
 use proc_macro2::{Ident, Span};
-use quote::{quote, quote_spanned};
+use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{Data, DataEnum, Field, Fields, FieldsUnnamed, LitStr, Variant};
 
@@ -38,17 +38,16 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
         .filter_map(
             |attr| match attr.parse_meta().expect("Could not parse attribute") {
                 syn::Meta::NameValue(syn::MetaNameValue {
-                    ident,
+                    path,
                     lit: syn::Lit::Str(lit),
                     ..
-                }) => {
-                    if ident == "computed" {
+                }) => match path.get_ident() {
+                    Some(ident) if ident == "computed" => {
                         let tp = lit.parse::<syn::Type>().expect("Could not parse type");
                         Some(quote! { #tp })
-                    } else {
-                        None
                     }
-                }
+                    _ => None,
+                },
                 _ => None,
             },
         )
@@ -63,7 +62,7 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
     let mut property_cases = vec![];
 
     let if_clauses = variants.into_iter().map(|Variant { ident, fields, attrs, .. }| {
-        let is_property = attrs.iter().any(|attr| attr.parse_meta().unwrap().name() == "property");
+        let is_property = attrs.iter().any(|attr| attr.parse_meta().unwrap().path().get_ident().unwrap() == "property");
 
         let parser_ty = match fields {
             Fields::Unnamed(FieldsUnnamed { unnamed, .. }) =>  {
@@ -159,7 +158,7 @@ fn parse_shorthands(attrs: &[syn::Attribute]) -> Vec<Shorthand> {
         .iter()
         .filter_map(|attr| {
             let meta = attr.parse_meta().unwrap();
-            if meta.name() == "shorthand" {
+            if meta.path().get_ident().unwrap() == "shorthand" {
                 Some(meta)
             } else {
                 None
@@ -169,7 +168,7 @@ fn parse_shorthands(attrs: &[syn::Attribute]) -> Vec<Shorthand> {
             syn::Meta::List(syn::MetaList { nested, .. }) => {
                 let mut iter = nested.iter();
                 let property_name =
-                    if let Some(syn::NestedMeta::Literal(syn::Lit::Str(str_lit))) = iter.next() {
+                    if let Some(syn::NestedMeta::Lit(syn::Lit::Str(str_lit))) = iter.next() {
                         str_lit.clone()
                     } else {
                         panic!("invalid property name")
@@ -178,15 +177,15 @@ fn parse_shorthands(attrs: &[syn::Attribute]) -> Vec<Shorthand> {
                 let span;
                 let method_name = match iter.next() {
                     Some(syn::NestedMeta::Meta(syn::Meta::NameValue(name_value))) => {
-                        assert!(name_value.ident == "method");
+                        assert!(name_value.path.get_ident().unwrap() == "method");
                         span = name_value.span();
                         if let syn::Lit::Str(str_lit) = &name_value.lit {
                             str_lit.parse().expect("Could not parse method name")
                         } else {
-                            panic!("invalid method name {:?}", name_value.lit)
+                            panic!("invalid method name {:?}", name_value.lit.to_token_stream())
                         }
                     }
-                    other => panic!("invalid method name {:?}", other),
+                    other => panic!("invalid method name {:?}", other.to_token_stream()),
                 };
 
                 Shorthand {
@@ -207,7 +206,7 @@ fn parse_spec(attrs: &[syn::Attribute]) -> Option<String> {
         .iter()
         .filter_map(|attr| {
             let meta = attr.parse_meta().unwrap();
-            if meta.name() == "spec" {
+            if meta.path().get_ident().unwrap() == "spec" {
                 Some(meta)
             } else {
                 None
@@ -221,7 +220,7 @@ fn parse_spec(attrs: &[syn::Attribute]) -> Option<String> {
                 .next()
                 .expect("#[spec] expects a string literal")
             {
-                syn::NestedMeta::Literal(syn::Lit::Str(str_lit)) => str_lit.value(),
+                syn::NestedMeta::Lit(syn::Lit::Str(str_lit)) => str_lit.value(),
                 _ => panic!("#[spec] expects a string literal"),
             }
         }

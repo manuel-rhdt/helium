@@ -8,12 +8,12 @@ edition = "2018"
 structopt = "0.2.18"
 derive_more = "^0.99"
 font-kit = "0.7.0"
-html5ever = "0.23.0"
+html5ever = "0.25.1"
 log = "0.4.6"
 simple_logger = "1.3.0"
-cssparser = "0.25.6"
-selectors = "0.21.0"
-specs = { version = "0.15.0", features = ["shred-derive", "specs-derive"] }
+cssparser = "0.27.2"
+selectors = "0.22.0"
+specs = { version = "0.16.0", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
@@ -21,9 +21,10 @@ font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
 arrayvec = "^0.5"
 harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
 parking_lot = "0.10.2"
+math-render = { git = "https://github.com/manuel-rhdt/mlayout" }
 
 [dev-dependencies]
-assert_cmd = "0.11.1"
+assert_cmd = "^1"
 predicates = "1.0.1"
 quickcheck = "0.8.5"
 quickcheck_macros = "0.8.0"
