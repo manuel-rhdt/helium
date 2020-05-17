@@ -117,7 +117,9 @@ impl LayoutMathGlyphs {
                         x + scale(x_glyph_offset),
                         y + scale(y_glyph_offset),
                     );
-                    para.ops.push(TextOperator::SetTransform(translate));
+                    let transform = translate
+                        .inv_apply(TransformMatrix::uniform_scale(glyph.scale.as_scale_mult()));
+                    para.ops.push(TextOperator::SetTransform(transform));
                     let glyph_index = GlyphIndex(glyph.glyph_code);
                     let _ = font.advance(glyph_index);
                     let op = TextOperator::Glyphs(Glyphs(vec![glyph_index]));
@@ -169,7 +171,7 @@ impl<'world> System<'world> for LayoutMathGlyphs {
             ));
             let scale = |val| val as f32 / font.upem() as f32 * math_box.font_size;
             self.generate_elements(
-                dbg!(&math_box.math_box),
+                &math_box.math_box,
                 &mut para,
                 &mut vg,
                 font,

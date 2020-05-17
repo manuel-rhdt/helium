@@ -199,15 +199,48 @@ pub struct TransformMatrix {
 }
 
 impl TransformMatrix {
-    pub fn translation(e: PixelLength, f: PixelLength) -> Self {
+    pub fn identity() -> Self {
         TransformMatrix {
             a: 1.0,
             b: 0.0,
             c: 0.0,
             d: 1.0,
+            e: PixelLength(0.0),
+            f: PixelLength(0.0),
+        }
+    }
+
+    pub fn translation(e: PixelLength, f: PixelLength) -> Self {
+        TransformMatrix {
             e,
             f,
+            ..TransformMatrix::identity()
         }
+    }
+
+    pub fn uniform_scale(scale: f32) -> Self {
+        TransformMatrix {
+            a: scale,
+            b: 0.0,
+            c: 0.0,
+            d: scale,
+            ..TransformMatrix::identity()
+        }
+    }
+
+    pub fn apply(self, other: TransformMatrix) -> TransformMatrix {
+        TransformMatrix {
+            a: self.a * other.a + self.b * other.c,
+            b: self.a * other.b + self.b * other.d,
+            c: self.c * other.a + self.d * other.c,
+            d: self.c * other.b + self.d * other.d,
+            e: self.e * other.a + self.f * other.c + other.e,
+            f: self.e * other.b + self.f * other.d + other.f,
+        }
+    }
+
+    pub fn inv_apply(self, other: TransformMatrix) -> TransformMatrix {
+        other.apply(self)
     }
 }
 
