@@ -1,7 +1,7 @@
 use super::components::{self, BlockLevelElement, LayoutEntity, MathExpression, Position};
 use super::inline::InlineFormattingContext;
 use super::normal_formatting::BlockFormattingContext;
-use super::FontMap;
+use super::{text::Font, FontMap};
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
 use crate::style::properties::computed::{ComputedValues, Display, LineHeight, StyleBuilder};
@@ -199,6 +199,23 @@ impl EntityConstructor {
         }
     }
 
+    fn match_font(&mut self, style: &ComputedValues) -> Font {
+        // TODO: handle error
+        let font_selector = FontSelector::from_style(&style);
+        let mut font_map = self.world.write_resource::<FontMap>();
+        let font_name = self
+            .font_match_cache
+            .entry(font_selector)
+            .or_insert_with(|| {
+                let font = crate::layout::text::font::match_font(&style)
+                    .expect("Could not find any matching fonts.");
+                let font_name = font.postscript_name();
+                font_map.insert(font_name.clone(), font);
+                font_name
+            });
+        font_map[font_name].clone()
+    }
+
     // Called on top-down traversal. Takes a node and its style to create a corresponding
     // `LayoutEntity`, and assigns the entity to the node.
     pub fn build_entity<'a>(&mut self, mut node: impl AbstractNode<'a>) {
@@ -235,21 +252,8 @@ impl EntityConstructor {
     }
 
     fn build_text_entity(&mut self, style: ComputedValues, text: &str) -> LayoutEntity {
-        // TODO: handle error
-        let font_selector = FontSelector::from_style(&style);
-        let mut font_map = self.world.write_resource::<FontMap>();
-        let font_name = self
-            .font_match_cache
-            .entry(font_selector)
-            .or_insert_with(|| {
-                let font = crate::layout::text::font::match_font(&style)
-                    .expect("Could not find any matching fonts.");
-                let font_name = font.postscript_name();
-                font_map.insert(font_name.clone(), font);
-                font_name
-            })
-            .clone();
-        let font = &font_map[&font_name];
+        let font = self.match_font(&style);
+        let font_name = font.postscript_name();
 
         // let font = crate::layout::text::font::match_font(&style)
         //     .expect("Could not find any matching fonts.");
@@ -263,8 +267,6 @@ impl EntityConstructor {
         let line_gap = line_height - font_height;
         let baseline = font.scale_to_px(font.ascent(), font_size) + line_gap / 2.0;
 
-        // needed for borrow checker
-        std::mem::drop(font_map);
         let entity = self
             .world
             .create_entity()
@@ -286,7 +288,7 @@ impl EntityConstructor {
     pub fn build_formatting_context<'a, Node: AbstractNode<'a>>(&mut self, node: &'a Node) {
         if self.mathml_context.is_some() {
             self.build_math_expression(node);
-            return
+            return;
         }
 
         let is_display_inline = |node: Node| match node.style().box_.display {
@@ -383,11 +385,16 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_math_expression<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+        let LayoutEntity(entity) = node.layout_entity().unwrap();
+        let style = node.style();
+        let font = self.match_font(&style);
+        let font_name = font.postscript_name();
+
         match node.html_data() {
             ParsedData::Element(element_data) => {
                 let elem =
                     mathmlparser::match_math_element(element_data.name.local.as_ref().as_bytes())
-                        .unwrap();
+                        .unwrap_or_default();
 
                 let attributes = element_data.attributes.borrow();
                 let attr_iter = attributes.values().map(|attr| {
@@ -403,32 +410,39 @@ impl EntityConstructor {
                         return Some(mathmlparser::Child::Field(field));
                     }
                     let LayoutEntity(entity) = child.layout_entity().unwrap();
-                    if let Some(MathExpression(inner)) =
+                    if let Some(MathExpression { expression, .. }) =
                         world.write_storage::<MathExpression>().remove(entity)
                     {
-                        Some(mathmlparser::Child::Expression(inner))
+                        Some(mathmlparser::Child::Expression(expression))
                     } else {
                         None
                     }
                 });
 
-                let expr = mathmlparser::build_element(
+                let expression = mathmlparser::build_element(
                     elem,
                     attr_iter,
                     children,
                     self.mathml_context.as_mut().unwrap(),
+                    entity.id() as u64,
                 );
 
                 world
                     .write_storage()
-                    .insert(node.layout_entity().unwrap().0, MathExpression(expr))
+                    .insert(
+                        node.layout_entity().unwrap().0,
+                        MathExpression {
+                            expression,
+                            font_name,
+                        },
+                    )
                     .unwrap();
 
                 if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
                     self.mathml_context = None;
                 }
             }
-            _ => {},
+            _ => {}
         }
     }
 }

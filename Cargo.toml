@@ -21,7 +21,7 @@ font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
 arrayvec = "^0.5"
 harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
 parking_lot = "0.10.2"
-math-render = { git = "https://github.com/manuel-rhdt/mlayout" }
+math-render = { path = "../rust-math-render" }#, git = "https://github.com/manuel-rhdt/mlayout" }
 
 [dev-dependencies]
 assert_cmd = "^1"

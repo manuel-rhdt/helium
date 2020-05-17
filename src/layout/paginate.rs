@@ -70,12 +70,13 @@ impl<'world> System<'world> for Paginator {
                 BlockLevelElement::Leaf(leaf) => {
                     let position = positions.get_mut(leaf).unwrap();
 
+                    position.y = self.margin.top + page_state.vertical_pos;
                     page_state.add_content(position.height);
                     if page_state.vertical_pos() > self.content_height() {
-                        page_state.new_page()
+                        page_state.new_page();
+                        position.y = self.margin.top + page_state.vertical_pos;
                     }
 
-                    position.y = self.margin.top + page_state.vertical_pos;
                     position.page = page_state.page_num;
                 }
             };

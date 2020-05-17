@@ -1,6 +1,6 @@
 use harfbuzz_rs::{
     shape as hb_shape, Blob, ClusterLevel, Face as HbFace, Font as HbFont,
-    GlyphInfo as HbGlyphInfo, Owned, UnicodeBuffer,
+    GlyphInfo as HbGlyphInfo, Owned, UnicodeBuffer, Shared,
 };
 
 use font_kit::handle::Handle;
@@ -9,6 +9,8 @@ use super::{
     font::{FontUnit, GlyphIndex},
     Font,
 };
+
+pub type HarfbuzzFont = Shared<HbFont<'static>>;
 
 #[derive(Debug, Copy, Clone)]
 pub struct GlyphInfo {

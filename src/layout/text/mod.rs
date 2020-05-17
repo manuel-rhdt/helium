@@ -8,6 +8,6 @@ pub use builtin::{
     InlineFragment, InlineFragmentIterator, InlineFragmentIteratorState, LineIsFullError,
 };
 pub use font::Font;
-pub use shape::shape;
+pub use shape::{shape, HarfbuzzFont};
 
 pub trait FontLike {}

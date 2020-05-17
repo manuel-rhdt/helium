@@ -188,12 +188,36 @@ pub enum KernedGlyphs {
     Kern(FontUnit),
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct TransformMatrix {
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+    pub d: f32,
+    pub e: PixelLength,
+    pub f: PixelLength,
+}
+
+impl TransformMatrix {
+    pub fn translation(e: PixelLength, f: PixelLength) -> Self {
+        TransformMatrix {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e,
+            f,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum TextOperator {
     SetFont(String, PixelLength),
     Glyphs(Glyphs),
     KernedGlyphs(Vec<KernedGlyphs>),
     SetWordSpacing(PixelLength),
+    SetTransform(TransformMatrix),
     NewLine {
         x_offset: PixelLength,
         leading: PixelLength,
@@ -231,8 +255,43 @@ pub struct TextList {
     pub list: Vec<BlockLevelElement>,
 }
 
-pub struct MathExpression(pub math_render::MathExpression);
+#[derive(Debug, Clone)]
+pub struct MathExpression {
+    pub expression: math_render::MathExpression,
+    pub font_name: String,
+}
 
 impl Component for MathExpression {
     type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Debug)]
+pub struct MathBox {
+    pub math_box: math_render::math_box::MathBox,
+    pub font_name: String,
+    pub font_size: PixelLength,
+}
+
+impl Component for MathBox {
+    type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Debug, Default)]
+pub struct VectorGraphics {
+    pub ops: Vec<GraphicsOp>,
+}
+
+impl Component for VectorGraphics {
+    type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Debug)]
+pub enum GraphicsOp {
+    Line {
+        from_x: PixelLength,
+        from_y: PixelLength,
+        to_x: PixelLength,
+        to_y: PixelLength,
+        thickness: PixelLength,
+    },
 }

@@ -6,6 +6,7 @@ pub mod normal_formatting;
 mod paginate;
 pub(crate) mod paragraph;
 pub mod text;
+mod mathml;
 
 use crate::layout::components::LayoutContext;
 use crate::style::{device::Device, properties::computed::StyleBuilder};
@@ -57,6 +58,10 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
 
     let mut layout_context = flow_constructor.layout_context();
 
+    let mut math_renderer = mathml::MathFormat {};
+    math_renderer.setup(&mut layout_context);
+    math_renderer.run_now(&layout_context);
+
     let mut break_points_finder = inline::FindPossibleLineBreaks;
     break_points_finder.run_now(&layout_context);
 
@@ -73,9 +78,15 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     let mut paginator = paginate::Paginator { page_height, margin };
     paginator.run_now(&layout_context);
 
+    // at this point the positions of all elements are fixed and should not be changed anymore
+
     let mut line_box_creator = inline::LineBoxCreator;
     line_box_creator.setup(&mut layout_context);
     line_box_creator.run_now(&layout_context);
+
+    let mut math_layout = mathml::LayoutMathGlyphs {};
+    math_layout.setup(&mut layout_context);
+    math_layout.run_now(&layout_context);
 
     let mut pages_create = normal_formatting::PagesCreate {
         page_width,

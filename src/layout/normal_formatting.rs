@@ -146,6 +146,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                         pos.x,
                         pos.width,
                     );
+                } else if self.positions.contains(leaf) {
+                    self.text_list.list.push(BlockLevelElement::Leaf(leaf))
                 }
             }
             BlockLevelElement::ContainerEnd(entity) => {
@@ -163,16 +165,22 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let container_pos = self.parent_container_pos();
         let dimensions = compute_element_dimensions(container_pos.width, &style);
 
-        let position = Position {
-            x: container_pos.x + dimensions.inline_offset(),
-            y: PixelLength(0.0),
-            width: dimensions.inline_size,
-            height: PixelLength(0.0),
-            z: self.z_index(),
-            page: 0,
-        };
+        let z = self.z_index();
+        let position = self
+            .positions
+            .entry(fragment)
+            .unwrap()
+            .or_insert_with(|| Position {
+                x: container_pos.x + dimensions.inline_offset(),
+                y: PixelLength(0.0),
+                width: dimensions.inline_size,
+                height: PixelLength(0.0),
+                z,
+                page: 0,
+            });
+        position.x = container_pos.x + dimensions.inline_offset();
+        position.z = z;
 
-        self.positions.insert(fragment, position).unwrap();
         self.decorations
             .insert(fragment, dimensions.decoration)
             .unwrap();

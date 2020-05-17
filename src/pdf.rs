@@ -158,6 +158,20 @@ pub fn write_pdf(print_pages: PrintPages, no_filter: bool) -> Result<(), Error> 
                                     page_context.push_operand(Pt::from(spacing))?;
                                     page_context.apply_operator("Tw")?;
                                 }
+                                &TextOperator::SetTransform(matrix) => {
+                                    let matrix: [f32; 6] = [
+                                        matrix.a,
+                                        matrix.b,
+                                        matrix.c,
+                                        matrix.d,
+                                        Pt::from(matrix.e).0 as f32,
+                                        Pt::from(page_height - matrix.f).0 as f32,
+                                    ];
+                                    for elem in &matrix {
+                                        page_context.push_operand(*elem)?;
+                                    }
+                                    page_context.apply_operator("Tm")?;
+                                }
                             }
                         }
 

@@ -1,4 +1,7 @@
-pub use super::builtin::{BuiltInFont, FontUnit};
+pub use super::{
+    builtin::{BuiltInFont, FontUnit},
+    HarfbuzzFont,
+};
 
 use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, PixelLength,
@@ -7,8 +10,9 @@ use crate::style::properties::computed::{
 use font_kit;
 use font_kit::family_name::FamilyName;
 use font_kit::properties::Properties;
-use font_kit::source::SystemSource;
+use font_kit::{handle::Handle, source::SystemSource};
 
+use harfbuzz_rs::{Blob, Face as HbFace, Font as HbFont};
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::BTreeMap;
 
@@ -25,6 +29,7 @@ pub struct Font {
     pub(crate) upem: u32,
     pub(crate) glyph_advances: Mutex<BTreeMap<GlyphIndex, FontUnit>>,
     pub(crate) to_unicode: Mutex<BTreeMap<GlyphIndex, String>>,
+    pub(crate) hb_font: HarfbuzzFont,
     pub(crate) font_data: FontData,
 }
 
@@ -35,6 +40,7 @@ impl Clone for Font {
             glyph_advances: Mutex::new(self.glyph_advances.lock().clone()),
             to_unicode: Mutex::new(self.to_unicode.lock().clone()),
             font_data: self.font_data.clone(),
+            hb_font: self.hb_font.clone(),
         }
     }
 }
@@ -56,9 +62,19 @@ impl Font {
 
     fn external(val: font_kit::font::Font) -> Self {
         let upem = val.metrics().units_per_em;
+        let font_bytes = val.copy_font_data().unwrap();
+        let handle = val.handle().unwrap();
+        let index = match handle {
+            Handle::Memory { font_index, .. } => font_index,
+            Handle::Path { font_index, .. } => font_index,
+        };
+        let blob = Blob::with_bytes_owned(font_bytes, |b| &*b);
+        let face = HbFace::new(blob, index);
+        let hb_font = HbFont::new(face).into();
         Font {
             upem,
             font_data: FontData::External(val),
+            hb_font,
             ..Default::default()
         }
     }
@@ -93,9 +109,7 @@ impl Font {
                     .unwrap()
                     .advance_width
             }
-            FontData::External(font) => {
-                scale_ext(self.upem, font.advance(glyph.0).unwrap().x())
-            }
+            FontData::External(font) => scale_ext(self.upem, font.advance(glyph.0).unwrap().x()),
         };
         self.glyph_advances.lock().insert(glyph, result);
         result
@@ -135,6 +149,7 @@ impl Default for Font {
             glyph_advances: Mutex::new(BTreeMap::new()),
             to_unicode: Default::default(),
             font_data: FontData::BuiltIn(BuiltInFont::Helvetica),
+            hb_font: HarfbuzzFont::default(),
         }
     }
 }

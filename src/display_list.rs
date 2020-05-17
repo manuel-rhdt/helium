@@ -1,4 +1,6 @@
-use crate::layout::components::{Decoration, Glyphs, Paragraph, Position, ZIndex};
+use crate::layout::components::{
+    Decoration, Glyphs, GraphicsOp, Paragraph, Position, VectorGraphics, ZIndex,
+};
 use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{PixelLength, RGBA};
 
@@ -225,6 +227,43 @@ impl<'a> System<'a> for DisplayText {
     }
 }
 
+pub struct DisplayVectorGraphics {
+    pub display_list: DisplayList,
+    pub bitset: specs::BitSet,
+}
+
+impl<'a> System<'a> for DisplayVectorGraphics {
+    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, VectorGraphics>);
+
+    fn run(&mut self, (positions, vector_graphics): Self::SystemData) {
+        for (pos, vector_graphic, _) in (&positions, &vector_graphics, &self.bitset).join() {
+            for op in &vector_graphic.ops {
+                match op {
+                    GraphicsOp::Line {
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        thickness,
+                    } => self.display_list.append(
+                        DisplayItem::LineString {
+                            points: vec![
+                                Point {
+                                    x: *from_x,
+                                    y: *from_y,
+                                },
+                                Point { x: *to_x, y: *to_y },
+                            ],
+                            line_width: *thickness,
+                        },
+                        pos.z,
+                    ),
+                }
+            }
+        }
+    }
+}
+
 pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
     <DisplayText as System>::SystemData::setup(world);
 
@@ -244,6 +283,15 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
 
         let display_list = decorations_builder.display_list;
         let bitset = decorations_builder.bitset;
+
+        let mut graphics_builder = DisplayVectorGraphics {
+            display_list,
+            bitset,
+        };
+        graphics_builder.run_now(world);
+
+        let display_list = graphics_builder.display_list;
+        let bitset = graphics_builder.bitset;
 
         let mut text_builder = DisplayText {
             display_list,
