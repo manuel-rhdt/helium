@@ -290,8 +290,12 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         ifm.lines = break_point_sequence
             .windows(2)
             .map(|window| {
-                let (baseline, height) =
-                    ifm.line_height(window[0], window[1], self.world.read_storage());
+                let (baseline, height) = ifm.line_height(
+                    window[0],
+                    window[1],
+                    self.world.read_storage(),
+                    self.world.read_storage(),
+                );
                 super::inline::Line {
                     from_break: window[0],
                     to_break: window[1],

@@ -7,7 +7,7 @@ use crate::style::properties::computed::{PixelLength as Px, TextAlign};
 
 use crate::layout::text::shape;
 
-use components::{Glyphs, KernedGlyphs};
+use components::{Glyphs, IntrinsicSize, KernedGlyphs, Position};
 use lemon_pdf::font::FontUnit;
 use specs::{Component, DenseVecStorage, Entity, VecStorage};
 use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
@@ -37,6 +37,7 @@ impl InlineFormattingContext {
         from_index: usize,
         to_index: usize,
         text_runs: ReadStorage<components::TextRun>,
+        intrinsic_sizes: ReadStorage<components::IntrinsicSize>,
     ) -> (Px, Px) {
         let from = self.break_points[from_index];
         let to = self.break_points[to_index];
@@ -52,10 +53,20 @@ impl InlineFormattingContext {
             .position(|&elem| elem == to.entity)
             .unwrap();
 
-        let (max_height, max_depth) = self.elements[start..=end]
+        let (max_ascent, max_descent) = self.elements[start..=end]
             .iter()
-            .map(|&ent| text_runs.get(ent).unwrap())
-            .map(|text_run| (text_run.baseline, text_run.line_height - text_run.baseline))
+            .map(|&ent| {
+                if let Some(text_run) = text_runs.get(ent) {
+                    (text_run.baseline, text_run.line_height - text_run.baseline)
+                } else if let Some(&IntrinsicSize::SizeWithBaseline {
+                    height, baseline, ..
+                }) = intrinsic_sizes.get(ent)
+                {
+                    (baseline, height - baseline)
+                } else {
+                    panic!("cannot layout element in line");
+                }
+            })
             .fold(
                 (Px(0.0), Px(0.0)),
                 |(height, depth), (new_height, new_depth)| {
@@ -63,8 +74,8 @@ impl InlineFormattingContext {
                 },
             );
 
-        assert!(max_height + max_depth != Px(0.0));
-        (max_height, max_height + max_depth)
+        assert!(max_ascent + max_descent != Px(0.0));
+        (max_ascent, max_ascent + max_descent)
     }
 }
 
@@ -87,10 +98,14 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
     type SystemData = (
         WriteStorage<'a, InlineFormattingContext>,
         WriteStorage<'a, components::TextRun>,
+        ReadStorage<'a, components::IntrinsicSize>,
         Read<'a, FontMap>,
     );
 
-    fn run(&mut self, (mut inline_formatting_contexts, mut text_runs, font_map): Self::SystemData) {
+    fn run(
+        &mut self,
+        (mut inline_formatting_contexts, mut text_runs, intrinsic_sizes, font_map): Self::SystemData,
+    ) {
         for InlineFormattingContext {
             elements,
             break_points,
@@ -110,39 +125,39 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             let mut last_whitespace = true;
 
             for (index, &entity) in elements.iter().enumerate() {
-                let text_run = match text_runs.get_mut(entity) {
-                    Some(text_run) => text_run,
-                    None => continue,
-                };
-
-                super::text::whitespace::transform_text(&mut text_run.text, last_whitespace);
-                if text_run.text.ends_with(char::is_whitespace) {
-                    last_whitespace = true;
-                } else {
-                    last_whitespace = false;
-                }
-                if index == elements.len() - 1 && last_whitespace {
-                    let new_len = text_run.text.trim_end().len();
-                    text_run.text.truncate(new_len);
-                }
-
-                let font = &font_map[&text_run.font_name];
-                let shaped = shape(&text_run.text, font);
-                for (pos, glyph_info) in &shaped {
-                    let cur_char = &text_run.text[glyph_info.cluster as usize..];
-                    if cur_char.starts_with(|chr: char| chr.is_whitespace()) {
-                        let advance_before = advance;
-                        advance += font.scale_to_px(pos.x_advance, text_run.font_size);
-                        let advance_after = advance;
-                        break_points.push(BreakPoint {
-                            entity,
-                            char_index: glyph_info.cluster as usize + 1,
-                            advance_before,
-                            advance_after,
-                        })
+                if let Some(text_run) = text_runs.get_mut(entity) {
+                    super::text::whitespace::transform_text(&mut text_run.text, last_whitespace);
+                    if text_run.text.ends_with(char::is_whitespace) {
+                        last_whitespace = true;
                     } else {
-                        advance += font.scale_to_px(pos.x_advance, text_run.font_size);
+                        last_whitespace = false;
                     }
+                    if index == elements.len() - 1 && last_whitespace {
+                        let new_len = text_run.text.trim_end().len();
+                        text_run.text.truncate(new_len);
+                    }
+
+                    let font = &font_map[&text_run.font_name];
+                    let shaped = shape(&text_run.text, font);
+                    for (pos, glyph_info) in &shaped {
+                        let cur_char = &text_run.text[glyph_info.cluster as usize..];
+                        if cur_char.starts_with(|chr: char| chr.is_whitespace()) {
+                            let advance_before = advance;
+                            advance += font.scale_to_px(pos.x_advance, text_run.font_size);
+                            let advance_after = advance;
+                            break_points.push(BreakPoint {
+                                entity,
+                                char_index: glyph_info.cluster as usize + 1,
+                                advance_before,
+                                advance_after,
+                            })
+                        } else {
+                            advance += font.scale_to_px(pos.x_advance, text_run.font_size);
+                        }
+                    }
+                } else if let Some(intrinsiz_size) = intrinsic_sizes.get(entity) {
+                    last_whitespace = false;
+                    advance += intrinsiz_size.width().unwrap_or_default();
                 }
             }
 
@@ -171,6 +186,7 @@ impl<'a> System<'a> for LineBoxCreator {
         Entities<'a>,
         ReadStorage<'a, InlineFormattingContext>,
         ReadStorage<'a, components::TextRun>,
+        ReadStorage<'a, components::IntrinsicSize>,
         WriteStorage<'a, components::Position>,
         WriteStorage<'a, Paragraph>,
         Read<'a, FontMap>,
@@ -178,7 +194,15 @@ impl<'a> System<'a> for LineBoxCreator {
 
     fn run(
         &mut self,
-        (entities, inline_formatting_contexts, text_runs, mut positions, mut paragraphs, font_map): Self::SystemData,
+        (
+            entities,
+            inline_formatting_contexts,
+            text_runs,
+            intrinsic_sizes,
+            mut positions,
+            mut paragraphs,
+            font_map,
+        ): Self::SystemData,
     ) {
         for InlineFormattingContext {
             break_points,
@@ -266,8 +290,10 @@ impl<'a> System<'a> for LineBoxCreator {
                 let from_break = break_points[from];
                 let to_break = break_points[to];
 
+                let mut advance = Px(0.0);
+                let mut text_cursor = Px(0.0);
                 loop {
-                    if let Some(run) = text_runs.get(entity) {
+                    advance += if let Some(run) = text_runs.get(entity) {
                         if !run.text.is_empty() {
                             if previous_font != Some((run.font_name.clone(), run.font_size)) {
                                 ops.push(TextOperator::SetFont(
@@ -292,9 +318,38 @@ impl<'a> System<'a> for LineBoxCreator {
                             let characters = &run.text[start..end];
                             let font = &font_map[&run.font_name];
 
-                            shape_piece(characters, font, run.font_size, word_spacing, &mut ops);
+                            shape_piece(characters, font, run.font_size, word_spacing, &mut ops)
+                        } else {
+                            Px(0.0)
                         }
-                    }
+                    } else if let Some(&IntrinsicSize::SizeWithBaseline {
+                        width,
+                        height,
+                        baseline,
+                    }) = intrinsic_sizes.get(entity)
+                    {
+                        ops.push(TextOperator::NewLine {
+                            x_offset: advance + width,
+                            leading: Px(0.0),
+                        });
+                        text_cursor = advance + width;
+
+                        positions
+                            .insert(
+                                entity,
+                                Position {
+                                    x: paragraph_start.0 + advance,
+                                    y: paragraph_start.1 - baseline,
+                                    width,
+                                    height,
+                                    ..paragraph_pos.unwrap()
+                                },
+                            )
+                            .unwrap();
+                        width
+                    } else {
+                        panic!("unsopported inline element type");
+                    };
 
                     if entity == to_break.entity {
                         break;
@@ -309,7 +364,7 @@ impl<'a> System<'a> for LineBoxCreator {
                 if let Some(next_line) = lines.get(line_num + 1) {
                     let next_line_pos = *positions.get(next_line.entity).unwrap();
                     ops.push(TextOperator::NewLine {
-                        x_offset: next_line_pos.x - line_pos.x,
+                        x_offset: next_line_pos.x - line_pos.x - text_cursor,
                         leading: (line.height - line.baseline) + next_line.baseline,
                     });
                 }
@@ -337,7 +392,7 @@ fn shape_piece(
     font_size: Px,
     word_spacing: Px,
     ops: &mut Vec<TextOperator>,
-) {
+) -> Px {
     let shaped = shape(characters, font);
 
     let mut kerned_glyphs = vec![];
@@ -349,7 +404,10 @@ fn shape_piece(
 
     let mut to_unicode_map = BTreeMap::new();
 
+    let mut advance = Px(0.0);
     for (pos, glyph_info) in shaped {
+        advance += font.scale_to_px(pos.x_advance, font_size);
+
         if glyph_info.cluster != previous_cluster {
             // a new cluster began
             if previous_cluster < glyph_info.cluster {
@@ -382,7 +440,9 @@ fn shape_piece(
         ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
     }
 
-    font.to_unicode.lock().append(&mut to_unicode_map)
+    font.to_unicode.lock().append(&mut to_unicode_map);
+
+    advance
 }
 
 // impl InlineFormatterState {

@@ -53,19 +53,28 @@ pub enum IntrinsicSize {
         width: PixelLength,
         height: PixelLength,
     },
+    SizeWithBaseline {
+        width: PixelLength,
+        height: PixelLength,
+        baseline: PixelLength,
+    },
 }
 
 impl IntrinsicSize {
     pub fn width(self) -> Option<PixelLength> {
         match self {
-            IntrinsicSize::Width(width) | IntrinsicSize::Size { width, .. } => Some(width),
+            IntrinsicSize::Width(width)
+            | IntrinsicSize::Size { width, .. }
+            | IntrinsicSize::SizeWithBaseline { width, .. } => Some(width),
             _ => None,
         }
     }
 
     pub fn height(self) -> Option<PixelLength> {
         match self {
-            IntrinsicSize::Height(height) | IntrinsicSize::Size { height, .. } => Some(height),
+            IntrinsicSize::Height(height)
+            | IntrinsicSize::Size { height, .. }
+            | IntrinsicSize::SizeWithBaseline { height, .. } => Some(height),
             _ => None,
         }
     }

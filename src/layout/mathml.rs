@@ -44,9 +44,10 @@ impl<'world> System<'world> for MathFormat {
             let shaper = HarfbuzzShaper::new(font.hb_font.clone());
             let result = layout(&expr.expression, &shaper);
 
-            let size = IntrinsicSize::Size {
+            let size = IntrinsicSize::SizeWithBaseline {
                 width: scale(result.extents().width),
                 height: scale(result.extents().height()),
+                baseline: scale(result.extents().ascent)
             };
             intrinsic_size.replace(size);
 
