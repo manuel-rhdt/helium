@@ -45,6 +45,20 @@ impl Component for Position {
     type Storage = DenseVecStorage<Self>;
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum IntrinsicSize {
+    Width(PixelLength),
+    Height(PixelLength),
+    Size {
+        width: PixelLength,
+        height: PixelLength,
+    },
+}
+
+impl Component for IntrinsicSize {
+    type Storage = DenseVecStorage<Self>;
+}
+
 /// The position of a box relative to the smallest containing stacking context.
 #[derive(Debug, Copy, Clone, Default)]
 pub struct StackingContextRelativePosition {
@@ -257,9 +271,19 @@ pub enum TextOperator {
     },
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Paragraph {
+    pub start_pos: (PixelLength, PixelLength),
     pub ops: Vec<TextOperator>,
+}
+
+impl Paragraph {
+    pub fn new(start_x: PixelLength, start_y: PixelLength) -> Self {
+        Paragraph {
+            start_pos: (start_x, start_y),
+            ops: vec![],
+        }
+    }
 }
 
 impl Component for Paragraph {

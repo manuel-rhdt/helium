@@ -1,7 +1,7 @@
 use super::{
     components::{
-        Glyphs, GraphicsOp, MathBox, MathExpression, Paragraph, Position, TextOperator,
-        TransformMatrix, VectorGraphics,
+        Glyphs, GraphicsOp, IntrinsicSize, MathBox, MathExpression, Paragraph, Position,
+        TextOperator, TransformMatrix, VectorGraphics,
     },
     text::{font::GlyphIndex, Font},
     FontMap,
@@ -22,17 +22,17 @@ impl<'world> System<'world> for MathFormat {
         Read<'world, FontMap>,
         ReadStorage<'world, MathExpression>,
         ReadStorage<'world, ComputedValues>,
-        WriteStorage<'world, Position>,
+        WriteStorage<'world, IntrinsicSize>,
         WriteStorage<'world, MathBox>,
     );
     fn run(
         &mut self,
-        (font_map, math_expressions, computed_values, mut positions, mut math_boxes): Self::SystemData,
+        (font_map, math_expressions, computed_values, mut intrinsic_sizes, mut math_boxes): Self::SystemData,
     ) {
-        for (expr, style, pos, math_box) in (
+        for (expr, style, intrinsic_size, math_box) in (
             &math_expressions,
             &computed_values,
-            positions.entries(),
+            intrinsic_sizes.entries(),
             math_boxes.entries(),
         )
             .join()
@@ -44,17 +44,11 @@ impl<'world> System<'world> for MathFormat {
             let shaper = HarfbuzzShaper::new(font.hb_font.clone());
             let result = layout(&expr.expression, &shaper);
 
-            let pos = pos.or_insert(Position {
-                x: PixelLength(0.0),
-                y: PixelLength(0.0),
-                width: PixelLength(0.0),
-                height: PixelLength(0.0),
-                z: Default::default(),
-                page: 0,
-            });
-
-            pos.width = scale(result.extents().width);
-            pos.height = scale(result.extents().height());
+            let size = IntrinsicSize::Size {
+                width: scale(result.extents().width),
+                height: scale(result.extents().height()),
+            };
+            intrinsic_size.replace(size);
 
             math_box.replace(MathBox {
                 math_box: result,
@@ -162,7 +156,7 @@ impl<'world> System<'world> for LayoutMathGlyphs {
         )
             .join()
         {
-            let mut para = Paragraph::default();
+            let mut para = Paragraph::new(PixelLength(0.0), PixelLength(0.0));
             let mut vg = VectorGraphics::default();
             let font = &font_map[&math_box.font_name];
             para.ops.push(TextOperator::SetFont(

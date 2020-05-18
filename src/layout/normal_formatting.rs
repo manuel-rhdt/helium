@@ -1,4 +1,6 @@
-use super::components::{BlockLevelElement, Decoration, EdgeValues, Position, TextList, ZIndex};
+use super::components::{
+    BlockLevelElement, Decoration, EdgeValues, IntrinsicSize, Position, TextList, ZIndex,
+};
 use super::inline_size::{calculate_inline_size, calculate_padding_and_border};
 use crate::style::properties::computed::{ComputedValues, PixelLength, TextAlign};
 
@@ -92,6 +94,7 @@ pub struct BlockFormatter<'elements, 'data> {
     world: &'data World,
     positions: WriteStorage<'data, Position>,
     decorations: WriteStorage<'data, Decoration>,
+    intrinsic_sizes: ReadStorage<'data, IntrinsicSize>,
     text_list: Write<'data, TextList>,
 }
 
@@ -112,6 +115,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             decorations: world.write_storage(),
             text_list: Write::fetch(world),
             container_stack: Default::default(),
+            intrinsic_sizes: world.read_storage(),
         }
     }
 
@@ -136,17 +140,17 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             BlockLevelElement::Leaf(leaf) => {
                 let container = self.container_stack.stack.last().unwrap();
                 assert_eq!(container.root_entity, leaf);
-                let pos = *self.positions.get(container.root_entity).unwrap();
+                let container_pos = *self.positions.get(container.root_entity).unwrap();
 
                 let mut inline_formatting_contexts = self.world.write_storage();
                 if let Some(inline_formatting_context) = inline_formatting_contexts.get_mut(leaf) {
                     self.layout_inline_formatting_context(
                         inline_formatting_context,
                         &style,
-                        pos.x,
-                        pos.width,
+                        container_pos.x,
+                        container_pos.width,
                     );
-                } else if self.positions.contains(leaf) {
+                } else if self.intrinsic_sizes.contains(leaf) {
                     self.text_list.list.push(BlockLevelElement::Leaf(leaf))
                 }
             }
@@ -163,23 +167,21 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
     fn start_container_fragment(&mut self, fragment: Entity, style: ComputedValues) {
         let container_pos = self.parent_container_pos();
-        let dimensions = compute_element_dimensions(container_pos.width, &style);
+        let dimensions = compute_element_dimensions(
+            container_pos.width,
+            self.intrinsic_sizes.get(fragment).cloned(),
+            &style,
+        );
 
         let z = self.z_index();
-        let position = self
-            .positions
-            .entry(fragment)
-            .unwrap()
-            .or_insert_with(|| Position {
-                x: container_pos.x + dimensions.inline_offset(),
-                y: PixelLength(0.0),
-                width: dimensions.inline_size,
-                height: PixelLength(0.0),
-                z,
-                page: 0,
-            });
-        position.x = container_pos.x + dimensions.inline_offset();
-        position.z = z;
+        self.positions.entry(fragment).unwrap().replace(Position {
+            x: container_pos.x + dimensions.inline_offset(),
+            y: PixelLength(0.0),
+            width: dimensions.inline_size,
+            height: PixelLength(0.0),
+            z,
+            page: 0,
+        });
 
         self.decorations
             .insert(fragment, dimensions.decoration)
@@ -243,6 +245,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         let entities = self.world.entities();
 
         let breakpoints = &ifm.break_points;
+        assert!(breakpoints.len() >= 2 || breakpoints.is_empty());
 
         // TODO: percentage relative to parent container
         let indent = style.text.text_indent.absolute(line_width);
@@ -274,9 +277,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         ifm.lines = break_point_sequence
             .windows(2)
             .map(|window| {
-                let (baseline, height) = ifm
-                    .line_height(window[0], window[1], self.world.read_storage())
-                    .unwrap_or_default();
+                let (baseline, height) =
+                    ifm.line_height(window[0], window[1], self.world.read_storage());
                 super::inline::Line {
                     from_break: window[0],
                     to_break: window[1],
@@ -306,12 +308,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
             let pos = Position {
                 x,
-                y: PixelLength(0.0),
+                y: PixelLength(0.0), //< will get assigned by paginator
                 width,
                 height: line.height,
                 z: self.z_index(),
-                page: 0,
+                page: 0, //< will get assigned by paginator
             };
+
+            assert!(line.height != PixelLength(0.0));
+
             self.positions.insert(line.entity, pos).unwrap();
 
             self.text_list
@@ -356,10 +361,12 @@ impl ElementDimensions {
 /// - `style`: the computed css properties of the element
 fn compute_element_dimensions(
     container_size: PixelLength,
+    intrinsic_size: Option<IntrinsicSize>,
     style: &ComputedValues,
 ) -> ElementDimensions {
     let mut decoration = calculate_padding_and_border(container_size, &style);
-    let inline_size = calculate_inline_size(container_size, &mut decoration, &style);
+    let inline_size =
+        calculate_inline_size(container_size, intrinsic_size, &mut decoration, &style);
     ElementDimensions {
         decoration,
         inline_size,

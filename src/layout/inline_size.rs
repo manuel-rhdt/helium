@@ -1,5 +1,4 @@
-use super::components::{ContainingBlock, Decoration, Position};
-use crate::style::device::Device;
+use super::components::{ContainingBlock, Decoration, Position, IntrinsicSize};
 use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
 
 use specs::prelude::*;
@@ -11,76 +10,6 @@ pub struct InlineSizeResources<'a> {
     pub positions: WriteStorage<'a, Position>,
     pub containing_blocks: ReadStorage<'a, ContainingBlock>,
     pub decorations: WriteStorage<'a, Decoration>,
-}
-
-#[derive(Debug)]
-pub struct InlineSizeContext {
-    pub device: Device,
-}
-
-impl InlineSizeContext {
-    pub fn new(device: Device) -> Self {
-        InlineSizeContext { device }
-    }
-
-    pub fn get_container_pos(
-        &self,
-        entity: Entity,
-        resources: &InlineSizeResources,
-    ) -> Option<Position> {
-        let container = resources.containing_blocks.get(entity)?.entity.0;
-        let container_width = *resources.positions.get(container)?;
-
-        Some(container_width)
-    }
-
-    pub fn set_inline_pos(
-        &self,
-        entity: Entity,
-        offset: Px,
-        width: Px,
-        resources: &mut InlineSizeResources,
-    ) {
-        if let Some(mut pos) = resources.positions.get_mut(entity) {
-            pos.x = offset;
-            pos.width = width;
-        }
-    }
-}
-
-impl<'a> System<'a> for InlineSizeContext {
-    type SystemData = InlineSizeResources<'a>;
-
-    fn run(&mut self, mut resources: Self::SystemData) {
-        // We need a sorted list of all entities. We currently cheat by assuming
-        // the list is correctly sorted given the order we construct the entities.
-        let sorted_entities: Vec<_> = resources.entities.join().collect();
-
-        // calculate inline-sizes
-        for &entity in sorted_entities.iter() {
-            let style = resources.computed_values.get(entity);
-            let container_pos = self.get_container_pos(entity, &resources);
-
-            if let (Some(style), Some(container_pos)) = (style, container_pos) {
-                let mut decoration = calculate_padding_and_border(container_pos.width, &style);
-                let inline_size =
-                    calculate_inline_size(container_pos.width, &mut decoration, &style);
-                let inline_offset =
-                    decoration.margin.left + decoration.border.left + decoration.padding.left;
-
-                self.set_inline_pos(
-                    entity,
-                    container_pos.x + inline_offset,
-                    inline_size,
-                    &mut resources,
-                );
-
-                if decoration != Default::default() {
-                    resources.decorations.insert(entity, decoration).unwrap();
-                }
-            }
-        }
-    }
 }
 
 pub fn calculate_padding_and_border(
@@ -103,7 +32,7 @@ pub fn calculate_padding_and_border(
     deco.padding.left = position.padding_left.absolute(container_size);
     deco.padding.right = position.padding_right.absolute(container_size);
 
-    // margin_left and margin_right get calculated in `calculate_inline_size`
+    // margin_left and margin_right are assigned in `calculate_inline_size`
     deco.margin.top = position.margin_top.absolute(Px(0.0), container_size);
     deco.margin.bottom = position.margin_bottom.absolute(Px(0.0), container_size);
 
@@ -135,6 +64,7 @@ pub fn calculate_padding_and_border(
 /// https://www.w3.org/TR/CSS22/visudet.html#blockwidth
 pub fn calculate_inline_size(
     container_size: Px,
+    intrinsic_size: Option<IntrinsicSize>,
     Decoration {
         margin,
         padding,

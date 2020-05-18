@@ -37,16 +37,24 @@ impl InlineFormattingContext {
         from_index: usize,
         to_index: usize,
         text_runs: ReadStorage<components::TextRun>,
-    ) -> Option<(Px, Px)> {
+    ) -> (Px, Px) {
         let from = self.break_points[from_index];
         let to = self.break_points[to_index];
 
-        let start = self.elements.iter().position(|&elem| elem == from.entity)?;
-        let end = self.elements.iter().position(|&elem| elem == to.entity)?;
+        let start = self
+            .elements
+            .iter()
+            .position(|&elem| elem == from.entity)
+            .unwrap();
+        let end = self
+            .elements
+            .iter()
+            .position(|&elem| elem == to.entity)
+            .unwrap();
 
         let (max_height, max_depth) = self.elements[start..=end]
             .iter()
-            .filter_map(|&ent| text_runs.get(ent))
+            .map(|&ent| text_runs.get(ent).unwrap())
             .map(|text_run| (text_run.baseline, text_run.line_height - text_run.baseline))
             .fold(
                 (Px(0.0), Px(0.0)),
@@ -55,7 +63,8 @@ impl InlineFormattingContext {
                 },
             );
 
-        Some((max_height, max_height + max_depth))
+        assert!(max_height + max_depth != Px(0.0));
+        (max_height, max_height + max_depth)
     }
 }
 
@@ -89,14 +98,12 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
         } in (&mut inline_formatting_contexts).join()
         {
             // insert first breakpoint at beginning
-            if let Some(&entity) = elements.first() {
-                break_points.push(BreakPoint {
-                    entity,
-                    char_index: 0,
-                    advance_before: Px(0.0),
-                    advance_after: Px(0.0),
-                })
-            }
+            break_points.push(BreakPoint {
+                entity: elements[0],
+                char_index: 0,
+                advance_before: Px(0.0),
+                advance_after: Px(0.0),
+            });
 
             let mut advance = Px(0.0);
 
@@ -140,16 +147,19 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             }
 
             // insert last breakpoint at the end
-            if let Some(&entity) = elements.last() {
-                if let Some(text_run) = text_runs.get(entity) {
-                    break_points.push(BreakPoint {
-                        entity,
-                        char_index: text_run.text.len(),
-                        advance_before: advance,
-                        advance_after: advance,
-                    })
-                }
-            }
+            let last_entity = *elements.last().unwrap();
+            let char_index = if let Some(text_run) = text_runs.get(last_entity) {
+                text_run.text.len()
+            } else {
+                1
+            };
+
+            break_points.push(BreakPoint {
+                entity: last_entity,
+                char_index,
+                advance_before: advance,
+                advance_after: advance,
+            })
         }
     }
 }
@@ -189,6 +199,10 @@ impl<'a> System<'a> for LineBoxCreator {
             let mut ops: Vec<TextOperator> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
             let mut paragraph_pos: Option<components::Position> = None;
+
+            // position of the first baseline of the paragraph
+            let mut paragraph_start = (Px(0.0), Px(0.0));
+
             for (line_num, line) in lines.iter().enumerate() {
                 let from = line.from_break;
                 let to = line.to_break;
@@ -197,9 +211,13 @@ impl<'a> System<'a> for LineBoxCreator {
                     .get(line.entity)
                     .expect("every line should have been assigned a position by now");
 
+                if line_num == 0 {
+                    paragraph_start = (line_pos.x, line_pos.y + line.baseline);
+                }
+
                 // if we want to justify the text we have to add word-spacing
                 let is_last_line = line_num == lines.len() - 1;
-                let word_spacing: Px = if (!is_last_line) && *text_align == TextAlign::Justify  {
+                let word_spacing: Px = if (!is_last_line) && *text_align == TextAlign::Justify {
                     // the ideal and maximal width of the line
                     let wanted_width = line_pos.width;
                     // the number of stretchable spaces in the current line (needed for justification)
@@ -221,10 +239,17 @@ impl<'a> System<'a> for LineBoxCreator {
                         entities
                             .build_entity()
                             .with(pos, &mut positions)
-                            .with(Paragraph { ops: ops.clone() }, &mut paragraphs)
+                            .with(
+                                Paragraph {
+                                    start_pos: paragraph_start,
+                                    ops: ops.clone(),
+                                },
+                                &mut paragraphs,
+                            )
                             .build();
                     }
                     ops.clear();
+                    paragraph_start = (line_pos.x, line_pos.y + line.baseline);
                     if let Some(previous_font) = &previous_font {
                         ops.push(TextOperator::SetFont(
                             previous_font.0.clone(),
@@ -232,7 +257,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         ))
                     }
                     paragraph_pos = Some(components::Position {
-                        y: line_pos.y + line.baseline,
+                        y: line_pos.y,
                         height: Px(0.0),
                         ..line_pos
                     });
@@ -243,27 +268,32 @@ impl<'a> System<'a> for LineBoxCreator {
 
                 loop {
                     if let Some(run) = text_runs.get(entity) {
-                        if previous_font != Some((run.font_name.clone(), run.font_size)) {
-                            ops.push(TextOperator::SetFont(run.font_name.clone(), run.font_size));
-                            previous_font = Some((run.font_name.clone(), run.font_size));
+                        if !run.text.is_empty() {
+                            if previous_font != Some((run.font_name.clone(), run.font_size)) {
+                                ops.push(TextOperator::SetFont(
+                                    run.font_name.clone(),
+                                    run.font_size,
+                                ));
+                                previous_font = Some((run.font_name.clone(), run.font_size));
+                            }
+
+                            // get the string slice of the current text fragment
+                            let start = if entity == from_break.entity {
+                                from_break.char_index
+                            } else {
+                                0
+                            };
+                            let end = if entity == to_break.entity {
+                                to_break.char_index
+                            } else {
+                                run.text.len()
+                            };
+
+                            let characters = &run.text[start..end];
+                            let font = &font_map[&run.font_name];
+
+                            shape_piece(characters, font, run.font_size, word_spacing, &mut ops);
                         }
-
-                        // get the string slice of the current text fragment
-                        let start = if entity == from_break.entity {
-                            from_break.char_index
-                        } else {
-                            0
-                        };
-                        let end = if entity == to_break.entity {
-                            to_break.char_index
-                        } else {
-                            run.text.len()
-                        };
-
-                        let characters = &run.text[start..end];
-                        let font = &font_map[&run.font_name];
-
-                        shape_piece(characters, font, run.font_size, word_spacing, &mut ops);
                     }
 
                     if entity == to_break.entity {
@@ -288,7 +318,13 @@ impl<'a> System<'a> for LineBoxCreator {
                 entities
                     .build_entity()
                     .with(pos, &mut positions)
-                    .with(Paragraph { ops: ops.clone() }, &mut paragraphs)
+                    .with(
+                        Paragraph {
+                            start_pos: paragraph_start,
+                            ops,
+                        },
+                        &mut paragraphs,
+                    )
                     .build();
             }
         }
@@ -342,7 +378,9 @@ fn shape_piece(
     if !glyphs.is_empty() {
         kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs)));
     }
-    ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
+    if !kerned_glyphs.is_empty() {
+        ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
+    }
 
     font.to_unicode.lock().append(&mut to_unicode_map)
 }

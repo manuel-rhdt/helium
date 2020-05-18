@@ -62,7 +62,7 @@ impl<'world> System<'world> for Paginator {
                     }
 
                     let position = positions.get_mut(end).unwrap();
-                    position.height = page_state.vertical_pos - position.y;
+                    position.height = page_state.vertical_pos + self.margin.top - position.y;
 
                     let container = page_state.in_progress_containers.end_container();
                     assert_eq!(container.unwrap().root_entity, end);
@@ -75,6 +75,7 @@ impl<'world> System<'world> for Paginator {
                     if page_state.vertical_pos() > self.content_height() {
                         page_state.new_page();
                         position.y = self.margin.top + page_state.vertical_pos;
+                        page_state.add_content(position.height);
                     }
 
                     position.page = page_state.page_num;

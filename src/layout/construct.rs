@@ -98,7 +98,10 @@ impl Traversal<DomRef> for FlowConstructor {
     }
 
     fn postorder_traverse(&mut self, node: DomRef) {
-        self.entity_constructor.build_formatting_context(&node)
+        match node.html_data() {
+            ParsedData::Element(_) => self.entity_constructor.build_formatting_context(&node),
+            _ => {}
+        }
     }
 }
 
@@ -255,9 +258,6 @@ impl EntityConstructor {
         let font = self.match_font(&style);
         let font_name = font.postscript_name();
 
-        // let font = crate::layout::text::font::match_font(&style)
-        //     .expect("Could not find any matching fonts.");
-
         let font_size = style.font.font_size;
         let font_height = font.scale_to_px(font.font_height(), font_size);
         let line_height = match style.font.line_height {
@@ -371,15 +371,18 @@ impl EntityConstructor {
             }
         }
 
-        // TODO: This means empty inline elements will get added to a parent inline formatting
-        // context... should we remove this check?
-        if !inline_formatting_context.elements.is_empty() {
-            if let Some(LayoutEntity(self_entity)) = node.layout_entity() {
-                self.world
-                    .write_storage()
-                    .insert(self_entity, inline_formatting_context)
-                    .unwrap();
-            }
+        if inline_formatting_context.elements.is_empty() {
+            // insert strut
+            inline_formatting_context
+                .elements
+                .push(self.build_text_entity(node.style(), "").0);
+        }
+
+        if let Some(LayoutEntity(self_entity)) = node.layout_entity() {
+            self.world
+                .write_storage()
+                .insert(self_entity, inline_formatting_context)
+                .unwrap();
         }
     }
 

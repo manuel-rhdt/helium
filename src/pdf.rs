@@ -22,12 +22,12 @@ pub fn write_pdf(print_pages: PrintPages, no_filter: bool) -> Result<(), Error> 
 
     let mut font_map = HashMap::new();
     for (font_name, font) in &print_pages.font_map {
-        if !font.glyph_advances.lock().is_empty() {
+        // if !font.glyph_advances.lock().is_empty() {
             log::info!("Embedding font {} into PDF file.", font_name);
             let font = font.embed_into_pdf(&mut context)?;
             let font = context.write_object(font)?;
             font_map.insert(font_name.clone(), font);
-        }
+        // }
     }
 
     log::info!("Write {} pages.", print_pages.pages.len());
@@ -128,9 +128,9 @@ pub fn write_pdf(print_pages: PrintPages, no_filter: bool) -> Result<(), Error> 
                         page_context.apply_operator("Tj")?;
                         page_context.end_text()?;
                     }
-                    DisplayItem::Paragraph((x, y), par) => {
-                        let x = *x;
-                        let y = page_height - *y;
+                    DisplayItem::Paragraph(par) => {
+                        let x = par.start_pos.0;
+                        let y = page_height - par.start_pos.1;
 
                         page_context.begin_text()?;
                         page_context.set_position(x.into(), y.into())?;

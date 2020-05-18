@@ -36,7 +36,7 @@ pub enum DisplayItem {
     Color(RGBA),
     StrokeColor(RGBA),
     Text(Point, PixelLength, String, Glyphs),
-    Paragraph((PixelLength, PixelLength), Paragraph),
+    Paragraph(Paragraph),
     Translate(PixelLength, PixelLength),
     Push,
     Pop,
@@ -220,7 +220,7 @@ impl<'a> System<'a> for DisplayText {
     fn run(&mut self, (positions, paragraphs): Self::SystemData) {
         for (pos, paragraph, _) in (&positions, &paragraphs, &self.bitset).join() {
             self.display_list.append(
-                DisplayItem::Paragraph((pos.x, pos.y), paragraph.clone()),
+                DisplayItem::Paragraph(paragraph.clone()),
                 pos.z,
             )
         }
