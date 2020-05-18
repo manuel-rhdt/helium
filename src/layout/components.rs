@@ -55,6 +55,22 @@ pub enum IntrinsicSize {
     },
 }
 
+impl IntrinsicSize {
+    pub fn width(self) -> Option<PixelLength> {
+        match self {
+            IntrinsicSize::Width(width) | IntrinsicSize::Size { width, .. } => Some(width),
+            _ => None,
+        }
+    }
+
+    pub fn height(self) -> Option<PixelLength> {
+        match self {
+            IntrinsicSize::Height(height) | IntrinsicSize::Size { height, .. } => Some(height),
+            _ => None,
+        }
+    }
+}
+
 impl Component for IntrinsicSize {
     type Storage = DenseVecStorage<Self>;
 }

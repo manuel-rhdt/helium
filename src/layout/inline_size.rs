@@ -1,5 +1,7 @@
-use super::components::{ContainingBlock, Decoration, Position, IntrinsicSize};
-use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength as Px};
+use super::components::{ContainingBlock, Decoration, Position};
+use crate::style::properties::computed::{
+    ComputedValues, GenericSize, LengthPercentage, PixelLength as Px,
+};
 
 use specs::prelude::*;
 
@@ -64,7 +66,7 @@ pub fn calculate_padding_and_border(
 /// https://www.w3.org/TR/CSS22/visudet.html#blockwidth
 pub fn calculate_inline_size(
     container_size: Px,
-    intrinsic_size: Option<IntrinsicSize>,
+    intrinsic_width: Option<Px>,
     Decoration {
         margin,
         padding,
@@ -73,7 +75,12 @@ pub fn calculate_inline_size(
     }: &mut Decoration,
     ComputedValues { position, .. }: &ComputedValues,
 ) -> Px {
-    match position.width {
+    let mut width = position.width;
+    if let (GenericSize::Auto, Some(intrinsic)) = (width, intrinsic_width) {
+        width = GenericSize::LengthPercentage(LengthPercentage::PixelLength(intrinsic))
+    }
+
+    match width {
         GenericSize::Auto => {
             margin.left = position.margin_left.absolute(Px(0.0), container_size);
             margin.right = position.margin_right.absolute(Px(0.0), container_size);

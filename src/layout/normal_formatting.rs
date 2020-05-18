@@ -150,7 +150,20 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                         container_pos.x,
                         container_pos.width,
                     );
-                } else if self.intrinsic_sizes.contains(leaf) {
+                } else if let Some(intrinsic_size) = self.intrinsic_sizes.get(leaf) {
+                    self.positions
+                        .insert(
+                            leaf,
+                            Position {
+                                x: container_pos.x,
+                                y: PixelLength(0.0),
+                                width: container_pos.width,
+                                height: intrinsic_size.height().unwrap_or_default(),
+                                z: self.z_index(),
+                                page: 0,
+                            },
+                        )
+                        .unwrap();
                     self.text_list.list.push(BlockLevelElement::Leaf(leaf))
                 }
             }
@@ -365,8 +378,12 @@ fn compute_element_dimensions(
     style: &ComputedValues,
 ) -> ElementDimensions {
     let mut decoration = calculate_padding_and_border(container_size, &style);
-    let inline_size =
-        calculate_inline_size(container_size, intrinsic_size, &mut decoration, &style);
+    let inline_size = calculate_inline_size(
+        container_size,
+        intrinsic_size.and_then(|s| s.width()),
+        &mut decoration,
+        &style,
+    );
     ElementDimensions {
         decoration,
         inline_size,
