@@ -3,7 +3,9 @@
  */
 
  @page {
-   margin: 2cm;
+   margin: 2.5cm;
+   width: 210mm;
+   height: 297mm;
  }
 
 [hidden],
@@ -242,4 +244,16 @@ h6 {
   margin-bottom: 2.33em;
   font-size: 0.67em;
   font-weight: bold;
+}
+
+math {
+  font-family: 'Latin Modern Math';
+}
+
+math[display="inline"] {
+  display: inline;
+}
+
+math[display="block"] {
+  display: block;
 }

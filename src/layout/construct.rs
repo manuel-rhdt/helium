@@ -291,12 +291,12 @@ impl EntityConstructor {
             return;
         }
 
-        let is_display_inline = |node: Node| match node.style().box_.display {
+        let is_display_inline = |node: &Node| match node.style().box_.display {
             Display::Inline => true,
             _ => false,
         };
 
-        if node.children().all(is_display_inline) {
+        if is_display_inline(node) || node.children().all(|n| is_display_inline(&n)) {
             self.build_inline_formatting_context(node)
         } else {
             self.build_block_formatting_context(node)

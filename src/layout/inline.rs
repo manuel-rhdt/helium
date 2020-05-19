@@ -145,9 +145,12 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             let advance_before = advance;
                             advance += font.scale_to_px(pos.x_advance, text_run.font_size);
                             let advance_after = advance;
+
+                            let ws_len = cur_char.len() - cur_char.trim_start().len();
+
                             break_points.push(BreakPoint {
                                 entity,
-                                char_index: glyph_info.cluster as usize + 1,
+                                char_index: glyph_info.cluster as usize + ws_len,
                                 advance_before,
                                 advance_after,
                             })
@@ -329,7 +332,7 @@ impl<'a> System<'a> for LineBoxCreator {
                     }) = intrinsic_sizes.get(entity)
                     {
                         ops.push(TextOperator::NewLine {
-                            x_offset: advance + width,
+                            x_offset: advance + width - text_cursor,
                             leading: Px(0.0),
                         });
                         text_cursor = advance + width;
@@ -338,8 +341,8 @@ impl<'a> System<'a> for LineBoxCreator {
                             .insert(
                                 entity,
                                 Position {
-                                    x: paragraph_start.0 + advance,
-                                    y: paragraph_start.1 - baseline,
+                                    x: line_pos.x + advance,
+                                    y: line_pos.y + line.baseline - baseline,
                                     width,
                                     height,
                                     ..paragraph_pos.unwrap()
@@ -423,6 +426,7 @@ fn shape_piece(
 
         // adjust kerning of space glyphs to allow text justification
         if characters[glyph_info.cluster as usize..].starts_with(char::is_whitespace) {
+            advance += word_spacing;
             let word_spacing = FontUnit((word_spacing / font_size.0).0 as f64 * 1000.0);
             kern.0 -= word_spacing.0;
         }
