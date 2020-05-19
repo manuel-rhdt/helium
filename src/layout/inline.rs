@@ -9,7 +9,7 @@ use crate::layout::text::shape;
 
 use components::{Glyphs, IntrinsicSize, KernedGlyphs, Position};
 use lemon_pdf::font::FontUnit;
-use specs::{Component, DenseVecStorage, Entity, VecStorage};
+use specs::{Component, DenseVecStorage, Entity};
 use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
 
 use std::collections::BTreeMap;
