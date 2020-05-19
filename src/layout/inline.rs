@@ -444,6 +444,9 @@ fn shape_piece(
         ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
     }
 
+    if let Some(text) = characters.get(previous_cluster as usize..) {
+        to_unicode_map.insert(GlyphIndex(cluster_starting_glyph), text.to_owned());
+    }
     font.to_unicode.lock().append(&mut to_unicode_map);
 
     advance

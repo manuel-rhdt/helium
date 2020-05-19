@@ -1,7 +1,7 @@
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
-use super::specified::{self, ApplyToComputedValues, BorderStyle, ComputedValue};
+use super::specified::{self, ApplyToComputedValues, BorderStyle, ComputedValue, MathFamily};
 pub use super::specified::{
     Display, FontFamily, FontStyle, FontWeight, PageBreak, Percentage, TextAlign,
 };
@@ -333,6 +333,7 @@ pub struct ComputedValues {
     pub text: Arc<Text>,
     pub background: Arc<Background>,
     pub page: Arc<Page>,
+    pub math: Arc<Math>
 }
 
 impl AsMut<Box> for ComputedValues {
@@ -363,6 +364,11 @@ impl AsMut<Background> for ComputedValues {
 impl AsMut<Page> for ComputedValues {
     fn as_mut(&mut self) -> &mut Page {
         Arc::make_mut(&mut self.page)
+    }
+}
+impl AsMut<Math> for ComputedValues {
+    fn as_mut(&mut self) -> &mut Math {
+        Arc::make_mut(&mut self.math)
     }
 }
 
@@ -461,6 +467,19 @@ impl Default for Page {
             orphans: 2,
             page_break_after: PageBreak::Auto,
             page_break_before: PageBreak::Auto,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Math {
+    pub math_variant: MathFamily,
+}
+
+impl Default for Math {
+    fn default() -> Self {
+        Math {
+            math_variant: MathFamily::Normal
         }
     }
 }

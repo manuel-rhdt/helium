@@ -2,11 +2,11 @@
  * https://www.w3.org/TR/html5/rendering.html
  */
 
- @page {
-   margin: 2.5cm;
-   width: 210mm;
-   height: 297mm;
- }
+@page {
+  margin: 2.5cm;
+  width: 210mm;
+  height: 297mm;
+}
 
 [hidden],
 area,
@@ -247,7 +247,8 @@ h6 {
 }
 
 math {
-  font-family: 'Latin Modern Math';
+  font-family: "Latin Modern Math";
+  math-variant: normal;
 }
 
 math[display="inline"] {
@@ -258,4 +259,52 @@ math[display="block"] {
   margin-left: auto;
   margin-right: auto;
   display: block;
+}
+math annotation {
+  display: none;
+}
+math mi {
+  math-variant: italic;
+}
+math [mathvariant="normal"] {
+  math-variant: normal;
+}
+math [mathvariant="bold"] {
+  math-variant: bold;
+}
+math [mathvariant="italic"] {
+  math-variant: italic;
+}
+math [mathvariant="bold-italic"] {
+  math-variant: bold-italic;
+}
+math [mathvariant="double-struck"] {
+  math-variant: double-struck;
+}
+math [mathvariant="bold-fraktur"] {
+  math-variant: bold-fraktur;
+}
+math [mathvariant="script"] {
+  math-variant: script;
+}
+math [mathvariant="bold-script"] {
+  math-variant: bold-script;
+}
+math [mathvariant="fraktur"] {
+  math-variant: fraktur;
+}
+math [mathvariant="sans-serif"] {
+  math-variant: sans-serif;
+}
+math [mathvariant="bold-sans-serif"] {
+  math-variant: bold-sans-serif;
+}
+math [mathvariant="sans-serif-italic"] {
+  math-variant: sans-serif-italic;
+}
+math [mathvariant="sans-serif-bold-italic"] {
+  math-variant: sans-serif-bold-italic;
+}
+math [mathvariant="monospace"] {
+  math-variant: monospace;
 }

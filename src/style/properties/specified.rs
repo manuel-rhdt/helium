@@ -4,6 +4,9 @@ use std::str::FromStr;
 use super::computed::PixelLength;
 use cssparser::{match_ignore_ascii_case, Color, CowRcStr, ParseError, Parser, Token};
 use helium_derive::{ParseDeclaration, PropertyValue};
+use super::super::parse::StyleParseError;
+
+use math_render::unicode_math::Family as MathFamily2;
 
 pub trait ParseDeclaration<'i> {
     type Error: 'i;
@@ -98,7 +101,8 @@ pub enum PropertyDeclaration<'a> {
     Box(Box),
     Text(Text),
     Background(Background),
-    Page(Page)
+    Page(Page),
+    Math(Math)
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -282,6 +286,13 @@ pub enum Page {
     PageBreakAfter(PageBreak),
     #[property]
     PageBreakBefore(PageBreak),
+}
+
+#[derive(Debug, Clone, ParseDeclaration)]
+#[computed = "super::computed::Math"]
+pub enum Math {
+    #[property]
+    MathVariant(MathFamily)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
@@ -593,7 +604,7 @@ impl Default for BorderStyle {
 }
 
 impl<'i> PropertyValue<'i> for Color {
-    type Error = ();
+    type Error = StyleParseError<'i>;
 
     fn from_css_property_value(
         input: &mut Parser<'i, '_>,
@@ -603,7 +614,7 @@ impl<'i> PropertyValue<'i> for Color {
 }
 
 impl<'i> PropertyValue<'i> for f32 {
-    type Error = ();
+    type Error = StyleParseError<'i>;
 
     fn from_css_property_value(
         input: &mut Parser<'i, '_>,
@@ -623,7 +634,7 @@ impl<'i> PropertyValue<'i> for f32 {
 }
 
 impl<'i> PropertyValue<'i> for usize {
-    type Error = ();
+    type Error = StyleParseError<'i>;
 
     fn from_css_property_value(
         input: &mut Parser<'i, '_>,
@@ -736,5 +747,45 @@ pub enum PageBreak {
 impl Default for PageBreak {
     fn default() -> Self {
         PageBreak::Auto
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum MathFamily {
+    Normal,
+    Italic,
+    Bold,
+    BoldItalic,
+    Script,
+    BoldScript,
+    Fraktur,
+    DoubleStruck,
+    BoldFraktur,
+    SansSerif,
+    BoldSansSerif,
+    SansSerifItalic,
+    SansSerifBoldItalic,
+    Monospace,
+}
+
+impl From<MathFamily> for MathFamily2 {
+    fn from(fam: MathFamily) -> MathFamily2 {
+        match fam {
+            MathFamily::Normal => MathFamily2::Normal,
+            MathFamily::Italic => MathFamily2::Italics,
+            MathFamily::Bold => MathFamily2::Bold,
+            MathFamily::BoldItalic => MathFamily2::BoldItalics,
+            MathFamily::Script => MathFamily2::Script,
+            MathFamily::BoldScript => MathFamily2::BoldScript,
+            MathFamily::Fraktur => MathFamily2::Fraktur,
+            MathFamily::DoubleStruck => MathFamily2::DoubleStruck,
+            MathFamily::BoldFraktur => MathFamily2::BoldFraktur,
+            MathFamily::SansSerif => MathFamily2::SansSerif,
+            MathFamily::BoldSansSerif => MathFamily2::SansSerifBold,
+            MathFamily::SansSerifItalic => MathFamily2::SansSerifItalics,
+            MathFamily::SansSerifBoldItalic => MathFamily2::SansSerifBoldItalics,
+            MathFamily::Monospace => MathFamily2::Monospace,
+            
+        }
     }
 }

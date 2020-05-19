@@ -10,9 +10,12 @@ use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
 use math_render::{mathmlparser, Field};
-use specs::{Builder, World, WorldExt};
+use specs::{Builder, SystemData, World, WorldExt, WriteStorage};
 
+use components::TextRun;
 use std::collections::HashMap;
+
+use log::debug;
 
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
@@ -482,17 +485,26 @@ impl EntityConstructor {
                     (name, value)
                 });
 
-                let world = &mut self.world;
+                let mut math_expressions = WriteStorage::<MathExpression>::fetch(&self.world);
+                let mut text_runs = WriteStorage::<TextRun>::fetch(&self.world);
                 let children = node.children().filter_map(|child| {
-                    if let ParsedData::Text(string) = child.html_data() {
-                        let field = Field::Unicode(string.borrow().clone());
-                        return Some(mathmlparser::Child::Field(field));
-                    }
-                    let LayoutEntity(entity) = child.layout_entity().unwrap();
-                    if let Some(MathExpression { expression, .. }) =
-                        world.write_storage::<MathExpression>().remove(entity)
-                    {
-                        Some(mathmlparser::Child::Expression(expression))
+                    if let Some(LayoutEntity(entity)) = child.layout_entity() {
+                        if let Some(text_run) = text_runs.get_mut(entity) {
+                            use math_render::mathmlparser::StringExtMathml;
+                            let text = text_run
+                                .text
+                                .adapt_to_family(Some(style.math.math_variant.into()))
+                                .replace_anomalous_characters(elem);
+                            text_run.text = text;
+
+                            let field = Field::Unicode(text_run.text.clone());
+                            return Some(mathmlparser::Child::Field((field, entity.id() as _)));
+                        }
+                        math_expressions.remove(entity).map(
+                            |MathExpression { expression, .. }| {
+                                mathmlparser::Child::Expression(expression)
+                            },
+                        )
                     } else {
                         None
                     }
@@ -506,8 +518,7 @@ impl EntityConstructor {
                     entity.id() as u64,
                 );
 
-                world
-                    .write_storage()
+                math_expressions
                     .insert(
                         node.layout_entity().unwrap().0,
                         MathExpression {

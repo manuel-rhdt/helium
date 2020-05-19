@@ -221,8 +221,8 @@ endcodespacerange
         writeln!(to_unicode_stream, "{} beginbfchar", to_unicode_len)?;
         for (glyph, uni) in to_unicode.iter() {
             write!(to_unicode_stream, "<{:04X}>\t<", glyph.0 as u16)?;
-            for chr in uni.chars() {
-                write!(to_unicode_stream, "{:04X}", chr as u32)?;
+            for chr in uni.encode_utf16() {
+                write!(to_unicode_stream, "{:04X}", chr)?;
             }
             writeln!(to_unicode_stream, ">")?;
         }

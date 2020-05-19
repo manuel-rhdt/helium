@@ -13,6 +13,22 @@ use selectors::context::QuirksMode;
 use selectors::matching;
 use selectors::parser::{NonTSPseudoClass, SelectorImpl, SelectorList, SelectorParseErrorKind};
 
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum StyleParseError<'i> {
+    #[error("unknown property {name}")]
+    UnknownProperty { name: CowRcStr<'i> },
+    #[error("selector parser error {0:?}")]
+    SelectorParserError(SelectorParseErrorKind<'i>),
+}
+
+impl<'i> From<SelectorParseErrorKind<'i>> for StyleParseError<'i> {
+    fn from(err: SelectorParseErrorKind<'i>) -> Self {
+        StyleParseError::SelectorParserError(err)
+    }
+}
+
 #[derive(Debug)]
 pub struct Styles {
     rules: Vec<QualifiedRule>,
@@ -125,7 +141,7 @@ struct TopLevelParser {}
 impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
     type Prelude = SelectorList<Selectors>;
     type QualifiedRule = QualifiedRule;
-    type Error = ();
+    type Error = StyleParseError<'i>;
 
     fn parse_prelude<'t>(
         &mut self,
@@ -133,7 +149,7 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
     ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
         let selector_parser = SelectorParser::default();
         let selector_list =
-            SelectorList::parse(&selector_parser, input).map_err(|_| input.new_custom_error(()))?;
+            SelectorList::parse(&selector_parser, input).map_err(|err| err.into())?;
         Ok(selector_list)
     }
 
@@ -164,7 +180,7 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
     type PreludeNoBlock = ();
     type PreludeBlock = ();
     type AtRule = QualifiedRule;
-    type Error = ();
+    type Error = StyleParseError<'i>;
 
     fn parse_prelude<'t>(
         &mut self,
@@ -340,7 +356,7 @@ struct StyleDeclarationParser {}
 
 impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
     type Declaration = PropertyDeclaration<'static>;
-    type Error = ();
+    type Error = StyleParseError<'i>;
 
     fn parse_value<'t>(
         &mut self,
@@ -355,5 +371,5 @@ impl<'i> AtRuleParser<'i> for StyleDeclarationParser {
     type PreludeNoBlock = ();
     type PreludeBlock = ();
     type AtRule = PropertyDeclaration<'static>;
-    type Error = ();
+    type Error = StyleParseError<'i>;
 }

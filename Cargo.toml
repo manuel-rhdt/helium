@@ -10,7 +10,6 @@ derive_more = "^0.99"
 font-kit = "0.7.0"
 html5ever = "0.25.1"
 log = "0.4.6"
-simple_logger = "^1.6.0"
 cssparser = "0.27.2"
 selectors = "0.22.0"
 specs = { version = "0.16.0", features = ["shred-derive", "specs-derive"] }
@@ -22,6 +21,8 @@ arrayvec = "^0.5"
 harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
 parking_lot = "0.10.2"
 math-render = { path = "../rust-math-render" }#, git = "https://github.com/manuel-rhdt/mlayout" }
+thiserror = "1.0.18"
+env_logger = "0.7.1"
 
 [dev-dependencies]
 assert_cmd = "^1"

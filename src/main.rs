@@ -53,7 +53,7 @@ pub enum Error {
 }
 
 fn main() -> Result<(), Error> {
-    simple_logger::init_with_level(log::Level::Info).unwrap();
+    env_logger::init();
 
     let opt = Options::from_args();
 

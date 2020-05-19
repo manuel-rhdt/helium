@@ -104,9 +104,8 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
                 #name::#ident(val) => { val.apply_to(computed) }
             });
             quote! {
-                match <#parser_ty as ParseDeclaration>::parse_declaration(name.clone(), input) {
-                    Ok(success) => return Ok(#name::#ident(success)),
-                    Err(err) => {},
+                if let Ok(success) = input.try_parse(|input| <#parser_ty as ParseDeclaration>::parse_declaration(name.clone(), input)) {
+                    return Ok(#name::#ident(success));
                 }
             }
         }
@@ -114,11 +113,11 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
 
     let trait_impl = quote! {
         impl #generics_appended ParseDeclaration<'i> for #name #generics {
-            type Error = ();
+            type Error = StyleParseError<'i>;
 
             fn parse_declaration(name: cssparser::CowRcStr<'i>, input: &mut cssparser::Parser<'i, '_>) -> Result<Self, ParseError<'i, Self::Error>> {
                 #(#if_clauses)*
-                Err(input.new_custom_error(()))
+                Err(input.new_custom_error(StyleParseError::UnknownProperty { name }))
             }
         }
 
@@ -276,14 +275,14 @@ fn impl_property_value_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream
 
     let gen = quote! {
         impl<'i> PropertyValue<'i> for #name {
-            type Error = ();
+            type Error = StyleParseError<'i>;
 
             fn from_css_property_value(input: &mut cssparser::Parser<'i, '_>) -> Result<#name, cssparser::ParseError<'i, Self::Error>> {
                 #(if let Ok(success) = input.r#try(|input| #sub_parsers) {
                     return Ok(success)
                 })*
 
-                Err(input.new_custom_error(()))
+                Err(input.new_error_for_next_token())
             }
         }
     };
