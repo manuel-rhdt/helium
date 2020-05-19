@@ -10,7 +10,7 @@ use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
 use math_render::{mathmlparser, Field};
-use specs::{Builder, World, WorldExt};
+use specs::{Builder, Entity, World, WorldExt};
 
 use std::collections::HashMap;
 
@@ -286,6 +286,10 @@ impl EntityConstructor {
     // computed styles) whether to build a block formatting context or an inline formatting
     // context.
     pub fn build_formatting_context<'a, Node: AbstractNode<'a>>(&mut self, node: &'a Node) {
+        if node.layout_entity().is_none() {
+            return;
+        }
+
         if self.mathml_context.is_some() {
             self.build_math_expression(node);
             return;
@@ -350,25 +354,56 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_inline_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+        let mut new_contexts = vec![];
+
         let mut inline_formatting_context = InlineFormattingContext {
             elements: vec![],
             break_points: vec![],
             lines: vec![],
             text_align: node.style().text.text_align,
         };
-        for child_entity in node
-            .children()
-            .map(|child| child.layout_entity().unwrap().0)
-        {
+        for child in node.children() {
+            let child_entity = child.layout_entity().unwrap().0;
             if let Some(InlineFormattingContext { elements, .. }) =
                 self.world.write_storage().remove(child_entity)
             {
                 inline_formatting_context
                     .elements
                     .extend_from_slice(&elements);
-            } else {
-                inline_formatting_context.elements.push(child_entity);
+                continue;
             }
+            if child.style().box_.display == Display::Block
+                || self
+                    .world
+                    .read_storage::<BlockFormattingContext>()
+                    .contains(child_entity)
+            {
+                if inline_formatting_context.elements.is_empty() {
+                    // insert strut
+                    inline_formatting_context
+                        .elements
+                        .push(self.build_text_entity(node.style(), "").0);
+                }
+                let new_ifc = self
+                    .world
+                    .create_entity()
+                    .with(std::mem::replace(
+                        &mut inline_formatting_context,
+                        InlineFormattingContext {
+                            elements: vec![],
+                            break_points: vec![],
+                            lines: vec![],
+                            text_align: node.style().text.text_align,
+                        },
+                    ))
+                    .with(node.style())
+                    .build();
+                new_contexts.push(new_ifc);
+                new_contexts.push(child_entity);
+                continue;
+            }
+
+            inline_formatting_context.elements.push(child_entity);
         }
 
         if inline_formatting_context.elements.is_empty() {
@@ -378,10 +413,51 @@ impl EntityConstructor {
                 .push(self.build_text_entity(node.style(), "").0);
         }
 
-        if let Some(LayoutEntity(self_entity)) = node.layout_entity() {
+        let LayoutEntity(self_entity) = node.layout_entity().unwrap();
+        if new_contexts.is_empty() {
             self.world
                 .write_storage()
                 .insert(self_entity, inline_formatting_context)
+                .unwrap();
+        } else {
+            let last_ifc = self
+                .world
+                .create_entity()
+                .with(inline_formatting_context)
+                .with(node.style())
+                .build();
+            new_contexts.push(last_ifc);
+
+            let mut block_formatting_context = BlockFormattingContext { elements: vec![] };
+
+            block_formatting_context
+                .elements
+                .push(BlockLevelElement::ContainerStart(self_entity));
+
+            for child_entity in new_contexts {
+                let child_bfc = self.world.write_storage().remove(child_entity);
+                if let Some(BlockFormattingContext { elements }) = child_bfc {
+                    block_formatting_context
+                        .elements
+                        .extend_from_slice(&elements);
+                } else {
+                    // insert anonymous block level box
+                    // see https://www.w3.org/TR/CSS22/visuren.html#anonymous-block-level
+                    block_formatting_context.elements.extend_from_slice(&[
+                        BlockLevelElement::ContainerStart(child_entity),
+                        BlockLevelElement::Leaf(child_entity),
+                        BlockLevelElement::ContainerEnd(child_entity),
+                    ]);
+                }
+            }
+
+            block_formatting_context
+                .elements
+                .push(BlockLevelElement::ContainerEnd(self_entity));
+
+            self.world
+                .write_storage()
+                .insert(self_entity, block_formatting_context)
                 .unwrap();
         }
     }
