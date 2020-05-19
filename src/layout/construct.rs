@@ -10,7 +10,7 @@ use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
 use math_render::{mathmlparser, Field};
-use specs::{Builder, Entity, World, WorldExt};
+use specs::{Builder, World, WorldExt};
 
 use std::collections::HashMap;
 
