@@ -1,72 +1,18 @@
 use super::components::{self, Paragraph, TextOperator};
 use super::{
-    normal_formatting::BlockFormattingContext,
     text::{font::GlyphIndex, Font},
     FontMap,
 };
-use crate::style::properties::computed::{ComputedValues, Display, PixelLength as Px, TextAlign};
+use crate::style::properties::computed::{PixelLength as Px, TextAlign};
 
 use crate::layout::text::shape;
 
-use components::{BlockLevelElement, Glyphs, IntrinsicSize, KernedGlyphs, Position};
+use components::{Glyphs, IntrinsicSize, KernedGlyphs, Position};
 use lemon_pdf::font::FontUnit;
 use specs::{Component, DenseVecStorage, Entity};
 use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
 
 use std::collections::BTreeMap;
-
-/// A system that splits inlines around block level elements (see
-/// https://www.w3.org/TR/CSS22/visuren.html#anonymous-block-level)
-pub struct InlineSplitter;
-
-impl InlineSplitter {
-    fn build_anonymous_block(
-        &self,
-        entities: &Entities,
-        inline_formatting_contexts: &mut WriteStorage<InlineFormattingContext>,
-        computed_values: &mut WriteStorage<ComputedValues>,
-        elements: &[Entity],
-        style: &ComputedValues,
-    ) -> Entity {
-        // build anonymous block element
-        entities
-            .build_entity()
-            .with(
-                InlineFormattingContext {
-                    elements: elements.to_owned(),
-                    break_points: vec![],
-                    lines: vec![],
-                    text_align: style.text.text_align,
-                },
-                inline_formatting_contexts,
-            )
-            .with(style.clone(), computed_values)
-            .build()
-    }
-}
-
-impl<'a> System<'a> for InlineSplitter {
-    type SystemData = (
-        Entities<'a>,
-        WriteStorage<'a, InlineFormattingContext>,
-        WriteStorage<'a, BlockFormattingContext>,
-        WriteStorage<'a, ComputedValues>,
-    );
-
-    fn run(
-        &mut self,
-        (
-            entities,
-            mut inline_formatting_contexts,
-            mut block_formatting_contexts,
-            mut computed_values,
-        ): Self::SystemData,
-    ) {
-        let bitset = inline_formatting_contexts.mask().clone();
-
-        for (_, entity) in (&bitset, &entities).join() {}
-    }
-}
 
 #[derive(Debug, Copy, Clone)]
 pub struct Line {
