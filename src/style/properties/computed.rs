@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::specified::{self, ApplyToComputedValues, BorderStyle, ComputedValue, MathFamily};
 pub use super::specified::{
-    Display, FontFamily, FontStyle, FontWeight, PageBreak, Percentage, TextAlign,
+    Display, FontFamily, FontStyle, FontWeight, PageBreak, Percentage, PositionSpec, TextAlign,
 };
 
 pub use cssparser::RGBA;
@@ -333,7 +333,7 @@ pub struct ComputedValues {
     pub text: Arc<Text>,
     pub background: Arc<Background>,
     pub page: Arc<Page>,
-    pub math: Arc<Math>
+    pub math: Arc<Math>,
 }
 
 impl AsMut<Box> for ComputedValues {
@@ -381,11 +381,13 @@ impl ComputedValues {
 #[derive(Debug, Default)]
 pub struct StyleBuilder {
     new_values: ComputedValues,
+    is_display_none: bool,
 }
 
 impl StyleBuilder {
     pub fn new(inherited_values: ComputedValues) -> Self {
         // Here we define which CSS property values are inherited
+
         let inherited = ComputedValues {
             font: inherited_values.font,
             page: inherited_values.page,
@@ -393,6 +395,7 @@ impl StyleBuilder {
         };
         StyleBuilder {
             new_values: inherited,
+            is_display_none: inherited_values.box_.display == Display::None,
         }
     }
 
@@ -402,6 +405,12 @@ impl StyleBuilder {
 
     pub fn build(mut self) -> ComputedValues {
         self.new_values.fixup();
+        if self.is_display_none {
+            *self.new_values.as_mut() = Box {
+                display: Display::None,
+                ..*self.new_values.box_.as_ref()
+            };
+        }
         self.new_values
     }
 }
@@ -409,6 +418,7 @@ impl StyleBuilder {
 #[derive(Debug, Clone, Default)]
 pub struct Box {
     pub display: specified::Display,
+    pub position: PositionSpec,
 }
 
 #[derive(Debug, Clone)]
@@ -479,7 +489,7 @@ pub struct Math {
 impl Default for Math {
     fn default() -> Self {
         Math {
-            math_variant: MathFamily::Normal
+            math_variant: MathFamily::Normal,
         }
     }
 }

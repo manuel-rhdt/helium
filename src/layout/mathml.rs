@@ -220,7 +220,6 @@ impl<'world> System<'world> for LayoutMathGlyphs {
                 &text_runs,
                 &mut to_unicode_map,
             );
-            dbg!(&to_unicode_map);
             font.to_unicode.lock().append(&mut to_unicode_map);
             paragraph.replace(para);
             vector_graphic.replace(vg);

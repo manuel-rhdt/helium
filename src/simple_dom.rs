@@ -244,7 +244,9 @@ fn construct_recursive(node: &Node, constructor: &mut EntityConstructor) {
     for child in node.children() {
         construct_recursive(child, constructor);
     }
-    constructor.build_formatting_context(&node);
+    if let ParsedData::Element(_) = node.html_data() {
+        constructor.build_formatting_context(&node);
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

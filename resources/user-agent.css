@@ -4,6 +4,7 @@
 
 @page {
   margin: 2.5cm;
+  /* A4 paper size */
   width: 210mm;
   height: 297mm;
 }
@@ -35,6 +36,7 @@ embed[hidden] {
 
 html,
 body {
+  font-family: 'Helvetica Neue';
   display: block;
 }
 

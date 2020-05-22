@@ -253,6 +253,8 @@ pub enum Font {
 pub enum Box {
     #[property]
     Display(Display),
+    #[property]
+    Position(PositionSpec),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -789,3 +791,16 @@ impl From<MathFamily> for MathFamily2 {
         }
     }
 }
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum PositionSpec {
+    Static,
+    Absolute
+}
+
+impl Default for PositionSpec {
+    fn default() -> Self {
+        PositionSpec::Static
+    }
+}
+

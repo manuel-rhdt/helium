@@ -414,19 +414,31 @@ impl DomRef {
     }
 }
 
-use crate::dot::{GraphDisplayStyle, Shape, Style};
+use crate::{
+    dot::{GraphDisplayStyle, Shape, Style},
+    layout::components::LayoutEntity,
+};
 
 impl crate::dot::GraphStyle for DomRef {
     fn graph_style(&self) -> GraphDisplayStyle {
+        let entity = self.layout_entity.get().map(|LayoutEntity(ent)| ent.id());
+        let entity = if let Some(ent) = entity {
+            format!("Entity({}): ", ent)
+        } else {
+            format!("")
+        };
+
         match &self.html_data {
             ParsedData::Element(ElementData { name, .. }) => GraphDisplayStyle::new()
-                .label(&name.local)
+                .label(format!("{}{}", entity, name.local))
                 .shape(Shape::Box),
             ParsedData::Doctype(_) => GraphDisplayStyle::new().label("doctype"),
             ParsedData::Document(_) => GraphDisplayStyle::new()
                 .label("document")
                 .style(Style::Filled(0.5, 0.5, 0.5)),
-            ParsedData::Text(_) => GraphDisplayStyle::new().label("text"),
+            ParsedData::Text(text) => {
+                GraphDisplayStyle::new().label(format!("{}{:?}", entity, text.borrow().clone()))
+            }
             _ => Default::default(),
         }
     }

@@ -11,9 +11,28 @@ use lemon_pdf::object::{IndirectReference, Object};
 use lemon_pdf::stream::Stream;
 use lemon_pdf::DocumentContext;
 
-use font_parse::{write_font, FontKitFont, OpentypeTableAccess, Tag};
+use font_parse::{write_font, OpentypeTableAccess, Tag};
 
 use std::io::{Result, Write};
+
+pub struct FontTableData(harfbuzz_rs::Shared<harfbuzz_rs::Blob<'static>>);
+
+impl std::ops::Deref for FontTableData {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl OpentypeTableAccess<'static> for Font {
+    type TableData = FontTableData;
+    fn table_data(&self, tag: Tag) -> Option<Self::TableData> {
+        self.hb_font
+            .face()
+            .table_with_tag(&tag.0)
+            .map(FontTableData)
+    }
+}
 
 impl Font {
     pub fn is_truetype(&self) -> bool {
@@ -27,11 +46,10 @@ impl Font {
 
     pub fn pdf_font_stream(&self) -> Result<Option<Stream>> {
         match &self.font_data {
-            FontData::External(font) => {
-                let wrapped_font = FontKitFont::new(font);
+            FontData::External(_) => {
                 let mut font_bytes = vec![];
 
-                if wrapped_font.has_table(Tag(*b"glyf")) {
+                if self.has_table(Tag(*b"glyf")) {
                     let tables = vec![
                         Tag(*b"head"),
                         Tag(*b"hhea"),
@@ -43,7 +61,7 @@ impl Font {
                         Tag(*b"hmtx"),
                         Tag(*b"fpgm"),
                     ];
-                    write_font(&wrapped_font, Tag([0, 1, 0, 0]), &tables, &mut font_bytes)?;
+                    write_font(self, Tag([0, 1, 0, 0]), &tables, &mut font_bytes)?;
                 } else {
                     let tables = &[
                         Tag(*b"head"),
@@ -52,7 +70,7 @@ impl Font {
                         Tag(*b"hmtx"),
                         Tag(*b"maxp"),
                     ];
-                    write_font(&wrapped_font, Tag([0, 1, 0, 0]), tables, &mut font_bytes)?;
+                    write_font(self, Tag([0, 1, 0, 0]), tables, &mut font_bytes)?;
                 }
 
                 let mut stream = Stream::with_bytes(font_bytes, None);

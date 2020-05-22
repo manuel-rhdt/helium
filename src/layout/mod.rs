@@ -2,11 +2,11 @@ pub mod components;
 pub mod construct;
 pub mod inline;
 pub mod inline_size;
+mod mathml;
 pub mod normal_formatting;
 mod paginate;
 pub(crate) mod paragraph;
 pub mod text;
-mod mathml;
 
 use crate::layout::components::LayoutContext;
 use crate::style::{device::Device, properties::computed::StyleBuilder};
@@ -14,7 +14,7 @@ use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use construct::FlowConstructor;
 
-use components::{TextList, EdgeValues};
+use components::{EdgeValues, TextList};
 use specs::{RunNow, World, WorldExt};
 
 pub type FontMap = std::collections::HashMap<String, text::Font>;
@@ -24,6 +24,9 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     let world = World::new();
     let mut flow_constructor = FlowConstructor::new(world);
     dom.traverse(&mut flow_constructor);
+
+    // dom.serialize_dot_graph(&mut std::fs::File::create("graph.dot").unwrap())
+    //     .unwrap();
 
     // get page style
     let mut style_builder = StyleBuilder::new(Default::default());
@@ -62,6 +65,10 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     math_renderer.setup(&mut layout_context);
     math_renderer.run_now(&layout_context);
 
+    // let mut inline_splitter = inline::InlineSplitter;
+    // inline_splitter.setup(&mut layout_context);
+    // inline_splitter.run_now(&layout_context);
+
     let mut break_points_finder = inline::FindPossibleLineBreaks;
     break_points_finder.run_now(&layout_context);
 
@@ -75,7 +82,10 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     };
     block_layout.run();
 
-    let mut paginator = paginate::Paginator { page_height, margin };
+    let mut paginator = paginate::Paginator {
+        page_height,
+        margin,
+    };
     paginator.run_now(&layout_context);
 
     // at this point the positions of all elements are fixed and should not be changed anymore

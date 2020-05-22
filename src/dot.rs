@@ -74,7 +74,7 @@ impl GraphDisplayStyle {
     }
 
     pub fn write(&self, mut w: impl Write) -> Result<()> {
-        write!(w, "[{},label=\"{}\"", self.shape, self.label)?;
+        write!(w, "[{},label=\"{}\"", self.shape, self.label.escape_debug())?;
         if let Some(style) = self.style {
             write!(w, ",{}", style)?;
         }

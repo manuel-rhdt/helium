@@ -101,18 +101,21 @@ impl Font {
     }
 
     pub fn advance(&self, glyph: GlyphIndex) -> FontUnit {
-        let result = match &self.font_data {
-            FontData::BuiltIn(font) => {
-                font.metrics()
-                    .char_metrics
-                    .get(glyph.0 as usize)
-                    .unwrap()
-                    .advance_width
-            }
-            FontData::External(font) => scale_ext(self.upem, font.advance(glyph.0).unwrap().x()),
-        };
-        self.glyph_advances.lock().insert(glyph, result);
-        result
+        *self.glyph_advances
+            .lock()
+            .entry(glyph)
+            .or_insert_with(|| match &self.font_data {
+                FontData::BuiltIn(font) => {
+                    font.metrics()
+                        .char_metrics
+                        .get(glyph.0 as usize)
+                        .unwrap()
+                        .advance_width
+                }
+                FontData::External(_) => {
+                    scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0) as f32)
+                }
+            })
     }
 
     pub fn scale_to_px(&self, val: FontUnit, font_size: PixelLength) -> PixelLength {
@@ -121,24 +124,6 @@ impl Font {
 
     pub fn font_height(&self) -> FontUnit {
         self.ascent() - self.descent()
-    }
-
-    pub fn glyph_metrics_provider<'font>(
-        &'font self,
-        font_size: PixelLength,
-    ) -> Box<dyn 'font + GlyphMetricsProvide> {
-        match &self.font_data {
-            FontData::BuiltIn(builtin) => Box::new(FontInstance::new(
-                *builtin,
-                self.glyph_advances.lock(),
-                font_size,
-            )),
-            FontData::External(font) => Box::new(FontInstance::new(
-                font,
-                self.glyph_advances.lock(),
-                font_size,
-            )),
-        }
     }
 }
 
@@ -245,20 +230,6 @@ pub(super) struct FontInstance<'font, Font: 'font> {
     pub font: Font,
     pub glyph_map: MutexGuard<'font, BTreeMap<GlyphIndex, FontUnit>>,
     pub size: PixelLength,
-}
-
-impl<'font, Font: 'font> FontInstance<'font, Font> {
-    pub(super) fn new(
-        font: Font,
-        glyph_map: MutexGuard<'font, BTreeMap<GlyphIndex, FontUnit>>,
-        size: PixelLength,
-    ) -> Self {
-        Self {
-            font,
-            glyph_map,
-            size,
-        }
-    }
 }
 
 pub trait GlyphMetricsProvide {
