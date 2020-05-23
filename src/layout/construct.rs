@@ -4,7 +4,7 @@ use super::normal_formatting::BlockFormattingContext;
 use super::{text::Font, FontMap};
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
-use crate::style::properties::computed::{ComputedValues, Display, LineHeight, StyleBuilder};
+use crate::style::properties::computed::{ComputedValues, Display, LineHeight, StyleBuilder, PositionSpec};
 use crate::traverse::Traversal;
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
@@ -366,13 +366,15 @@ impl EntityConstructor {
             };
 
         for elem in elem_iter {
-            let is_block_level = computed_values
-                .get(elem)
-                .map(|s| s.box_.display)
-                .unwrap_or(Display::Inline)
-                == Display::Block;
+            let child_style = computed_values.get(elem);
+            let display = child_style.map(|s| s.box_.display).unwrap_or(Display::Inline);
+            let position = child_style.map(|s| s.box_.position).unwrap_or_default();
 
-            if is_block_level {
+            if position == PositionSpec::Absolute {
+                continue;
+            }
+
+            if display == Display::Block {
                 if !inline_level_elements.is_empty() {
                     push_block(
                         block_level_elements,
@@ -496,6 +498,13 @@ impl EntityConstructor {
                 Some(LayoutEntity(entity)) => entity,
                 None => continue,
             };
+
+            let child_style = child.style();
+            if child_style.box_.position == PositionSpec::Absolute {
+                // TODO: handle absoulte elements
+                continue;
+            }
+
             if let Some(InlineFormattingContext { elements, .. }) =
                 self.world.write_storage().remove(child_entity)
             {

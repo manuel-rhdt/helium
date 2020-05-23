@@ -120,6 +120,7 @@ impl LayoutMathGlyphs {
                         .get_unchecked(math_box.user_data() as _)
                         .map(|TextRun { text, .. }| text);
 
+                    let base_transform = TransformMatrix::translation(x, y);
                     for (advance, glyph) in glyphs.iter().scan(0, |advance, glyph| {
                         let previous_advance = scale(*advance);
                         *advance += glyph.advance_width();
@@ -127,11 +128,11 @@ impl LayoutMathGlyphs {
                     }) {
                         let (x_glyph_offset, y_glyph_offset) = (glyph.offset.x, glyph.offset.y);
                         let translate = TransformMatrix::translation(
-                            x + advance + scale(x_glyph_offset),
-                            y + scale(y_glyph_offset),
+                            advance + scale(x_glyph_offset),
+                            scale(y_glyph_offset),
                         );
-                        let transform = translate
-                            .inv_apply(TransformMatrix::uniform_scale(glyph.scale.as_scale_mult()));
+                        let transform = base_transform
+                            .inv_apply(translate.inv_apply(TransformMatrix::uniform_scale(glyph.scale.as_scale_mult())));
                         para.ops.push(TextOperator::SetTransform(transform));
                         let glyph_index = GlyphIndex(glyph.glyph_code);
                         let _ = font.advance(glyph_index);

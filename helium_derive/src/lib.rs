@@ -104,8 +104,10 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
                 #name::#ident(val) => { val.apply_to(computed) }
             });
             quote! {
-                if let Ok(success) = input.try_parse(|input| <#parser_ty as ParseDeclaration>::parse_declaration(name.clone(), input)) {
-                    return Ok(#name::#ident(success));
+                match input.try_parse(|input| <#parser_ty as ParseDeclaration>::parse_declaration(name.clone(), input)) {
+                    Ok(success) => return Ok(#name::#ident(success)),
+                    Err(cssparser::ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::UnknownProperty { .. }), .. }) => {},
+                    Err(other) => return Err(other)
                 }
             }
         }
