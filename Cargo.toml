@@ -5,32 +5,31 @@ authors = ["Manuel Reinhardt"]
 edition = "2018"
 
 [dependencies]
-structopt = "0.2.18"
-derive_more = "^0.99"
+structopt = ">= 0.2"
+derive_more = "*"
 font-kit = "0.7.0"
 html5ever = "0.25.1"
-log = "0.4.6"
+log = { version = "0.4.8", features = ["std", "max_level_trace", "release_max_level_trace"] }
 cssparser = "0.27.2"
 selectors = "0.22.0"
-specs = { version = "0.16.0", features = ["shred-derive", "specs-derive"] }
+specs = { version = ">= 0.16", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
-arrayvec = "^0.5"
 harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
-parking_lot = "0.10.2"
+parking_lot = ">=0.10"
 math-render = { path = "../rust-math-render" }#, git = "https://github.com/manuel-rhdt/mlayout" }
-thiserror = "1.0.18"
-env_logger = "0.7.1"
+thiserror = "^1"
+env_logger = ">= 0.7"
 
 [dev-dependencies]
 assert_cmd = "^1"
-predicates = "1.0.1"
+predicates = "^1"
 quickcheck = "0.8.5"
 quickcheck_macros = "0.8.0"
 
 [build-dependencies]
 quote = "1"
-Inflector = "0.11.4"
+Inflector = ">= 0.11"
 proc-macro2 = "1"

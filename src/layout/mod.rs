@@ -16,14 +16,20 @@ use construct::FlowConstructor;
 
 use components::{EdgeValues, TextList};
 use specs::{RunNow, World, WorldExt};
+use std::time::Instant;
+
+use log::info;
 
 pub type FontMap = std::collections::HashMap<String, text::Font>;
 
 pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     // here we set the layout passes
     let world = World::new();
+
+    let mut time_before = Instant::now();
     let mut flow_constructor = FlowConstructor::new(world);
     dom.traverse(&mut flow_constructor);
+    info!("TIMED: construct {:?}", time_before.elapsed());
 
     // dom.serialize_dot_graph(&mut std::fs::File::create("graph.dot").unwrap())
     //     .unwrap();
@@ -63,14 +69,19 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
 
     let mut math_renderer = mathml::MathFormat {};
     math_renderer.setup(&mut layout_context);
+    
+    time_before = Instant::now();
     math_renderer.run_now(&layout_context);
+    info!("TIMED: math {:?}", time_before.elapsed());
 
     // let mut inline_splitter = inline::InlineSplitter;
     // inline_splitter.setup(&mut layout_context);
     // inline_splitter.run_now(&layout_context);
 
     let mut break_points_finder = inline::FindPossibleLineBreaks;
+    time_before = Instant::now();
     break_points_finder.run_now(&layout_context);
+    info!("TIMED: line breaks {:?}", time_before.elapsed());
 
     // perform the layout passes
     layout_context.insert(TextList::default());
@@ -79,23 +90,33 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
         page_height,
         margin,
     };
+    time_before = Instant::now();
     block_layout.run(&mut layout_context);
+    info!("TIMED: block layout {:?}", time_before.elapsed());
 
     let mut paginator = paginate::Paginator {
         page_height,
         margin,
     };
+
+    time_before = Instant::now();
     paginator.run_now(&layout_context);
+    info!("TIMED: paginate {:?}", time_before.elapsed());
 
     // at this point the positions of all elements are fixed and should not be changed anymore
 
     let mut line_box_creator = inline::LineBoxCreator;
     line_box_creator.setup(&mut layout_context);
+
+    time_before = Instant::now();
     line_box_creator.run_now(&layout_context);
+    info!("TIMED: line boxes {:?}", time_before.elapsed());
 
     let mut math_layout = mathml::LayoutMathGlyphs {};
     math_layout.setup(&mut layout_context);
+    time_before = Instant::now();
     math_layout.run_now(&layout_context);
+    info!("TIMED: math paint {:?}", time_before.elapsed());
 
     let mut pages_create = normal_formatting::PagesCreate {
         page_width,
