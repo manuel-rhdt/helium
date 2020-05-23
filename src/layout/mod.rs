@@ -78,9 +78,8 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
         page_width,
         page_height,
         margin,
-        world: &layout_context,
     };
-    block_layout.run();
+    block_layout.run(&mut layout_context);
 
     let mut paginator = paginate::Paginator {
         page_height,

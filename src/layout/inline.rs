@@ -36,8 +36,8 @@ impl InlineFormattingContext {
         &self,
         from_index: usize,
         to_index: usize,
-        text_runs: ReadStorage<components::TextRun>,
-        intrinsic_sizes: ReadStorage<components::IntrinsicSize>,
+        text_runs: &ReadStorage<components::TextRun>,
+        intrinsic_sizes: &ReadStorage<components::IntrinsicSize>,
     ) -> (Px, Px) {
         let from = self.break_points[from_index];
         let to = self.break_points[to_index];
