@@ -548,13 +548,6 @@ impl EntityConstructor {
                     mathmlparser::match_math_element(element_data.name.local.as_ref().as_bytes())
                         .unwrap_or_default();
 
-                let attributes = element_data.attributes.borrow();
-                let attr_iter = attributes.values().map(|attr| {
-                    let name = attr.name.local.as_ref();
-                    let value = attr.value.as_ref();
-                    (name, value)
-                });
-
                 let mut math_expressions = WriteStorage::<MathExpression>::fetch(&self.world);
                 let mut text_runs = WriteStorage::<TextRun>::fetch(&self.world);
                 let children = node.children().filter_map(|child| {
