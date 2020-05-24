@@ -123,7 +123,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
 
             let mut advance = Px(0.0);
 
-            for (index, &entity) in elements.iter().enumerate() {
+            for (_index, &entity) in elements.iter().enumerate() {
                 if let Some(text_run) = text_runs.get_mut(entity) {
                     let font = &font_map[&text_run.font_name];
                     let shaped = shape(&text_run.text, font);
