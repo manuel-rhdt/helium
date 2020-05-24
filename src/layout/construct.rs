@@ -4,7 +4,9 @@ use super::normal_formatting::BlockFormattingContext;
 use super::{text::Font, FontMap};
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::Styles;
-use crate::style::properties::computed::{ComputedValues, Display, LineHeight, StyleBuilder, PositionSpec};
+use crate::style::properties::computed::{
+    ComputedValues, Display, LineHeight, PositionSpec, StyleBuilder,
+};
 use crate::traverse::Traversal;
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
@@ -367,7 +369,9 @@ impl EntityConstructor {
 
         for elem in elem_iter {
             let child_style = computed_values.get(elem);
-            let display = child_style.map(|s| s.box_.display).unwrap_or(Display::Inline);
+            let display = child_style
+                .map(|s| s.box_.display)
+                .unwrap_or(Display::Inline);
             let position = child_style.map(|s| s.box_.position).unwrap_or_default();
 
             if position == PositionSpec::Absolute {
@@ -576,9 +580,24 @@ impl EntityConstructor {
                     }
                 });
 
+                let (flags, overrides) = style.math.operator_flags_and_overrides();
+
+                let attributes = math_render::mathmlparser::Attributes {
+                    schema: Default::default(),
+                    token: math_render::mathmlparser::TokenAttributes {
+                        operator_attributes: math_render::mathmlparser::OperatorAttributes {
+                            form: style.math.form.into(),
+                            flags,
+                            user_overrides: overrides,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                };
+
                 let expression = mathmlparser::build_element(
                     elem,
-                    attr_iter,
+                    attributes,
                     children,
                     self.mathml_context.as_mut().unwrap(),
                     entity.id() as u64,
@@ -607,7 +626,7 @@ impl EntityConstructor {
 pub mod test {
     use super::*;
 
-    use crate::simple_dom::{div, p, text, Quantity::Px};
+    use crate::simple_dom::{div, p, span, text, Quantity::Px};
 
     use crate::style::properties::computed::{ComputedValues, GenericSize};
 
@@ -666,6 +685,26 @@ pub mod test {
         let inline_fmt = world.read_storage();
         let InlineFormattingContext { elements, .. } = html[0].get(&inline_fmt);
         assert_eq!(elements, &[html[0][0].entity(), html[0][1].entity()]);
+    }
+
+    #[test]
+    fn test_nested_inlines() {
+        let html = div(vec![
+            span(vec![span(vec![text("Abc")]), span(vec![text("efg")])]),
+            span(vec![text("hij")]),
+        ]);
+        let world = html.construct();
+
+        let inline_fmt = world.read_storage();
+        let InlineFormattingContext { elements, .. } = html.get(&inline_fmt);
+        assert_eq!(
+            elements,
+            &[
+                html[0][0][0].entity(),
+                html[0][1][0].entity(),
+                html[1][0].entity()
+            ]
+        )
     }
 
     #[test]

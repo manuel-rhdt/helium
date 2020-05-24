@@ -10,7 +10,7 @@ use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{Data, DataEnum, Field, Fields, FieldsUnnamed, LitStr, Variant};
 
-#[proc_macro_derive(ParseDeclaration, attributes(property, computed, shorthand, spec))]
+#[proc_macro_derive(ParseDeclaration, attributes(property, ua_property, computed, shorthand, spec))]
 pub fn parse_declaration_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
@@ -62,7 +62,10 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
     let mut property_cases = vec![];
 
     let if_clauses = variants.into_iter().map(|Variant { ident, fields, attrs, .. }| {
-        let is_property = attrs.iter().any(|attr| attr.parse_meta().unwrap().path().get_ident().unwrap() == "property");
+        let mut variant_attribute = None;
+        for attr in attrs {
+            parse_variant_attribute(&mut variant_attribute, attr);
+        }
 
         let parser_ty = match fields {
             Fields::Unnamed(FieldsUnnamed { unnamed, .. }) =>  {
@@ -72,7 +75,7 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
             },
             _ => panic!("Variant must not contain named fields.")
         };
-        if is_property {
+        if variant_attribute.is_some() {
             let shorthands = parse_shorthands(&attrs);
 
             let ident_kebab = to_kebab_case(&ident.to_string());
@@ -94,8 +97,14 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
                 });
             }
 
+            let property_name = if variant_attribute == Some(VariantAttribute::UAProperty) {
+                format!("-helium-{}", ident_kebab)
+            } else {
+                ident_kebab
+            };
+
             quote! {
-                if name.eq_ignore_ascii_case(#ident_kebab) {
+                if name.eq_ignore_ascii_case(#property_name) {
                     return <#parser_ty as PropertyValue>::from_css_property_value(input).map(#name::#ident);
                 }
             }
@@ -133,6 +142,23 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
     };
 
     trait_impl
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum VariantAttribute {
+    Property,
+    // user agent  property
+    UAProperty,
+}
+
+fn parse_variant_attribute(val: &mut Option<VariantAttribute>, attr: &syn::Attribute) {
+    let meta = attr.parse_meta().unwrap();
+    let attr_ident = meta.path().get_ident().unwrap();
+    if attr_ident == "property" {
+        *val = Some(VariantAttribute::Property)
+    } else if attr_ident == "ua_property" {
+        *val = Some(VariantAttribute::UAProperty)
+    }
 }
 
 struct Shorthand {

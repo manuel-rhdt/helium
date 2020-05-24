@@ -1,10 +1,10 @@
 use std::borrow::{Cow, ToOwned};
 use std::str::FromStr;
 
+use super::super::parse::StyleParseError;
 use super::computed::PixelLength;
 use cssparser::{match_ignore_ascii_case, Color, CowRcStr, ParseError, Parser, Token};
 use helium_derive::{ParseDeclaration, PropertyValue};
-use super::super::parse::StyleParseError;
 
 use math_render::unicode_math::Family as MathFamily2;
 
@@ -102,7 +102,7 @@ pub enum PropertyDeclaration<'a> {
     Text(Text),
     Background(Background),
     Page(Page),
-    Math(Math)
+    Math(Math),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -293,8 +293,14 @@ pub enum Page {
 #[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Math"]
 pub enum Math {
-    #[property]
-    MathVariant(MathFamily)
+    #[ua_property]
+    MathVariant(MathFamily),
+    #[ua_property]
+    Form(MathOperatorForm),
+    #[ua_property]
+    OperatorIsStretchy(AutoBool),
+    #[ua_property]
+    MathStyle(MathStyle),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
@@ -529,10 +535,7 @@ impl Default for BorderWidth {
 }
 
 impl ComputedValue<BorderWidth> for super::computed::PixelLength {
-    fn from_specified(
-        bw: &BorderWidth,
-        style: &super::computed::ComputedValues,
-    ) -> Self {
+    fn from_specified(bw: &BorderWidth, style: &super::computed::ComputedValues) -> Self {
         match bw {
             BorderWidth::Thin => PixelLength(1.0),
             BorderWidth::Medium => PixelLength(3.0),
@@ -553,10 +556,7 @@ pub enum FontSize {
 }
 
 impl ComputedValue<FontSize> for super::computed::PixelLength {
-    fn from_specified(
-        font_size: &FontSize,
-        style: &super::computed::ComputedValues,
-    ) -> Self {
+    fn from_specified(font_size: &FontSize, style: &super::computed::ComputedValues) -> Self {
         match *font_size {
             FontSize::Quantity(Quantity { value, unit }) => {
                 PixelLength::from_val_unit(value, unit, style.font.font_size)
@@ -584,7 +584,7 @@ pub enum TextAlign {
     Left,
     Justify,
     Center,
-    Right
+    Right,
 }
 
 impl Default for TextAlign {
@@ -623,10 +623,7 @@ impl<'i> PropertyValue<'i> for f32 {
     ) -> Result<Self, ParseError<'i, Self::Error>> {
         let token = input.next()?;
         match token {
-            Token::Number {
-                value,
-                ..
-            } => Ok(*value),
+            Token::Number { value, .. } => Ok(*value),
             _ => {
                 let token = token.clone();
                 Err(input.new_unexpected_token_error(token))
@@ -652,6 +649,37 @@ impl<'i> PropertyValue<'i> for usize {
                 Err(input.new_unexpected_token_error(token))
             }
         }
+    }
+}
+
+impl<'i> PropertyValue<'i> for bool {
+    type Error = StyleParseError<'i>;
+
+    fn from_css_property_value(
+        input: &mut Parser<'i, '_>,
+    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        let val = input.expect_ident_or_string()?;
+        if val.eq_ignore_ascii_case("true") {
+            Ok(true)
+        } else if val.eq_ignore_ascii_case("false") {
+            Ok(false)
+        } else {
+            let val = val.clone();
+            Err(input.new_unexpected_token_error(cssparser::Token::Ident(val)))
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum AutoBool {
+    True,
+    False,
+    Auto,
+}
+
+impl Default for AutoBool {
+    fn default() -> Self {
+        AutoBool::Auto
     }
 }
 
@@ -770,6 +798,12 @@ pub enum MathFamily {
     Monospace,
 }
 
+impl Default for MathFamily {
+    fn default() -> Self {
+        MathFamily::Normal
+    }
+}
+
 impl From<MathFamily> for MathFamily2 {
     fn from(fam: MathFamily) -> MathFamily2 {
         match fam {
@@ -787,7 +821,6 @@ impl From<MathFamily> for MathFamily2 {
             MathFamily::SansSerifItalic => MathFamily2::SansSerifItalics,
             MathFamily::SansSerifBoldItalic => MathFamily2::SansSerifBoldItalics,
             MathFamily::Monospace => MathFamily2::Monospace,
-            
         }
     }
 }
@@ -795,7 +828,7 @@ impl From<MathFamily> for MathFamily2 {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum PositionSpec {
     Static,
-    Absolute
+    Absolute,
 }
 
 impl Default for PositionSpec {
@@ -804,3 +837,39 @@ impl Default for PositionSpec {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum MathOperatorForm {
+    Auto,
+    Prefix,
+    Infix,
+    Postfix,
+}
+
+impl Default for MathOperatorForm {
+    fn default() -> MathOperatorForm {
+        MathOperatorForm::Auto
+    }
+}
+
+impl From<MathOperatorForm> for Option<math_render::mathmlparser::Form> {
+    fn from(other: MathOperatorForm) -> Self {
+        match other {
+            MathOperatorForm::Auto => None,
+            MathOperatorForm::Prefix => Some(math_render::mathmlparser::Form::Prefix),
+            MathOperatorForm::Infix => Some(math_render::mathmlparser::Form::Infix),
+            MathOperatorForm::Postfix => Some(math_render::mathmlparser::Form::Postfix),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum MathStyle {
+    Inline,
+    Display
+}
+
+impl Default for MathStyle {
+    fn default() -> MathStyle {
+        MathStyle::Inline
+    }
+}

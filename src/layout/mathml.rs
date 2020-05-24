@@ -7,13 +7,13 @@ use super::{
     FontMap,
 };
 use math_render::{
-    layout,
+    layout_with_style,
     math_box::{Drawable, MathBoxContent, MathBoxMetrics},
     shaper::HarfbuzzShaper,
 };
-use specs::{Join, Read, ReadStorage, System, WriteStorage};
+use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
 
-use crate::style::properties::computed::{ComputedValues, PixelLength};
+use crate::style::properties::computed::{ComputedValues, MathStyle, PixelLength};
 use std::collections::BTreeMap;
 
 pub struct MathFormat {}
@@ -21,6 +21,7 @@ pub struct MathFormat {}
 impl<'world> System<'world> for MathFormat {
     type SystemData = (
         Read<'world, FontMap>,
+        Entities<'world>,
         ReadStorage<'world, MathExpression>,
         ReadStorage<'world, ComputedValues>,
         WriteStorage<'world, IntrinsicSize>,
@@ -28,7 +29,14 @@ impl<'world> System<'world> for MathFormat {
     );
     fn run(
         &mut self,
-        (font_map, math_expressions, computed_values, mut intrinsic_sizes, mut math_boxes): Self::SystemData,
+        (
+            font_map,
+            entities,
+            math_expressions,
+            computed_values,
+            mut intrinsic_sizes,
+            mut math_boxes,
+        ): Self::SystemData,
     ) {
         for (expr, style, intrinsic_size, math_box) in (
             &math_expressions,
@@ -43,7 +51,19 @@ impl<'world> System<'world> for MathFormat {
             let scale = |val| val as f32 / font.upem() as f32 * style.font.font_size;
 
             let shaper = HarfbuzzShaper::new(font.hb_font.clone());
-            let result = layout(&expr.expression, &shaper);
+            let result = layout_with_style(&expr.expression, &shaper, |default, user_data| {
+                let entity = entities.entity(user_data as _);
+                let style = computed_values.get(entity);
+                if let Some(style) = style {
+                    if style.math.math_style == MathStyle::Inline {
+                        default.inline_style()
+                    } else {
+                        default.display_style()
+                    }
+                } else {
+                    default
+                }
+            });
 
             let size = IntrinsicSize::SizeWithBaseline {
                 width: scale(result.extents().width),
@@ -111,7 +131,10 @@ impl LayoutMathGlyphs {
                 // node.append(group);
             }
             MathBoxContent::Drawable(drawable) => match drawable {
-                Drawable::Glyphs(glyphs) => {
+                Drawable::Glyphs {
+                    glyphs,
+                    scale: scale_factor,
+                } => {
                     let mut previous_cluster = 0xFFFF;
                     let mut cluster_starting_glyph = 0xFFFF;
 
@@ -120,7 +143,8 @@ impl LayoutMathGlyphs {
                         .get_unchecked(math_box.user_data() as _)
                         .map(|TextRun { text, .. }| text);
 
-                    let base_transform = TransformMatrix::translation(x, y);
+                    let base_transform = TransformMatrix::translation(x, y)
+                        .inv_apply(TransformMatrix::uniform_scale(scale_factor.as_scale_mult()));
                     for (advance, glyph) in glyphs.iter().scan(0, |advance, glyph| {
                         let previous_advance = scale(*advance);
                         *advance += glyph.advance_width();
@@ -131,8 +155,7 @@ impl LayoutMathGlyphs {
                             advance + scale(x_glyph_offset),
                             scale(y_glyph_offset),
                         );
-                        let transform = base_transform
-                            .inv_apply(translate.inv_apply(TransformMatrix::uniform_scale(glyph.scale.as_scale_mult())));
+                        let transform = base_transform.inv_apply(translate);
                         para.ops.push(TextOperator::SetTransform(transform));
                         let glyph_index = GlyphIndex(glyph.glyph_code);
                         let _ = font.advance(glyph_index);

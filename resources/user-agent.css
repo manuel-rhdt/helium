@@ -250,14 +250,16 @@ h6 {
 
 math {
   font-family: "Latin Modern Math";
-  math-variant: normal;
+  -helium-math-variant: normal;
 }
 
 math[display="inline"] {
+  -helium-math-style: inline;
   display: inline;
 }
 
 math[display="block"] {
+  -helium-math-style: display;
   margin-left: auto;
   margin-right: auto;
   display: block;
@@ -266,47 +268,53 @@ math annotation {
   display: none;
 }
 math mi {
-  math-variant: italic;
+  -helium-math-variant: italic;
 }
 math [mathvariant="normal"] {
-  math-variant: normal;
+  -helium-math-variant: normal;
 }
 math [mathvariant="bold"] {
-  math-variant: bold;
+  -helium-math-variant: bold;
 }
 math [mathvariant="italic"] {
-  math-variant: italic;
+  -helium-math-variant: italic;
 }
 math [mathvariant="bold-italic"] {
-  math-variant: bold-italic;
+  -helium-math-variant: bold-italic;
 }
 math [mathvariant="double-struck"] {
-  math-variant: double-struck;
+  -helium-math-variant: double-struck;
 }
 math [mathvariant="bold-fraktur"] {
-  math-variant: bold-fraktur;
+  -helium-math-variant: bold-fraktur;
 }
 math [mathvariant="script"] {
-  math-variant: script;
+  -helium-math-variant: script;
 }
 math [mathvariant="bold-script"] {
-  math-variant: bold-script;
+  -helium-math-variant: bold-script;
 }
 math [mathvariant="fraktur"] {
-  math-variant: fraktur;
+  -helium-math-variant: fraktur;
 }
 math [mathvariant="sans-serif"] {
-  math-variant: sans-serif;
+  -helium-math-variant: sans-serif;
 }
 math [mathvariant="bold-sans-serif"] {
-  math-variant: bold-sans-serif;
+  -helium-math-variant: bold-sans-serif;
 }
 math [mathvariant="sans-serif-italic"] {
-  math-variant: sans-serif-italic;
+  -helium-math-variant: sans-serif-italic;
 }
 math [mathvariant="sans-serif-bold-italic"] {
-  math-variant: sans-serif-bold-italic;
+  -helium-math-variant: sans-serif-bold-italic;
 }
 math [mathvariant="monospace"] {
-  math-variant: monospace;
+  -helium-math-variant: monospace;
+}
+math mo[stretchy="true"], math mstyle[stretchy="true"] mo {
+  -helium-operator-is-stretchy: true;
+}
+math mo[stretchy="false"], math mstyle[stretchy="false"] mo {
+  -helium-operator-is-stretchy: false;
 }
