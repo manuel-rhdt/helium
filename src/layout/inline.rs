@@ -123,21 +123,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
 
             let mut advance = Px(0.0);
 
-            let mut last_whitespace = true;
-
             for (index, &entity) in elements.iter().enumerate() {
                 if let Some(text_run) = text_runs.get_mut(entity) {
-                    super::text::whitespace::transform_text(&mut text_run.text, last_whitespace);
-                    if text_run.text.ends_with(char::is_whitespace) {
-                        last_whitespace = true;
-                    } else {
-                        last_whitespace = false;
-                    }
-                    if index == elements.len() - 1 && last_whitespace {
-                        let new_len = text_run.text.trim_end().len();
-                        text_run.text.truncate(new_len);
-                    }
-
                     let font = &font_map[&text_run.font_name];
                     let shaped = shape(&text_run.text, font);
                     for (pos, glyph_info) in &shaped {
@@ -160,7 +147,6 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                     }
                 } else if let Some(intrinsiz_size) = intrinsic_sizes.get(entity) {
-                    last_whitespace = false;
                     advance += intrinsiz_size.width().unwrap_or_default();
                 }
             }

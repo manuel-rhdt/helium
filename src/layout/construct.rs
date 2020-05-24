@@ -147,12 +147,23 @@ impl HtmlNode for DomRef {
 pub trait IterChildren<'a>: Sized {
     type ChildrenIter: 'a + Iterator<Item = Self>;
     fn children(&'a self) -> Self::ChildrenIter;
+
+    fn next_sibling(&self) -> Option<Self>;
+    fn previous_sibling(&self) -> Option<Self>;
 }
 
 impl<'a> IterChildren<'a> for DomRef {
     type ChildrenIter = crate::tree::SiblingIter<DomRef>;
     fn children(&'a self) -> Self::ChildrenIter {
         TreeLinked::children(&self)
+    }
+
+    fn next_sibling(&self) -> Option<Self> {
+        crate::tree::TreeLinked::next_sibling(&self)
+    }
+
+    fn previous_sibling(&self) -> Option<Self> {
+        crate::tree::TreeLinked::previous_sibling(&self)
     }
 }
 
@@ -181,6 +192,7 @@ pub struct EntityConstructor {
     font_match_cache: HashMap<FontSelector, String>,
     mathml_context: Option<mathmlparser::ParseContext>,
     pub world: World,
+    trim_next_inline_whitespace: bool,
 }
 
 impl std::fmt::Debug for EntityConstructor {
@@ -203,6 +215,7 @@ impl EntityConstructor {
             world,
             font_match_cache: Default::default(),
             mathml_context: None,
+            trim_next_inline_whitespace: true,
         }
     }
 
@@ -242,11 +255,31 @@ impl EntityConstructor {
             }
             ParsedData::Document(_) => self.build_root_entity(),
             ParsedData::Text(string) => {
-                let text = &string.borrow() as &str;
-                if text.trim().is_empty() {
+                // TODO: implement proper whitespace algorithm
+
+                let mut text = string.borrow_mut();
+
+                match node.previous_sibling() {
+                    Some(node) if node.style().box_.display == Display::Inline => {}
+                    _ => self.trim_next_inline_whitespace = true,
+                };
+
+                super::text::whitespace::transform_text(
+                    &mut text,
+                    self.trim_next_inline_whitespace,
+                );
+
+                if &*text != text.trim_end() {
+                    // this text node ends with whitespace
+                    self.trim_next_inline_whitespace = true
+                } else {
+                    self.trim_next_inline_whitespace = false
+                }
+
+                if text.is_empty() {
                     return;
                 } else {
-                    self.build_text_entity(style, text)
+                    self.build_text_entity(style, &*text)
                 }
             }
             _ => self.build_default_entity(style),

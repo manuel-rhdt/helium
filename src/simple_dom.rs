@@ -166,6 +166,14 @@ impl<'a> IterChildren<'a> for &'a Node {
     fn children(&'a self) -> Self::ChildrenIter {
         self.contents.iter()
     }
+
+    fn next_sibling(&self) -> Option<Self> {
+        None
+    }
+
+    fn previous_sibling(&self) -> Option<Self> {
+        None
+    }
 }
 
 /// Create a block-level html element.

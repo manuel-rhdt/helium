@@ -20,7 +20,8 @@ pub fn transform_text(text: &mut String, after_whitespace: bool) {
         let should_keep = !(last_whitespace && is_whitespace(ch));
         last_whitespace = is_whitespace(ch);
         should_keep
-    })
+    });
+    
 }
 
 #[cfg(test)]
@@ -39,5 +40,4 @@ mod test {
         }
         true
     }
-
 }
