@@ -69,14 +69,10 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
 
     let mut math_renderer = mathml::MathFormat {};
     math_renderer.setup(&mut layout_context);
-    
+
     time_before = Instant::now();
     math_renderer.run_now(&layout_context);
     info!("TIMED: math {:?}", time_before.elapsed());
-
-    // let mut inline_splitter = inline::InlineSplitter;
-    // inline_splitter.setup(&mut layout_context);
-    // inline_splitter.run_now(&layout_context);
 
     let mut break_points_finder = inline::FindPossibleLineBreaks;
     time_before = Instant::now();
@@ -85,11 +81,7 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
 
     // perform the layout passes
     layout_context.insert(TextList::default());
-    let mut block_layout = normal_formatting::BlockLevelLayout {
-        page_width,
-        page_height,
-        margin,
-    };
+    let mut block_layout = normal_formatting::BlockLevelLayout { page_width, margin };
     time_before = Instant::now();
     block_layout.run(&mut layout_context);
     info!("TIMED: block layout {:?}", time_before.elapsed());

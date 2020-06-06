@@ -14,7 +14,6 @@ use specs::storage::BTreeStorage;
 
 pub struct BlockLevelLayout {
     pub page_width: PixelLength,
-    pub page_height: PixelLength,
     pub margin: EdgeValues<PixelLength>,
 }
 
@@ -25,12 +24,8 @@ impl BlockLevelLayout {
         for BlockFormattingContext { elements } in block_formatting_contexts.join() {
             let system_data = BlockFormatterData::fetch(world);
 
-            let mut block_formatter = BlockFormatter::new(
-                &elements,
-                (self.page_width, self.page_height),
-                self.margin,
-                system_data,
-            );
+            let mut block_formatter =
+                BlockFormatter::new(&elements, self.page_width, self.margin, system_data);
             block_formatter.layout();
         }
     }
@@ -106,7 +101,7 @@ pub struct BlockFormatterData<'data> {
 pub struct BlockFormatter<'elements, 'data> {
     elements: &'elements [BlockLevelElement],
     container_stack: ContainerStack,
-    page_size: (PixelLength, PixelLength),
+    page_width: PixelLength,
     page_margin: EdgeValues<PixelLength>,
     data: BlockFormatterData<'data>,
     page_state: PageState,
@@ -116,13 +111,13 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     /// Creates a new `BlockFormatter` that manages the layout of `elements` into pages.
     pub fn new(
         elements: &'elements [BlockLevelElement],
-        page_size: (PixelLength, PixelLength),
+        page_width: PixelLength,
         page_margin: EdgeValues<PixelLength>,
         data: BlockFormatterData<'data>,
     ) -> Self {
         BlockFormatter {
             elements,
-            page_size,
+            page_width,
             page_margin,
             container_stack: Default::default(),
             data,
@@ -268,7 +263,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             Position {
                 x: self.page_margin.left,
                 y: PixelLength(0.0),
-                width: self.page_size.0 - self.page_margin.left - self.page_margin.right,
+                width: self.page_width - self.page_margin.left - self.page_margin.right,
                 height: PixelLength(0.0),
                 z: Default::default(),
                 page: 0,
@@ -572,30 +567,20 @@ mod test {
     struct BlockLayoutTest<'a> {
         html: &'a crate::simple_dom::Node,
         page_width: crate::simple_dom::Quantity,
-        page_height: crate::simple_dom::Quantity,
     }
 
     impl<'a> BlockLayoutTest<'a> {
         fn layout(self) -> specs::World {
             let mut world = self.html.construct();
             let page_width = self.page_width.try_into().unwrap();
-            let page_height = self.page_height.try_into().unwrap();
 
             world.insert(TextList::default());
             let mut block_level_layout = BlockLevelLayout {
                 page_width,
-                page_height,
                 margin: EdgeValues::all(PixelLength(0.0)),
             };
 
             block_level_layout.run(&mut world);
-
-            let mut pages_create = PagesCreate {
-                page_width,
-                page_height,
-            };
-            System::setup(&mut pages_create, &mut world);
-            pages_create.run_now(&world);
 
             world
         }
@@ -635,7 +620,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(100.0),
         };
         let world = test.layout();
 
@@ -667,7 +651,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(200.0),
         };
         let world = test.layout();
 
@@ -698,7 +681,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(100.0),
         };
         let world = test.layout();
 
@@ -740,7 +722,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(100.0),
         };
         let world = test.layout();
 
@@ -778,7 +759,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(100.0),
         };
         let world = test.layout();
 
@@ -807,7 +787,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(100.0),
         };
         let world = test.layout();
 
@@ -823,7 +802,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(100.0),
         };
         let world = test.layout();
 
@@ -845,7 +823,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(100.0),
         };
         let world = test.layout();
 
@@ -870,7 +847,6 @@ mod test {
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
-            page_height: Px(100.0),
         };
         let world = test.layout();
 

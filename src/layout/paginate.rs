@@ -118,12 +118,10 @@ impl<'world> System<'world> for Paginator {
             super::paragraph::compute_breakpoints(break_points.len(), &mut |from, to| {
                 let height = break_points[to].advance_after - break_points[from].advance_before;
 
-                let max_content_size = self.page_height - self.margin.top - self.margin.bottom;
-
-                if height > max_content_size {
+                if height > self.content_height() {
                     std::f64::INFINITY
                 } else {
-                    (max_content_size.0 as f64 - height.0 as f64).powi(3)
+                    (self.content_height().0 as f64 - height.0 as f64).powi(3)
                 }
             });
 
