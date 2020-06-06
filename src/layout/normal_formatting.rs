@@ -5,7 +5,7 @@ use super::{
     inline::InlineFormattingContext,
     inline_size::{calculate_inline_size, calculate_padding_and_border},
 };
-use crate::style::properties::computed::{ComputedValues, PixelLength, TextAlign};
+use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength, TextAlign};
 
 use std::collections::BTreeMap;
 
@@ -229,6 +229,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     /// - `page_end`: if true this function assumes that the fragment should end abruptly (without
     ///    adding bottom padding and border)
     fn end_container_fragment(&mut self, fragment: Entity) {
+        let parent_pos = self.parent_container_pos();
+
         self.data
             .text_list
             .list
@@ -236,8 +238,19 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
         let mut pos = self.data.positions.get_mut(fragment).unwrap();
         let decoration = self.data.decorations.get(fragment).unwrap();
+        let style = self.data.computed_values.get(fragment).unwrap();
 
-        pos.height = self.page_state.vertical_pos() - pos.y;
+        let content_height = self.page_state.vertical_pos() - pos.y;
+        match style.position.height {
+            GenericSize::Auto => {
+                pos.height = content_height;
+            }
+            GenericSize::LengthPercentage(lp) => {
+                pos.height = lp.absolute(parent_pos.width);
+                // update the page state
+                self.page_state.add_content(-content_height + pos.height);
+            }
+        }
 
         self.page_state.add_content(decoration.border.bottom);
         self.page_state.add_content(decoration.padding.bottom);
@@ -586,30 +599,29 @@ mod test {
         }
     }
 
-    // #[test]
-    // fn test_vertical_stacking_of_consecutive_containers() {
-    //     let html = &html(vec![
-    //         div(vec![])
-    //             .height(Px(10.0))
-    //             .margin_top(Px(10.0))
-    //             .margin_bottom(Px(30.0)),
-    //         div(vec![]),
-    //     ]);
+    #[test]
+    fn test_vertical_stacking_of_consecutive_containers() {
+        let html = &html(vec![
+            div(vec![])
+                .height(Px(10.0))
+                .margin_top(Px(10.0))
+                .margin_bottom(Px(30.0)),
+            div(vec![]),
+        ]);
 
-    //     let test = BlockLayoutTest {
-    //         html,
-    //         page_width: Px(100.0),
-    //         page_height: Px(100.0),
-    //     };
-    //     let world = test.layout();
+        let test = BlockLayoutTest {
+            html,
+            page_width: Px(100.0),
+        };
+        let world = test.layout();
 
-    //     let positions = world.read_storage();
-    //     let pos1: &Position = html[0].get(&positions);
-    //     let pos2: &Position = html[1].get(&positions);
+        let positions = world.read_storage();
+        let pos1: &Position = html[0].get(&positions);
+        let pos2: &Position = html[1].get(&positions);
 
-    //     assert_eq!(pos1.y, PixelLength(10.0));
-    //     assert_eq!(pos2.y, PixelLength(50.0));
-    // }
+        assert_eq!(pos1.y, PixelLength(10.0));
+        assert_eq!(pos2.y, PixelLength(50.0));
+    }
 
     #[test]
     fn test_content_height_of_container_with_simple_children() {
@@ -695,7 +707,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(80.0),
                 height: PixelLength(0.0),
-                z: ZIndex(1),
+                z: ZIndex(2),
                 page: 0,
             }
         );
@@ -707,7 +719,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(65.0),
                 height: PixelLength(0.0),
-                z: ZIndex(2),
+                z: ZIndex(3),
                 page: 0,
             }
         );
@@ -736,7 +748,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(50.0),
                 height: PixelLength(0.0),
-                z: ZIndex(1),
+                z: ZIndex(2),
                 page: 0,
             }
         );
@@ -747,7 +759,7 @@ mod test {
                 y: PixelLength(0.0),
                 width: PixelLength(150.0),
                 height: PixelLength(0.0),
-                z: ZIndex(1),
+                z: ZIndex(2),
                 page: 0,
             }
         );
@@ -772,7 +784,7 @@ mod test {
                 y: PixelLength(10.0),
                 width: PixelLength(100.0),
                 height: PixelLength(0.0),
-                z: ZIndex(1),
+                z: ZIndex(2),
                 page: 0,
             }
         );
@@ -794,72 +806,5 @@ mod test {
         let pos2: &Position = html[1].get(&positions);
 
         assert_eq!(pos2.y, PixelLength(40.0));
-    }
-
-    #[test]
-    fn test_page_is_generated() {
-        let html = &html(vec![div(vec![]).height(Px(10.0))]);
-        let test = BlockLayoutTest {
-            html,
-            page_width: Px(100.0),
-        };
-        let world = test.layout();
-
-        let pages = world.read_resource::<Option<Pages>>();
-        let pages = pages.as_ref().unwrap();
-        assert_eq!(pages.num_pages(), 1);
-
-        let page_data = pages.page(0);
-
-        assert!(page_data.contains(html["div"].entity()));
-    }
-
-    #[test]
-    fn test_page_break_simple() {
-        let html = &html(vec![
-            div(vec![]).height(Px(75.0)),
-            div(vec![]).height(Px(75.0)),
-        ]);
-        let test = BlockLayoutTest {
-            html,
-            page_width: Px(100.0),
-        };
-        let world = test.layout();
-
-        let pages = world.read_resource::<Option<Pages>>();
-        let pages = pages.as_ref().unwrap();
-        assert_eq!(pages.num_pages(), 2);
-
-        let page0 = pages.page(0);
-        let page1 = pages.page(1);
-
-        assert!(page0.contains(html[0].entity()));
-        assert!(page1.contains(html[1].entity()));
-    }
-
-    #[test]
-    fn test_page_returns_correct_bitset() {
-        let html = &html(vec![
-            div(vec![]).height(Px(25.0)),
-            div(vec![]).height(Px(25.0)),
-            div(vec![]).height(Px(75.0)),
-        ]);
-        let test = BlockLayoutTest {
-            html,
-            page_width: Px(100.0),
-        };
-        let world = test.layout();
-
-        let pages = world.read_resource::<Option<Pages>>();
-        let pages = pages.as_ref().unwrap();
-        assert_eq!(pages.num_pages(), 2);
-
-        let page0 = pages.page(0);
-        let mut bitset = specs::BitSet::new();
-        page0.add_elements_to_set(&mut bitset);
-
-        assert!(bitset.contains(html[0].entity().id()));
-        assert!(bitset.contains(html[1].entity().id()));
-        assert!(!bitset.contains(html[2].entity().id()));
     }
 }
