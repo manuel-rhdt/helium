@@ -109,6 +109,7 @@ pub struct BlockFormatter<'elements, 'data> {
     page_size: (PixelLength, PixelLength),
     page_margin: EdgeValues<PixelLength>,
     data: BlockFormatterData<'data>,
+    page_state: PageState,
 }
 
 impl<'elements, 'data> BlockFormatter<'elements, 'data> {
@@ -125,6 +126,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             page_margin,
             container_stack: Default::default(),
             data,
+            page_state: Default::default(),
         }
     }
 
@@ -165,7 +167,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                             leaf,
                             Position {
                                 x: container_pos.x,
-                                y: PixelLength(0.0),
+                                y: self.page_state.vertical_pos(),
                                 width: container_pos.width,
                                 height: intrinsic_size.height().unwrap_or_default(),
                                 z: self.z_index(),
@@ -173,6 +175,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                             },
                         )
                         .unwrap();
+                    self.page_state
+                        .add_content(intrinsic_size.height().unwrap_or_default());
                     self.data.text_list.list.push(BlockLevelElement::Leaf(leaf))
                 }
             }
@@ -195,6 +199,12 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             &style,
         );
 
+        let decoration = dimensions.decoration;
+
+        self.page_state.add_margin(decoration.margin.top);
+        self.page_state.add_content(decoration.border.top);
+        self.page_state.add_content(decoration.padding.top);
+
         let z = self.z_index();
         self.data
             .positions
@@ -202,17 +212,14 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .unwrap()
             .replace(Position {
                 x: container_pos.x + dimensions.inline_offset(),
-                y: PixelLength(0.0),
+                y: self.page_state.vertical_pos(),
                 width: dimensions.inline_size,
                 height: PixelLength(0.0),
                 z,
                 page: 0,
             });
 
-        self.data
-            .decorations
-            .insert(fragment, dimensions.decoration)
-            .unwrap();
+        self.data.decorations.insert(fragment, decoration).unwrap();
 
         self.data
             .text_list
@@ -231,6 +238,15 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             .text_list
             .list
             .push(BlockLevelElement::ContainerEnd(fragment));
+
+        let mut pos = self.data.positions.get_mut(fragment).unwrap();
+        let decoration = self.data.decorations.get(fragment).unwrap();
+
+        pos.height = self.page_state.vertical_pos() - pos.y;
+
+        self.page_state.add_content(decoration.border.bottom);
+        self.page_state.add_content(decoration.padding.bottom);
+        self.page_state.add_margin(decoration.margin.bottom);
     }
 
     fn parent_container(&self) -> Option<ContainerData> {
@@ -251,7 +267,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         } else {
             Position {
                 x: self.page_margin.left,
-                y: self.page_margin.top,
+                y: PixelLength(0.0),
                 width: self.page_size.0 - self.page_margin.left - self.page_margin.right,
                 height: PixelLength(0.0),
                 z: Default::default(),
@@ -341,7 +357,7 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
                 let pos = Position {
                     x,
-                    y: PixelLength(0.0), //< will get assigned by paginator
+                    y: self.page_state.vertical_pos(),
                     width,
                     height: line.height,
                     z: ZIndex(self.container_stack.len() as i64),
@@ -356,6 +372,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     .text_list
                     .list
                     .push(BlockLevelElement::Leaf(line.entity));
+
+                self.page_state.add_content(line.height);
             }
         }
     }
@@ -456,6 +474,46 @@ pub struct Fragments {
 
 impl Component for Fragments {
     type Storage = BTreeStorage<Self>;
+}
+
+/// Contains state of the vertical layout process.
+///
+/// Its responsibilities include
+/// * managing margin collapsing
+#[derive(Debug, Clone, Default)]
+struct PageState {
+    vertical_pos: PixelLength,
+    /// Contains `Some(margin)` if the previous space was a margin.
+    collapse_margin: Option<PixelLength>,
+}
+
+impl PageState {
+    fn add_content(&mut self, content: PixelLength) {
+        if content == PixelLength(0.0) {
+            return;
+        }
+        self.collapse_margin = None;
+        self.vertical_pos += content;
+    }
+
+    fn add_margin(&mut self, margin: PixelLength) {
+        if margin == PixelLength(0.0) {
+            return;
+        }
+        if let Some(prev_margin) = self.collapse_margin {
+            let margin = prev_margin.max(margin);
+            self.collapse_margin = Some(margin);
+            let additional_margin = margin - prev_margin;
+            self.vertical_pos += additional_margin;
+        } else {
+            self.collapse_margin = Some(margin);
+            self.vertical_pos += margin;
+        }
+    }
+
+    fn vertical_pos(&self) -> PixelLength {
+        self.vertical_pos
+    }
 }
 
 /// A resource that holds a sorted vector of all page entities.
