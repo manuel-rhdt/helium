@@ -156,20 +156,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 );
 
                 if let Some(intrinsic_size) = self.data.intrinsic_sizes.get(leaf) {
-                    self.data
-                        .positions
-                        .insert(
-                            leaf,
-                            Position {
-                                x: container_pos.x,
-                                y: self.page_state.vertical_pos(),
-                                width: container_pos.width,
-                                height: intrinsic_size.height().unwrap_or_default(),
-                                z: self.z_index(),
-                                page: 0,
-                            },
-                        )
-                        .unwrap();
                     self.page_state
                         .add_content(intrinsic_size.height().unwrap_or_default());
                     self.data.text_list.list.push(BlockLevelElement::Leaf(leaf))
