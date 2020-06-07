@@ -92,7 +92,7 @@ impl Font {
     pub fn ascent(&self) -> FontUnit {
         match &self.font_data {
             FontData::BuiltIn(font) => font.metrics().ascender,
-            FontData::External(font) => scale_ext(
+            FontData::External(_font) => scale_ext(
                 self.upem,
                 self.hb_font
                     .get_font_h_extents()
@@ -105,7 +105,7 @@ impl Font {
     pub fn descent(&self) -> FontUnit {
         match &self.font_data {
             FontData::BuiltIn(font) => font.metrics().descender,
-            FontData::External(font) => scale_ext(
+            FontData::External(_font) => scale_ext(
                 self.upem,
                 self.hb_font
                     .get_font_h_extents()
