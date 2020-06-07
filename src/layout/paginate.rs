@@ -1,7 +1,7 @@
 use super::components::{BlockLevelElement, Decoration, EdgeValues, Position, TextList};
 use crate::style::properties::computed::{ComputedValues, PageBreak, PixelLength};
 use specs::{Read, ReadStorage, System, WriteStorage};
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 pub struct Paginator {
     pub page_height: PixelLength,
@@ -102,7 +102,8 @@ impl<'world> System<'world> for Paginator {
         let mut current_page = 0;
         let mut y_offset = self.margin.top;
 
-        let mut processed_entities = BTreeSet::new();
+        // we keep track of which entities we already processed
+        let mut processed_entities = HashSet::new();
 
         // TODO: Split block containers appropriately
         for (index, &elem) in text_list.list.iter().enumerate() {
@@ -119,14 +120,11 @@ impl<'world> System<'world> for Paginator {
                 _ => {}
             };
 
-            if processed_entities.contains(&elem.entity()) {
-                continue;
-            }
-
-            if let Some(Position { page, y, .. }) = positions.get_mut(elem.entity()) {
-                *page = current_page;
-                *y = *y + y_offset;
-                processed_entities.insert(elem.entity());
+            if processed_entities.insert(elem.entity()) {
+                if let Some(Position { page, y, .. }) = positions.get_mut(elem.entity()) {
+                    *page = current_page;
+                    *y = *y + y_offset;
+                }
             }
         }
     }
