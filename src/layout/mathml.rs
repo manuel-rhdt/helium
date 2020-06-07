@@ -48,7 +48,7 @@ impl<'world> System<'world> for MathFormat {
         {
             let font = &(*font_map)[&expr.font_name];
 
-            let scale = |val| val as f32 / font.upem() as f32 * style.font.font_size;
+            let scale = |val| val as f32 / font.upem as f32 * style.font.font_size;
 
             let shaper = HarfbuzzShaper::new(font.hb_font.clone());
             let result = layout_with_style(&expr.expression, &shaper, |default, user_data| {
@@ -96,7 +96,7 @@ impl LayoutMathGlyphs {
         text_runs: &ReadStorage<'_, TextRun>,
         to_unicode_map: &mut BTreeMap<GlyphIndex, String>,
     ) {
-        let scale = |val| val as f32 / font.upem() as f32 * font_size;
+        let scale = |val| val as f32 / font.upem as f32 * font_size;
         let content = math_box.content();
 
         match content {
@@ -231,7 +231,7 @@ impl<'world> System<'world> for LayoutMathGlyphs {
                 math_box.font_name.clone(),
                 math_box.font_size,
             ));
-            let scale = |val| val as f32 / font.upem() as f32 * math_box.font_size;
+            let scale = |val| val as f32 / font.upem as f32 * math_box.font_size;
             let mut to_unicode_map = BTreeMap::new();
             self.generate_elements(
                 &math_box.math_box,

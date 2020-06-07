@@ -36,12 +36,7 @@ impl OpentypeTableAccess<'static> for Font {
 
 impl Font {
     pub fn is_truetype(&self) -> bool {
-        match &self.font_data {
-            FontData::External(font) => {
-                font.load_font_table(u32::from_be_bytes(*b"glyf")).is_some()
-            }
-            _ => false,
-        }
+        self.has_table(Tag(*b"glyf"))
     }
 
     pub fn pdf_font_stream(&self) -> Result<Option<Stream>> {
@@ -83,7 +78,7 @@ impl Font {
     }
 
     pub fn to_font_unit(&self, val: f32) -> FontUnit {
-        FontUnit((val * 1000.0 / self.upem() as f32) as f64)
+        FontUnit((val * 1000.0 / self.upem as f32) as f64)
     }
 
     pub fn pdf_font_descriptor(
@@ -92,6 +87,7 @@ impl Font {
     ) -> FontDescriptor {
         match &self.font_data {
             FontData::External(font) => {
+                let font = font.load().unwrap();
                 let bbox = font.metrics().bounding_box;
                 let bbox = [
                     self.to_font_unit(bbox.min_x()),
@@ -113,13 +109,6 @@ impl Font {
                 }
             }
             _ => todo!(),
-        }
-    }
-
-    pub fn upem(&self) -> u32 {
-        match &self.font_data {
-            FontData::BuiltIn(_) => 1000,
-            FontData::External(font) => font.metrics().units_per_em,
         }
     }
 

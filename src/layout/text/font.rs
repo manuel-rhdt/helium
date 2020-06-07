@@ -16,7 +16,7 @@ use harfbuzz_rs::{Blob, Face as HbFace, Font as HbFont};
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::BTreeMap;
 
-fn scale_ext(upem: u32, metric: f32) -> FontUnit {
+fn scale_ext(upem: u32, metric: i32) -> FontUnit {
     let upem = upem as f64;
     FontUnit(metric as f64 * 1000f64 / upem)
 }
@@ -30,6 +30,7 @@ pub struct Font {
     pub(crate) glyph_advances: Mutex<BTreeMap<GlyphIndex, FontUnit>>,
     pub(crate) to_unicode: Mutex<BTreeMap<GlyphIndex, String>>,
     pub(crate) hb_font: HarfbuzzFont,
+    pub(crate) postscript_name: String,
     pub(crate) font_data: FontData,
 }
 
@@ -41,6 +42,7 @@ impl Clone for Font {
             to_unicode: Mutex::new(self.to_unicode.lock().clone()),
             font_data: self.font_data.clone(),
             hb_font: self.hb_font.clone(),
+            postscript_name: self.postscript_name.clone(),
         }
     }
 }
@@ -48,7 +50,7 @@ impl Clone for Font {
 #[derive(Debug, Clone)]
 pub enum FontData {
     BuiltIn(BuiltInFont),
-    External(font_kit::font::Font),
+    External(font_kit::handle::Handle),
 }
 
 impl Font {
@@ -56,52 +58,66 @@ impl Font {
         Font {
             upem: 1000,
             font_data: FontData::BuiltIn(val),
+            postscript_name: val.metrics().font_name.to_owned(),
             ..Default::default()
         }
     }
 
-    fn external(val: font_kit::font::Font) -> Self {
-        let upem = val.metrics().units_per_em;
-        let font_bytes = val.copy_font_data().unwrap();
-        let handle = val.handle().unwrap();
+    fn external(handle: font_kit::handle::Handle) -> Self {
+        let loaded = handle.load().unwrap();
+
+        let upem = loaded.metrics().units_per_em;
+        let font_bytes = loaded.copy_font_data().unwrap();
         let index = match handle {
             Handle::Memory { font_index, .. } => font_index,
             Handle::Path { font_index, .. } => font_index,
         };
+        let name = loaded.postscript_name().unwrap();
         let blob = Blob::with_bytes_owned(font_bytes, |b| &*b);
         let face = HbFace::new(blob, index);
         let hb_font = HbFont::new(face).into();
         Font {
             upem,
-            font_data: FontData::External(val),
+            font_data: FontData::External(handle),
             hb_font,
+            postscript_name: name,
             ..Default::default()
         }
     }
 
     pub fn postscript_name(&self) -> String {
-        match &self.font_data {
-            FontData::BuiltIn(builtin) => builtin.metrics().font_name.to_owned(),
-            FontData::External(ext_font) => ext_font.postscript_name().unwrap(),
-        }
+        self.postscript_name.clone()
     }
 
     pub fn ascent(&self) -> FontUnit {
         match &self.font_data {
             FontData::BuiltIn(font) => font.metrics().ascender,
-            FontData::External(font) => scale_ext(self.upem, font.metrics().ascent),
+            FontData::External(font) => scale_ext(
+                self.upem,
+                self.hb_font
+                    .get_font_h_extents()
+                    .map(|f| f.ascender)
+                    .unwrap_or_default(),
+            ),
         }
     }
 
     pub fn descent(&self) -> FontUnit {
         match &self.font_data {
             FontData::BuiltIn(font) => font.metrics().descender,
-            FontData::External(font) => scale_ext(self.upem, font.metrics().descent),
+            FontData::External(font) => scale_ext(
+                self.upem,
+                self.hb_font
+                    .get_font_h_extents()
+                    .map(|f| f.descender)
+                    .unwrap_or_default(),
+            ),
         }
     }
 
     pub fn advance(&self, glyph: GlyphIndex) -> FontUnit {
-        *self.glyph_advances
+        *self
+            .glyph_advances
             .lock()
             .entry(glyph)
             .or_insert_with(|| match &self.font_data {
@@ -113,7 +129,7 @@ impl Font {
                         .advance_width
                 }
                 FontData::External(_) => {
-                    scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0) as f32)
+                    scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0))
                 }
             })
     }
@@ -135,6 +151,7 @@ impl Default for Font {
             to_unicode: Default::default(),
             font_data: FontData::BuiltIn(BuiltInFont::Helvetica),
             hb_font: HarfbuzzFont::default(),
+            postscript_name: format!("DEFAULT_FONT"),
         }
     }
 }
@@ -161,8 +178,6 @@ pub fn match_font(style: &ComputedValues) -> Option<Font> {
             .collect::<Vec<_>>();
         let font = SystemSource::new()
             .select_best_match(&families, &style.into())
-            .ok()?
-            .load()
             .ok()?;
 
         Some(Font::external(font))
