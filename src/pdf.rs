@@ -16,7 +16,7 @@ impl From<PixelLength> for Pt {
     }
 }
 
-pub fn write_pdf(print_pages: PrintPages, no_filter: bool) -> Result<(), Error> {
+pub fn write_pdf(print_pages: PrintPages, no_filter: bool, crop: bool) -> Result<(), Error> {
     let file = BufWriter::new(File::create("test_working.pdf")?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
@@ -34,14 +34,23 @@ pub fn write_pdf(print_pages: PrintPages, no_filter: bool) -> Result<(), Error> 
 
     for mut print_page in print_pages.pages {
         let mut page = Page::new();
-        page.set_media_box(MediaBox::new(
-            Pt(0.0),
-            Pt(0.0),
-            print_page.width.into(),
-            print_page.height.into(),
-        ));
-
         let page_height = print_page.height;
+
+        if crop {
+            page.set_media_box(MediaBox::new(
+                print_page.content_rect.x.into(),
+                (page_height - print_page.content_rect.y).into(),
+                print_page.content_rect.xmax().into(),
+                (page_height - print_page.content_rect.ymax()).into(),
+            ));
+        } else {
+            page.set_media_box(MediaBox::new(
+                Pt(0.0),
+                Pt(0.0),
+                print_page.width.into(),
+                print_page.height.into(),
+            ));
+        }
 
         let filter = if no_filter {
             None

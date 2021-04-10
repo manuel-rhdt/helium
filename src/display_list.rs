@@ -20,6 +20,38 @@ pub struct Rect {
     pub height: PixelLength,
 }
 
+impl Rect {
+    pub fn xmax(self) -> PixelLength {
+        self.x + self.width
+    }
+
+    pub fn ymax(self) -> PixelLength {
+        self.y + self.height
+    }
+
+    /// Create a rect exactly large enough to encompass `self` and `other`.
+    pub fn union(self, other: Rect) -> Rect {
+        let xmin = if self.x <= other.x { self.x } else { other.x };
+        let ymin = if self.y <= other.y { self.y } else { other.y };
+        let xmax = if self.xmax() >= other.xmax() {
+            self.xmax()
+        } else {
+            other.xmax()
+        };
+        let ymax = if self.ymax() >= other.ymax() {
+            self.ymax()
+        } else {
+            other.ymax()
+        };
+        Rect {
+            x: xmin,
+            y: ymin,
+            width: xmax - xmin,
+            height: ymax - ymin,
+        }
+    }
+}
+
 impl Point {
     pub fn new(x: PixelLength, y: PixelLength) -> Self {
         Point { x, y }
@@ -45,6 +77,7 @@ pub enum DisplayItem {
 #[derive(Debug, Clone)]
 struct DisplayElement {
     z_index: ZIndex,
+    entity: Entity,
     item: DisplayItem,
 }
 
@@ -54,8 +87,12 @@ pub struct DisplayList {
 }
 
 impl DisplayList {
-    pub fn append(&mut self, item: DisplayItem, z_index: ZIndex) {
-        self.items.push(DisplayElement { item, z_index })
+    pub fn append(&mut self, item: DisplayItem, entity: Entity, z_index: ZIndex) {
+        self.items.push(DisplayElement {
+            item,
+            entity,
+            z_index,
+        })
     }
 
     pub fn items(&mut self) -> impl ExactSizeIterator<Item = &DisplayItem> {
@@ -69,18 +106,20 @@ impl DisplayList {
         end: Point,
         width: PixelLength,
         color: RGBA,
+        entity: Entity,
         z: ZIndex,
     ) {
-        self.append(DisplayItem::Push, z);
-        self.append(DisplayItem::StrokeColor(color), z);
+        self.append(DisplayItem::Push, entity, z);
+        self.append(DisplayItem::StrokeColor(color), entity, z);
         self.append(
             DisplayItem::LineString {
                 points: vec![start, end],
                 line_width: width,
             },
+            entity,
             z,
         );
-        self.append(DisplayItem::Pop, z);
+        self.append(DisplayItem::Pop, entity, z);
     }
 
     // fn append_text(&mut self, pos: Point, text: &components::Text, z_index: ZIndex) {
@@ -104,6 +143,7 @@ pub struct PrintPage {
     pub display_list: DisplayList,
     pub width: PixelLength,
     pub height: PixelLength,
+    pub content_rect: Rect,
 }
 
 pub struct PrintPages {
@@ -124,10 +164,15 @@ pub struct DisplayDecoration {
 }
 
 impl<'a> System<'a> for DisplayDecoration {
-    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, Decoration>);
+    type SystemData = (
+        Entities<'a>,
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, Decoration>,
+    );
 
-    fn run(&mut self, (positions, decorations): Self::SystemData) {
+    fn run(&mut self, (entities, positions, decorations): Self::SystemData) {
         for (
+            entity,
             &Position {
                 x,
                 y,
@@ -138,7 +183,7 @@ impl<'a> System<'a> for DisplayDecoration {
             },
             deco,
             _,
-        ) in (&positions, &decorations, &self.bitset).join()
+        ) in (&entities, &positions, &decorations, &self.bitset).join()
         {
             use PixelLength as Px;
 
@@ -155,9 +200,9 @@ impl<'a> System<'a> for DisplayDecoration {
             } = deco;
 
             if background_color != RGBA::transparent() {
-                self.display_list.append(DisplayItem::Push, z);
+                self.display_list.append(DisplayItem::Push, entity, z);
                 self.display_list
-                    .append(DisplayItem::Color(background_color), z);
+                    .append(DisplayItem::Color(background_color), entity, z);
                 self.display_list.append(
                     DisplayItem::FilledRect(Rect {
                         x: x - padding.left,
@@ -165,9 +210,10 @@ impl<'a> System<'a> for DisplayDecoration {
                         width: width + padding.left + padding.right,
                         height: height + padding.top + padding.bottom,
                     }),
+                    entity,
                     z,
                 );
-                self.display_list.append(DisplayItem::Pop, z);
+                self.display_list.append(DisplayItem::Pop, entity, z);
             }
 
             let hbt = border.top / 2.0;
@@ -185,25 +231,37 @@ impl<'a> System<'a> for DisplayDecoration {
                 let pt2 = Point::new(xmax, ymin + hbt);
 
                 self.display_list
-                    .stroked_line(pt1, pt2, border.top, border_color.top, z);
+                    .stroked_line(pt1, pt2, border.top, border_color.top, entity, z);
             }
             if border.bottom > Px(0.0) {
                 let pt1 = Point::new(xmin, ymax - hbb);
                 let pt2 = Point::new(xmax, ymax - hbb);
-                self.display_list
-                    .stroked_line(pt1, pt2, border.bottom, border_color.bottom, z);
+                self.display_list.stroked_line(
+                    pt1,
+                    pt2,
+                    border.bottom,
+                    border_color.bottom,
+                    entity,
+                    z,
+                );
             }
             if border.left > Px(0.0) {
                 let pt1 = Point::new(xmin + hbl, ymin);
                 let pt2 = Point::new(xmin + hbl, ymax);
                 self.display_list
-                    .stroked_line(pt1, pt2, border.left, border_color.left, z);
+                    .stroked_line(pt1, pt2, border.left, border_color.left, entity, z);
             }
             if border.right > Px(0.0) {
                 let pt1 = Point::new(xmax - hbr, ymin);
                 let pt2 = Point::new(xmax - hbr, ymax);
-                self.display_list
-                    .stroked_line(pt1, pt2, border.right, border_color.right, z);
+                self.display_list.stroked_line(
+                    pt1,
+                    pt2,
+                    border.right,
+                    border_color.right,
+                    entity,
+                    z,
+                );
             }
         }
     }
@@ -215,14 +273,17 @@ pub struct DisplayText {
 }
 
 impl<'a> System<'a> for DisplayText {
-    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, Paragraph>);
+    type SystemData = (
+        Entities<'a>,
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, Paragraph>,
+    );
 
-    fn run(&mut self, (positions, paragraphs): Self::SystemData) {
-        for (pos, paragraph, _) in (&positions, &paragraphs, &self.bitset).join() {
-            self.display_list.append(
-                DisplayItem::Paragraph(paragraph.clone()),
-                pos.z,
-            )
+    fn run(&mut self, (entities, positions, paragraphs): Self::SystemData) {
+        for (entity, pos, paragraph, _) in (&entities, &positions, &paragraphs, &self.bitset).join()
+        {
+            self.display_list
+                .append(DisplayItem::Paragraph(paragraph.clone()), entity, pos.z)
         }
     }
 }
@@ -233,10 +294,16 @@ pub struct DisplayVectorGraphics {
 }
 
 impl<'a> System<'a> for DisplayVectorGraphics {
-    type SystemData = (ReadStorage<'a, Position>, ReadStorage<'a, VectorGraphics>);
+    type SystemData = (
+        Entities<'a>,
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, VectorGraphics>,
+    );
 
-    fn run(&mut self, (positions, vector_graphics): Self::SystemData) {
-        for (pos, vector_graphic, _) in (&positions, &vector_graphics, &self.bitset).join() {
+    fn run(&mut self, (entities, positions, vector_graphics): Self::SystemData) {
+        for (entity, pos, vector_graphic, _) in
+            (&entities, &positions, &vector_graphics, &self.bitset).join()
+        {
             for op in &vector_graphic.ops {
                 match op {
                     GraphicsOp::Line {
@@ -256,9 +323,49 @@ impl<'a> System<'a> for DisplayVectorGraphics {
                             ],
                             line_width: *thickness,
                         },
+                        entity,
                         pos.z,
                     ),
                 }
+            }
+        }
+    }
+}
+
+pub struct ContentRectCalculator {
+    pub bitset: specs::BitSet,
+    pub content_rect: Option<Rect>,
+}
+
+impl<'a> System<'a> for ContentRectCalculator {
+    type SystemData = (ReadStorage<'a, Position>,);
+
+    fn run(&mut self, (positions,): Self::SystemData) {
+        for (
+            &Position {
+                x,
+                y,
+                width,
+                height,
+                ..
+            },
+            ..,
+        ) in (&positions, &self.bitset).join()
+        {
+            if let Some(r) = self.content_rect {
+                self.content_rect = Some(r.union(Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                }))
+            } else {
+                self.content_rect = Some(Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                })
             }
         }
     }
@@ -300,10 +407,26 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         text_builder.run_now(world);
         let display_list = text_builder.display_list;
 
+        let mut bitset = specs::BitSet::new();
+        for DisplayElement {
+            entity,..
+        } in &display_list.items
+        {
+            bitset.add(entity.id());
+        }
+
+        let mut content_rect_calculator = ContentRectCalculator {
+            bitset,
+            content_rect: None,
+        };
+        content_rect_calculator.run_now(world);
+        let content_rect = content_rect_calculator.content_rect.unwrap_or_default();
+
         page_vec.push(PrintPage {
             display_list,
             width: page.size.0,
             height: page.size.1,
+            content_rect,
         });
     }
 
