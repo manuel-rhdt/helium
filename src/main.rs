@@ -43,6 +43,8 @@ use log::info;
 struct Options {
     #[structopt(long = "no-compression")]
     no_filter: bool,
+    #[structopt(long = "crop")]
+    crop: bool,    
     #[structopt(parse(from_os_str))]
     input: PathBuf,
 }
@@ -79,7 +81,7 @@ fn main() -> Result<(), Error> {
 
     let display_list = display_list::generate_display_list(&mut layout_context);
 
-    pdf::write_pdf(display_list, opt.no_filter)?;
+    pdf::write_pdf(display_list, opt.no_filter, opt.crop)?;
 
     Ok(())
 }

@@ -5,7 +5,7 @@ use super::{
     inline::InlineFormattingContext,
     inline_size::{calculate_inline_size, calculate_padding_and_border},
 };
-use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength, TextAlign};
+use crate::{display_list::Rect, style::properties::computed::{ComputedValues, GenericSize, PixelLength, TextAlign}};
 
 use std::collections::BTreeMap;
 
@@ -306,13 +306,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 }
             };
 
-            let mut break_point_sequence =
+            let break_point_sequence =
                 super::paragraph::compute_breakpoints(breakpoints.len(), &mut weight);
-
-            if !breakpoints.is_empty() {
-                break_point_sequence.insert(0, 0);
-                break_point_sequence.push(breakpoints.len() - 1);
-            }
 
             // needed for borrow checker
             let text_runs = &self.data.text_runs;
@@ -530,7 +525,7 @@ impl Pages {
 
 pub struct PagesCreate {
     pub page_width: PixelLength,
-    pub page_height: PixelLength,
+    pub page_height: PixelLength
 }
 
 impl<'a> System<'a> for PagesCreate {
@@ -542,12 +537,12 @@ impl<'a> System<'a> for PagesCreate {
 
     fn run(&mut self, (entities, positions, mut pages): Self::SystemData) {
         let mut page_list = Pages::default();
-        for (entity, Position { page, .. }) in (&entities, &positions).join() {
-            page_list
+        for (entity, &Position { page, .. }) in (&entities, &positions).join() {
+            let page = page_list
                 .0
-                .entry(*page)
-                .or_insert_with(|| Page::new(self.page_width, self.page_height))
-                .append_element(entity)
+                .entry(page)
+                .or_insert_with(|| Page::new(self.page_width, self.page_height));
+            page.append_element(entity);
         }
         *pages = Some(page_list);
     }

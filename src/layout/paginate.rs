@@ -92,11 +92,17 @@ impl<'world> System<'world> for Paginator {
                 if height > self.content_height() {
                     std::f64::INFINITY
                 } else {
+                    if break_points[to].forced {
+                        return std::f64::NEG_INFINITY;
+                    }
                     (self.content_height().0 as f64 - height.0 as f64).powi(3)
                 }
             });
 
-        let mut optimal_sequence_iter = optimal_sequence.iter().map(|&index| break_points[index]);
+        let mut optimal_sequence_iter = optimal_sequence
+            .iter()
+            .skip(1)
+            .map(|&index| break_points[index]);
         let mut next_break = optimal_sequence_iter.next();
 
         let mut current_page = 0;

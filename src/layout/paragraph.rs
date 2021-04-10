@@ -14,6 +14,13 @@ fn lowest_weight_subsequence(
         .min_by(|(_, p1), (_, p2)| p1.partial_cmp(p2).unwrap_or(Ordering::Equal))
 }
 
+#[derive(Default, Copy, Clone)]
+struct Node {
+    position: usize,
+    weight: f64,
+    previous: Option<usize>,
+}
+
 /// Use the Knuth-Plass paragraph layout algorithm to compute the optimal breakpoints.
 ///
 /// # Discussion
@@ -37,24 +44,66 @@ pub fn compute_breakpoints(
     num_breakpoints: usize,
     weight: &mut dyn FnMut(usize, usize) -> f64,
 ) -> Vec<usize> {
-    // a vec of weights for every break point
-    let mut weights = vec![0.0f64; num_breakpoints];
-    // a list that stores the optimal "parent" break point's index for every break point
-    let mut parents = vec![0; num_breakpoints];
+    let mut nodes: Vec<Node> = Vec::with_capacity(num_breakpoints);
+    let mut active_nodes: Vec<usize> = vec![0];
+
+    nodes.push(Node {
+        position: 0,
+        weight: 0.0,
+        previous: None,
+    });
+
     for i in 1..num_breakpoints {
-        let (j, weight) =
-            lowest_weight_subsequence(i, &weights, weight).unwrap_or((0, std::f64::INFINITY));
-        weights[i] = weight;
-        debug_assert!(j < i);
-        parents[i] = j;
+        let mut j = 0;
+
+        let mut minimal_observed_weight = f64::INFINITY;
+        let mut optimal_node = None;
+
+        // TODO: Use drain_filter once it is stable
+        while j != active_nodes.len() {
+            let node_index = active_nodes[j];
+            let node = nodes[node_index];
+
+            let weight_ij = weight(node.position, i);
+            let forced_break = weight_ij == f64::NEG_INFINITY;
+
+            let current_weight = if forced_break {
+                0.0
+            } else {
+                weight(node.position, i) + node.weight
+            };
+            if current_weight.is_infinite() || forced_break {
+                active_nodes.remove(j);
+            } else {
+                j += 1;
+            }
+
+            if current_weight < minimal_observed_weight || forced_break {
+                minimal_observed_weight = current_weight;
+                optimal_node = Some(Node {
+                    position: i,
+                    weight: current_weight,
+                    previous: Some(node_index),
+                });
+            }
+        }
+
+        if let Some(best_node) = optimal_node {
+            nodes.push(best_node);
+            active_nodes.push(nodes.len() - 1);
+        }
     }
 
     // find all the ancestors of the last breakpoint
-    let mut i = parents.last().cloned().unwrap_or(0);
+    let mut node = nodes[active_nodes.last().cloned().unwrap_or(0)];
     let mut result = vec![];
-    while i != 0 {
-        result.push(i);
-        i = parents[i];
+    loop {
+        result.push(node.position);
+        if let Some(index) = node.previous {
+            node = nodes[index];
+        } else {
+            break;
+        }
     }
     result.reverse();
     result
