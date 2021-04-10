@@ -12,22 +12,22 @@ html5ever = "0.25.1"
 log = { version = "0.4.8", features = ["std", "max_level_trace", "release_max_level_trace"] }
 cssparser = "0.27.2"
 selectors = "0.22.0"
-specs = { version = ">= 0.16", features = ["shred-derive", "specs-derive"] }
+specs = { version = "0.16", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
 harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
-parking_lot = ">=0.10"
+parking_lot = "0.11"
 math-render = { git = "https://github.com/manuel-rhdt/mlayout" }
 thiserror = "^1"
-env_logger = ">= 0.7"
+env_logger = "0.8"
 
 [dev-dependencies]
-assert_cmd = "^1"
-predicates = "^1"
-quickcheck = "0.8.5"
-quickcheck_macros = "0.8.0"
+assert_cmd = "1"
+predicates = "1"
+quickcheck = "1"
+quickcheck_macros = "1"
 
 [build-dependencies]
 quote = "1"
