@@ -1,8 +1,9 @@
 use super::{
     components::{
-        Glyphs, GraphicsOp, IntrinsicSize, MathBox, MathExpression, Paragraph, Position,
-        TextOperator, TextRun, TransformMatrix, VectorGraphics,
+        ContainingBlock, Decoration, Glyphs, GraphicsOp, IntrinsicSize, MathBox, MathExpression,
+        Paragraph, Position, TextOperator, TextRun, TransformMatrix, VectorGraphics, ZIndex,
     },
+    inline_size::calculate_padding_and_border,
     text::{font::GlyphIndex, Font},
     FontMap,
 };
@@ -11,7 +12,7 @@ use math_render::{
     math_box::{Drawable, MathBoxContent, MathBoxMetrics},
     shaper::HarfbuzzShaper,
 };
-use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
+use specs::{Entities, Entity, Join, Read, ReadStorage, System, WriteStorage};
 
 use crate::style::properties::computed::{ComputedValues, MathStyle, PixelLength};
 use std::collections::BTreeMap;
@@ -22,23 +23,30 @@ impl<'world> System<'world> for MathFormat {
     type SystemData = (
         Read<'world, FontMap>,
         Entities<'world>,
+        WriteStorage<'world, Position>,
         ReadStorage<'world, MathExpression>,
         ReadStorage<'world, ComputedValues>,
         WriteStorage<'world, IntrinsicSize>,
         WriteStorage<'world, MathBox>,
+        WriteStorage<'world, ContainingBlock>,
+        WriteStorage<'world, Decoration>,
     );
     fn run(
         &mut self,
         (
             font_map,
             entities,
+            mut positions,
             math_expressions,
             computed_values,
             mut intrinsic_sizes,
             mut math_boxes,
+            mut parents,
+            mut decorations,
         ): Self::SystemData,
     ) {
-        for (expr, style, intrinsic_size, math_box) in (
+        for (entity, expr, style, intrinsic_size, math_box) in (
+            &entities,
             &math_expressions,
             &computed_values,
             intrinsic_sizes.entries(),
@@ -47,6 +55,7 @@ impl<'world> System<'world> for MathFormat {
             .join()
         {
             let font = &(*font_map)[&expr.font_name];
+            let font_scale = style.font.font_size / (font.upem as f32);
 
             let scale = |val| val as f32 / font.upem as f32 * style.font.font_size;
 
@@ -65,8 +74,20 @@ impl<'world> System<'world> for MathFormat {
                 }
             });
 
+            process_mathbox(
+                &result,
+                entity,
+                scale(result.extents().ascent),
+                font_scale,
+                &entities,
+                &mut positions,
+                &mut parents,
+                &mut decorations,
+                &computed_values,
+            );
+
             let size = IntrinsicSize::SizeWithBaseline {
-                width: scale(result.extents().width),
+                width: scale(result.advance_width()),
                 height: scale(result.extents().height()),
                 baseline: scale(result.extents().ascent),
             };
@@ -76,7 +97,66 @@ impl<'world> System<'world> for MathFormat {
                 math_box: result,
                 font_name: expr.font_name.clone(),
                 font_size: style.font.font_size,
+                font_scale,
             });
+        }
+    }
+}
+
+pub fn process_mathbox(
+    math_box: &math_render::math_box::MathBox,
+    parent: Entity,
+    baseline: PixelLength,
+    font_scale: PixelLength,
+    entities: &Entities,
+    positions: &mut WriteStorage<Position>,
+    parents: &mut WriteStorage<ContainingBlock>,
+    decorations: &mut WriteStorage<Decoration>,
+    computed_values: &ReadStorage<ComputedValues>,
+) {
+    let entity = entities.entity(math_box.user_data() as _);
+
+    let scale = |x| x as f32 * font_scale;
+
+    let extents = math_box.extents();
+
+    dbg!(math_box.extents());
+
+    let x = scale(math_box.origin.x + extents.left_side_bearing);
+    let y = baseline + scale(math_box.origin.y - extents.ascent);
+    let width = scale(extents.width);
+    let height = scale(extents.height());
+
+    let pos = Position {
+        x,
+        y,
+        width,
+        height,
+        z: ZIndex(0),
+        page: 0,
+    };
+    positions.insert(entity, pos).unwrap();
+    if entity != parent {
+        parents
+            .insert(entity, ContainingBlock { entity: parent })
+            .unwrap();
+        let decoration = calculate_padding_and_border(width, computed_values.get(entity).unwrap());
+        decorations.insert(entity, decoration).unwrap();
+    }
+
+    if let MathBoxContent::Boxes(list) = math_box.content() {
+        for child in list {
+            process_mathbox(
+                child,
+                parent,
+                baseline,
+                font_scale,
+                entities,
+                positions,
+                parents,
+                decorations,
+                computed_values,
+            );
         }
     }
 }

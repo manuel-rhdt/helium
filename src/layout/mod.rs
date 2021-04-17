@@ -7,6 +7,7 @@ pub mod normal_formatting;
 mod paginate;
 pub(crate) mod paragraph;
 pub mod text;
+mod relative_positioning;
 
 use crate::layout::components::LayoutContext;
 use crate::style::{device::Device, properties::computed::StyleBuilder};
@@ -15,6 +16,7 @@ use crate::tree::DomRef;
 use construct::FlowConstructor;
 
 use components::{EdgeValues, TextList};
+use relative_positioning::RelativePositioningSystem;
 use specs::{RunNow, World, WorldExt};
 use std::time::Instant;
 
@@ -95,14 +97,16 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
     paginator.run_now(&layout_context);
     info!("TIMED: paginate {:?}", time_before.elapsed());
 
-    // at this point the positions of all elements are fixed and should not be changed anymore
-
     let mut line_box_creator = inline::LineBoxCreator;
     line_box_creator.setup(&mut layout_context);
-
     time_before = Instant::now();
     line_box_creator.run_now(&layout_context);
     info!("TIMED: line boxes {:?}", time_before.elapsed());
+
+    let mut relative_positioning_system = RelativePositioningSystem;
+    relative_positioning_system.run_now(&mut layout_context);
+
+    // at this point the positions of all elements are fixed and should not be changed anymore
 
     let mut math_layout = mathml::LayoutMathGlyphs {};
     math_layout.setup(&mut layout_context);

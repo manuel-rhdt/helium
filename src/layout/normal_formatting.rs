@@ -1,11 +1,12 @@
 use super::components::{
-    BlockLevelElement, Decoration, EdgeValues, IntrinsicSize, Position, TextList, TextRun, ZIndex,
+    BlockLevelElement, Decoration, EdgeValues, IntrinsicSize, Position, TextList, TextRun,
+    ZIndex,
 };
 use super::{
     inline::InlineFormattingContext,
     inline_size::{calculate_inline_size, calculate_padding_and_border},
 };
-use crate::{display_list::Rect, style::properties::computed::{ComputedValues, GenericSize, PixelLength, TextAlign}};
+use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength, TextAlign};
 
 use std::collections::BTreeMap;
 
@@ -135,8 +136,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         }
     }
 
-    // fn change_state(&mut self)
-
     fn process_element(&mut self, element: BlockLevelElement, style: ComputedValues) {
         match element {
             BlockLevelElement::ContainerStart(entity) => {
@@ -212,8 +211,6 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     ///
     /// # Arguments
     /// - `fragment` specifies the entity index of the fragment
-    /// - `page_end`: if true this function assumes that the fragment should end abruptly (without
-    ///    adding bottom padding and border)
     fn end_container_fragment(&mut self, fragment: Entity) {
         let parent_pos = self.parent_container_pos();
 
@@ -525,7 +522,7 @@ impl Pages {
 
 pub struct PagesCreate {
     pub page_width: PixelLength,
-    pub page_height: PixelLength
+    pub page_height: PixelLength,
 }
 
 impl<'a> System<'a> for PagesCreate {

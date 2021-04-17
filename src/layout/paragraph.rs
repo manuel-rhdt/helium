@@ -137,7 +137,6 @@ mod test {
             .collect();
         offsets.insert(0, 0.0);
 
-        dbg!(&offsets);
         let sequence = compute_breakpoints(offsets.len(), &mut |from, to| {
             line_demerits(from, to, &offsets, 15.0)
         });

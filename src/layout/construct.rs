@@ -584,8 +584,8 @@ impl EntityConstructor {
                 let mut math_expressions = WriteStorage::<MathExpression>::fetch(&self.world);
                 let mut text_runs = WriteStorage::<TextRun>::fetch(&self.world);
                 let children = node.children().filter_map(|child| {
-                    if let Some(LayoutEntity(entity)) = child.layout_entity() {
-                        if let Some(text_run) = text_runs.get_mut(entity) {
+                    if let Some(LayoutEntity(child_entity)) = child.layout_entity() {
+                        if let Some(text_run) = text_runs.get_mut(child_entity) {
                             use math_render::mathmlparser::StringExtMathml;
                             let text = text_run
                                 .text
@@ -594,9 +594,9 @@ impl EntityConstructor {
                             text_run.text = text;
 
                             let field = Field::Unicode(text_run.text.clone());
-                            return Some(mathmlparser::Child::Field((field, entity.id() as _)));
+                            return Some(mathmlparser::Child::Field((field, child_entity.id() as _)));
                         }
-                        math_expressions.remove(entity).map(
+                        math_expressions.remove(child_entity).map(
                             |MathExpression { expression, .. }| {
                                 mathmlparser::Child::Expression(expression)
                             },
