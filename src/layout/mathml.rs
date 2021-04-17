@@ -120,8 +120,6 @@ pub fn process_mathbox(
 
     let extents = math_box.extents();
 
-    dbg!(math_box.extents());
-
     let x = scale(math_box.origin.x + extents.left_side_bearing);
     let y = baseline + scale(math_box.origin.y - extents.ascent);
     let width = scale(extents.width);

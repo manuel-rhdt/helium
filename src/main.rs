@@ -84,7 +84,7 @@ fn main() -> Result<(), Error> {
     };
 
     let before_layout = Instant::now();
-    let mut layout_context = layout::layout(dom.clone(), device);
+    let mut layout_context = layout::layout(dom.clone(), device, opt.crop);
     info!("TIMED: layout {:?}", before_layout.elapsed());
 
     let display_list = display_list::generate_display_list(&mut layout_context);

@@ -6,9 +6,10 @@ mod mathml;
 pub mod normal_formatting;
 mod paginate;
 pub(crate) mod paragraph;
-pub mod text;
 mod relative_positioning;
+pub mod text;
 
+use crate::PixelLength;
 use crate::layout::components::LayoutContext;
 use crate::style::{device::Device, properties::computed::StyleBuilder};
 use crate::traverse::Traverse;
@@ -24,7 +25,7 @@ use log::info;
 
 pub type FontMap = std::collections::HashMap<String, text::Font>;
 
-pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
+pub fn layout(dom: DomRef, device: Device, crop: bool) -> LayoutContext {
     // here we set the layout passes
     let world = World::new();
 
@@ -46,26 +47,36 @@ pub fn layout(dom: DomRef, device: Device) -> LayoutContext {
         }
     }
     let style = style_builder.build();
-    let margin = EdgeValues {
-        top: style
-            .position
-            .margin_top
-            .absolute(Default::default(), device.height),
-        left: style
-            .position
-            .margin_left
-            .absolute(Default::default(), device.width),
-        bottom: style
-            .position
-            .margin_bottom
-            .absolute(Default::default(), device.height),
-        right: style
-            .position
-            .margin_right
-            .absolute(Default::default(), device.width),
-    };
-    let page_width = style.position.width.absolute(device.width, device.width);
-    let page_height = style.position.height.absolute(device.width, device.width);
+
+    let margin;
+    let page_width;
+    let page_height;
+    if crop {
+        margin = Default::default();
+        page_width = PixelLength(0.0);
+        page_height = PixelLength(0.0);
+    } else {
+        margin = EdgeValues {
+            top: style
+                .position
+                .margin_top
+                .absolute(Default::default(), device.height),
+            left: style
+                .position
+                .margin_left
+                .absolute(Default::default(), device.width),
+            bottom: style
+                .position
+                .margin_bottom
+                .absolute(Default::default(), device.height),
+            right: style
+                .position
+                .margin_right
+                .absolute(Default::default(), device.width),
+        };
+        page_width = style.position.width.absolute(device.width, device.width);
+        page_height = style.position.height.absolute(device.width, device.width);
+    }
 
     let mut layout_context = flow_constructor.layout_context();
 
