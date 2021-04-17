@@ -1,19 +1,5 @@
 //! Contains an algorithm for Knuth-style optimal paragraph formatting
 
-use std::cmp::Ordering;
-
-/// Returns the weight of the subsequence with the lowest penalty
-fn lowest_weight_subsequence(
-    to: usize,
-    weights: &[f64],
-    weight: &mut dyn FnMut(usize, usize) -> f64,
-) -> Option<(usize, f64)> {
-    (0..to)
-        .filter(|&from| weights[from] < std::f64::INFINITY)
-        .map(|from| (from, weight(from, to) + weights[from]))
-        .min_by(|(_, p1), (_, p2)| p1.partial_cmp(p2).unwrap_or(Ordering::Equal))
-}
-
 #[derive(Default, Copy, Clone)]
 struct Node {
     position: usize,
