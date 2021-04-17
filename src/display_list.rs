@@ -187,9 +187,6 @@ impl<'a> System<'a> for DisplayDecoration {
         {
             use PixelLength as Px;
 
-            if width == Px(0.0) || height == Px(0.0) {
-                continue;
-            }
 
             let &Decoration {
                 padding,
@@ -352,6 +349,9 @@ impl<'a> System<'a> for ContentRectCalculator {
             ..,
         ) in (&positions, &self.bitset).join()
         {
+            if width == PixelLength(0.0) || height == PixelLength(0.0) {
+                continue
+            }
             if let Some(r) = self.content_rect {
                 self.content_rect = Some(r.union(Rect {
                     x,
@@ -407,13 +407,7 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         text_builder.run_now(world);
         let display_list = text_builder.display_list;
 
-        let mut bitset = specs::BitSet::new();
-        for DisplayElement {
-            entity,..
-        } in &display_list.items
-        {
-            bitset.add(entity.id());
-        }
+        let bitset = text_builder.bitset;
 
         let mut content_rect_calculator = ContentRectCalculator {
             bitset,

@@ -44,7 +44,7 @@ struct Options {
     #[structopt(long = "no-compression")]
     no_filter: bool,
     #[structopt(long = "crop")]
-    crop: bool,    
+    crop: bool,
     #[structopt(parse(from_os_str))]
     input: PathBuf,
 }
@@ -69,10 +69,18 @@ fn main() -> Result<(), Error> {
         before_render_tree.elapsed()
     );
 
-    // a4 paper
-    let device = Device {
-        width: PixelLength(793.7),
-        height: PixelLength(1123.0),
+    let device = if opt.crop {
+        // dummy device. Final page size is determined by cropping
+        Device {
+            width: PixelLength(0.0),
+            height: PixelLength(0.0),
+        }
+    } else {
+        // a4 paper
+        Device {
+            width: PixelLength(793.7),
+            height: PixelLength(1123.0),
+        }
     };
 
     let before_layout = Instant::now();

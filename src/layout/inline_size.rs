@@ -1,4 +1,4 @@
-use super::components::{ContainingBlock, Decoration, Position};
+use super::components::{Decoration, Position};
 use crate::style::properties::computed::{
     ComputedValues, GenericSize, LengthPercentage, PixelLength as Px,
 };
@@ -10,7 +10,6 @@ pub struct InlineSizeResources<'a> {
     pub entities: Entities<'a>,
     pub computed_values: ReadStorage<'a, ComputedValues>,
     pub positions: WriteStorage<'a, Position>,
-    pub containing_blocks: ReadStorage<'a, ContainingBlock>,
     pub decorations: WriteStorage<'a, Decoration>,
 }
 

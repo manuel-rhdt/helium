@@ -13,7 +13,7 @@ pub struct LayoutEntity(pub Entity);
 
 #[derive(Debug)]
 pub struct ContainingBlock {
-    pub entity: LayoutEntity,
+    pub entity: Entity,
 }
 
 impl Component for ContainingBlock {
@@ -23,7 +23,7 @@ impl Component for ContainingBlock {
 /// Describes the position of a box, where (x, y) specifies the top-left corner
 /// and width and height specify the dimensions of the content rect.
 ///
-/// The origin of the coordinate system is usually the parent element's top left
+/// The origin of the coordinate system is usually the page's top left
 /// corner.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Position {
@@ -352,6 +352,7 @@ pub struct MathBox {
     pub math_box: math_render::math_box::MathBox,
     pub font_name: String,
     pub font_size: PixelLength,
+    pub font_scale: PixelLength,
 }
 
 impl Component for MathBox {
