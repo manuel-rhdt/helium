@@ -385,8 +385,8 @@ impl<'data> System<'data> for InlineFormatter {
 
             // weight for computing optimal break points
             let mut weight = |from: usize, to: usize| {
-                if breakpoints[to].forced {
-                    return std::f64::NEG_INFINITY;
+                if (to - from) >= 2 && breakpoints[from + 1..to].iter().any(|b| b.forced) {
+                    return std::f64::INFINITY;
                 }
                 let indent = if from == 0 { indent } else { PixelLength(0.0) };
                 let advance = breakpoints[to].advance_before - breakpoints[from].advance_after;

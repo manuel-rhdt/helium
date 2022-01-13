@@ -56,7 +56,7 @@ pub fn compute_breakpoints(
             let current_weight = if forced_break {
                 0.0
             } else {
-                weight(node.position, i) + node.weight
+                weight_ij + node.weight
             };
             if current_weight.is_infinite() || forced_break {
                 active_nodes.remove(j);
