@@ -1,4 +1,6 @@
-use super::components::{self, BlockLevelElement, LayoutEntity, MathExpression, Position};
+use super::components::{
+    self, BlockLevelElement, LayoutEntity, MathExpression, Position, RootNode,
+};
 use super::inline::InlineFormattingContext;
 use super::normal_formatting::BlockFormattingContext;
 use super::{text::Font, FontMap};
@@ -46,7 +48,7 @@ impl FlowConstructor {
                     if let ParsedData::Text(css) = &child.html_data {
                         self.styles.parse_css(&css.borrow())
                     } else {
-                        log::error!("<style> element did not contain any style information.")
+                        log::warn!("<style> element did not contain any style information.")
                     }
                 }
             }
@@ -211,6 +213,7 @@ impl EntityConstructor {
         world.register::<components::Decoration>();
         world.register::<MathExpression>();
         world.insert(FontMap::new());
+        world.insert(RootNode(None));
         EntityConstructor {
             world,
             font_match_cache: Default::default(),
@@ -520,6 +523,9 @@ impl EntityConstructor {
                 },
             )
             .unwrap();
+
+        let mut root_node = self.world.write_resource::<RootNode>();
+        *root_node = RootNode(Some(entity));
     }
 
     // called on bottom-up traversal
@@ -594,7 +600,10 @@ impl EntityConstructor {
                             text_run.text = text;
 
                             let field = Field::Unicode(text_run.text.clone());
-                            return Some(mathmlparser::Child::Field((field, child_entity.id() as _)));
+                            return Some(mathmlparser::Child::Field((
+                                field,
+                                child_entity.id() as _,
+                            )));
                         }
                         math_expressions.remove(child_entity).map(
                             |MathExpression { expression, .. }| {
@@ -746,6 +755,10 @@ pub mod test {
     fn test_anonymous_block_box_for_text_node_creation() {
         use BlockLevelElement::*;
 
+        // <div>
+        //   <div></div>
+        //   Hello World
+        // </div>
         let html = div(vec![div(vec![]), text("Hello World!")]);
         let world = html.construct();
         let block_fmt = world.read_storage();
@@ -758,10 +771,11 @@ pub mod test {
                 ContainerStart(html[0].entity()),
                 Leaf(html[0].entity()),
                 ContainerEnd(html[0].entity()),
-                // these are the anonymous node
-                elements[4],
-                elements[5],
-                elements[6],
+                // these are the three anonymous node
+                ContainerStart(elements[4].entity()),
+                Leaf(elements[5].entity()),
+                ContainerEnd(elements[6].entity()),
+                // end of anonymous nodes
                 ContainerEnd(html.entity()),
             ]
         );

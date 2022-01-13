@@ -42,7 +42,8 @@ impl Font {
     pub fn pdf_font_stream(&self) -> Result<Option<Stream>> {
         match &self.font_data {
             FontData::External(_) => {
-                let mut font_bytes = vec![];
+                let font_bytes = vec![];
+                let mut stream = Stream::with_bytes(font_bytes, None);
 
                 if self.has_table(Tag(*b"glyf")) {
                     let tables = vec![
@@ -56,7 +57,7 @@ impl Font {
                         Tag(*b"hmtx"),
                         Tag(*b"fpgm"),
                     ];
-                    write_font(self, Tag([0, 1, 0, 0]), &tables, &mut font_bytes)?;
+                    write_font(self, Tag([0, 1, 0, 0]), &tables, &mut stream.bytes)?;
                 } else {
                     let tables = &[
                         Tag(*b"head"),
@@ -65,11 +66,13 @@ impl Font {
                         Tag(*b"hmtx"),
                         Tag(*b"maxp"),
                     ];
-                    write_font(self, Tag([0, 1, 0, 0]), tables, &mut font_bytes)?;
+                    // write_font(self, Tag([0, 1, 0, 0]), tables, &mut font_bytes)?;
+                    let cff_data = self
+                        .table_data(Tag(*b"CFF "))
+                        .expect("No CFF table found in font.");
+                    stream.bytes.write_all(&cff_data)?;
+                    stream.add_key_value("Subtype".to_owned(), Box::new("CIDFontType0C"));
                 }
-
-                let mut stream = Stream::with_bytes(font_bytes, None);
-                stream.add_key_value("Subtype".to_owned(), Box::new("OpenType"));
 
                 Ok(Some(stream))
             }
@@ -96,7 +99,7 @@ impl Font {
                     self.to_font_unit(bbox.max_y()),
                 ];
 
-                FontDescriptor {
+                let mut font_descriptor = FontDescriptor {
                     font_name: self.postscript_name().clone(),
                     font_family: font.family_name().as_bytes().to_owned(),
                     font_b_box: bbox,
@@ -104,9 +107,16 @@ impl Font {
                     x_height: self.to_font_unit(font.metrics().x_height),
                     ascent: self.to_font_unit(font.metrics().ascent),
                     descent: self.to_font_unit(font.metrics().descent),
-                    font_file3: font_data,
                     ..Default::default()
+                };
+
+                if self.is_truetype() {
+                    font_descriptor.font_file2 = font_data;
+                } else {
+                    font_descriptor.font_file3 = font_data;
                 }
+
+                font_descriptor
             }
             _ => todo!(),
         }

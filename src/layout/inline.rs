@@ -146,8 +146,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             advance += font.scale_to_px(pos.x_advance, text_run.font_size);
                         }
                     }
-                } else if let Some(intrinsiz_size) = intrinsic_sizes.get(entity) {
-                    advance += intrinsiz_size.width().unwrap_or_default();
+                } else if let Some(intrinsic_size) = intrinsic_sizes.get(entity) {
+                    advance += intrinsic_size.width().unwrap_or_default();
                 }
             }
 

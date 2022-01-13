@@ -287,9 +287,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dca26ee1f8d361640700bde38b2c37d8c22b3ce2d360e1fc1c74ea4b0aa7d775"
+checksum = "06ed27e177f16d65f0f0c22a213e17c696ace5dd64b14258b52f9417ccb52db4"
 dependencies = [
  "cfg-if 1.0.0",
  "crossbeam-utils 0.8.3",
@@ -807,7 +807,7 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 [[package]]
 name = "lemon_pdf"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git#326e6b9da73090b8b43b1c219797ed0c008d6910"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git#e85d52d391a6dbc34fe4b33e437d788e62fd12a0"
 dependencies = [
  "Inflector",
  "afm",
@@ -830,7 +830,7 @@ dependencies = [
 [[package]]
 name = "lemon_pdf_derive"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git#326e6b9da73090b8b43b1c219797ed0c008d6910"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git#e85d52d391a6dbc34fe4b33e437d788e62fd12a0"
 dependencies = [
  "Inflector",
  "proc-macro2 0.4.30",
@@ -1039,7 +1039,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "instant",
  "libc",
- "redox_syscall 0.2.5",
+ "redox_syscall 0.2.6",
  "smallvec",
  "winapi",
 ]
@@ -1407,9 +1407,9 @@ checksum = "41cc0f7e4d5d4544e8861606a285bb08d3e70712ccc7d2b84d7c0ccfaf4b05ce"
 
 [[package]]
 name = "redox_syscall"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94341e4e44e24f6b591b59e47a8a027df12e008d73fd5672dbea9cc22f4507d9"
+checksum = "8270314b5ccceb518e7e578952f0b72b88222d02e8f77f5ecf7abbb673539041"
 dependencies = [
  "bitflags",
 ]
@@ -1892,9 +1892,9 @@ checksum = "f7fe0bb3479651439c9112f72b6c505038574c9fbb575ed1bf3b797fa39dd564"
 
 [[package]]
 name = "utf-8"
-version = "0.7.5"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05e42f7c18b8f902290b009cde6d651262f956c98bc51bca4cd1d511c9cd85c7"
+checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
 name = "vec_map"

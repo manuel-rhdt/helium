@@ -8,7 +8,7 @@ use cssparser::{
     RuleListParser, SourceLocation, ToCss,
 };
 use html5ever::{LocalName, Namespace};
-use log::error;
+use log::{error, warn};
 use selectors::context::QuirksMode;
 use selectors::matching;
 use selectors::parser::{NonTSPseudoClass, SelectorImpl, SelectorList, SelectorParseErrorKind};
@@ -53,7 +53,7 @@ impl Styles {
 
         for rule in qualified_rule_iter {
             match rule {
-                Err(error) => error!("Could not parse CSS rule: {:?}", error),
+                Err(error) => warn!("Could not parse CSS rule: {:?}", error),
                 Ok(rule) => self.rules.push(rule),
             }
         }
@@ -61,7 +61,7 @@ impl Styles {
 
     pub fn add_stylesheet(&mut self, href: &str) {
         error!("add_stylesheet unimplemented");
-        error!("Could not read stylesheet \"{}\"", href)
+        warn!("Could not read stylesheet \"{}\"", href)
     }
 
     pub fn rules_iter(&self) -> impl DoubleEndedIterator<Item = &QualifiedRule> {
@@ -168,7 +168,7 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
         for declaration in declaration_list_parser {
             match declaration {
                 Ok(declaration) => declaration_block.declarations.push(declaration),
-                Err(err) => error!("Error while parsing declaration: {:?}", err),
+                Err(err) => warn!("Error while parsing declaration: {:?}", err),
             };
         }
 
@@ -211,7 +211,7 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
         for declaration in declaration_list_parser {
             match declaration {
                 Ok(declaration) => declaration_block.declarations.push(declaration),
-                Err(err) => error!("Error while parsing declaration: {:?}", err),
+                Err(err) => warn!("Error while parsing declaration: {:?}", err),
             };
         }
 
