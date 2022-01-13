@@ -267,6 +267,8 @@ pub enum Text {
     TextIndent(QuantityOrPercentage),
     #[property]
     TextAlign(TextAlign),
+    #[ua_property]
+    LineBreak(LineBreak)
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -871,5 +873,17 @@ pub enum MathStyle {
 impl Default for MathStyle {
     fn default() -> MathStyle {
         MathStyle::Inline
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum LineBreak {
+    Normal,
+    Force
+}
+
+impl Default for LineBreak {
+    fn default() -> LineBreak {
+        LineBreak::Normal
     }
 }

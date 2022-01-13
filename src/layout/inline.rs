@@ -3,7 +3,7 @@ use super::{
     text::{font::GlyphIndex, Font},
     FontMap,
 };
-use crate::style::properties::computed::{PixelLength as Px, TextAlign};
+use crate::style::properties::computed::{ComputedValues, PixelLength as Px, TextAlign};
 
 use crate::layout::text::shape;
 
@@ -92,6 +92,7 @@ pub struct BreakPoint {
     pub char_index: usize,
     pub advance_before: Px,
     pub advance_after: Px,
+    pub forced: bool,
 }
 
 // TODO: test this
@@ -100,12 +101,13 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
         WriteStorage<'a, InlineFormattingContext>,
         WriteStorage<'a, components::TextRun>,
         ReadStorage<'a, components::IntrinsicSize>,
+        ReadStorage<'a, ComputedValues>,
         Read<'a, FontMap>,
     );
 
     fn run(
         &mut self,
-        (mut inline_formatting_contexts, mut text_runs, intrinsic_sizes, font_map): Self::SystemData,
+        (mut inline_formatting_contexts, mut text_runs, intrinsic_sizes, computed_values, font_map): Self::SystemData,
     ) {
         for InlineFormattingContext {
             elements,
@@ -119,6 +121,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 char_index: 0,
                 advance_before: Px(0.0),
                 advance_after: Px(0.0),
+                forced: false,
             });
 
             let mut advance = Px(0.0);
@@ -141,6 +144,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 char_index: glyph_info.cluster as usize + ws_len,
                                 advance_before,
                                 advance_after,
+                                forced: false,
                             })
                         } else {
                             advance += font.scale_to_px(pos.x_advance, text_run.font_size);
@@ -148,6 +152,19 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     }
                 } else if let Some(intrinsic_size) = intrinsic_sizes.get(entity) {
                     advance += intrinsic_size.width().unwrap_or_default();
+                }
+                if let Some(style) = computed_values.get(entity) {
+                    if style.text.line_break
+                        == crate::style::properties::specified::LineBreak::Force
+                    {
+                        break_points.push(BreakPoint {
+                            entity,
+                            char_index: 0,
+                            advance_before: advance,
+                            advance_after: advance,
+                            forced: true,
+                        })
+                    }
                 }
             }
 
@@ -164,6 +181,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 char_index,
                 advance_before: advance,
                 advance_after: advance,
+                forced: false,
             })
         }
     }
