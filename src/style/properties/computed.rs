@@ -454,6 +454,7 @@ pub struct Text {
     pub white_space: specified::WhiteSpace,
     pub text_indent: LengthPercentage,
     pub text_align: specified::TextAlign,
+    pub line_break: specified::LineBreak,
 }
 
 #[derive(Debug, Clone)]

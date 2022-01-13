@@ -40,6 +40,10 @@ body {
   display: block;
 }
 
+br {
+  -helium-line-break: force;
+}
+
 address,
 blockquote,
 center,

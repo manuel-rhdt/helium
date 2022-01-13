@@ -9,7 +9,7 @@ pub(crate) mod paragraph;
 mod relative_positioning;
 pub mod text;
 
-use crate::layout::components::{LayoutContext, LayoutEntity, RootNode};
+use crate::layout::components::{LayoutContext, RootNode};
 use crate::style::{device::Device, properties::computed::StyleBuilder};
 use crate::traverse::Traverse;
 use crate::tree::DomRef;
