@@ -9,11 +9,11 @@ pub(crate) mod paragraph;
 mod relative_positioning;
 pub mod text;
 
-use crate::PixelLength;
-use crate::layout::components::LayoutContext;
+use crate::layout::components::{LayoutContext, LayoutEntity, RootNode};
 use crate::style::{device::Device, properties::computed::StyleBuilder};
 use crate::traverse::Traverse;
 use crate::tree::DomRef;
+use crate::PixelLength;
 use construct::FlowConstructor;
 
 use components::{EdgeValues, TextList};
@@ -92,9 +92,14 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> LayoutContext {
     break_points_finder.run_now(&layout_context);
     info!("TIMED: line breaks {:?}", time_before.elapsed());
 
-    // perform the layout passes
+    // perform the layout routines
     layout_context.insert(TextList::default());
-    let mut block_layout = normal_formatting::BlockLevelLayout { page_width, margin };
+    let RootNode(root_entity) = *layout_context.read_resource();
+    let mut block_layout = normal_formatting::BlockLevelLayout {
+        root_entity: root_entity.expect("Could not find root entity."),
+        page_width,
+        margin,
+    };
     time_before = Instant::now();
     block_layout.run(&mut layout_context);
     info!("TIMED: block layout {:?}", time_before.elapsed());

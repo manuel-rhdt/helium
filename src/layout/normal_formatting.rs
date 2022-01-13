@@ -1,6 +1,7 @@
+use log::error;
+
 use super::components::{
-    BlockLevelElement, Decoration, EdgeValues, IntrinsicSize, Position, TextList, TextRun,
-    ZIndex,
+    BlockLevelElement, Decoration, EdgeValues, IntrinsicSize, Position, TextList, TextRun, ZIndex,
 };
 use super::{
     inline::InlineFormattingContext,
@@ -14,20 +15,46 @@ use specs::prelude::*;
 use specs::storage::BTreeStorage;
 
 pub struct BlockLevelLayout {
+    pub root_entity: Entity,
     pub page_width: PixelLength,
     pub margin: EdgeValues<PixelLength>,
 }
 
+#[derive(Debug, Clone)]
+pub enum LayoutOp {
+    Block(BlockFormatter),
+    Inline(InlineFormatter),
+}
+
 impl BlockLevelLayout {
     pub fn run(&mut self, world: &mut World) {
-        <BlockFormatterData as SystemData>::setup(world);
-        let block_formatting_contexts = world.read_storage();
-        for BlockFormattingContext { elements } in block_formatting_contexts.join() {
-            let system_data = BlockFormatterData::fetch(world);
+        <BlockFormattingData as SystemData>::setup(world);
 
-            let mut block_formatter =
-                BlockFormatter::new(&elements, self.page_width, self.margin, system_data);
-            block_formatter.layout();
+        // setup a trampoline for the main layout process
+        let ops_stack = vec![LayoutOp::Block(BlockFormatter::new(
+            self.root_entity,
+            self.page_width,
+            self.margin,
+        ))];
+
+        world.insert(ops_stack);
+        let page_cursor = PageCursor::default();
+        world.insert(page_cursor);
+
+        loop {
+            let next_op = {
+                let mut ops_stack = world.fetch_mut::<Vec<LayoutOp>>();
+                ops_stack.pop()
+            };
+            match next_op {
+                Some(LayoutOp::Block(mut block_formatter)) => {
+                    block_formatter.run_now(world);
+                }
+                Some(LayoutOp::Inline(mut inline_formatter)) => {
+                    inline_formatter.run_now(world);
+                }
+                None => break,
+            }
         }
     }
 }
@@ -88,77 +115,110 @@ impl ContainerStack {
 }
 
 #[derive(SystemData)]
-pub struct BlockFormatterData<'data> {
-    entities: Entities<'data>,
+pub struct BlockFormattingData<'data> {
     positions: WriteStorage<'data, Position>,
     decorations: WriteStorage<'data, Decoration>,
     intrinsic_sizes: ReadStorage<'data, IntrinsicSize>,
     text_list: Write<'data, TextList>,
     computed_values: ReadStorage<'data, ComputedValues>,
-    inline_formatting_contexts: WriteStorage<'data, InlineFormattingContext>,
-    text_runs: ReadStorage<'data, TextRun>,
+    inline_formatting_contexts: ReadStorage<'data, InlineFormattingContext>,
+    ops_stack: Write<'data, Vec<LayoutOp>>,
+    page_cursor: Write<'data, PageCursor>,
 }
 
-pub struct BlockFormatter<'elements, 'data> {
-    elements: &'elements [BlockLevelElement],
+#[derive(Debug, Clone)]
+pub struct BlockFormatter {
+    leaf: Entity,
     container_stack: ContainerStack,
+    element_cursor: usize,
     page_width: PixelLength,
     page_margin: EdgeValues<PixelLength>,
-    data: BlockFormatterData<'data>,
-    page_state: PageState,
 }
 
-impl<'elements, 'data> BlockFormatter<'elements, 'data> {
-    /// Creates a new `BlockFormatter` that manages the layout of `elements` into pages.
+impl<'data> System<'data> for BlockFormatter {
+    type SystemData = (
+        ReadStorage<'data, BlockFormattingContext>,
+        BlockFormattingData<'data>,
+    );
+
+    fn run(&mut self, (block_formatting_contexts, mut data): Self::SystemData) {
+        if let Some(BlockFormattingContext { elements }) = block_formatting_contexts.get(self.leaf)
+        {
+            let elements = &elements[self.element_cursor..];
+            let computed_values = data.computed_values.clone();
+            for (index, element) in elements.iter().enumerate() {
+                let style = computed_values.get(element.entity()).unwrap().clone();
+                let continuation = self.process_element(*element, style, &mut data);
+                if let Some(op) = continuation {
+                    data.ops_stack.push(LayoutOp::Block(BlockFormatter {
+                        leaf: self.leaf,
+                        container_stack: self.container_stack.clone(),
+                        element_cursor: self.element_cursor + index + 1,
+                        page_width: self.page_width,
+                        page_margin: self.page_margin,
+                    }));
+                    data.ops_stack.push(op);
+                    break;
+                }
+            }
+        } else {
+            error!(
+                "Expected Entity {:?} to have an associated BlockFormattingContext.",
+                self.leaf
+            )
+        }
+    }
+}
+
+impl BlockFormatter {
+    /// Creates a new `BlockFormatter` that manages the layout of nested block-level elements.
     pub fn new(
-        elements: &'elements [BlockLevelElement],
+        leaf: Entity,
         page_width: PixelLength,
         page_margin: EdgeValues<PixelLength>,
-        data: BlockFormatterData<'data>,
     ) -> Self {
         BlockFormatter {
-            elements,
+            leaf,
+            element_cursor: 0,
             page_width,
             page_margin,
             container_stack: Default::default(),
-            data,
-            page_state: Default::default(),
         }
     }
 
-    /// Iterate through the elements of the flow and assigns the leaf positions on the individual
-    /// pages.
-    fn layout(&mut self) {
-        let computed_values = self.data.computed_values.clone();
-        for element in self.elements.iter() {
-            let style = computed_values.get(element.entity()).unwrap().clone();
-            self.process_element(*element, style);
-        }
-    }
-
-    fn process_element(&mut self, element: BlockLevelElement, style: ComputedValues) {
+    fn process_element(
+        &mut self,
+        element: BlockLevelElement,
+        style: ComputedValues,
+        data: &mut BlockFormattingData,
+    ) -> Option<LayoutOp> {
         match element {
             BlockLevelElement::ContainerStart(entity) => {
                 let container = self.container_stack.start_container(entity);
-                self.start_container_fragment(container.root_entity, style);
+                self.start_container_fragment(container.root_entity, style, data);
+                None
             }
             BlockLevelElement::Leaf(leaf) => {
                 let container = self.container_stack.stack.last().unwrap();
                 assert_eq!(container.root_entity, leaf);
-                let container_pos = *self.data.positions.get(container.root_entity).unwrap();
+                let container_pos = *data.positions.get(container.root_entity).unwrap();
 
-                self.layout_inline_formatting_context(
-                    leaf,
-                    &style,
-                    container_pos.x,
-                    container_pos.width,
-                );
-
-                if let Some(intrinsic_size) = self.data.intrinsic_sizes.get(leaf) {
-                    self.page_state
-                        .add_content(intrinsic_size.height().unwrap_or_default());
-                    self.data.text_list.list.push(BlockLevelElement::Leaf(leaf))
+                if data.inline_formatting_contexts.contains(leaf) {
+                    return Some(LayoutOp::Inline(InlineFormatter {
+                        leaf,
+                        style,
+                        line_start: container_pos.x,
+                        line_width: container_pos.width,
+                        z_index: self.z_index(),
+                    }));
                 }
+
+                if let Some(intrinsic_size) = data.intrinsic_sizes.get(leaf) {
+                    data.page_cursor
+                        .add_content(intrinsic_size.height().unwrap_or_default());
+                    data.text_list.list.push(BlockLevelElement::Leaf(leaf))
+                }
+                None
             }
             BlockLevelElement::ContainerEnd(entity) => {
                 let container = self
@@ -166,43 +226,45 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     .end_container()
                     .expect("Internal Error");
                 assert_eq!(container.root_entity, entity);
-                self.end_container_fragment(container.root_entity);
+                self.end_container_fragment(container.root_entity, data);
+                None
             }
         }
     }
 
-    fn start_container_fragment(&mut self, fragment: Entity, style: ComputedValues) {
-        let container_pos = self.parent_container_pos();
+    fn start_container_fragment(
+        &mut self,
+        fragment: Entity,
+        style: ComputedValues,
+        data: &mut BlockFormattingData,
+    ) {
+        let container_pos = self.parent_container_pos(data);
         let dimensions = compute_element_dimensions(
             container_pos.width,
-            self.data.intrinsic_sizes.get(fragment).cloned(),
+            data.intrinsic_sizes.get(fragment).cloned(),
             &style,
         );
 
         let decoration = dimensions.decoration;
+        let page_cursor = &mut data.page_cursor;
 
-        self.page_state.add_margin(decoration.margin.top);
-        self.page_state.add_content(decoration.border.top);
-        self.page_state.add_content(decoration.padding.top);
+        page_cursor.add_margin(decoration.margin.top);
+        page_cursor.add_content(decoration.border.top);
+        page_cursor.add_content(decoration.padding.top);
 
         let z = self.z_index();
-        self.data
-            .positions
-            .entry(fragment)
-            .unwrap()
-            .replace(Position {
-                x: container_pos.x + dimensions.inline_offset(),
-                y: self.page_state.vertical_pos(),
-                width: dimensions.inline_size,
-                height: PixelLength(0.0),
-                z,
-                page: 0,
-            });
+        data.positions.entry(fragment).unwrap().replace(Position {
+            x: container_pos.x + dimensions.inline_offset(),
+            y: page_cursor.vertical_pos(),
+            width: dimensions.inline_size,
+            height: PixelLength(0.0),
+            z,
+            page: 0,
+        });
 
-        self.data.decorations.insert(fragment, decoration).unwrap();
+        data.decorations.insert(fragment, decoration).unwrap();
 
-        self.data
-            .text_list
+        data.text_list
             .list
             .push(BlockLevelElement::ContainerStart(fragment));
     }
@@ -211,19 +273,19 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
     ///
     /// # Arguments
     /// - `fragment` specifies the entity index of the fragment
-    fn end_container_fragment(&mut self, fragment: Entity) {
-        let parent_pos = self.parent_container_pos();
+    fn end_container_fragment(&mut self, fragment: Entity, data: &mut BlockFormattingData) {
+        let parent_pos = self.parent_container_pos(data);
 
-        self.data
-            .text_list
+        data.text_list
             .list
             .push(BlockLevelElement::ContainerEnd(fragment));
 
-        let mut pos = self.data.positions.get_mut(fragment).unwrap();
-        let decoration = self.data.decorations.get(fragment).unwrap();
-        let style = self.data.computed_values.get(fragment).unwrap();
+        let mut pos = data.positions.get_mut(fragment).unwrap();
+        let decoration = data.decorations.get(fragment).unwrap();
+        let style = data.computed_values.get(fragment).unwrap();
+        let page_cursor = &mut data.page_cursor;
 
-        let content_height = self.page_state.vertical_pos() - pos.y;
+        let content_height = page_cursor.vertical_pos() - pos.y;
         match style.position.height {
             GenericSize::Auto => {
                 pos.height = content_height;
@@ -231,13 +293,17 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             GenericSize::LengthPercentage(lp) => {
                 pos.height = lp.absolute(parent_pos.width);
                 // update the page state
-                self.page_state.add_content(-content_height + pos.height);
+                page_cursor.add_content(-content_height + pos.height);
             }
         }
 
-        self.page_state.add_content(decoration.border.bottom);
-        self.page_state.add_content(decoration.padding.bottom);
-        self.page_state.add_margin(decoration.margin.bottom);
+        page_cursor.add_content(decoration.border.bottom);
+        page_cursor.add_content(decoration.padding.bottom);
+        page_cursor.add_margin(decoration.margin.bottom);
+    }
+
+    fn z_index(&self) -> ZIndex {
+        ZIndex(self.container_stack.len() as i64)
     }
 
     fn parent_container(&self) -> Option<ContainerData> {
@@ -249,10 +315,10 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
         }
     }
 
-    fn parent_container_pos(&self) -> Position {
+    fn parent_container_pos(&self, data: &BlockFormattingData) -> Position {
         if let Some(pos) = self
             .parent_container()
-            .and_then(|container| self.data.positions.get(container.root_entity).cloned())
+            .and_then(|container| data.positions.get(container.root_entity).cloned())
         {
             pos
         } else {
@@ -266,31 +332,62 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
             }
         }
     }
+}
 
-    fn z_index(&self) -> ZIndex {
-        ZIndex(self.container_stack.len() as i64)
-    }
+// impl<'elements, 'data> BlockFormatter<'elements, 'data> {
 
-    fn layout_inline_formatting_context(
-        &mut self,
-        leaf: Entity,
-        style: &ComputedValues,
-        line_start: PixelLength,
-        line_width: PixelLength,
-    ) {
-        if let Some(ifm) = self.data.inline_formatting_contexts.get_mut(leaf) {
-            let entities = &self.data.entities;
+//     /// Iterate through the elements of the flow and assigns the leaf positions on the individual
+//     /// pages.
+//     fn layout(&mut self) {
+//         let computed_values = self.data.computed_values.clone();
+//         for element in self.elements.iter() {
+//             let style = computed_values.get(element.entity()).unwrap().clone();
+//             self.process_element(*element, style);
+//         }
+//     }
+// }
+
+#[derive(SystemData)]
+pub struct InlineFormattingData<'data> {
+    entities: Entities<'data>,
+    positions: WriteStorage<'data, Position>,
+    // decorations: WriteStorage<'data, Decoration>,
+    intrinsic_sizes: ReadStorage<'data, IntrinsicSize>,
+    text_list: Write<'data, TextList>,
+    inline_formatting_contexts: WriteStorage<'data, InlineFormattingContext>,
+    text_runs: ReadStorage<'data, TextRun>,
+    page_cursor: Write<'data, PageCursor>,
+}
+
+// Performs line-breaking of an inline formatting context.
+// Inserts one leaf element into the `text_list` for every line of text
+#[derive(Debug, Clone)]
+pub struct InlineFormatter {
+    leaf: Entity,
+    style: ComputedValues,
+    line_start: PixelLength,
+    line_width: PixelLength,
+    z_index: ZIndex,
+}
+
+impl<'data> System<'data> for InlineFormatter {
+    type SystemData = InlineFormattingData<'data>;
+
+    fn run(&mut self, mut data: Self::SystemData) {
+        if let Some(ifm) = data.inline_formatting_contexts.get_mut(self.leaf) {
+            let entities = &data.entities;
 
             let breakpoints = &ifm.break_points;
             assert!(breakpoints.len() >= 2 || breakpoints.is_empty());
 
             // TODO: percentage relative to parent container
-            let indent = style.text.text_indent.absolute(line_width);
+            let indent = self.style.text.text_indent.absolute(self.line_width);
 
+            // weight for computing optimal break points
             let mut weight = |from: usize, to: usize| {
                 let indent = if from == 0 { indent } else { PixelLength(0.0) };
                 let advance = breakpoints[to].advance_before - breakpoints[from].advance_after;
-                let line_width = line_width - indent;
+                let line_width = self.line_width - indent;
                 if to == breakpoints.len() - 1 && advance <= line_width {
                     // the last line does not need to be justified
                     0.0
@@ -307,8 +404,8 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                 super::paragraph::compute_breakpoints(breakpoints.len(), &mut weight);
 
             // needed for borrow checker
-            let text_runs = &self.data.text_runs;
-            let intrinsic_sizes = &self.data.intrinsic_sizes;
+            let text_runs = &data.text_runs;
+            let intrinsic_sizes = &data.intrinsic_sizes;
             ifm.lines = break_point_sequence
                 .windows(2)
                 .map(|window| {
@@ -329,9 +426,9 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     - breakpoints[line.from_break].advance_after;
 
                 let (x, width) = if line_num == 0 {
-                    (line_start + indent, line_width - indent)
+                    (self.line_start + indent, self.line_width - indent)
                 } else {
-                    (line_start, line_width)
+                    (self.line_start, self.line_width)
                 };
 
                 let (x, width) = match ifm.text_align {
@@ -341,25 +438,25 @@ impl<'elements, 'data> BlockFormatter<'elements, 'data> {
                     TextAlign::Right => (x + width - content_width, content_width),
                 };
 
+                let page_cursor = &mut data.page_cursor;
                 let pos = Position {
                     x,
-                    y: self.page_state.vertical_pos(),
+                    y: page_cursor.vertical_pos(),
                     width,
                     height: line.height,
-                    z: ZIndex(self.container_stack.len() as i64),
+                    z: self.z_index,
                     page: 0, //< will get assigned by paginator
                 };
 
                 assert!(line.height != PixelLength(0.0));
 
-                self.data.positions.insert(line.entity, pos).unwrap();
+                data.positions.insert(line.entity, pos).unwrap();
 
-                self.data
-                    .text_list
+                data.text_list
                     .list
                     .push(BlockLevelElement::Leaf(line.entity));
 
-                self.page_state.add_content(line.height);
+                page_cursor.add_content(line.height);
             }
         }
     }
@@ -467,13 +564,13 @@ impl Component for Fragments {
 /// Its responsibilities include
 /// * managing margin collapsing
 #[derive(Debug, Clone, Default)]
-struct PageState {
+pub struct PageCursor {
     vertical_pos: PixelLength,
     /// Contains `Some(margin)` if the previous space was a margin.
     collapse_margin: Option<PixelLength>,
 }
 
-impl PageState {
+impl PageCursor {
     fn add_content(&mut self, content: PixelLength) {
         if content == PixelLength(0.0) {
             return;
@@ -567,6 +664,7 @@ mod test {
 
             world.insert(TextList::default());
             let mut block_level_layout = BlockLevelLayout {
+                root_entity: self.html.entity(),
                 page_width,
                 margin: EdgeValues::all(PixelLength(0.0)),
             };

@@ -11,6 +11,9 @@ pub type LayoutContext = World;
 #[derive(Debug, Copy, Clone, From)]
 pub struct LayoutEntity(pub Entity);
 
+#[derive(Debug, Copy, Clone, From)]
+pub struct RootNode(pub Option<Entity>);
+
 #[derive(Debug)]
 pub struct ContainingBlock {
     pub entity: Entity,

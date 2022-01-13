@@ -1,6 +1,7 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::layout::components::TextOperator;
 use crate::style::properties::computed::PixelLength;
+use std::path::PathBuf;
 
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::stream::StreamFilter;
@@ -16,8 +17,13 @@ impl From<PixelLength> for Pt {
     }
 }
 
-pub fn write_pdf(print_pages: PrintPages, no_filter: bool, crop: bool) -> Result<(), Error> {
-    let file = BufWriter::new(File::create("test_working.pdf")?);
+pub fn write_pdf(
+    output_path: PathBuf,
+    print_pages: PrintPages,
+    no_filter: bool,
+    crop: bool,
+) -> Result<(), Error> {
+    let file = BufWriter::new(File::create(output_path)?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
     let mut font_map = HashMap::new();

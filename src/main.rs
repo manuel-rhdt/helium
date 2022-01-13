@@ -45,8 +45,12 @@ struct Options {
     no_filter: bool,
     #[structopt(long = "crop")]
     crop: bool,
+    /// The input HTML file to process
     #[structopt(parse(from_os_str))]
     input: PathBuf,
+    /// Path where the output PDF file will be stored
+    #[structopt(parse(from_os_str))]
+    output: PathBuf,
 }
 
 #[derive(Debug, From)]
@@ -89,7 +93,7 @@ fn main() -> Result<(), Error> {
 
     let display_list = display_list::generate_display_list(&mut layout_context);
 
-    pdf::write_pdf(display_list, opt.no_filter, opt.crop)?;
+    pdf::write_pdf(opt.output, display_list, opt.no_filter, opt.crop)?;
 
     Ok(())
 }
