@@ -253,6 +253,10 @@ impl EntityConstructor {
                 if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
                     self.mathml_context = Some(mathmlparser::ParseContext::default());
                 }
+                if element_data.name == QualName::new(None, ns!(html), local_name!("br")) {
+                    // treat <br> as whitespace
+                    self.trim_next_inline_whitespace = true;
+                }
 
                 self.build_default_entity(style)
             }
@@ -548,6 +552,7 @@ impl EntityConstructor {
                 continue;
             }
 
+            // merge child's InlineFormattingContext into the current context
             if let Some(InlineFormattingContext { elements, .. }) =
                 self.world.write_storage().remove(child_entity)
             {
