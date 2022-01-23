@@ -251,13 +251,13 @@ impl<'a> System<'a> for LineBoxCreator {
                 let is_last_line = line_num == lines.len() - 1;
                 let word_spacing: Px = if (!is_last_line) && *text_align == TextAlign::Justify {
                     // the ideal and maximal width of the line
-                    let wanted_width = line_pos.width;
+                    let desired_width = line_pos.width;
                     // the number of stretchable spaces in the current line (needed for justification)
                     let num_spaces = to - from - 1;
                     // the actual width of the unstretched characters in the line
                     let line_width =
                         break_points[to].advance_before - break_points[from].advance_after;
-                    (wanted_width - line_width) / num_spaces as f32
+                    (desired_width - line_width) / num_spaces as f32
                 } else {
                     // no adjustment needed since this line should not be justified
                     Px(0.0)
