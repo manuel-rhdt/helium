@@ -1,0 +1,39 @@
+Program = { Form+ }
+
+Form = _{ Definition | Expression }
+
+Definition = _{ Define }
+Define = {
+    "(" ~ "define" ~ Ident ~ Expression ~ ")"
+}
+
+Expression = _{ Number | String | Ident | Lambda | Sexpr }
+Sexpr = { "(" ~ Expression+ ~ ")" }
+
+Ident = @{ (Initial ~ Subsequent*) | "+" | "-" | "..." }
+
+Initial = _{ CASED_LETTER | "!" | "$" | "%" | "&" | "*" | "/" | ":" | "<" | ">" | "?" | "~" | "_" | "^" }
+Subsequent = _{ Initial | ASCII_DIGIT | "." | "+" | "-" }
+
+Number = @{
+    "-"?
+    ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*)
+    ~ ("." ~ ASCII_DIGIT*)?
+    ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)?
+}
+String = ${ "\"" ~ Inner ~ "\"" }
+Inner = @{ Char* }
+Char = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}
+
+Lambda = {
+    "(" ~ ("lambda" | "λ") ~ "(" ~ Args ~ ")" ~ Body ~ ")"
+}
+
+Args = { Ident+ }
+Body = { Form+ }
+
+WHITESPACE = _{ " " | "\t" | "\n" }
