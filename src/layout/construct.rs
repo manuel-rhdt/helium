@@ -1,5 +1,5 @@
 use super::components::{
-    self, BlockLevelElement, LayoutEntity, MathExpression, Position, RootNode,
+    self, BlockLevelElement, LayoutEntity, Position, RootNode,
 };
 use super::inline::InlineFormattingContext;
 use super::normal_formatting::BlockFormattingContext;
@@ -13,7 +13,6 @@ use crate::traverse::Traversal;
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
-use math_render::{mathmlparser, Field};
 use specs::{Builder, Entities, Entity, SystemData, World, WorldExt, WriteStorage};
 
 use components::TextRun;
@@ -192,7 +191,6 @@ impl FontSelector {
 
 pub struct EntityConstructor {
     font_match_cache: HashMap<FontSelector, String>,
-    mathml_context: Option<mathmlparser::ParseContext>,
     pub world: World,
     trim_next_inline_whitespace: bool,
 }
@@ -211,13 +209,11 @@ impl EntityConstructor {
         world.register::<Position>();
         world.register::<components::TextRun>();
         world.register::<components::Decoration>();
-        world.register::<MathExpression>();
         world.insert(FontMap::new());
         world.insert(RootNode(None));
         EntityConstructor {
             world,
             font_match_cache: Default::default(),
-            mathml_context: None,
             trim_next_inline_whitespace: true,
         }
     }
@@ -250,9 +246,6 @@ impl EntityConstructor {
 
         let entity = match node.html_data() {
             ParsedData::Element(element_data) => {
-                if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
-                    self.mathml_context = Some(mathmlparser::ParseContext::default());
-                }
                 if element_data.name == QualName::new(None, ns!(html), local_name!("br")) {
                     // treat <br> as whitespace
                     self.trim_next_inline_whitespace = true;
@@ -338,11 +331,6 @@ impl EntityConstructor {
     // context.
     pub fn build_formatting_context<'a, Node: AbstractNode<'a>>(&mut self, node: &'a Node) {
         if node.layout_entity().is_none() {
-            return;
-        }
-
-        if self.mathml_context.is_some() {
-            self.build_math_expression(node);
             return;
         }
 
@@ -577,88 +565,6 @@ impl EntityConstructor {
             .write_storage()
             .insert(self_entity, inline_formatting_context)
             .unwrap();
-    }
-
-    // called on bottom-up traversal
-    fn build_math_expression<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
-        let LayoutEntity(entity) = node.layout_entity().unwrap();
-        let style = node.style();
-        let font = self.match_font(&style);
-        let font_name = font.postscript_name();
-
-        match node.html_data() {
-            ParsedData::Element(element_data) => {
-                let elem =
-                    mathmlparser::match_math_element(element_data.name.local.as_ref().as_bytes())
-                        .unwrap_or_default();
-
-                let mut math_expressions = WriteStorage::<MathExpression>::fetch(&self.world);
-                let mut text_runs = WriteStorage::<TextRun>::fetch(&self.world);
-                let children = node.children().filter_map(|child| {
-                    if let Some(LayoutEntity(child_entity)) = child.layout_entity() {
-                        if let Some(text_run) = text_runs.get_mut(child_entity) {
-                            use math_render::mathmlparser::StringExtMathml;
-                            let text = text_run
-                                .text
-                                .adapt_to_family(Some(style.math.math_variant.into()))
-                                .replace_anomalous_characters(elem);
-                            text_run.text = text;
-
-                            let field = Field::Unicode(text_run.text.clone());
-                            return Some(mathmlparser::Child::Field((
-                                field,
-                                child_entity.id() as _,
-                            )));
-                        }
-                        math_expressions.remove(child_entity).map(
-                            |MathExpression { expression, .. }| {
-                                mathmlparser::Child::Expression(expression)
-                            },
-                        )
-                    } else {
-                        None
-                    }
-                });
-
-                let (flags, overrides) = style.math.operator_flags_and_overrides();
-
-                let attributes = math_render::mathmlparser::Attributes {
-                    schema: Default::default(),
-                    token: math_render::mathmlparser::TokenAttributes {
-                        operator_attributes: math_render::mathmlparser::OperatorAttributes {
-                            form: style.math.form.into(),
-                            flags,
-                            user_overrides: overrides,
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    },
-                };
-
-                let expression = mathmlparser::build_element(
-                    elem,
-                    attributes,
-                    children,
-                    self.mathml_context.as_mut().unwrap(),
-                    entity.id() as u64,
-                );
-
-                math_expressions
-                    .insert(
-                        node.layout_entity().unwrap().0,
-                        MathExpression {
-                            expression,
-                            font_name,
-                        },
-                    )
-                    .unwrap();
-
-                if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
-                    self.mathml_context = None;
-                }
-            }
-            _ => {}
-        }
     }
 }
 

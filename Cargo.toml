@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 structopt = ">= 0.2"
-derive_more = "*"
+derive_more = { version = "*", features = ["full"] }
 font-kit = "0.8.0"
 html5ever = "0.25.1"
 log = { version = "0.4.8", features = ["std", "max_level_trace", "release_max_level_trace"] }
@@ -19,7 +19,6 @@ lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
 harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
 parking_lot = "0.11"
-math-render = { git = "https://github.com/manuel-rhdt/mlayout" }
 thiserror = "^1"
 env_logger = "0.8"
 pest = "2.4.0"

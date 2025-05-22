@@ -6,8 +6,6 @@ use super::computed::PixelLength;
 use cssparser::{match_ignore_ascii_case, Color, CowRcStr, ParseError, Parser, Token};
 use helium_derive::{ParseDeclaration, PropertyValue};
 
-use math_render::unicode_math::Family as MathFamily2;
-
 pub trait ParseDeclaration<'i> {
     type Error: 'i;
     fn parse_declaration(
@@ -102,7 +100,6 @@ pub enum PropertyDeclaration<'a> {
     Text(Text),
     Background(Background),
     Page(Page),
-    Math(Math),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -292,18 +289,6 @@ pub enum Page {
     PageBreakBefore(PageBreak),
 }
 
-#[derive(Debug, Clone, ParseDeclaration)]
-#[computed = "super::computed::Math"]
-pub enum Math {
-    #[ua_property]
-    MathVariant(MathFamily),
-    #[ua_property]
-    Form(MathOperatorForm),
-    #[ua_property]
-    OperatorIsStretchy(AutoBool),
-    #[ua_property]
-    MathStyle(MathStyle),
-}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
 pub enum Display {
@@ -782,50 +767,6 @@ impl Default for PageBreak {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
-pub enum MathFamily {
-    Normal,
-    Italic,
-    Bold,
-    BoldItalic,
-    Script,
-    BoldScript,
-    Fraktur,
-    DoubleStruck,
-    BoldFraktur,
-    SansSerif,
-    BoldSansSerif,
-    SansSerifItalic,
-    SansSerifBoldItalic,
-    Monospace,
-}
-
-impl Default for MathFamily {
-    fn default() -> Self {
-        MathFamily::Normal
-    }
-}
-
-impl From<MathFamily> for MathFamily2 {
-    fn from(fam: MathFamily) -> MathFamily2 {
-        match fam {
-            MathFamily::Normal => MathFamily2::Normal,
-            MathFamily::Italic => MathFamily2::Italics,
-            MathFamily::Bold => MathFamily2::Bold,
-            MathFamily::BoldItalic => MathFamily2::BoldItalics,
-            MathFamily::Script => MathFamily2::Script,
-            MathFamily::BoldScript => MathFamily2::BoldScript,
-            MathFamily::Fraktur => MathFamily2::Fraktur,
-            MathFamily::DoubleStruck => MathFamily2::DoubleStruck,
-            MathFamily::BoldFraktur => MathFamily2::BoldFraktur,
-            MathFamily::SansSerif => MathFamily2::SansSerif,
-            MathFamily::BoldSansSerif => MathFamily2::SansSerifBold,
-            MathFamily::SansSerifItalic => MathFamily2::SansSerifItalics,
-            MathFamily::SansSerifBoldItalic => MathFamily2::SansSerifBoldItalics,
-            MathFamily::Monospace => MathFamily2::Monospace,
-        }
-    }
-}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum PositionSpec {
@@ -853,16 +794,6 @@ impl Default for MathOperatorForm {
     }
 }
 
-impl From<MathOperatorForm> for Option<math_render::mathmlparser::Form> {
-    fn from(other: MathOperatorForm) -> Self {
-        match other {
-            MathOperatorForm::Auto => None,
-            MathOperatorForm::Prefix => Some(math_render::mathmlparser::Form::Prefix),
-            MathOperatorForm::Infix => Some(math_render::mathmlparser::Form::Infix),
-            MathOperatorForm::Postfix => Some(math_render::mathmlparser::Form::Postfix),
-        }
-    }
-}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum MathStyle {
