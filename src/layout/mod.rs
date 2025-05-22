@@ -2,7 +2,6 @@ pub mod components;
 pub mod construct;
 pub mod inline;
 pub mod inline_size;
-mod mathml;
 pub mod normal_formatting;
 mod paginate;
 pub(crate) mod paragraph;
@@ -81,12 +80,6 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> LayoutContext {
 
     let mut layout_context = flow_constructor.layout_context();
 
-    let mut math_renderer = mathml::MathFormat {};
-    math_renderer.setup(&mut layout_context);
-
-    time_before = Instant::now();
-    math_renderer.run_now(&layout_context);
-    info!("TIMED: math {:?}", time_before.elapsed());
 
     let mut break_points_finder = inline::FindPossibleLineBreaks;
     time_before = Instant::now();
@@ -124,12 +117,6 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> LayoutContext {
     relative_positioning_system.run_now(&mut layout_context);
 
     // at this point the positions of all elements are fixed and should not be changed anymore
-
-    let mut math_layout = mathml::LayoutMathGlyphs {};
-    math_layout.setup(&mut layout_context);
-    time_before = Instant::now();
-    math_layout.run_now(&layout_context);
-    info!("TIMED: math paint {:?}", time_before.elapsed());
 
     let mut pages_create = normal_formatting::PagesCreate {
         page_width,
