@@ -203,18 +203,18 @@ pub trait TreeLinked: Sized + Clone + Eq {
             new_sibling.links().parent.set(Some(parent.weak_link()))
         }
 
-        if let Some(previous) = self.previous_sibling() {
+        match self.previous_sibling() { Some(previous) => {
             new_sibling.links().previous.set(Some(previous.weak_link()));
             previous
                 .links()
                 .next
                 .set(Some(new_sibling.clone().strong_link()));
-        } else if let Some(parent) = self.parent() {
+        } _ => { match self.parent() { Some(parent) => {
             parent
                 .links()
                 .first_child
                 .set(Some(new_sibling.clone().strong_link()))
-        }
+        } _ => {}}}}
 
         self.links().previous.set(Some(new_sibling.weak_link()));
         new_sibling
@@ -227,15 +227,15 @@ pub trait TreeLinked: Sized + Clone + Eq {
         new_child.detach();
         new_child.links().parent.set(Some(self.weak_link()));
 
-        if let Some(last) = self.last_child() {
+        match self.last_child() { Some(last) => {
             // we already have children
             self.links().last_child.set(Some(new_child.weak_link()));
             new_child.links().previous.set(Some(last.weak_link()));
             last.links().next.set(Some(new_child.strong_link()));
-        } else {
+        } _ => {
             self.links().last_child.set(Some(new_child.weak_link()));
             self.links().first_child.set(Some(new_child.strong_link()));
-        }
+        }}
     }
 
     fn children(&self) -> SiblingIter<Self> {

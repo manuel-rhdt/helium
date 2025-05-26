@@ -104,18 +104,17 @@ impl selectors::Element for ElementRef {
     fn has_class(&self, name: &LocalName, case_sensitivity: CaseSensitivity) -> bool {
         let name = name.as_bytes();
         !name.is_empty()
-            && if let Some(class_attr) =
-                self.attributes
+            && match self.attributes
                     .borrow()
                     .get(&QualName::new(None, ns!(), local_name!("class")))
-            {
+            { Some(class_attr) => {
                 class_attr
                     .value
                     .split(SELECTOR_WHITESPACE)
                     .any(|class| case_sensitivity.eq(class.as_bytes(), name))
-            } else {
+            } _ => {
                 false
-            }
+            }}
     }
 
     #[inline]
