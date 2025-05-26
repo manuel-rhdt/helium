@@ -376,7 +376,7 @@ fn eval_expr<'code>(
                     };
                     let body = list[2..].to_vec();
                     let closure = Value::Closure {
-                        env: env.clone(),
+                        env: Rc::new(env.as_ref().clone()),
                         arg_names,
                         body,
                     };
@@ -407,9 +407,6 @@ pub fn parse_and_eval(program: &str) -> Option<Value> {
     let env = default_environment();
     let mut result = None;
     for val in parsed {
-        if !result.is_none() {
-            panic!("{:?}", env);
-        }
         result = Some(eval(val, Rc::clone(&env)).unwrap());
     }
     result
@@ -568,23 +565,19 @@ mod test {
 
     #[test]
     fn test_define() {
-        // let result = parse_and_eval("(define a 5) a").unwrap();
-        // assert_eq!(result, Value::Number(5.0));
+        let result = parse_and_eval("(define a 5) a").unwrap();
+        assert_eq!(result, Value::Number(5.0));
 
-        // let result = parse_and_eval("(define a (+ 1 2)) a").unwrap();
-        // assert_eq!(result, Value::Number(3.0));
-
-        // // define returns NULL
-        // let result =
-        //     parse_and_eval("(define my_add (lambda (a b) (+ a b)))").unwrap();
-        // assert!(result.is_null());
-
-        let result =
-            parse_and_eval("(define my_add (lambda (a b) (+ a b))) 3").unwrap();
+        let result = parse_and_eval("(define a (+ 1 2)) a").unwrap();
         assert_eq!(result, Value::Number(3.0));
 
-        // let result =
-        //     parse_and_eval("(define my_add (lambda (a b) (+ a b)))\n(my_add (+ 3 4) 5)").unwrap();
-        // assert_eq!(result, Value::Number(3.0 + 4.0 + 5.0));
+        // define returns NULL
+        let result =
+            parse_and_eval("(define my_add (lambda (a b) (+ a b)))").unwrap();
+        assert!(result.is_null());
+
+        let result =
+            parse_and_eval("(define my_add (lambda (a b) (+ a b)))\n(my_add (+ 3 4) 5)").unwrap();
+        assert_eq!(result, Value::Number(3.0 + 4.0 + 5.0));
     }
 }
