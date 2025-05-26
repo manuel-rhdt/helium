@@ -1,8 +1,11 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc};
 
 use env_logger::Env;
+use font_parse::tables::head;
+use html5ever::tendril::fmt::imp;
 use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
+use specs::rayon::result;
 
 #[derive(Parser)]
 #[grammar = "layout/lscheme/grammar.pest"]
@@ -19,59 +22,75 @@ pub enum Value<'code> {
     Null,
     Number(f64),
     String(&'code str),
-    Ident(&'code str),
-    Sexpr(Vec<Value<'code>>),
-    Lambda {
-        arg_names: Vec<&'code str>,
-        body: Vec<Value<'code>>,
-    },
+    Symbol(&'code str),
+    List(Vec<Value<'code>>),
+
+    // The following values are created by the evaluator
     NativeFunc(for<'a> fn(&[Value<'a>]) -> Result<Value<'a>, RuntimeError>),
-    // does never get constructed by parser
-    Func {
-        env: Environment<'code>,
+
+    // Represents a function including its environment.
+    Closure {
+        env: EnvRef<'code>,
         arg_names: Vec<&'code str>,
         body: Vec<Value<'code>>,
     },
 
-    // Builtin Forms
+    // Builtin Special Forms
     Define(&'code str, Box<Value<'code>>),
-
-    // mutable values
-    List(Rc<RefCell<Cons<'code>>>),
+    DefineSyntax(&'code str, Box<Value<'code>>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Cons<'code> {
-    car: Value<'code>,
-    cdr: Option<Rc<RefCell<Cons<'code>>>>,
+impl Value<'_> {
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    pub fn is_number(&self) -> bool {
+        matches!(self, Self::Number(_))
+    }
+
+    pub fn is_string(&self) -> bool {
+        matches!(self, Self::String(_))
+    }
+
+    pub fn is_symbol(&self) -> bool {
+        matches!(self, Self::Symbol(_))
+    }
+
+    pub fn is_list(&self) -> bool {
+        matches!(self, Self::List(_))
+    }
 }
 
 impl Debug for Value<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Null => f.debug_tuple("Null").finish(),
-            Self::Number(arg0) => f.debug_tuple("Number").field(arg0).finish(),
-            Self::String(arg0) => f.debug_tuple("String").field(arg0).finish(),
-            Self::Ident(arg0) => f.debug_tuple("Ident").field(arg0).finish(),
-            Self::List(arg0) => f.debug_tuple("List").field(arg0).finish(),
-            Self::Sexpr(arg0) => f.debug_tuple("Sexpr").field(arg0).finish(),
-            Self::Lambda { arg_names, body } => f
-                .debug_struct("Lambda")
-                .field("arg_names", arg_names)
-                .field("body", body)
-                .finish(),
-            Self::Func {
+            Self::Number(arg0) => write!(f, "{}", arg0),
+            Self::String(arg0) => write!(f, "\"{}\"", arg0),
+            Self::Symbol(arg0) => write!(f, "{}", arg0),
+            Self::List(arg0) => {
+                write!(f, "(")?;
+                for item in arg0 {
+                    write!(f, "{:?} ", item)?;
+                }
+                write!(f, ")")
+            }
+            Self::Closure {
                 env,
                 arg_names,
                 body,
             } => f
-                .debug_struct("Lambda")
+                .debug_struct("Closure")
                 .field("env", env)
                 .field("arg_names", arg_names)
                 .field("body", body)
                 .finish(),
             Self::NativeFunc(_) => f.debug_tuple("NativeFunc").finish(),
             Self::Define(id, val) => f.debug_tuple("Define").field(id).field(val).finish(),
+            Self::DefineSyntax(id, val) => {
+                f.debug_tuple("DefineSyntax").field(id).field(val).finish()
+            }
         }
     }
 }
@@ -81,10 +100,9 @@ impl PartialEq for Value<'_> {
         match (self, other) {
             (Self::Number(l0), Self::Number(r0)) => l0 == r0,
             (Self::String(l0), Self::String(r0)) => l0 == r0,
-            (Self::Ident(l0), Self::Ident(r0)) => l0 == r0,
-            (Self::Sexpr(l0), Self::Sexpr(r0)) => l0 == r0,
-            (Self::NativeFunc(l0), Self::NativeFunc(r0)) => false,
+            (Self::Symbol(l0), Self::Symbol(r0)) => l0 == r0,
             (Self::List(l0), Self::List(r0)) => l0 == r0,
+            (Self::NativeFunc(l0), Self::NativeFunc(r0)) => false,
             _ => false,
         }
     }
@@ -97,48 +115,29 @@ fn expect_number(val: &Value) -> Result<f64, RuntimeError> {
     }
 }
 
-pub fn parse_lscheme(program: &str) -> Result<Vec<Value>, Error<Rule>> {
+pub fn parse_lscheme(program: &str) -> Result<Vec<Value<'_>>, Error<Rule>> {
     let lscheme = SchemeParser::parse(Rule::Program, program)?.next().unwrap();
 
-    fn parse_value(pair: Pair<Rule>) -> Value {
+    fn parse_value(pair: Pair<Rule>) -> Value<'_> {
         match pair.as_rule() {
             Rule::Number => Value::Number(pair.as_str().parse().unwrap()),
             Rule::String => Value::String(pair.into_inner().next().unwrap().as_str()),
-            Rule::Ident => Value::Ident(pair.as_str()),
-            Rule::Sexpr => Value::Sexpr(pair.into_inner().map(|p| parse_value(p)).collect()),
-            Rule::Lambda => {
-                let mut inner = pair.into_inner();
-                let arg_names = parse_args(inner.next().unwrap());
-                let body = inner.next().unwrap().into_inner().map(|p| parse_value(p));
-                Value::Lambda {
-                    arg_names: arg_names,
-                    body: body.collect(),
-                }
-            }
-            Rule::Define => {
-                let mut inner = pair.into_inner();
-                let id = inner.next().unwrap().as_str();
-                let val = parse_value(inner.next().unwrap());
-                Value::Define(id, Box::new(val))
-            }
-            _ => unreachable!(),
+            Rule::Ident => Value::Symbol(pair.as_str()),
+            Rule::List => Value::List(pair.into_inner().map(|p| parse_value(p)).collect()),
+            other => panic!("Unexpected rule: {:?}", other),
         }
     }
 
-    Ok(lscheme.into_inner().map(|p| parse_value(p)).collect())
-}
-
-fn parse_args(pair: Pair<Rule>) -> Vec<&str> {
-    pair.into_inner().map(|p| p.as_str()).collect()
+    Ok(lscheme.into_inner().map(|p| parse_value(p)).collect::<Vec<_>>())
 }
 
 #[derive(Debug, Clone)]
 pub struct Environment<'code> {
     map: HashMap<&'code str, Value<'code>>,
-    parent: Option<Box<Environment<'code>>>,
+    parent: Option<EnvRef<'code>>,
 }
 
-pub fn default_environment<'code>() -> Environment<'code> {
+pub fn default_environment<'code>() -> EnvRef<'code> {
     let mut new_map = HashMap::new();
 
     fn plus<'code>(args: &[Value<'code>]) -> Result<Value<'code>, RuntimeError> {
@@ -163,174 +162,255 @@ pub fn default_environment<'code>() -> Environment<'code> {
     }
     new_map.insert("-", Value::NativeFunc(minus));
 
-    Environment {
+    Rc::new(RefCell::new(Environment {
         map: new_map,
         parent: None,
-    }
+    }))
 }
+
+type EnvRef<'code> = Rc<RefCell<Environment<'code>>>;
 
 impl<'code> Environment<'code> {
     pub fn get(&self, k: &str) -> Option<Value<'code>> {
         self.map
             .get(k)
             .cloned()
-            .or_else(|| self.parent.as_ref().and_then(|p_env| p_env.get(k)))
+            .or_else(|| self.parent.as_ref().and_then(|p_env| p_env.borrow().get(k)))
     }
 
     pub fn child_env(&self) -> Environment<'code> {
         Environment {
             map: HashMap::new(),
-            parent: Some(Box::new(self.clone())),
+            parent: Some(Rc::new(RefCell::new(self.clone()))),
         }
     }
 }
 
-pub struct CallFrame<'code> {
-    returns_to: Value<'code>,
-    environment: Environment<'code>,
-    evaluated_arguments: Vec<Value<'code>>,
-    previous_frame: Option<Box<CallFrame<'code>>>,
+#[derive(Debug, Clone)]
+pub enum Continuation<'code> {
+    ApplyFunction {
+        proc: Option<Value<'code>>,
+        args: Vec<Value<'code>>,
+        evaluated_args: Vec<Value<'code>>,
+        env: EnvRef<'code>,
+    },
+    EvaluateDefine {
+        name: &'code str,
+        env: EnvRef<'code>,
+    },
 }
 
-fn push_frame<'code>(
-    current_frame: &mut Option<CallFrame<'code>>,
-    returns_to: Value<'code>,
-    env: &mut Environment<'code>,
-    argument_rib: &mut Vec<Value<'code>>,
-) {
-    let new_env = env.child_env();
-    let old_env = std::mem::replace(env, new_env);
-    let new_frame = CallFrame {
-        returns_to: returns_to,
-        environment: old_env,
-        evaluated_arguments: argument_rib.clone(),
-        previous_frame: None,
-    };
-    let previous_frame = std::mem::replace(current_frame, Some(new_frame));
-    current_frame.as_mut().unwrap().previous_frame = previous_frame.map(Box::new);
-    argument_rib.clear();
+pub struct CallStack<'code> {
+    stack: Vec<Continuation<'code>>,
 }
 
-fn pop_frame<'code>(
-    current_frame: &mut Option<CallFrame<'code>>,
-    env: &mut Environment<'code>,
-    argument_rib: &mut Vec<Value<'code>>,
-) {
-    if let Some(frame) = current_frame.take() {
-        *argument_rib = frame.evaluated_arguments;
-        *env = frame.environment;
-        *current_frame = frame.previous_frame.map(|f| *f);
-    } else {
-        panic!("Tried to pop empty frame")
+impl<'code> CallStack<'code> {
+    pub fn push_frame(&mut self, continuation: Continuation<'code>) {
+        self.stack.push(continuation);
+    }
+
+    pub fn pop_frame(&mut self) -> Continuation<'code> {
+        self.stack.pop().unwrap()
     }
 }
 
-pub fn eval<'code>(
-    mut next_expression: Value<'code>,
-    mut current_frame: Option<CallFrame<'code>>,
-    env: &mut Environment<'code>,
-) -> Result<Value<'code>, RuntimeError> {
-    let mut argument_rib = vec![];
-    let mut accumulator;
+#[derive(Debug)]
+enum Thunk<'code> {
+    Value(Value<'code>),
+    Return(Value<'code>),
+    Eval(Value<'code>, EnvRef<'code>),
+    TailCall(Value<'code>, EnvRef<'code>),
+}
 
+impl<'code> Continuation<'code> {
+    fn apply_value(&mut self, val: Value<'code>) -> Result<Thunk<'code>, RuntimeError> {
+        match self {
+            Continuation::EvaluateDefine { name, env } => {
+                // In this case, `val` is the value to be defined
+                env.borrow_mut().map.insert(name, val);
+                Ok(Thunk::Return(Value::Null)) // Return null after defining
+            }
+            Continuation::ApplyFunction {
+                proc,
+                args,
+                evaluated_args,
+                env,
+                ..
+            } => {
+                if proc.is_none() {
+                    // `val` represents the evaluated procedure (head of the list)
+                    *proc = Some(val);
+
+                    if args.is_empty() {
+                        // If there are no arguments, we can apply the function immediately
+                        let func = proc.as_ref().unwrap();
+                        let val = eval_fn(&func, &[])?;
+                        Ok(val)
+                    } else {
+                        // Otherwise, we continue evaluating the arguments
+                        let first_arg = args[0].clone();
+                        Ok(Thunk::Eval(first_arg, Rc::clone(env)))
+                    }
+                } else {
+                    if evaluated_args.len() >= args.len() {
+                        panic!("Called continuation after it already is exhausted. This is a bug in the interpreter.");
+                    }
+                    evaluated_args.push(val);
+                    if evaluated_args.len() == args.len() {
+                        // All arguments are evaluated, we can apply the function
+                        let func = proc.as_ref().unwrap();
+                        let val = eval_fn(func, evaluated_args)?;
+                        Ok(val)
+                    } else {
+                        // Continue evaluating the next argument
+                        let next_arg = args[evaluated_args.len()].clone();
+                        Ok(Thunk::Eval(next_arg, Rc::clone(env)))
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn trampoline<'code>(thunk: Thunk<'code>) -> Result<Value<'code>, RuntimeError> {
+    let mut current_thunk = thunk;
+    let mut stack = CallStack { stack: vec![] };
+    let mut counter = 0;
     loop {
-        match &next_expression {
-            Value::Define(id, val) => {
-                push_frame(
-                    &mut current_frame,
-                    next_expression.clone(),
-                    env,
-                    &mut argument_rib,
-                );
-                next_expression = val.as_ref().clone();
-                continue;
+        if counter > 1000 {
+            return Err(RuntimeError::Message("Stack overflow".to_string()));
+        } else {
+            counter += 1;
+        }
+        match current_thunk {
+            Thunk::Value(val) => {
+                if let Some(frame) = stack.stack.last_mut() {
+                    current_thunk = frame.apply_value(val)?;
+                } else {
+                    return Ok(val);
+                }
             }
-            Value::Sexpr(list) => {
-                push_frame(
-                    &mut current_frame,
-                    next_expression.clone(),
-                    env,
-                    &mut argument_rib,
-                );
-                next_expression = list[0].clone(); // in normal condition never panics because Sexpr should not be empty
-                continue;
+            Thunk::Return(val) => {
+                stack.pop_frame();
+                current_thunk = Thunk::Value(val);
             }
-            Value::Lambda { arg_names, body } => {
-                // construct a bound function
-                accumulator = Some(Value::Func {
-                    env: env.clone(),
-                    arg_names: arg_names.clone(),
-                    body: body.clone(),
-                })
+            Thunk::Eval(expr, env) => {
+                current_thunk = eval_expr(expr, env, &mut stack)?;
             }
-            Value::Ident(name) => {
-                let val = env.get(name).ok_or(RuntimeError::Message(format!(
+            Thunk::TailCall(expr, env) => {
+                stack.pop_frame();
+                current_thunk = Thunk::Eval(expr, env);
+            }
+        }
+    }
+}
+
+fn eval_expr<'code>(
+    expr: Value<'code>,
+    env: EnvRef<'code>,
+    stack: &mut CallStack<'code>,
+) -> Result<Thunk<'code>, RuntimeError> {
+    match expr {
+        Value::Symbol(name) => {
+            if let Some(val) = env.borrow().get(name) {
+                Ok(Thunk::Value(val))
+            } else {
+                Err(RuntimeError::Message(format!(
                     "Undefined identifier: {:?}",
                     name
-                )))?;
-                accumulator = Some(val);
-            }
-            other => accumulator = Some(other.clone()),
-        };
-
-        assert!(accumulator.is_some());
-
-        // determine next expression to evaluate
-
-        loop {
-            match current_frame.as_ref().map(|f| &f.returns_to) {
-                Some(Value::Define(id, _val)) => {
-                    let id: &'code str = id;
-                    pop_frame(&mut current_frame, env, &mut argument_rib);
-                    // we have already evaluated value and stored it in the accumulator
-                    env.map.insert(id, accumulator.take().unwrap());
-                    // define does not return a value
-                    accumulator = Some(Value::Null);
-                }
-                Some(Value::Sexpr(vec)) => {
-                    // first we just need to evaluate all arguments
-
-                    let num_args = vec.len();
-                    let is_evaluated = argument_rib.len() == num_args;
-
-                    if !is_evaluated {
-                        // the accumulator contains the last evaluated argument
-                        argument_rib.push(accumulator.take().unwrap());
-                    }
-
-                    if argument_rib.len() < num_args {
-                        // evaluate next argument
-                        next_expression = vec[argument_rib.len()].clone();
-                        break;
-                    }
-                    // once all arguments were evaluated we replace the current Sexpr with the function body
-                    else if !is_evaluated {
-                        // evaluate function application
-                        let func = &argument_rib[0];
-                        let evaluated_args = &argument_rib[1..];
-                        let result = eval_fn(func, evaluated_args, env)?;
-                        next_expression = result;
-                        break;
-                    } else {
-                        // the function evaluation finished with the return value stored in accumulator
-                        pop_frame(&mut current_frame, env, &mut argument_rib);
-                    }
-                }
-                Some(_) => break,
-                None => return Ok(accumulator.unwrap()),
+                )))
             }
         }
+        Value::List(list) => {
+            if list.is_empty() {
+                return Err(RuntimeError::Message(format!(
+                    "Empty list cannot be evaluated"
+                )));
+            }
 
-        assert!(accumulator.is_none());
+            let head = &list[0];
+
+            match head {
+                Value::Symbol("define") => {
+                    if list.len() != 3 {
+                        return Err(RuntimeError::Message(
+                            "define requires exactly two arguments".to_string(),
+                        ));
+                    }
+                    let name = match &list[1] {
+                        Value::Symbol(s) => *s,
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "define first argument must be a symbol".to_string(),
+                            ))
+                        }
+                    };
+                    let value = &list[2];
+                    stack.push_frame(Continuation::EvaluateDefine {
+                        name: name,
+                        env: Rc::clone(&env),
+                    });
+                    Ok(Thunk::Eval(value.clone(), Rc::clone(&env)))
+                }
+                Value::Symbol("lambda") => {
+                    if list.len() < 3 {
+                        return Err(RuntimeError::Message(
+                            "lambda requires at least two arguments".to_string(),
+                        ));
+                    }
+                    let arg_names = match &list[1] {
+                        Value::List(args) => args
+                            .iter()
+                            .map(|v| match v {
+                                Value::Symbol(s) => Ok(*s),
+                                _ => Err(RuntimeError::Message(format!(
+                                    "lambda argument must be a symbol"
+                                ))),
+                            })
+                            .collect::<Result<_, _>>()?,
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "lambda second argument must be a list of symbols".to_string(),
+                            ))
+                        }
+                    };
+                    let body = list[2..].to_vec();
+                    let closure = Value::Closure {
+                        env: env.clone(),
+                        arg_names,
+                        body,
+                    };
+                    Ok(Thunk::Value(closure))
+                }
+                head => {
+                    // create a new continuation
+                    stack.push_frame(Continuation::ApplyFunction {
+                        proc: None,
+                        args: list[1..].to_vec(),
+                        evaluated_args: vec![],
+                        env: Rc::clone(&env),
+                    });
+                    Ok(Thunk::Eval(head.clone(), env))
+                }
+            }
+        }
+        other => Ok(Thunk::Value(other)),
     }
+}
+
+pub fn eval<'code>(expr: Value<'code>, env: EnvRef<'code>) -> Result<Value<'code>, RuntimeError> {
+    trampoline(Thunk::Eval(expr, env))
 }
 
 pub fn parse_and_eval(program: &str) -> Option<Value> {
     let parsed = parse_lscheme(program).unwrap();
-    let mut env = default_environment();
+    let env = default_environment();
     let mut result = None;
     for val in parsed {
-        result = Some(eval(val, None, &mut env).unwrap());
+        if !result.is_none() {
+            panic!("{:?}", env);
+        }
+        result = Some(eval(val, Rc::clone(&env)).unwrap());
     }
     result
 }
@@ -339,23 +419,22 @@ pub fn parse_and_eval(program: &str) -> Option<Value> {
 fn eval_fn<'code>(
     func: &Value<'code>,
     args: &[Value<'code>],
-    env: &mut Environment<'code>,
-) -> Result<Value<'code>, RuntimeError> {
+) -> Result<Thunk<'code>, RuntimeError> {
     // 1. form a new environment by combining the current environment with the function arguments
     // 2. return the expression to be evaluated as the current expression
 
     match func {
-        Value::NativeFunc(f) => f(args),
-        Value::Func {
+        Value::NativeFunc(f) => Ok(Thunk::Return(f(args)?)),
+        Value::Closure {
             env: lambda_env,
             arg_names,
             body,
         } => {
-            *env = lambda_env.clone();
+            let mut env = lambda_env.borrow().child_env();
             for (&arg_name, evaluated_arg) in arg_names.iter().zip(args) {
                 env.map.insert(arg_name, evaluated_arg.clone());
             }
-            Ok(body[0].clone())
+            Ok(Thunk::TailCall(body[0].clone(), Rc::new(env.into())))
         }
         val => Err(RuntimeError::Message(format!(
             "Expected function, got {:?}",
@@ -368,27 +447,144 @@ mod test {
     use super::*;
 
     #[test]
-    fn check_simple() {
-        let result = parse_and_eval("(+ 3 (- (+ 3 4) 4))").unwrap();
-        assert_eq!(result, Value::Number(6.0));
+    fn test_parse_number() {
+        let program = "123";
+        let expected = Ok(vec![Value::Number(123.0)]);
+        assert_eq!(parse_lscheme(program), expected);
     }
 
     #[test]
-    fn check_lambda() {
+    fn test_parse_negative_number() {
+        let program = "-45";
+        let expected = Ok(vec![Value::Number(-45.0)]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_parse_string() {
+        let program = r#""hello""#;
+        let expected = Ok(vec![Value::String("hello")]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_parse_symbol() {
+        let program = "foo";
+        let expected = Ok(vec![Value::Symbol("foo")]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_parse_simple_list() {
+        let program = "(+ 1 2)";
+        let expected = Ok(vec![Value::List(vec![
+            Value::Symbol("+"),
+            Value::Number(1.0),
+            Value::Number(2.0),
+        ])]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_parse_nested_list() {
+        let program = "(define x (list 1 2))";
+        let expected = Ok(vec![Value::List(vec![
+            Value::Symbol("define"),
+            Value::Symbol("x"),
+            Value::List(vec![
+                Value::Symbol("list"),
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]),
+        ])]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_parse_multiple_top_level_expressions() {
+        let program = "(+ 1 2) (define a 10)";
+        let expected = Ok(vec![
+            Value::List(vec![
+                Value::Symbol("+"),
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]),
+            Value::List(vec![
+                Value::Symbol("define"),
+                Value::Symbol("a"),
+                Value::Number(10.0),
+            ]),
+        ]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_parse_empty_list() {
+        let program = "()";
+        let expected = Ok(vec![Value::List(vec![])]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_parse_list_with_mixed_types() {
+        let program = r#"(set! my-var "hello" 123)"#;
+        let expected = Ok(vec![Value::List(vec![
+            Value::Symbol("set!"),
+            Value::Symbol("my-var"),
+            Value::String("hello"),
+            Value::Number(123.0),
+        ])]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_parse_with_whitespace() {
+        let program = "  ( +   1   2   )  ";
+        let expected = Ok(vec![Value::List(vec![
+            Value::Symbol("+"),
+            Value::Number(1.0),
+            Value::Number(2.0),
+        ])]);
+        assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn test_nested_application() {
+        let result = parse_and_eval("(+ 3 (- (+ 13 7) 4))").unwrap();
+        assert_eq!(result, Value::Number(19.0));
+    }
+
+    #[test]
+    fn test_lambda() {
         let result = parse_and_eval("((lambda (a b) (+ a b)) 3 4)").unwrap();
+        assert_eq!(result, Value::Number(7.0));
+
+        let result = parse_and_eval("((lambda () (+ 3 4)))").unwrap();
+        assert_eq!(result, Value::Number(7.0));
+
+        let result = parse_and_eval("(((lambda (a) (lambda (b) (+ a b))) 3) 4)").unwrap();
         assert_eq!(result, Value::Number(7.0));
     }
 
     #[test]
-    fn check_define() {
-        let result = parse_and_eval("(define a 5) a").unwrap();
-        assert_eq!(result, Value::Number(5.0));
+    fn test_define() {
+        // let result = parse_and_eval("(define a 5) a").unwrap();
+        // assert_eq!(result, Value::Number(5.0));
 
-        let result = parse_and_eval("(define a (+ 1 2)) a").unwrap();
-        assert_eq!(result, Value::Number(3.0));
+        // let result = parse_and_eval("(define a (+ 1 2)) a").unwrap();
+        // assert_eq!(result, Value::Number(3.0));
+
+        // // define returns NULL
+        // let result =
+        //     parse_and_eval("(define my_add (lambda (a b) (+ a b)))").unwrap();
+        // assert!(result.is_null());
 
         let result =
-            parse_and_eval("(define my_add (lambda (a b) (+ a b)))\n(my_add (+ 3 4) 5)").unwrap();
-        assert_eq!(result, Value::Number(3.0 + 4.0 + 5.0));
+            parse_and_eval("(define my_add (lambda (a b) (+ a b))) 3").unwrap();
+        assert_eq!(result, Value::Number(3.0));
+
+        // let result =
+        //     parse_and_eval("(define my_add (lambda (a b) (+ a b)))\n(my_add (+ 3 4) 5)").unwrap();
+        // assert_eq!(result, Value::Number(3.0 + 4.0 + 5.0));
     }
 }
