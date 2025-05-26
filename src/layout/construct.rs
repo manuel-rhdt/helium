@@ -76,7 +76,7 @@ impl Traversal<DomRef> for FlowConstructor {
         self.read_stylesheet(&node);
 
         // TODO: Selector matching, Cascade
-        if let Some(element_ref) = &node.clone().into_element_ref() {
+        match &node.clone().into_element_ref() { Some(element_ref) => {
             let parent_style = element_ref
                 .as_node()
                 .parent()
@@ -93,11 +93,11 @@ impl Traversal<DomRef> for FlowConstructor {
                 }
             }
             element_ref.as_node().set_style(style_builder.build());
-        } else {
+        } _ => {
             let parent_style = node.parent().and_then(|parent| NodeData::style(&parent));
             let style = StyleBuilder::new(parent_style.unwrap_or_default()).build();
             node.set_style(style);
-        }
+        }}
 
         self.entity_constructor.build_entity(node)
     }
