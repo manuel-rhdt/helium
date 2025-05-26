@@ -2,7 +2,7 @@
 name = "helium"
 version = "0.1.0"
 authors = ["Manuel Reinhardt"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 structopt = ">= 0.2"
