@@ -12,7 +12,7 @@ html5ever = "0.25.1"
 log = { version = "0.4.8", features = ["std", "max_level_trace", "release_max_level_trace"] }
 cssparser = "0.27.2"
 selectors = "0.22.0"
-specs = { version = "0.16", features = ["shred-derive", "specs-derive"] }
+specs = { version = "0.20", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
@@ -23,6 +23,7 @@ thiserror = "^1"
 env_logger = "0.8"
 pest = "2.8.0"
 pest_derive = "2.8.0"
+rustyline = "16"
 
 [dev-dependencies]
 assert_cmd = "1"

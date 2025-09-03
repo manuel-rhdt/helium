@@ -35,6 +35,7 @@ mod tree;
 use crate::parser::generate_render_tree;
 use crate::style::device::Device;
 use style::properties::computed::PixelLength;
+use crate::layout::lscheme::repl;  
 
 use log::info;
 
@@ -86,10 +87,11 @@ fn main() -> Result<(), Error> {
             height: PixelLength(1123.0),
         }
     };
-
     let before_layout = Instant::now();
     let mut layout_context = layout::layout(dom.clone(), device, opt.crop);
     info!("TIMED: layout {:?}", before_layout.elapsed());
+
+    repl(&mut layout_context);
 
     let display_list = display_list::generate_display_list(&mut layout_context);
 

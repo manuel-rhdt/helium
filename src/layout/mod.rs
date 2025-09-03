@@ -7,7 +7,7 @@ mod paginate;
 pub(crate) mod paragraph;
 mod relative_positioning;
 pub mod text;
-mod lscheme;
+pub(crate) mod lscheme;
 
 use crate::layout::components::{LayoutContext, RootNode};
 use crate::style::{device::Device, properties::computed::StyleBuilder};
@@ -80,6 +80,8 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> LayoutContext {
 
     let mut layout_context = flow_constructor.layout_context();
 
+    layout_context.register::<components::IntrinsicSize>();
+    layout_context.register::<components::ContainingBlock>();
 
     let mut break_points_finder = inline::FindPossibleLineBreaks;
     time_before = Instant::now();

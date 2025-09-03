@@ -11,7 +11,7 @@ pub type LayoutContext = World;
 #[derive(Debug, Copy, Clone, From)]
 pub struct LayoutEntity(pub Entity);
 
-#[derive(Debug, Copy, Clone, From)]
+#[derive(Debug, Copy, Clone, From, Default)]
 pub struct RootNode(pub Option<Entity>);
 
 #[derive(Debug)]
@@ -61,6 +61,15 @@ pub enum IntrinsicSize {
         height: PixelLength,
         baseline: PixelLength,
     },
+}
+
+impl Default for IntrinsicSize {
+    fn default() -> Self {
+        IntrinsicSize::Size {
+            width: PixelLength(0.0),
+            height: PixelLength(0.0),
+        }
+    }
 }
 
 impl IntrinsicSize {
