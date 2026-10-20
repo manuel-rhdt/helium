@@ -8,7 +8,7 @@ use rustyline;
 
 pub fn repl(layout_context: &mut LayoutContext) -> Result<(), Box<dyn std::error::Error>> {
     let mut rl = rustyline::DefaultEditor::new()?;
-    let env = default_environment();
+    let env = default_environment()?;
     insert_components(&env, layout_context);
 
     loop {
@@ -26,17 +26,14 @@ pub fn repl(layout_context: &mut LayoutContext) -> Result<(), Box<dyn std::error
                             }
                         }
                     }
-                    Err(e) => eprintln!("Parse error: {:?}", e),
+                    Err(e) => println!("Parse error: {}", e),
                 }
             }
             Err(rustyline::error::ReadlineError::Interrupted)
             | Err(rustyline::error::ReadlineError::Eof) => {
                 break;
             }
-            Err(err) => {
-                eprintln!("Error: {:?}", err);
-                break;
-            }
+            Err(err) => return Err(err.into()),
         }
     }
 

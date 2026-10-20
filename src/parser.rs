@@ -154,7 +154,7 @@ impl DomAccess for NodeRef<NodeData> {
 
 pub struct Sink {
     document_node: NodeRef<NodeData>,
-    on_parse_error: Option<Box<dyn FnMut(Cow<'static, str>)>>,
+    on_parse_error: RefCell<Option<Box<dyn FnMut(Cow<'static, str>)>>>,
 }
 
 impl TreeSink for Sink {
@@ -165,21 +165,22 @@ impl TreeSink for Sink {
     }
 
     type Handle = NodeRef<NodeData>;
+    type ElemName<'a> = ExpandedName<'a>;
 
     #[inline]
-    fn parse_error(&mut self, message: Cow<'static, str>) {
-        if let Some(ref mut handler) = self.on_parse_error {
+    fn parse_error(&self, message: Cow<'static, str>) {
+        if let Some(handler) = self.on_parse_error.borrow_mut().as_mut() {
             handler(message)
         }
     }
 
     #[inline]
-    fn get_document(&mut self) -> Self::Handle {
+    fn get_document(&self) -> Self::Handle {
         self.document_node.clone()
     }
 
     #[inline]
-    fn set_quirks_mode(&mut self, mode: QuirksMode) {
+    fn set_quirks_mode(&self, mode: QuirksMode) {
         self.document_node
             .as_document()
             .unwrap()
@@ -193,13 +194,13 @@ impl TreeSink for Sink {
     }
 
     #[inline]
-    fn elem_name<'a>(&self, target: &'a Self::Handle) -> ExpandedName<'a> {
+    fn elem_name<'a>(&'a self, target: &'a Self::Handle) -> ExpandedName<'a> {
         target.as_element().unwrap().name.expanded()
     }
 
     #[inline]
     fn create_element(
-        &mut self,
+        &self,
         name: QualName,
         attrs: Vec<Attribute>,
         _flags: ElementFlags,
@@ -214,12 +215,12 @@ impl TreeSink for Sink {
     }
 
     #[inline]
-    fn create_comment(&mut self, text: StrTendril) -> Self::Handle {
+    fn create_comment(&self, text: StrTendril) -> Self::Handle {
         NodeRef::new_comment(text)
     }
 
     #[inline]
-    fn create_pi(&mut self, target: StrTendril, data: StrTendril) -> Self::Handle {
+    fn create_pi(&self, target: StrTendril, data: StrTendril) -> Self::Handle {
         NodeRef::new(NodeData::from_html_data(ParsedData::ProcessingInstruction(
             target.into(),
             data.into(),
@@ -227,7 +228,7 @@ impl TreeSink for Sink {
     }
 
     #[inline]
-    fn append(&mut self, parent: &Self::Handle, child: NodeOrText<Self::Handle>) {
+    fn append(&self, parent: &Self::Handle, child: NodeOrText<Self::Handle>) {
         match child {
             NodeOrText::AppendNode(node) => parent.append(node),
             NodeOrText::AppendText(text) => {
@@ -243,7 +244,7 @@ impl TreeSink for Sink {
     }
 
     #[inline]
-    fn append_before_sibling(&mut self, sibling: &Self::Handle, child: NodeOrText<Self::Handle>) {
+    fn append_before_sibling(&self, sibling: &Self::Handle, child: NodeOrText<Self::Handle>) {
         match child {
             NodeOrText::AppendNode(node) => sibling.insert_before(node),
             NodeOrText::AppendText(text) => {
@@ -260,7 +261,7 @@ impl TreeSink for Sink {
 
     #[inline]
     fn append_doctype_to_document(
-        &mut self,
+        &self,
         name: StrTendril,
         public_id: StrTendril,
         system_id: StrTendril,
@@ -270,7 +271,7 @@ impl TreeSink for Sink {
     }
 
     #[inline]
-    fn add_attrs_if_missing(&mut self, target: &Self::Handle, attrs: Vec<Attribute>) {
+    fn add_attrs_if_missing(&self, target: &Self::Handle, attrs: Vec<Attribute>) {
         let element = target.as_element().unwrap();
         let attributes = &element.attributes;
 
@@ -283,12 +284,12 @@ impl TreeSink for Sink {
     }
 
     #[inline]
-    fn remove_from_parent(&mut self, target: &Self::Handle) {
+    fn remove_from_parent(&self, target: &Self::Handle) {
         target.detach()
     }
 
     #[inline]
-    fn reparent_children(&mut self, node: &Self::Handle, new_parent: &Self::Handle) {
+    fn reparent_children(&self, node: &Self::Handle, new_parent: &Self::Handle) {
         // FIXME: Can this be done more effciently in rctree,
         // by moving the whole linked list of children at once?
         for child in node.children() {
@@ -297,12 +298,12 @@ impl TreeSink for Sink {
     }
 
     #[inline]
-    fn mark_script_already_started(&mut self, _node: &Self::Handle) {
+    fn mark_script_already_started(&self, _node: &Self::Handle) {
         // FIXME: Is this useful outside of a browser?
     }
 
     #[inline]
-    fn get_template_contents(&mut self, target: &Self::Handle) -> Self::Handle {
+    fn get_template_contents(&self, target: &Self::Handle) -> Self::Handle {
         target
             .as_element()
             .unwrap()
@@ -312,7 +313,7 @@ impl TreeSink for Sink {
     }
 
     fn append_based_on_parent_node(
-        &mut self,
+        &self,
         element: &Self::Handle,
         prev_element: &Self::Handle,
         child: NodeOrText<Self::Handle>,
@@ -332,7 +333,7 @@ fn parse_html() -> html5ever::Parser<Sink> {
                 _quirks_mode: QuirksMode::NoQuirks.into(),
             },
         ))),
-        on_parse_error: None,
+        on_parse_error: RefCell::new(None),
     };
     html5ever::parse_document(sink, html5ever::ParseOpts::default())
 }

@@ -27,11 +27,89 @@ pub struct Line {
 pub struct InlineFormattingContext {
     pub text_align: crate::style::properties::specified::TextAlign,
     pub elements: Vec<Entity>,
+    /// Absolutely positioned boxes whose static position is in this context. They are not part
+    /// of `elements` because they do not take part in inline layout.
+    pub absolutes: Vec<Entity>,
     pub break_points: Vec<BreakPoint>,
     pub lines: Vec<Line>,
 }
 
 impl InlineFormattingContext {
+    /// Breaks the paragraph into lines using the Knuth-Plass algorithm.
+    ///
+    /// `line_width` is the width available to every line; the first line is shortened by
+    /// `indent`. For every resulting line a new entity is created from `entities`. The result
+    /// is stored in `self.lines`.
+    pub fn break_lines(
+        &mut self,
+        line_width: Px,
+        indent: Px,
+        entities: &Entities,
+        text_runs: &ReadStorage<components::TextRun>,
+        intrinsic_sizes: &ReadStorage<components::IntrinsicSize>,
+    ) -> Result<(), String> {
+        let breakpoints = &self.break_points;
+        if breakpoints.is_empty() {
+            self.lines.clear();
+            return Ok(());
+        }
+        if breakpoints.len() < 2 {
+            return Err(format!(
+                "inline context needs at least 2 break points, found {}",
+                breakpoints.len()
+            ));
+        }
+
+        // weight for computing optimal break points
+        let mut weight = |from: usize, to: usize| {
+            if (to - from) >= 2 && breakpoints[from + 1..to].iter().any(|b| b.forced) {
+                return std::f64::INFINITY;
+            }
+            let indent = if from == 0 { indent } else { Px(0.0) };
+            let advance = breakpoints[to].advance_before - breakpoints[from].advance_after;
+            let line_width = line_width - indent;
+            if to == breakpoints.len() - 1 && advance <= line_width {
+                // the last line does not need to be justified
+                0.0
+            } else if advance > line_width {
+                std::f64::INFINITY
+            } else {
+                ((line_width - advance).0 as f64).powi(3)
+            }
+        };
+
+        let break_point_sequence =
+            super::paragraph::compute_breakpoints(breakpoints.len(), &mut weight);
+
+        let lines = break_point_sequence
+            .windows(2)
+            .map(|window| {
+                let (baseline, height) =
+                    self.line_height(window[0], window[1], text_runs, intrinsic_sizes);
+                if height == Px(0.0) {
+                    return Err(format!(
+                        "line between break points {} and {} has zero height",
+                        window[0], window[1]
+                    ));
+                }
+                Ok(Line {
+                    from_break: window[0],
+                    to_break: window[1],
+                    height,
+                    baseline,
+                    entity: entities.create(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        self.lines = lines;
+        Ok(())
+    }
+
+    /// The width of the content between two break points.
+    pub fn content_width(&self, from_break: usize, to_break: usize) -> Px {
+        self.break_points[to_break].advance_before - self.break_points[from_break].advance_after
+    }
+
     pub fn line_height(
         &self,
         from_index: usize,
@@ -115,6 +193,11 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             ..
         } in (&mut inline_formatting_contexts).join()
         {
+            // an empty block (e.g. `<div></div>`) has an inline formatting context without content
+            if elements.is_empty() {
+                continue;
+            }
+
             // insert first breakpoint at beginning
             break_points.push(BreakPoint {
                 entity: elements[0],
@@ -225,7 +308,8 @@ impl<'a> System<'a> for LineBoxCreator {
             let mut entity = if let Some(&e) = elements_iter.next() {
                 e
             } else {
-                break;
+                // an empty block has nothing to draw, but other contexts still do
+                continue;
             };
 
             let mut ops: Vec<TextOperator> = vec![];

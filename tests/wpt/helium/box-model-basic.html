@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<!-- helium's own positive control for the checkLayout harness, written in WPT style. -->
+<title>Basic box model sizes</title>
+<style>
+  body { margin: 0; }
+  #a { width: 100px; padding: 5px; border: 2px solid black; margin: 3px; }
+  #b { height: 4px; }
+</style>
+<div id="a" data-expected-width="114" data-expected-padding-left="5" data-expected-margin-top="3">
+  <div id="b" data-expected-height="4" data-expected-width="100"></div>
+</div>

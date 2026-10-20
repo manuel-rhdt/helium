@@ -193,6 +193,8 @@ impl BlockFormatter {
         data: &mut BlockFormattingData,
     ) -> Option<LayoutOp> {
         match element {
+            // absolutely positioned boxes are not supported by this (legacy) layout
+            BlockLevelElement::Absolute(_) => None,
             BlockLevelElement::ContainerStart(entity) => {
                 let container = self.container_stack.start_container(entity);
                 self.start_container_fragment(container.root_entity, style, data);
@@ -377,52 +379,15 @@ impl<'data> System<'data> for InlineFormatter {
         if let Some(ifm) = data.inline_formatting_contexts.get_mut(self.leaf) {
             let entities = &data.entities;
 
-            let breakpoints = &ifm.break_points;
-            assert!(breakpoints.len() >= 2 || breakpoints.is_empty());
-
             // TODO: percentage relative to parent container
             let indent = self.style.text.text_indent.absolute(self.line_width);
-
-            // weight for computing optimal break points
-            let mut weight = |from: usize, to: usize| {
-                if (to - from) >= 2 && breakpoints[from + 1..to].iter().any(|b| b.forced) {
-                    return std::f64::INFINITY;
-                }
-                let indent = if from == 0 { indent } else { PixelLength(0.0) };
-                let advance = breakpoints[to].advance_before - breakpoints[from].advance_after;
-                let line_width = self.line_width - indent;
-                if to == breakpoints.len() - 1 && advance <= line_width {
-                    // the last line does not need to be justified
-                    0.0
-                } else {
-                    if advance > line_width {
-                        std::f64::INFINITY
-                    } else {
-                        ((line_width - advance).0 as f64).powi(3)
-                    }
-                }
-            };
-
-            let break_point_sequence =
-                super::paragraph::compute_breakpoints(breakpoints.len(), &mut weight);
 
             // needed for borrow checker
             let text_runs = &data.text_runs;
             let intrinsic_sizes = &data.intrinsic_sizes;
-            ifm.lines = break_point_sequence
-                .windows(2)
-                .map(|window| {
-                    let (baseline, height) =
-                        ifm.line_height(window[0], window[1], text_runs, intrinsic_sizes);
-                    super::inline::Line {
-                        from_break: window[0],
-                        to_break: window[1],
-                        height,
-                        baseline,
-                        entity: entities.create(),
-                    }
-                })
-                .collect();
+            ifm.break_lines(self.line_width, indent, entities, text_runs, intrinsic_sizes)
+                .expect("could not break inline context into lines");
+            let breakpoints = &ifm.break_points;
 
             for (line_num, &line) in ifm.lines.iter().enumerate() {
                 let content_width = breakpoints[line.to_break].advance_before
@@ -476,29 +441,18 @@ pub struct ContainerData {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-struct ElementDimensions {
-    decoration: Decoration,
-    inline_size: PixelLength,
+pub struct ElementDimensions {
+    pub decoration: Decoration,
+    pub inline_size: PixelLength,
 }
 
 impl ElementDimensions {
-    /// Returns distance between the left edge of the element's content area and the left edge of
-    /// the containing element's content area.
-    ///
-    /// In other words, this function returns the combined length of the left margin, left padding
-    /// and left border width.
-    fn inline_offset(self) -> PixelLength {
+    pub fn inline_offset(self) -> PixelLength {
         self.decoration.border.left + self.decoration.margin.left + self.decoration.padding.left
     }
 }
 
-/// Uses the constraints given by the width, height, margin, padding and border properties to
-/// compute the dimensions of an element.
-///
-/// # Arguments
-/// - `container_size`: the horizontal size of the content area of the containing element
-/// - `style`: the computed css properties of the element
-fn compute_element_dimensions(
+pub fn compute_element_dimensions(
     container_size: PixelLength,
     intrinsic_size: Option<IntrinsicSize>,
     style: &ComputedValues,
@@ -574,7 +528,7 @@ pub struct PageCursor {
 }
 
 impl PageCursor {
-    fn add_content(&mut self, content: PixelLength) {
+    pub fn add_content(&mut self, content: PixelLength) {
         if content == PixelLength(0.0) {
             return;
         }
@@ -582,7 +536,7 @@ impl PageCursor {
         self.vertical_pos += content;
     }
 
-    fn add_margin(&mut self, margin: PixelLength) {
+    pub fn add_margin(&mut self, margin: PixelLength) {
         if margin == PixelLength(0.0) {
             return;
         }
@@ -597,8 +551,13 @@ impl PageCursor {
         }
     }
 
-    fn vertical_pos(&self) -> PixelLength {
+    pub fn vertical_pos(&self) -> PixelLength {
         self.vertical_pos
+    }
+
+    pub fn set_vertical_pos(&mut self, v: PixelLength) {
+        self.vertical_pos = v;
+        self.collapse_margin = None;
     }
 }
 

@@ -9,7 +9,72 @@ pub use super::specified::{
     TextAlign,
 };
 
-pub use cssparser::RGBA;
+pub use cssparser_color::Color;
+
+/// An sRGB color with 8 bits per channel.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
+pub struct RGBA {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub alpha: u8,
+}
+
+impl RGBA {
+    pub const fn new(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
+        RGBA { red, green, blue, alpha }
+    }
+
+    pub const fn transparent() -> Self {
+        RGBA::new(0, 0, 0, 0)
+    }
+}
+
+/// The color a CSS color resolves to when painting.
+///
+/// Colors that are not defined in sRGB (lab, oklch, `color()`) are not supported yet and
+/// resolve to transparent. `currentcolor` also resolves to transparent for now.
+pub fn color_to_rgba(color: Color) -> RGBA {
+    use cssparser_color::{hsl_to_rgb, hwb_to_rgb};
+
+    fn channel(value: f32) -> u8 {
+        (value * 255.0).round().clamp(0.0, 255.0) as u8
+    }
+    fn from_floats((r, g, b): (f32, f32, f32), alpha: Option<f32>) -> RGBA {
+        RGBA::new(channel(r), channel(g), channel(b), channel(alpha.unwrap_or(1.0)))
+    }
+
+    match color {
+        Color::Rgba(c) => RGBA::new(c.red, c.green, c.blue, channel(c.alpha)),
+        Color::Hsl(c) => from_floats(
+            hsl_to_rgb(
+                (c.hue.unwrap_or(0.0) / 360.0).rem_euclid(1.0),
+                c.saturation.unwrap_or(0.0),
+                c.lightness.unwrap_or(0.0),
+            ),
+            c.alpha,
+        ),
+        Color::Hwb(c) => from_floats(
+            hwb_to_rgb(
+                (c.hue.unwrap_or(0.0) / 360.0).rem_euclid(1.0),
+                c.whiteness.unwrap_or(0.0),
+                c.blackness.unwrap_or(0.0),
+            ),
+            c.alpha,
+        ),
+        Color::CurrentColor
+        | Color::Lab(_)
+        | Color::Lch(_)
+        | Color::Oklab(_)
+        | Color::Oklch(_)
+        | Color::ColorFunction(_) => RGBA::transparent(),
+    }
+}
+
+/// An opaque sRGB color.
+pub fn opaque(red: u8, green: u8, blue: u8) -> Color {
+    Color::Rgba(cssparser_color::RgbaLegacy::new(red, green, blue, 1.0))
+}
 
 pub type CssFloat = f32;
 
@@ -256,6 +321,10 @@ impl GenericSize {
 pub struct Position {
     pub width: GenericSize,
     pub height: GenericSize,
+    pub top: GenericSize,
+    pub right: GenericSize,
+    pub bottom: GenericSize,
+    pub left: GenericSize,
     pub margin_top: GenericSize,
     pub margin_bottom: GenericSize,
     pub margin_left: GenericSize,
@@ -272,10 +341,10 @@ pub struct Position {
     pub border_bottom_style: BorderStyle,
     pub border_left_style: BorderStyle,
     pub border_right_style: BorderStyle,
-    pub border_top_color: cssparser::Color,
-    pub border_bottom_color: cssparser::Color,
-    pub border_left_color: cssparser::Color,
-    pub border_right_color: cssparser::Color,
+    pub border_top_color: Color,
+    pub border_bottom_color: Color,
+    pub border_left_color: Color,
+    pub border_right_color: Color,
 }
 
 impl Position {
@@ -300,6 +369,10 @@ impl Default for Position {
         Position {
             width: GenericSize::Auto,
             height: GenericSize::Auto,
+            top: GenericSize::Auto,
+            right: GenericSize::Auto,
+            bottom: GenericSize::Auto,
+            left: GenericSize::Auto,
             margin_top: GenericSize::zero(),
             margin_bottom: GenericSize::zero(),
             margin_left: GenericSize::zero(),
@@ -316,10 +389,10 @@ impl Default for Position {
             border_bottom_style: BorderStyle::default(),
             border_left_style: BorderStyle::default(),
             border_right_style: BorderStyle::default(),
-            border_top_color: cssparser::Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)),
-            border_bottom_color: cssparser::Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)),
-            border_left_color: cssparser::Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)),
-            border_right_color: cssparser::Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)),
+            border_top_color: opaque(0, 0, 0),
+            border_bottom_color: opaque(0, 0, 0),
+            border_left_color: opaque(0, 0, 0),
+            border_right_color: opaque(0, 0, 0),
         }
     }
 }
@@ -371,7 +444,12 @@ impl AsMut<Page> for ComputedValues {
 
 impl ComputedValues {
     fn fixup(&mut self) {
-        Arc::make_mut(&mut self.position).fixup()
+        Arc::make_mut(&mut self.position).fixup();
+        // https://www.w3.org/TR/CSS22/visuren.html#dis-pos-flo
+        // An absolutely positioned box is always blockified.
+        if self.box_.position == PositionSpec::Absolute && self.box_.display == Display::Inline {
+            Arc::make_mut(&mut self.box_).display = Display::Block;
+        }
     }
 }
 
@@ -449,13 +527,13 @@ pub struct Text {
 
 #[derive(Debug, Clone)]
 pub struct Background {
-    pub background_color: cssparser::Color,
+    pub background_color: Color,
 }
 
 impl Default for Background {
     fn default() -> Self {
         Background {
-            background_color: cssparser::Color::RGBA(RGBA::transparent()),
+            background_color: Color::Rgba(cssparser_color::RgbaLegacy::new(0, 0, 0, 0.0)),
         }
     }
 }

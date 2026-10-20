@@ -167,21 +167,16 @@ impl<'a> From<&'a ComputedValues> for Properties {
 }
 
 pub fn match_font(style: &ComputedValues) -> Option<Font> {
-    // if let Some(_) = option_env!("PREFER_BUILTIN") {
-        match_font_builtin(style)
-    // } else {
-    //     let families = style
-    //         .font
-    //         .font_family
-    //         .iter()
-    //         .map(|fam| FamilyName::from(fam.clone()))
-    //         .collect::<Vec<_>>();
-    //     let font = SystemSource::new()
-    //         .select_best_match(&families, &style.into())
-    //         .ok()?;
-
-    //     Some(Font::external(font))
-    // }
+    let families = style
+        .font
+        .font_family
+        .iter()
+        .map(|fam| FamilyName::from(fam.clone()))
+        .collect::<Vec<_>>();
+    let font = SystemSource::new()
+        .select_best_match(&families, &style.into())
+        .ok()?;
+    Some(Font::external(font))
 }
 
 pub fn match_font_builtin(style: &ComputedValues) -> Option<Font> {

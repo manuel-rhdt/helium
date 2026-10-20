@@ -3,15 +3,16 @@ use std::str::FromStr;
 
 use super::super::parse::StyleParseError;
 use super::computed::PixelLength;
-use cssparser::{match_ignore_ascii_case, Color, CowRcStr, ParseError, Parser, Token};
+use cssparser::{match_ignore_ascii_case, CowRcStr, ParseError, Parser, Token};
+use cssparser_color::Color;
 use helium_derive::{ParseDeclaration, PropertyValue};
 
 pub trait ParseDeclaration<'i> {
     type Error: 'i;
     fn parse_declaration(
         name: CowRcStr<'i>,
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>>
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<Self::Error>>
     where
         Self: Sized;
 }
@@ -23,8 +24,8 @@ pub trait ApplyToComputedValues {
 pub trait PropertyValue<'i>: Sized {
     type Error: 'i;
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>>
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<Self::Error>>
     where
         Self: Sized;
 
@@ -47,8 +48,8 @@ impl<'i> PropertyValue<'i> for String {
     type Error = ();
 
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<Self::Error>> {
         Ok(input.expect_ident_or_string()?.to_string())
     }
 }
@@ -60,8 +61,8 @@ where
     type Error = T::Error;
 
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<Self::Error>> {
         input.parse_entirely(|input| {
             let mut result = vec![];
             loop {
@@ -109,6 +110,17 @@ pub enum Position<'a> {
     Width(AutoOrQuantityOrPercentage),
     #[property]
     Height(AutoOrQuantityOrPercentage),
+
+    /// Offsets of positioned boxes.
+    /// https://www.w3.org/TR/CSS22/visuren.html#position-props
+    #[property]
+    Top(AutoOrQuantityOrPercentage),
+    #[property]
+    Right(AutoOrQuantityOrPercentage),
+    #[property]
+    Bottom(AutoOrQuantityOrPercentage),
+    #[property]
+    Left(AutoOrQuantityOrPercentage),
 
     #[property]
     #[shorthand("margin-top", method = "top")]
@@ -274,6 +286,10 @@ pub enum Background {
     /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
     #[property]
     BackgroundColor(Color),
+    /// Only the `<color>` form of the shorthand is supported.
+    #[property]
+    #[shorthand("background-color", method = "clone")]
+    Background(Color),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -350,8 +366,8 @@ where
     type Error = T::Error;
 
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, T::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<T::Error>> {
         // TODO: Error if zero elements.
         Vec::<T>::from_css_property_value(input).map(|elements| List {
             elements: Cow::Owned(elements),
@@ -417,8 +433,8 @@ impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for CommaSeparated<T> {
     type Error = T::Error;
 
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, T::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<T::Error>> {
         input
             .parse_comma_separated(|input| T::from_css_property_value(input))
             .map(|elements| CommaSeparated { elements })
@@ -443,7 +459,7 @@ pub struct Quantity {
 impl<'i> PropertyValue<'i> for Quantity {
     type Error = ();
 
-    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<()>> {
         let token = input.next()?;
         let (value, unit) = match token {
             Token::Dimension { value, unit, .. } => (*value, unit.parse()),
@@ -453,14 +469,14 @@ impl<'i> PropertyValue<'i> for Quantity {
             } if *val == 0 => (0.0, Ok(Unit::Px)),
             _ => {
                 let token = token.clone();
-                return Err(input.new_unexpected_token_error(token));
+                return Err(ParseError::unexpected_token());
             }
         };
 
         let unit = match unit {
             Err(_) => {
                 let token = token.clone();
-                return Err(input.new_unexpected_token_error(token.clone()));
+                return Err(ParseError::unexpected_token());
             }
             Ok(unit) => unit,
         };
@@ -476,13 +492,13 @@ pub struct Percentage(pub super::CssFloat);
 impl<'i> PropertyValue<'i> for Percentage {
     type Error = ();
 
-    fn from_css_property_value(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i, ()>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<()>> {
         let token = input.next()?;
         match token {
             Token::Percentage { unit_value, .. } => Ok(Percentage(*unit_value)),
             _ => {
                 let token = token.clone();
-                Err(input.new_unexpected_token_error(token))
+                Err(ParseError::unexpected_token())
             }
         }
     }
@@ -593,38 +609,41 @@ impl Default for BorderStyle {
 }
 
 impl<'i> PropertyValue<'i> for Color {
-    type Error = StyleParseError<'i>;
+    type Error = StyleParseError;
 
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>> {
-        Color::parse(input).map_err(Into::into)
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<Self::Error>> {
+        Color::parse(input).map_err(|error| match error.kind {
+            cssparser::ParseErrorKind::Basic(kind) => ParseError::from_basic_kind(kind),
+            cssparser::ParseErrorKind::Custom(()) => ParseError::unexpected_token(),
+        })
     }
 }
 
 impl<'i> PropertyValue<'i> for f32 {
-    type Error = StyleParseError<'i>;
+    type Error = StyleParseError;
 
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<Self::Error>> {
         let token = input.next()?;
         match token {
             Token::Number { value, .. } => Ok(*value),
             _ => {
                 let token = token.clone();
-                Err(input.new_unexpected_token_error(token))
+                Err(ParseError::unexpected_token())
             }
         }
     }
 }
 
 impl<'i> PropertyValue<'i> for usize {
-    type Error = StyleParseError<'i>;
+    type Error = StyleParseError;
 
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<Self::Error>> {
         let token = input.next()?;
         match token {
             Token::Number {
@@ -633,18 +652,18 @@ impl<'i> PropertyValue<'i> for usize {
             } => Ok(*val as usize),
             _ => {
                 let token = token.clone();
-                Err(input.new_unexpected_token_error(token))
+                Err(ParseError::unexpected_token())
             }
         }
     }
 }
 
 impl<'i> PropertyValue<'i> for bool {
-    type Error = StyleParseError<'i>;
+    type Error = StyleParseError;
 
     fn from_css_property_value(
-        input: &mut Parser<'i, '_>,
-    ) -> Result<Self, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<Self::Error>> {
         let val = input.expect_ident_or_string()?;
         if val.eq_ignore_ascii_case("true") {
             Ok(true)
@@ -652,7 +671,7 @@ impl<'i> PropertyValue<'i> for bool {
             Ok(false)
         } else {
             let val = val.clone();
-            Err(input.new_unexpected_token_error(cssparser::Token::Ident(val)))
+            Err(ParseError::unexpected_token())
         }
     }
 }
@@ -711,7 +730,7 @@ impl<'a> List<'a, Border> {
                 _ => None,
             })
             .next()
-            .unwrap_or(Color::RGBA(cssparser::RGBA::new(0, 0, 0, 255)))
+            .unwrap_or(super::computed::opaque(0, 0, 0))
     }
 }
 

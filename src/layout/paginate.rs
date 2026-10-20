@@ -1,4 +1,6 @@
-use super::components::{BlockLevelElement, Decoration, EdgeValues, Position, TextList};
+use super::components::{
+    AbsoluteGroups, BlockLevelElement, Decoration, EdgeValues, Position, TextList,
+};
 use crate::style::properties::computed::{ComputedValues, PageBreak, PixelLength};
 use specs::{Read, ReadStorage, System, WriteStorage};
 use std::collections::HashSet;
@@ -25,11 +27,15 @@ struct PageBreakOpportunity {
 impl<'world> System<'world> for Paginator {
     type SystemData = (
         Read<'world, TextList>,
+        Read<'world, AbsoluteGroups>,
         WriteStorage<'world, Position>,
         ReadStorage<'world, Decoration>,
         ReadStorage<'world, ComputedValues>,
     );
-    fn run(&mut self, (text_list, mut positions, _decorations, computed_values): Self::SystemData) {
+    fn run(
+        &mut self,
+        (text_list, absolute_groups, mut positions, _decorations, computed_values): Self::SystemData,
+    ) {
         let mut break_points = vec![PageBreakOpportunity {
             before_index: 0,
             forced: false,
@@ -63,6 +69,8 @@ impl<'world> System<'world> for Paginator {
 
             match elem {
                 BlockLevelElement::ContainerStart(_) => force_next_page_break = false,
+                // never part of the text list
+                BlockLevelElement::Absolute(_) => {}
                 BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) => {
                     if page_break_after == PageBreak::Always {
                         force_next_page_break = true;
@@ -107,6 +115,8 @@ impl<'world> System<'world> for Paginator {
 
         let mut current_page = 0;
         let mut y_offset = self.margin.top;
+        // the vertical offset that was applied to the contents of every page
+        let mut page_offsets = vec![y_offset];
 
         // we keep track of which entities we already processed
         let mut processed_entities = HashSet::new();
@@ -121,6 +131,7 @@ impl<'world> System<'world> for Paginator {
                 }) if before_index == index => {
                     current_page += 1;
                     y_offset = self.margin.top - advance_after;
+                    page_offsets.push(y_offset);
                     next_break = optimal_sequence_iter.next();
                 }
                 _ => {}
@@ -130,6 +141,22 @@ impl<'world> System<'world> for Paginator {
                 if let Some(Position { page, y, .. }) = positions.get_mut(elem.entity()) {
                     *page = current_page;
                     *y = *y + y_offset;
+                }
+            }
+        }
+
+        // Absolutely positioned boxes are not part of the text list. They are placed on the page
+        // of their containing block, which for the initial containing block is the first page.
+        for group in &absolute_groups.groups {
+            let page = group
+                .containing_block
+                .and_then(|cb| positions.get(cb))
+                .map_or(0, |pos| pos.page);
+            let offset = page_offsets[page];
+            for &entity in &group.entities {
+                if let Some(pos) = positions.get_mut(entity) {
+                    pos.page = page;
+                    pos.y += offset;
                 }
             }
         }

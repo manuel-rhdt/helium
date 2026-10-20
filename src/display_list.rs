@@ -373,6 +373,7 @@ impl<'a> System<'a> for ContentRectCalculator {
 
 pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
     <DisplayText as System>::SystemData::setup(world);
+    <DisplayVectorGraphics as System>::SystemData::setup(world);
 
     let pages = world.read_resource::<Option<Pages>>();
     let pages = pages.as_ref().unwrap();

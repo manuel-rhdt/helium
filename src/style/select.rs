@@ -1,9 +1,10 @@
-use super::parse;
+use super::parse::{self, CssIdent, CssNamespace, CssString};
 use crate::tree::{DomRef, ElementRef, TreeLinked};
 
-use html5ever::{local_name, namespace_url, ns, LocalName, Namespace, QualName};
+use html5ever::{local_name, ns, LocalName, Namespace, QualName};
 use selectors::{
     attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint, SELECTOR_WHITESPACE},
+    bloom::BloomFilter,
     matching::{ElementSelectorFlags, MatchingContext},
 };
 
@@ -91,18 +92,18 @@ impl selectors::Element for ElementRef {
     }
 
     #[inline]
-    fn has_id(&self, id: &LocalName, case_sensitivity: CaseSensitivity) -> bool {
+    fn has_id(&self, id: &CssIdent, case_sensitivity: CaseSensitivity) -> bool {
         self.attributes
             .borrow()
             .get(&QualName::new(None, ns!(), local_name!("id")))
             .map_or(false, |id_attr| {
-                case_sensitivity.eq(id.as_bytes(), id_attr.value.as_bytes())
+                case_sensitivity.eq(id.0.as_bytes(), id_attr.value.as_bytes())
             })
     }
 
     #[inline]
-    fn has_class(&self, name: &LocalName, case_sensitivity: CaseSensitivity) -> bool {
-        let name = name.as_bytes();
+    fn has_class(&self, name: &CssIdent, case_sensitivity: CaseSensitivity) -> bool {
+        let name = name.0.as_bytes();
         !name.is_empty()
             && match self.attributes
                     .borrow()
@@ -120,17 +121,17 @@ impl selectors::Element for ElementRef {
     #[inline]
     fn attr_matches(
         &self,
-        ns: &NamespaceConstraint<&Namespace>,
-        local_name: &LocalName,
-        operation: &AttrSelectorOperation<&String>,
+        ns: &NamespaceConstraint<&CssNamespace>,
+        local_name: &CssIdent,
+        operation: &AttrSelectorOperation<&CssString>,
     ) -> bool {
         let attrs = self.attributes.borrow();
         match *ns {
             NamespaceConstraint::Any => attrs
                 .iter()
-                .any(|(name, attr)| name.local == *local_name && operation.eval_str(&attr.value)),
+                .any(|(name, attr)| name.local == local_name.0 && operation.eval_str(&attr.value)),
             NamespaceConstraint::Specific(ns_url) => attrs
-                .get(&QualName::new(None, ns_url.clone(), local_name.clone()))
+                .get(&QualName::new(None, ns_url.0.clone(), local_name.0.clone()))
                 .map_or(false, |attr| operation.eval_str(&attr.value)),
         }
     }
@@ -143,15 +144,11 @@ impl selectors::Element for ElementRef {
         match *pseudo {}
     }
 
-    fn match_non_ts_pseudo_class<F>(
+    fn match_non_ts_pseudo_class(
         &self,
         pseudo: &parse::PseudoClass,
         _context: &mut MatchingContext<parse::Selectors>,
-        _flags_setter: &mut F,
-    ) -> bool
-    where
-        F: FnMut(&Self, ElementSelectorFlags),
-    {
+    ) -> bool {
         use parse::PseudoClass::*;
         match *pseudo {
             Active | Focus | Hover | Enabled | Disabled | Checked | Indeterminate | Visited => {
@@ -179,16 +176,23 @@ impl selectors::Element for ElementRef {
     fn has_namespace(&self, ns: &Namespace) -> bool {
         &self.name.ns == ns
     }
-    fn is_same_type(&self, _other: &Self) -> bool {
+    fn is_same_type(&self, other: &Self) -> bool {
+        self.name.ns == other.name.ns && self.name.local == other.name.local
+    }
+    fn first_element_child(&self) -> Option<Self> {
+        self.as_node().children().find_map(DomRef::into_element_ref)
+    }
+    fn apply_selector_flags(&self, _flags: ElementSelectorFlags) {}
+    fn has_custom_state(&self, _name: &CssIdent) -> bool {
         false
     }
-    fn exported_part(&self, _name: &LocalName) -> Option<LocalName> {
-        todo!()
+    fn imported_part(&self, _name: &CssIdent) -> Option<CssIdent> {
+        None
     }
-    fn imported_part(&self, _name: &LocalName) -> Option<LocalName> {
-        todo!()
+    fn is_part(&self, _name: &CssIdent) -> bool {
+        false
     }
-    fn is_part(&self, _name: &LocalName) -> bool {
+    fn add_element_unique_hashes(&self, _filter: &mut BloomFilter) -> bool {
         false
     }
 }

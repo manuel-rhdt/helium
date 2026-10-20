@@ -8,10 +8,10 @@ edition = "2024"
 structopt = ">= 0.2"
 derive_more = { version = "*", features = ["full"] }
 font-kit = "0.8.0"
-html5ever = "0.25.1"
+html5ever = "0.40"
 log = { version = "0.4.8", features = ["std", "max_level_trace", "release_max_level_trace"] }
-cssparser = "0.27.2"
-selectors = "0.22.0"
+cssparser = "0.38"
+selectors = "0.41"
 specs = { version = "0.20", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
@@ -24,12 +24,15 @@ env_logger = "0.8"
 pest = "2.8.0"
 pest_derive = "2.8.0"
 rustyline = "16"
+cssparser-color = "0.6"
+precomputed-hash = "0.1"
 
 [dev-dependencies]
 assert_cmd = "1"
 predicates = "1"
 quickcheck = "1"
 quickcheck_macros = "1"
+serde_json = "1.0.154"
 
 [build-dependencies]
 quote = "1"
