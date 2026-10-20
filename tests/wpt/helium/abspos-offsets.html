@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!-- helium's own test in WPT's checkLayout style: boxes with position: absolute -->
+<title>position: absolute offsets, sizes and static positions</title>
+<style>
+  body { margin: 0; }
+  .abs { position: absolute; }
+
+  #a { left: 10px; top: 20px; width: 100px; height: 40px; }
+
+  /* the containing block of everything inside is the padding box: 220px x 120px */
+  #c { left: 50px; top: 100px; width: 200px; height: 100px; border: 5px solid black; padding: 10px; }
+  #d { right: 0; bottom: 0; width: 30px; height: 20px; }
+  #e { left: 10px; top: 10px; margin: 3px; width: 10px; height: 10px; }
+  #f { left: 0; right: 0; width: 100px; height: 5px; margin: 0 auto; }
+  #g { left: 20px; right: 20px; height: 5px; }
+  #h { top: 10px; bottom: 10px; left: 0; width: 5px; }
+  #p { left: 10%; top: 50%; width: 10%; height: 10%; }
+
+  /* shrink-to-fit */
+  #i { left: 0; top: 300px; padding: 2px; }
+  #i > div { width: 70px; height: 10px; }
+
+  /* static positions: where the boxes would have been without position: absolute */
+  #before { height: 30px; }
+  #j { width: 10px; height: 10px; }
+  #indent { margin-left: 40px; padding-top: 5px; height: 20px; }
+  #k { width: 10px; height: 10px; }
+</style>
+
+<div id="a" class="abs"
+     data-offset-x="10" data-offset-y="20" data-expected-width="100" data-expected-height="40"></div>
+
+<div id="c" class="abs"
+     data-offset-x="50" data-offset-y="100" data-expected-width="230" data-expected-height="130">
+  <div id="d" class="abs" data-offset-x="190" data-offset-y="100"></div>
+  <div id="e" class="abs" data-offset-x="13" data-offset-y="13" data-expected-margin-left="3"></div>
+  <div id="f" class="abs" data-offset-x="60" data-expected-margin-left="60" data-expected-margin-right="60"></div>
+  <div id="g" class="abs" data-offset-x="20" data-expected-width="180"></div>
+  <div id="h" class="abs" data-offset-y="10" data-expected-height="100"></div>
+  <div id="p" class="abs" data-offset-x="22" data-offset-y="60" data-expected-width="22" data-expected-height="12"></div>
+</div>
+
+<div id="i" class="abs" data-offset-x="0" data-offset-y="300"
+     data-expected-width="74" data-expected-height="14">
+  <div></div>
+</div>
+
+<div id="before"></div>
+<div id="j" class="abs" data-offset-x="0" data-offset-y="30"></div>
+<div id="indent">
+  <div id="k" class="abs" data-offset-x="40" data-offset-y="35"></div>
+</div>

@@ -37,15 +37,7 @@ pub fn calculate_padding_and_border(
     deco.margin.top = position.margin_top.absolute(Px(0.0), container_size);
     deco.margin.bottom = position.margin_bottom.absolute(Px(0.0), container_size);
 
-    // TODO: Do this elsewhere?
-    use cssparser::{Color, RGBA};
-    fn get_color(col: Color) -> RGBA {
-        match col {
-            // TODO: CurrentColor
-            Color::CurrentColor => RGBA::transparent(),
-            Color::RGBA(rgba) => rgba,
-        }
-    }
+    use crate::style::properties::computed::color_to_rgba as get_color;
 
     deco.background_color = get_color(background.background_color);
     deco.border_color.top = get_color(position.border_top_color);

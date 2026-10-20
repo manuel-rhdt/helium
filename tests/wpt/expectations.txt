@@ -1,0 +1,8 @@
+# Known failures of the vendored web-platform-tests, one path per line (relative to tests/wpt).
+# A test listed here must keep failing: once helium passes it, the runner asks for its removal.
+
+# `box-sizing: border-box` is ignored, and the right margin is not reported as a used value
+# when the left margin is `auto`; `direction: rtl` is not implemented
+css/CSS2/normal-flow/auto-margins-used-values.html
+# `max-height` is not implemented (the div grows to its 300px child)
+css/CSS2/normal-flow/unresolvable-min-height.html

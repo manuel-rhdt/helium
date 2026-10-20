@@ -1,0 +1,17 @@
+# Known failures of the vendored web-platform-tests reftests, one path per line (relative to
+# tests/wpt). A test listed here must keep failing: once helium passes it, the runner asks for its
+# removal. Run `cargo test --test wpt_reftest` to see why a test fails.
+
+css/CSS2/normal-flow/height-003.xht
+css/CSS2/normal-flow/max-height-002.xht
+css/CSS2/normal-flow/max-width-003.xht
+css/CSS2/normal-flow/min-width-003.xht
+css/CSS2/normal-flow/width-003.xht
+css/CSS2/normal-flow/blocks-011.xht
+css/CSS2/normal-flow/block-non-replaced-width-001.xht
+
+# needs the Ahem font (/fonts/ahem.css) to cover the red box
+css/CSS2/normal-flow/blocks-021.xht
+
+# float, overflow and the Ahem font
+css/CSS2/normal-flow/max-width-106.xht

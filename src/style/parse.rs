@@ -4,27 +4,32 @@ use super::properties::specified::{Font, ParseDeclaration, PropertyDeclaration};
 use crate::tree::ElementRef;
 
 use cssparser::{
-    AtRuleParser, AtRuleType, CowRcStr, ParseError, Parser, ParserInput, QualifiedRuleParser,
-    RuleListParser, SourceLocation, ToCss,
+    AtRuleParser, BasicParseErrorKind, CowRcStr, ParseError, Parser, ParserState,
+    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss,
 };
 use html5ever::{LocalName, Namespace};
 use log::{error, warn};
-use selectors::context::QuirksMode;
+use precomputed_hash::PrecomputedHash;
+use selectors::context::{
+    MatchingForInvalidation, NeedsSelectorFlags, QuirksMode, SelectorCaches,
+};
 use selectors::matching;
-use selectors::parser::{NonTSPseudoClass, SelectorImpl, SelectorList, SelectorParseErrorKind};
+use selectors::parser::{
+    NonTSPseudoClass, ParseRelative, SelectorImpl, SelectorList, SelectorParseErrorKind,
+};
 
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum StyleParseError<'i> {
+pub enum StyleParseError {
     #[error("unknown property {name}")]
-    UnknownProperty { name: CowRcStr<'i> },
+    UnknownProperty { name: String },
     #[error("selector parser error {0:?}")]
-    SelectorParserError(SelectorParseErrorKind<'i>),
+    SelectorParserError(SelectorParseErrorKind),
 }
 
-impl<'i> From<SelectorParseErrorKind<'i>> for StyleParseError<'i> {
-    fn from(err: SelectorParseErrorKind<'i>) -> Self {
+impl From<SelectorParseErrorKind> for StyleParseError {
+    fn from(err: SelectorParseErrorKind) -> Self {
         StyleParseError::SelectorParserError(err)
     }
 }
@@ -45,15 +50,14 @@ impl Default for Styles {
 
 impl Styles {
     pub fn parse_css(&mut self, input: &str) {
-        let mut input = ParserInput::new(input);
-        let mut parser = Parser::new(&mut input);
+        let mut parser = Parser::new(input);
+        let mut top_level = TopLevelParser::default();
 
-        let qualified_rule_iter =
-            RuleListParser::new_for_stylesheet(&mut parser, TopLevelParser::default());
-
-        for rule in qualified_rule_iter {
+        for rule in StyleSheetParser::new(&mut parser, &mut top_level) {
             match rule {
-                Err(error) => warn!("Could not parse CSS rule: {:?}", error),
+                Err((error, text, _location)) => {
+                    warn!("Could not parse CSS rule {:?}: {:?}", text, error)
+                }
                 Ok(rule) => self.rules.push(rule),
             }
         }
@@ -90,11 +94,14 @@ impl QualifiedRule {
     }
 
     pub fn matches(&self, elem: &ElementRef) -> bool {
+        let mut caches = SelectorCaches::default();
         let mut context = matching::MatchingContext::new(
             matching::MatchingMode::Normal,
             None,
-            None,
+            &mut caches,
             QuirksMode::NoQuirks,
+            NeedsSelectorFlags::No,
+            MatchingForInvalidation::No,
         );
         if let GeneralizedSelector::Selectors(list) = &self.selectors {
             matching::matches_selector_list(list, elem, &mut context)
@@ -122,6 +129,27 @@ impl PropertyDeclarationBlock {
         Default::default()
     }
 
+    /// Parses the value of a `style` attribute (a declaration list without surrounding braces).
+    pub fn parse_inline(input: &str) -> Self {
+        let mut parser = Parser::new(input);
+        Self::parse_declarations(&mut parser)
+    }
+
+    /// Parses a declaration list up to the end of the input.
+    fn parse_declarations(input: &mut Parser) -> Self {
+        let mut declaration_parser = StyleDeclarationParser {};
+        let mut block = Self::new();
+        for declaration in RuleBodyParser::new(input, &mut declaration_parser) {
+            match declaration {
+                Ok(declaration) => block.declarations.push(declaration),
+                Err((error, text, _location)) => {
+                    warn!("Error while parsing declaration {:?}: {:?}", text, error)
+                }
+            }
+        }
+        block
+    }
+
     pub fn declarations(&self) -> impl Iterator<Item = &PropertyDeclaration> {
         let iter1 = self.declarations.iter().filter(|decl| match decl {
             PropertyDeclaration::Font(Font::FontSize(_)) => true,
@@ -141,84 +169,141 @@ struct TopLevelParser {}
 impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
     type Prelude = SelectorList<Selectors>;
     type QualifiedRule = QualifiedRule;
-    type Error = StyleParseError<'i>;
+    type Error = StyleParseError;
 
     fn parse_prelude<'t>(
         &mut self,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
         let selector_parser = SelectorParser::default();
-        let selector_list =
-            SelectorList::parse(&selector_parser, input).map_err(|err| err.into())?;
+        let selector_list = SelectorList::parse(&selector_parser, input, ParseRelative::No)
+            .map_err(|err| err.into::<StyleParseError>())?;
         Ok(selector_list)
     }
 
     fn parse_block<'t>(
         &mut self,
         prelude: Self::Prelude,
-        _location: SourceLocation,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::QualifiedRule, ParseError<'i, Self::Error>> {
-        let declaration_parser = StyleDeclarationParser {};
-        let declaration_list_parser =
-            cssparser::DeclarationListParser::new(input, declaration_parser);
-
-        let mut declaration_block = PropertyDeclarationBlock::new();
-
-        for declaration in declaration_list_parser {
-            match declaration {
-                Ok(declaration) => declaration_block.declarations.push(declaration),
-                Err(err) => warn!("Error while parsing declaration: {:?}", err),
-            };
-        }
-
-        Ok(QualifiedRule::new(prelude, declaration_block))
+        _start: &ParserState,
+        input: &mut Parser<'i>,
+    ) -> Result<Self::QualifiedRule, ParseError<Self::Error>> {
+        Ok(QualifiedRule::new(
+            prelude,
+            PropertyDeclarationBlock::parse_declarations(input),
+        ))
     }
 }
 
 impl<'i> AtRuleParser<'i> for TopLevelParser {
-    type PreludeNoBlock = ();
-    type PreludeBlock = ();
+    type Prelude = ();
     type AtRule = QualifiedRule;
-    type Error = StyleParseError<'i>;
+    type Error = StyleParseError;
 
     fn parse_prelude<'t>(
         &mut self,
         name: CowRcStr<'i>,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<AtRuleType<Self::PreludeNoBlock, Self::PreludeBlock>, ParseError<'i, Self::Error>>
-    {
+        _input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
         if name.eq_ignore_ascii_case("page") {
-            Ok(AtRuleType::WithBlock(()))
+            Ok(())
         } else {
-            let _ = input;
-            Err(input.new_error(cssparser::BasicParseErrorKind::AtRuleInvalid(name)))
+            Err(ParseError::from_basic_kind(
+                BasicParseErrorKind::AtRuleInvalid,
+            ))
         }
     }
 
     fn parse_block<'t>(
         &mut self,
-        _prelude: Self::PreludeBlock,
-        _location: SourceLocation,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::AtRule, ParseError<'i, Self::Error>> {
-        let declaration_parser = StyleDeclarationParser {};
-        let declaration_list_parser =
-            cssparser::DeclarationListParser::new(input, declaration_parser);
-
-        let mut declaration_block = PropertyDeclarationBlock::new();
-
-        for declaration in declaration_list_parser {
-            match declaration {
-                Ok(declaration) => declaration_block.declarations.push(declaration),
-                Err(err) => warn!("Error while parsing declaration: {:?}", err),
-            };
-        }
-
+        _prelude: Self::Prelude,
+        _start: &ParserState,
+        input: &mut Parser<'i>,
+    ) -> Result<Self::AtRule, ParseError<Self::Error>> {
         Ok(QualifiedRule {
             selectors: GeneralizedSelector::AtPage,
-            properties: declaration_block,
+            properties: PropertyDeclarationBlock::parse_declarations(input),
         })
+    }
+}
+
+/// An identifier (`#id`, `.class`, ...) as it appears in a selector.
+///
+/// `selectors` needs its types to be serializable with [`ToCss`], which cannot be implemented for
+/// the types of html5ever, so we wrap them.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct CssIdent(pub LocalName);
+
+impl<'a> From<&'a str> for CssIdent {
+    fn from(s: &'a str) -> Self {
+        CssIdent(LocalName::from(s))
+    }
+}
+
+impl ToCss for CssIdent {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        cssparser::serialize_identifier(&self.0, dest)
+    }
+}
+
+impl PrecomputedHash for CssIdent {
+    fn precomputed_hash(&self) -> u32 {
+        self.0.precomputed_hash()
+    }
+}
+
+impl std::borrow::Borrow<LocalName> for CssIdent {
+    fn borrow(&self) -> &LocalName {
+        &self.0
+    }
+}
+
+/// The namespace of a selector, see [`CssIdent`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct CssNamespace(pub Namespace);
+
+impl<'a> From<&'a str> for CssNamespace {
+    fn from(s: &'a str) -> Self {
+        CssNamespace(Namespace::from(s))
+    }
+}
+
+impl ToCss for CssNamespace {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        cssparser::serialize_identifier(&self.0, dest)
+    }
+}
+
+impl PrecomputedHash for CssNamespace {
+    fn precomputed_hash(&self) -> u32 {
+        self.0.precomputed_hash()
+    }
+}
+
+impl std::borrow::Borrow<Namespace> for CssNamespace {
+    fn borrow(&self) -> &Namespace {
+        &self.0
+    }
+}
+
+/// The value of an attribute selector, see [`CssIdent`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct CssString(pub String);
+
+impl<'a> From<&'a str> for CssString {
+    fn from(s: &'a str) -> Self {
+        CssString(s.to_owned())
+    }
+}
+
+impl AsRef<str> for CssString {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl ToCss for CssString {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        cssparser::serialize_string(&self.0, dest)
     }
 }
 
@@ -226,20 +311,17 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
 pub struct Selectors;
 
 impl SelectorImpl for Selectors {
-    type AttrValue = String;
-    type Identifier = LocalName;
-    type ClassName = LocalName;
-    type LocalName = LocalName;
-    type NamespacePrefix = LocalName;
-    type NamespaceUrl = Namespace;
+    type ExtraMatchingData<'a> = ();
+    type AttrValue = CssString;
+    type Identifier = CssIdent;
+    type LocalName = CssIdent;
+    type NamespacePrefix = CssIdent;
+    type NamespaceUrl = CssNamespace;
     type BorrowedNamespaceUrl = Namespace;
     type BorrowedLocalName = LocalName;
 
     type NonTSPseudoClass = PseudoClass;
     type PseudoElement = PseudoElement;
-
-    type ExtraMatchingData = ();
-    type PartName = LocalName;
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -257,8 +339,6 @@ pub enum PseudoClass {
 }
 
 impl NonTSPseudoClass for PseudoClass {
-    type Impl = Selectors;
-
     fn is_active_or_hover(&self) -> bool {
         match self {
             PseudoClass::Active | PseudoClass::Hover => true,
@@ -266,9 +346,6 @@ impl NonTSPseudoClass for PseudoClass {
         }
     }
     fn is_user_action_state(&self) -> bool {
-        false
-    }
-    fn has_zero_specificity(&self) -> bool {
         false
     }
 }
@@ -305,22 +382,19 @@ impl ToCss for PseudoElement {
     }
 }
 
-impl selectors::parser::PseudoElement for PseudoElement {
-    type Impl = Selectors;
-}
+impl selectors::parser::PseudoElement for PseudoElement {}
 
 #[derive(Default)]
 struct SelectorParser;
 
 impl<'i> selectors::Parser<'i> for SelectorParser {
     type Impl = Selectors;
-    type Error = SelectorParseErrorKind<'i>;
+    type Error = SelectorParseErrorKind;
 
     fn parse_non_ts_pseudo_class(
         &self,
-        location: SourceLocation,
         name: CowRcStr<'i>,
-    ) -> Result<PseudoClass, ParseError<'i, SelectorParseErrorKind<'i>>> {
+    ) -> Result<PseudoClass, ParseError<SelectorParseErrorKind>> {
         use self::PseudoClass::*;
         if name.eq_ignore_ascii_case("any-link") {
             Ok(AnyLink)
@@ -343,11 +417,9 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
         } else if name.eq_ignore_ascii_case("indeterminate") {
             Ok(Indeterminate)
         } else {
-            Err(
-                location.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(
-                    name,
-                )),
-            )
+            Err(ParseError::custom(
+                SelectorParseErrorKind::UnsupportedPseudoClassOrElement,
+            ))
         }
     }
 }
@@ -356,20 +428,38 @@ struct StyleDeclarationParser {}
 
 impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
     type Declaration = PropertyDeclaration<'static>;
-    type Error = StyleParseError<'i>;
+    type Error = StyleParseError;
 
     fn parse_value<'t>(
         &mut self,
         name: CowRcStr<'i>,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+        _declaration_start: &ParserState,
+    ) -> Result<Self::Declaration, ParseError<Self::Error>> {
         PropertyDeclaration::parse_declaration(name, input)
     }
 }
 
 impl<'i> AtRuleParser<'i> for StyleDeclarationParser {
-    type PreludeNoBlock = ();
-    type PreludeBlock = ();
+    type Prelude = ();
     type AtRule = PropertyDeclaration<'static>;
-    type Error = StyleParseError<'i>;
+    type Error = StyleParseError;
+}
+
+impl<'i> QualifiedRuleParser<'i> for StyleDeclarationParser {
+    type Prelude = ();
+    type QualifiedRule = PropertyDeclaration<'static>;
+    type Error = StyleParseError;
+}
+
+impl<'i> RuleBodyItemParser<'i, PropertyDeclaration<'static>, StyleParseError>
+    for StyleDeclarationParser
+{
+    fn parse_declarations(&self) -> bool {
+        true
+    }
+
+    fn parse_qualified(&self) -> bool {
+        false
+    }
 }

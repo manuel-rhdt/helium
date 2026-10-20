@@ -1,5 +1,8 @@
+pub mod absolute;
+pub mod check;
 pub mod components;
 pub mod construct;
+pub mod dump;
 pub mod inline;
 pub mod inline_size;
 pub mod normal_formatting;
@@ -25,7 +28,7 @@ use log::info;
 
 pub type FontMap = std::collections::HashMap<String, text::Font>;
 
-pub fn layout(dom: DomRef, device: Device, crop: bool) -> LayoutContext {
+pub fn layout(dom: DomRef, device: Device, crop: bool) -> Result<LayoutContext, lscheme::RuntimeError> {
     // here we set the layout passes
     let world = World::new();
 
@@ -90,14 +93,21 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> LayoutContext {
 
     // perform the layout routines
     layout_context.insert(TextList::default());
+    layout_context.insert(components::AbsoluteGroups::default());
+    layout_context.insert(components::PageGeometry {
+        width: page_width,
+        height: page_height,
+        margin,
+    });
     let RootNode(root_entity) = *layout_context.read_resource();
-    let mut block_layout = normal_formatting::BlockLevelLayout {
+    let block_layout = lscheme::scheme_layout::SchemeBlockLayout {
         root_entity: root_entity.expect("Could not find root entity."),
         page_width,
+        page_height,
         margin,
     };
     time_before = Instant::now();
-    block_layout.run(&mut layout_context);
+    block_layout.run(&mut layout_context)?;
     info!("TIMED: block layout {:?}", time_before.elapsed());
 
     let mut paginator = paginate::Paginator {
@@ -127,5 +137,5 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> LayoutContext {
     pages_create.setup(&mut layout_context);
     pages_create.run_now(&layout_context);
 
-    layout_context
+    Ok(layout_context)
 }

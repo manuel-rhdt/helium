@@ -46,6 +46,13 @@ struct Options {
     no_filter: bool,
     #[structopt(long = "crop")]
     crop: bool,
+    /// Write the computed layout as JSON to this file (use `-` for stdout)
+    #[structopt(long = "dump-layout", parse(from_os_str))]
+    dump_layout: Option<PathBuf>,
+    /// Evaluate the `data-expected-*` attributes (web-platform-tests `checkLayout`) of the input
+    /// document against the computed layout and exit with an error if any expectation fails.
+    #[structopt(long = "check-layout")]
+    check_layout: bool,
     /// The input HTML file to process
     #[structopt(parse(from_os_str))]
     input: PathBuf,
@@ -57,6 +64,7 @@ struct Options {
 #[derive(Debug, From)]
 pub enum Error {
     Io(std::io::Error),
+    Layout(layout::lscheme::RuntimeError),
 }
 
 fn main() -> Result<(), Error> {
@@ -88,14 +96,49 @@ fn main() -> Result<(), Error> {
         }
     };
     let before_layout = Instant::now();
-    let mut layout_context = layout::layout(dom.clone(), device, opt.crop);
+    let mut layout_context = layout::layout(dom.clone(), device, opt.crop)?;
     info!("TIMED: layout {:?}", before_layout.elapsed());
 
-    repl(&mut layout_context);
+    // repl(&mut layout_context);
+
+    if let Some(path) = &opt.dump_layout {
+        let json = layout::dump::dump_layout(&dom, &layout_context);
+        if path.as_os_str() == "-" {
+            print!("{}", json);
+        } else {
+            fs::write(path, json)?;
+        }
+    }
+
+    // the PDF is still written for failing checks so that it can be inspected
+    let check_exit_code = if opt.check_layout {
+        let report = layout::check::check_layout(&dom, &layout_context);
+        for line in &report.unsupported {
+            eprintln!("UNSUPPORTED {}", line);
+        }
+        for line in &report.failures {
+            eprintln!("FAIL {}", line);
+        }
+        println!("checked {} expectations, {} failed", report.checked, report.failures.len());
+        if !report.failures.is_empty() {
+            Some(1)
+        } else if report.checked == 0 {
+            eprintln!("no checkable expectations found");
+            Some(2)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let display_list = display_list::generate_display_list(&mut layout_context);
 
     pdf::write_pdf(opt.output, display_list, opt.no_filter, opt.crop)?;
+
+    if let Some(code) = check_exit_code {
+        std::process::exit(code);
+    }
 
     Ok(())
 }

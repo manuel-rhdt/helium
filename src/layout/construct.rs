@@ -5,14 +5,14 @@ use super::inline::InlineFormattingContext;
 use super::normal_formatting::BlockFormattingContext;
 use super::{text::Font, FontMap};
 use crate::parser::{ElementData, ParsedData};
-use crate::style::parse::Styles;
+use crate::style::parse::{PropertyDeclarationBlock, Styles};
 use crate::style::properties::computed::{
     ComputedValues, Display, LineHeight, PositionSpec, StyleBuilder,
 };
 use crate::traverse::Traversal;
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
-use html5ever::{local_name, namespace_url, ns, Attribute, QualName};
+use html5ever::{local_name, ns, Attribute, QualName};
 use specs::{Builder, Entities, Entity, SystemData, World, WorldExt, WriteStorage};
 
 use components::TextRun;
@@ -89,6 +89,17 @@ impl Traversal<DomRef> for FlowConstructor {
             {
                 let properties = &matched_rule.properties;
                 for declaration in properties.declarations() {
+                    style_builder.add_declaration(declaration);
+                }
+            }
+            // declarations in the `style` attribute override all matched rules
+            let inline_style = element_ref
+                .attributes
+                .borrow()
+                .get(&QualName::new(None, ns!(), local_name!("style")))
+                .map(|attr| PropertyDeclarationBlock::parse_inline(&attr.value));
+            if let Some(block) = &inline_style {
+                for declaration in block.declarations() {
                     style_builder.add_declaration(declaration);
                 }
             }
@@ -360,6 +371,7 @@ impl EntityConstructor {
             .with(
                 InlineFormattingContext {
                     elements: elements.to_owned(),
+                    absolutes: vec![],
                     break_points: vec![],
                     lines: vec![],
                     text_align: style.text.text_align,
@@ -383,15 +395,17 @@ impl EntityConstructor {
         let push_block =
             |ble: &mut Vec<BlockLevelElement>,
              entity,
-             block_formatting_contexts: &mut WriteStorage<BlockFormattingContext>| {
+             block_formatting_contexts: &mut WriteStorage<BlockFormattingContext>,
+             inline_formatting_contexts: &WriteStorage<InlineFormattingContext>| {
                 if let Some(child_bfc) = block_formatting_contexts.remove(entity) {
                     ble.extend_from_slice(&child_bfc.elements);
                 } else {
-                    ble.extend_from_slice(&[
-                        BlockLevelElement::ContainerStart(entity),
-                        BlockLevelElement::Leaf(entity),
-                        BlockLevelElement::ContainerEnd(entity),
-                    ])
+                    ble.push(BlockLevelElement::ContainerStart(entity));
+                    if let Some(ifc) = inline_formatting_contexts.get(entity) {
+                        ble.extend(ifc.absolutes.iter().map(|&a| BlockLevelElement::Absolute(a)));
+                    }
+                    ble.push(BlockLevelElement::Leaf(entity));
+                    ble.push(BlockLevelElement::ContainerEnd(entity));
                 }
             };
 
@@ -403,6 +417,7 @@ impl EntityConstructor {
             let position = child_style.map(|s| s.box_.position).unwrap_or_default();
 
             if position == PositionSpec::Absolute {
+                block_level_elements.push(BlockLevelElement::Absolute(elem));
                 continue;
             }
 
@@ -418,14 +433,17 @@ impl EntityConstructor {
                             style,
                         ),
                         block_formatting_contexts,
+                        inline_formatting_contexts,
                     );
                     inline_level_elements.clear();
                 }
-                push_block(block_level_elements, elem, block_formatting_contexts);
+                push_block(block_level_elements, elem, block_formatting_contexts, inline_formatting_contexts);
             } else {
-                if let Some(InlineFormattingContext { elements, .. }) =
+                if let Some(InlineFormattingContext { elements, absolutes, .. }) =
                     inline_formatting_contexts.remove(elem)
                 {
+                    block_level_elements
+                        .extend(absolutes.into_iter().map(BlockLevelElement::Absolute));
                     Self::build_blocks(
                         elements.iter().cloned(),
                         inline_level_elements,
@@ -472,13 +490,18 @@ impl EntityConstructor {
             &mut block_formatting_contexts,
         );
 
-        if block_level_elements.is_empty() {
+        let has_block_level_elements = block_level_elements
+            .iter()
+            .any(|elem| !matches!(elem, BlockLevelElement::Absolute(_)));
+        if !has_block_level_elements {
             // no block-level elements were found, so we create a inline_formatting_context
+            let absolutes = block_level_elements.iter().map(|elem| elem.entity()).collect();
             inline_formatting_contexts
                 .insert(
                     entity,
                     InlineFormattingContext {
                         elements: inline_level_elements,
+                        absolutes,
                         text_align: style.text.text_align,
                         break_points: vec![],
                         lines: vec![],
@@ -524,6 +547,7 @@ impl EntityConstructor {
     fn build_inline_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
         let mut inline_formatting_context = InlineFormattingContext {
             elements: vec![],
+            absolutes: vec![],
             break_points: vec![],
             lines: vec![],
             text_align: node.style().text.text_align,
@@ -536,17 +560,18 @@ impl EntityConstructor {
 
             let child_style = child.style();
             if child_style.box_.position == PositionSpec::Absolute {
-                // TODO: handle absoulte elements
+                inline_formatting_context.absolutes.push(child_entity);
                 continue;
             }
 
             // merge child's InlineFormattingContext into the current context
-            if let Some(InlineFormattingContext { elements, .. }) =
+            if let Some(InlineFormattingContext { elements, absolutes, .. }) =
                 self.world.write_storage().remove(child_entity)
             {
                 inline_formatting_context
                     .elements
                     .extend_from_slice(&elements);
+                inline_formatting_context.absolutes.extend(absolutes);
                 continue;
             }
 

@@ -1,0 +1,9 @@
+<!DOCTYPE html>
+<link rel="match" href="abspos-boxes-ref.html">
+<title>position: absolute paints boxes like the equivalent in-flow boxes</title>
+<style>
+  body { margin: 0; }
+  #outer { position: absolute; left: 30px; top: 40px; width: 100px; height: 60px; padding: 5px; border: 2px solid black; background: green; }
+  #inner { position: absolute; right: 0; bottom: 0; width: 20px; height: 10px; background: blue; }
+</style>
+<div id="outer"><div id="inner"></div></div>

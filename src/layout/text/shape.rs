@@ -33,6 +33,11 @@ pub struct GlyphPosition {
 }
 
 pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
+    // harfbuzz hands back a null glyph array for an empty buffer, which trips
+    // the slice precondition check in harfbuzz_rs.
+    if text.is_empty() {
+        return Vec::new();
+    }
     match &font.font_data {
         super::font::FontData::BuiltIn(builtin) => text
             .chars()

@@ -330,6 +330,9 @@ impl Component for Paragraph {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum BlockLevelElement {
     ContainerStart(Entity),
+    /// Marks the position in the flow where an absolutely positioned box would have been had it
+    /// been `position: static` (its "static position"). The box itself is not part of the flow.
+    Absolute(Entity),
     Leaf(Entity),
     ContainerEnd(Entity),
 }
@@ -339,7 +342,7 @@ impl BlockLevelElement {
     pub fn entity(self) -> Entity {
         use BlockLevelElement::*;
         match self {
-            ContainerStart(entity) | Leaf(entity) | ContainerEnd(entity) => entity,
+            ContainerStart(entity) | Absolute(entity) | Leaf(entity) | ContainerEnd(entity) => entity,
         }
     }
 }
@@ -369,4 +372,35 @@ pub enum GraphicsOp {
         to_y: PixelLength,
         thickness: PixelLength,
     },
+}
+
+/// The entities of one absolutely positioned box and its in-flow descendants.
+///
+/// Absolutely positioned boxes are laid out separately from the main flow, so they are not part
+/// of the [`TextList`] the paginator works on. Instead they are placed on the page of their
+/// containing block.
+#[derive(Debug, Clone, Default)]
+pub struct AbsoluteGroup {
+    /// The entity whose page the group is placed on: the positioned ancestor establishing the
+    /// containing block or, if the box is positioned relative to the initial containing block
+    /// by its static position, the content in front of it in the flow. `None` for the first
+    /// page.
+    pub containing_block: Option<Entity>,
+    /// All entities that got a position while laying out the group, each of them once.
+    pub entities: Vec<Entity>,
+}
+
+/// All groups of absolutely positioned boxes. A group always comes after the group of its
+/// containing block.
+#[derive(Debug, Default)]
+pub struct AbsoluteGroups {
+    pub groups: Vec<AbsoluteGroup>,
+}
+
+/// The size and margins of the pages the layout was done for.
+#[derive(Debug, Copy, Clone, Default)]
+pub struct PageGeometry {
+    pub width: PixelLength,
+    pub height: PixelLength,
+    pub margin: EdgeValues<PixelLength>,
 }

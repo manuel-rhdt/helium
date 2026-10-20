@@ -1,10 +1,13 @@
 Program = { WHITESPACE* ~ Form+ ~ WHITESPACE* }
 
-Form = _{ Number | String | Ident | List }
+Form = _{ Bool | Quote | Number | String | Ident | List }
+
+Bool = @{ "#t" | "#f" }
+Quote = { "'" ~ Form }
 
 List = { "(" ~ Form* ~ ")" }
 
-Ident = @{ (Initial ~ Subsequent*) | "+" | "-" | "..." }
+Ident = @{ "<=" | ">=" | "=" | (Initial ~ Subsequent*) | "+" | "-" | "..." }
 
 Initial = _{ CASED_LETTER | "!" | "$" | "%" | "&" | "*" | "/" | ":" | "<" | ">" | "?" | "~" | "_" | "^" }
 Subsequent = _{ Initial | ASCII_DIGIT | "." | "+" | "-" }
@@ -23,5 +26,5 @@ Char = {
     | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
 }
 
-WHITESPACE = _{ " " | "\t" | "\n" }
-
+Comment = _{ ";" ~ (!"\n" ~ ANY)* }
+WHITESPACE = _{ " " | "\t" | "\n" | Comment }
