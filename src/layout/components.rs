@@ -352,7 +352,27 @@ pub struct TextList {
     pub list: Vec<BlockLevelElement>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MathExpression {
+    pub expression: math_render::MathExpression,
+    pub font_name: String,
+}
 
+impl Component for MathExpression {
+    type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Debug)]
+pub struct MathBox {
+    pub math_box: math_render::math_box::MathBox,
+    pub font_name: String,
+    pub font_size: PixelLength,
+    pub font_scale: PixelLength,
+}
+
+impl Component for MathBox {
+    type Storage = DenseVecStorage<Self>;
+}
 
 #[derive(Debug, Default)]
 pub struct VectorGraphics {

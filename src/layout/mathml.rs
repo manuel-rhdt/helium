@@ -45,19 +45,11 @@ impl<'world> System<'world> for MathFormat {
             mut decorations,
         ): Self::SystemData,
     ) {
-        for (entity, expr, style, intrinsic_size, math_box) in (
-            &entities,
-            &math_expressions,
-            &computed_values,
-            intrinsic_sizes.entries(),
-            math_boxes.entries(),
-        )
-            .join()
-        {
+        for (entity, expr, style) in (&entities, &math_expressions, &computed_values).join() {
             let font = &(*font_map)[&expr.font_name];
-            let font_scale = style.font.font_size / (font.upem as f32);
+            let font_scale = PixelLength(style.font.font_size.0 / (font.upem as f32));
 
-            let scale = |val| val as f32 / font.upem as f32 * style.font.font_size;
+            let scale = |val| PixelLength(val as f32 / font.upem as f32 * style.font.font_size.0);
 
             let shaper = HarfbuzzShaper::new(font.hb_font.clone());
             let result = layout_with_style(&expr.expression, &shaper, |default, user_data| {
@@ -91,14 +83,19 @@ impl<'world> System<'world> for MathFormat {
                 height: scale(result.extents().height()),
                 baseline: scale(result.extents().ascent),
             };
-            intrinsic_size.replace(size);
+            intrinsic_sizes.insert(entity, size).unwrap();
 
-            math_box.replace(MathBox {
-                math_box: result,
-                font_name: expr.font_name.clone(),
-                font_size: style.font.font_size,
-                font_scale,
-            });
+            math_boxes
+                .insert(
+                    entity,
+                    MathBox {
+                        math_box: result,
+                        font_name: expr.font_name.clone(),
+                        font_size: style.font.font_size,
+                        font_scale,
+                    },
+                )
+                .unwrap();
         }
     }
 }
@@ -172,6 +169,7 @@ impl LayoutMathGlyphs {
         y: PixelLength,
         font_size: PixelLength,
         text_runs: &ReadStorage<'_, TextRun>,
+        entities: &Entities<'_>,
         to_unicode_map: &mut BTreeMap<GlyphIndex, String>,
     ) {
         let scale = |val| val as f32 / font.upem as f32 * font_size;
@@ -191,6 +189,7 @@ impl LayoutMathGlyphs {
                         y + y_offset,
                         font_size,
                         text_runs,
+                        entities,
                         to_unicode_map,
                     );
                 }
@@ -217,8 +216,7 @@ impl LayoutMathGlyphs {
                     let mut cluster_starting_glyph = 0xFFFF;
 
                     let text = text_runs
-                        .join()
-                        .get_unchecked(math_box.user_data() as _)
+                        .get(entities.entity(math_box.user_data() as _))
                         .map(|TextRun { text, .. }| text);
 
                     let base_transform = TransformMatrix::translation(x, y)
@@ -283,6 +281,7 @@ impl LayoutMathGlyphs {
 
 impl<'world> System<'world> for LayoutMathGlyphs {
     type SystemData = (
+        Entities<'world>,
         ReadStorage<'world, MathBox>,
         ReadStorage<'world, Position>,
         WriteStorage<'world, Paragraph>,
@@ -292,16 +291,9 @@ impl<'world> System<'world> for LayoutMathGlyphs {
     );
     fn run(
         &mut self,
-        (math_boxes, positions, mut paragraphs, mut vector_graphics, text_runs, font_map): Self::SystemData,
+        (entities, math_boxes, positions, mut paragraphs, mut vector_graphics, text_runs, font_map): Self::SystemData,
     ) {
-        for (math_box, pos, paragraph, vector_graphic) in (
-            &math_boxes,
-            &positions,
-            paragraphs.entries(),
-            vector_graphics.entries(),
-        )
-            .join()
-        {
+        for (entity, math_box, pos) in (&entities, &math_boxes, &positions).join() {
             let mut para = Paragraph::new(PixelLength(0.0), PixelLength(0.0));
             let mut vg = VectorGraphics::default();
             let font = &font_map[&math_box.font_name];
@@ -320,11 +312,12 @@ impl<'world> System<'world> for LayoutMathGlyphs {
                 pos.y + scale(math_box.math_box.extents().ascent),
                 math_box.font_size,
                 &text_runs,
+                &entities,
                 &mut to_unicode_map,
             );
             font.to_unicode.lock().append(&mut to_unicode_map);
-            paragraph.replace(para);
-            vector_graphic.replace(vg);
+            paragraphs.insert(entity, para).unwrap();
+            vector_graphics.insert(entity, vg).unwrap();
         }
     }
 }
