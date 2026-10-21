@@ -88,3 +88,94 @@ fn text_after_math_flows_on() {
     let y = |id: &str| find(&dump["document"], id).unwrap()["border_box"]["y"].as_f64().unwrap();
     assert!(y("d") >= y("p") + height(&dump, "p") - 0.001);
 }
+
+/// The x positions of the glyphs of the math font, in drawing order.
+fn math_glyph_xs(dump: &Value) -> Vec<f64> {
+    let mut xs = Vec::new();
+    for run in dump["paint"]["text"].as_array().unwrap() {
+        for op in run["ops"].as_array().unwrap() {
+            if op["op"] == "transform" {
+                xs.push(op["matrix"][4].as_f64().unwrap());
+            }
+        }
+    }
+    xs
+}
+
+fn gap_between_a_and_b(name: &str, width: &str) -> f64 {
+    let dump = dump(
+        name,
+        &format!(
+            r#"<style>body {{ margin: 0 }}</style>
+               <p style="margin: 0"><math><mi>a</mi><mspace width="{}"/><mi>b</mi></math></p>"#,
+            width
+        ),
+    );
+    let xs = math_glyph_xs(&dump);
+    assert_eq!(xs.len(), 2, "expected exactly two glyphs: {:?}", xs);
+    xs[1] - xs[0]
+}
+
+#[test]
+fn mspace_adds_horizontal_space() {
+    let none = gap_between_a_and_b("mspace_none", "0");
+    let px = gap_between_a_and_b("mspace_px", "48px");
+    assert!((px - none - 48.0).abs() < 0.01, "none: {}, 48px: {}", none, px);
+}
+
+#[test]
+fn mspace_supports_em_and_named_spaces() {
+    let none = gap_between_a_and_b("mspace_none2", "0");
+    // the font size is 16px
+    let em = gap_between_a_and_b("mspace_em", "2em");
+    assert!((em - none - 32.0).abs() < 0.01, "none: {}, 2em: {}", none, em);
+    let named = gap_between_a_and_b("mspace_named", "thickmathspace");
+    assert!((named - none - 16.0 * 5.0 / 18.0).abs() < 0.05, "none: {}, thick: {}", none, named);
+}
+
+#[test]
+fn mspace_with_negative_width_moves_back() {
+    let none = gap_between_a_and_b("mspace_none3", "0");
+    let negative = gap_between_a_and_b("mspace_negative", "-8px");
+    assert!((none - negative - 8.0).abs() < 0.01, "none: {}, -8px: {}", none, negative);
+}
+
+fn glyph_count_in_math_font(dump: &Value) -> usize {
+    dump["paint"]["text"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|run| run["ops"].as_array().unwrap())
+        .filter(|op| op["op"] == "glyphs")
+        .map(|op| op["glyphs"].as_array().unwrap().len())
+        .sum()
+}
+
+#[test]
+fn multi_letter_identifiers_are_upright_unless_a_variant_is_given() {
+    // the glyph ids of the same letters in italic and in normal style differ
+    let glyphs = |name: &str, math: &str| {
+        let dump = dump(name, &format!("<p><math>{}</math></p>", math));
+        let mut ids = Vec::new();
+        for run in dump["paint"]["text"].as_array().unwrap() {
+            for op in run["ops"].as_array().unwrap() {
+                if op["op"] == "glyphs" {
+                    ids.extend(op["glyphs"].as_array().unwrap().iter().map(|g| g.as_u64().unwrap()));
+                }
+            }
+        }
+        ids
+    };
+    let multi = glyphs("mi_multi", "<mi>sin</mi>");
+    let upright = glyphs("mi_multi_normal", r#"<mi mathvariant="normal">sin</mi>"#);
+    let italic = glyphs("mi_multi_italic", r#"<mi mathvariant="italic">sin</mi>"#);
+    assert_eq!(multi, upright);
+    assert_ne!(multi, italic);
+
+    let single = glyphs("mi_single", "<mi>x</mi>");
+    let single_italic = glyphs("mi_single_italic", r#"<mi mathvariant="italic">x</mi>"#);
+    let single_normal = glyphs("mi_single_normal", r#"<mi mathvariant="normal">x</mi>"#);
+    assert_eq!(single, single_italic);
+    assert_ne!(single, single_normal);
+    assert_eq!(glyph_count_in_math_font(&dump("mi_count", "<math><mi>sin</mi></math>")), 3);
+}

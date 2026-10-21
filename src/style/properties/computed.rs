@@ -2,10 +2,10 @@ use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
 use super::specified::{
-    self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue,
+    self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue, MathFamily, MathOperatorForm,
 };
 pub use super::specified::{
-    Display, FontFamily, FontStyle, FontWeight, PageBreak, Percentage, PositionSpec,
+    Display, FontFamily, FontStyle, FontWeight, MathStyle, PageBreak, Percentage, PositionSpec,
     TextAlign,
 };
 
@@ -409,6 +409,7 @@ pub struct ComputedValues {
     pub text: Arc<Text>,
     pub background: Arc<Background>,
     pub page: Arc<Page>,
+    pub math: Arc<Math>,
 }
 
 impl AsMut<Box> for ComputedValues {
@@ -441,6 +442,11 @@ impl AsMut<Page> for ComputedValues {
         Arc::make_mut(&mut self.page)
     }
 }
+impl AsMut<Math> for ComputedValues {
+    fn as_mut(&mut self) -> &mut Math {
+        Arc::make_mut(&mut self.math)
+    }
+}
 
 impl ComputedValues {
     fn fixup(&mut self) {
@@ -466,6 +472,10 @@ impl StyleBuilder {
         let inherited = ComputedValues {
             font: inherited_values.font,
             page: inherited_values.page,
+            math: Arc::new(Math {
+                math_style: inherited_values.math.math_style,
+                ..Default::default()
+            }),
             ..Default::default()
         };
         StyleBuilder {
@@ -554,6 +564,45 @@ impl Default for Page {
             page_break_after: PageBreak::Auto,
             page_break_before: PageBreak::Auto,
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Math {
+    pub math_variant: MathFamily,
+    pub form: MathOperatorForm,
+    pub operator_is_stretchy: AutoBool,
+    pub math_style: MathStyle,
+}
+
+impl Math {
+    pub fn operator_flags_and_overrides(
+        &self,
+    ) -> (
+        math_render::mathmlparser::Flags,
+        math_render::mathmlparser::Flags,
+    ) {
+        let mut flags = math_render::mathmlparser::Flags::default();
+        let mut overrides = math_render::mathmlparser::Flags::default();
+
+        let mut set_flag = |property, flag| match property {
+            AutoBool::True => {
+                flags.insert(flag);
+                overrides.insert(flag);
+            }
+            AutoBool::False => {
+                flags.remove(flag);
+                overrides.insert(flag);
+            }
+            AutoBool::Auto => overrides.remove(flag),
+        };
+
+        set_flag(
+            self.operator_is_stretchy,
+            math_render::mathmlparser::Flags::STRETCHY,
+        );
+
+        (flags, overrides)
     }
 }
 

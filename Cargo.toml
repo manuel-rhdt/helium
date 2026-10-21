@@ -17,7 +17,8 @@ helium_derive = { path = "./helium_derive" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
-harfbuzz_rs = { git = "https://github.com/manuel-rhdt/harfbuzz_rs" }
+harfbuzz_rs = { version = "^3.0.1", features = ["sys"] }
+math-render = { path = "../mlayout" }
 parking_lot = "0.11"
 thiserror = "^1"
 env_logger = "0.8"

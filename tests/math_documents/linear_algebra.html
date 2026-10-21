@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Spectral Notes on Symmetric Matrices</title>
+<style>
+  body { font-size: 11pt; line-height: 1.4; }
+  h1 { text-align: center; font-size: 19pt; }
+  h2 { font-size: 13pt; margin-top: 20px; }
+  p { text-align: justify; margin-top: 0; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<h1>Spectral Notes on Symmetric Matrices</h1>
+
+<h2>1. Eigenvalues</h2>
+<p>Let <math><mi>A</mi></math> be a real <math><mn>2</mn><mo>&#xD7;</mo><mn>2</mn></math> symmetric matrix
+</p>
+<math display="block">
+  <mi>A</mi><mo>=</mo>
+  <mrow><mo>(</mo>
+    <mtable>
+      <mtr><mtd><mi>a</mi></mtd><mtd><mi>b</mi></mtd></mtr>
+      <mtr><mtd><mi>b</mi></mtd><mtd><mi>c</mi></mtd></mtr>
+    </mtable>
+  <mo>)</mo></mrow>
+</math>
+<p>Its eigenvalues <math><msub><mi>&#x03BB;</mi><mn>1</mn></msub></math> and <math><msub><mi>&#x03BB;</mi><mn>2</mn></msub></math>
+are the roots of the characteristic polynomial <math><mi>det</mi><mrow><mo>(</mo><mi>A</mi><mo>&#x2212;</mo><mi>&#x03BB;</mi><mi>I</mi><mo>)</mo></mrow><mo>=</mo><mn>0</mn></math>, that is</p>
+<math display="block">
+  <msub><mi>&#x03BB;</mi><mrow><mn>1</mn><mo>,</mo><mn>2</mn></mrow></msub>
+  <mo>=</mo>
+  <mfrac>
+    <mrow><mi>a</mi><mo>+</mo><mi>c</mi><mo>&#xB1;</mo><msqrt><msup><mrow><mo>(</mo><mi>a</mi><mo>&#x2212;</mo><mi>c</mi><mo>)</mo></mrow><mn>2</mn></msup><mo>+</mo><mn>4</mn><msup><mi>b</mi><mn>2</mn></msup></msqrt></mrow>
+    <mn>2</mn>
+  </mfrac>
+</math>
+<p>Both are real, and they coincide exactly when <math><mi>b</mi><mo>=</mo><mn>0</mn></math> and
+<math><mi>a</mi><mo>=</mo><mi>c</mi></math>.</p>
+
+<h2>2. Spectral decomposition</h2>
+<p>By the spectral theorem there is an orthogonal matrix <math><mi>Q</mi></math> such that</p>
+<math display="block">
+  <mi>A</mi><mo>=</mo><mi>Q</mi><mi>&#x039B;</mi><msup><mi>Q</mi><mi>T</mi></msup>
+  <mo>=</mo>
+  <munderover><mo>&#x2211;</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>
+  <msub><mi>&#x03BB;</mi><mi>i</mi></msub><msub><mi>q</mi><mi>i</mi></msub><msubsup><mi>q</mi><mi>i</mi><mi>T</mi></msubsup>
+</math>
+<p>where <math><mi>&#x039B;</mi><mo>=</mo><mi>diag</mi><mrow><mo>(</mo><msub><mi>&#x03BB;</mi><mn>1</mn></msub><mo>,</mo><mo>&#x2026;</mo><mo>,</mo><msub><mi>&#x03BB;</mi><mi>n</mi></msub><mo>)</mo></mrow></math>
+and <math><msub><mi>q</mi><mi>i</mi></msub></math> are the columns of <math><mi>Q</mi></math>.</p>
+
+<h2>3. The Rayleigh quotient</h2>
+<p>The extreme eigenvalues have a variational characterisation. For <math><mi>x</mi><mo>&#x2260;</mo><mn>0</mn></math>,</p>
+<math display="block">
+  <msub><mi>&#x03BB;</mi><mrow><mi>max</mi></mrow></msub><mrow><mo>(</mo><mi>A</mi><mo>)</mo></mrow>
+  <mo>=</mo>
+  <munder><mi>max</mi><mrow><mi>x</mi><mo>&#x2260;</mo><mn>0</mn></mrow></munder>
+  <mfrac>
+    <mrow><msup><mi>x</mi><mi>T</mi></msup><mi>A</mi><mi>x</mi></mrow>
+    <mrow><msup><mi>x</mi><mi>T</mi></msup><mi>x</mi></mrow>
+  </mfrac>
+  <mo>,</mo>
+  <mspace width="2em"/>
+  <msup><mrow><mo>&#x2016;</mo><mi>A</mi><mo>&#x2016;</mo></mrow><mn>2</mn></msup>
+  <mo>=</mo>
+  <msubsup><mi>&#x03BB;</mi><mrow><mi>max</mi></mrow><mn>2</mn></msubsup>
+</math>
+
+<h2>4. Matrix exponential</h2>
+<p>Using the decomposition above, the matrix exponential is computed entrywise on the spectrum:
+<math><msup><mi>e</mi><mi>A</mi></msup><mo>=</mo><mi>Q</mi><mi>diag</mi><mrow><mo>(</mo><msup><mi>e</mi><msub><mi>&#x03BB;</mi><mn>1</mn></msub></msup><mo>,</mo><mo>&#x2026;</mo><mo>,</mo><msup><mi>e</mi><msub><mi>&#x03BB;</mi><mi>n</mi></msub></msup><mo>)</mo></mrow><msup><mi>Q</mi><mi>T</mi></msup></math>.
+In particular <math><mi>det</mi><mrow><mo>(</mo><msup><mi>e</mi><mi>A</mi></msup><mo>)</mo></mrow><mo>=</mo><msup><mi>e</mi><mrow><mi>tr</mi><mrow><mo>(</mo><mi>A</mi><mo>)</mo></mrow></mrow></msup></math>.</p>
+</body>
+</html>

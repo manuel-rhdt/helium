@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>On the Gaussian Integral and Its Generalisations</title>
+<style>
+  body { font-size: 11pt; line-height: 1.4; }
+  h1 { text-align: center; font-size: 20pt; margin-bottom: 4px; }
+  .authors { text-align: center; margin-top: 0; margin-bottom: 24px; }
+  h2 { font-size: 14pt; margin-top: 22px; }
+  p { text-align: justify; margin-top: 0; margin-bottom: 10px; }
+  .abstract { margin-left: 36px; margin-right: 36px; font-size: 10pt; }
+  .theorem { border-left: 4px solid #3b6ea5; padding-left: 12px; margin-left: 12px; }
+</style>
+</head>
+<body>
+<h1>On the Gaussian Integral and Its Generalisations</h1>
+<p class="authors">A. Example and B. Sample</p>
+
+<div class="abstract">
+<p><b>Abstract.</b> We revisit the evaluation of
+<math><msubsup><mo>&#x222B;</mo><mrow><mo>&#x2212;</mo><mi>&#x221E;</mi></mrow><mi>&#x221E;</mi></msubsup><msup><mi>e</mi><mrow><mo>&#x2212;</mo><msup><mi>x</mi><mn>2</mn></msup></mrow></msup><mi>d</mi><mi>x</mi></math>
+and give a short proof of its generalisation to <math><mi>n</mi></math> dimensions
+using only polar coordinates and Fubini's theorem.</p>
+</div>
+
+<h2>1. Introduction</h2>
+<p>The integral of the function <math><mi>f</mi><mrow><mo>(</mo><mi>x</mi><mo>)</mo></mrow><mo>=</mo><msup><mi>e</mi><mrow><mo>&#x2212;</mo><msup><mi>x</mi><mn>2</mn></msup></mrow></msup></math>
+over the real line is one of the most frequently encountered integrals in analysis, probability and
+mathematical physics. Its value is famously
+</p>
+<math display="block">
+  <msubsup><mo>&#x222B;</mo><mrow><mo>&#x2212;</mo><mi>&#x221E;</mi></mrow><mrow><mo>+</mo><mi>&#x221E;</mi></mrow></msubsup>
+  <msup><mi>e</mi><mrow><mo>&#x2212;</mo><msup><mi>x</mi><mn>2</mn></msup></mrow></msup>
+  <mi>d</mi><mi>x</mi>
+  <mo>=</mo>
+  <msqrt><mi>&#x03C0;</mi></msqrt>
+</math>
+<p>and it underlies the normalisation of the normal distribution with mean <math><mi>&#x03BC;</mi></math>
+and variance <math><msup><mi>&#x03C3;</mi><mn>2</mn></msup></math>, whose density is
+</p>
+<math display="block">
+  <mi>&#x03C6;</mi><mrow><mo>(</mo><mi>x</mi><mo>)</mo></mrow><mo>=</mo>
+  <mfrac>
+    <mn>1</mn>
+    <mrow><mi>&#x03C3;</mi><msqrt><mrow><mn>2</mn><mi>&#x03C0;</mi></mrow></msqrt></mrow>
+  </mfrac>
+  <msup>
+    <mi>e</mi>
+    <mrow><mo>&#x2212;</mo><mfrac><msup><mrow><mo>(</mo><mi>x</mi><mo>&#x2212;</mo><mi>&#x03BC;</mi><mo>)</mo></mrow><mn>2</mn></msup><mrow><mn>2</mn><msup><mi>&#x03C3;</mi><mn>2</mn></msup></mrow></mfrac></mrow>
+  </msup>
+</math>
+
+<h2>2. Main result</h2>
+<div class="theorem">
+<p><b>Theorem 1.</b> For every symmetric positive definite matrix <math><mi>A</mi><mo>&#x2208;</mo><msup><mi>&#x211D;</mi><mrow><mi>n</mi><mo>&#xD7;</mo><mi>n</mi></mrow></msup></math> we have</p>
+<math display="block">
+  <msub><mo>&#x222B;</mo><msup><mi>&#x211D;</mi><mi>n</mi></msup></msub>
+  <msup><mi>e</mi><mrow><mo>&#x2212;</mo><msup><mi>x</mi><mi>T</mi></msup><mi>A</mi><mi>x</mi></mrow></msup>
+  <mi>d</mi><mi>x</mi>
+  <mo>=</mo>
+  <mfrac>
+    <msup><mi>&#x03C0;</mi><mrow><mi>n</mi><mo>/</mo><mn>2</mn></mrow></msup>
+    <msqrt><mrow><mi>det</mi><mo>&#x2061;</mo><mi>A</mi></mrow></msqrt>
+  </mfrac>
+</math>
+</div>
+
+<p><i>Proof.</i> Let <math><mi>I</mi><mo>=</mo><msubsup><mo>&#x222B;</mo><mrow><mo>&#x2212;</mo><mi>&#x221E;</mi></mrow><mi>&#x221E;</mi></msubsup><msup><mi>e</mi><mrow><mo>&#x2212;</mo><msup><mi>x</mi><mn>2</mn></msup></mrow></msup><mi>d</mi><mi>x</mi></math>.
+By Fubini's theorem the square of <math><mi>I</mi></math> is a double integral over the plane, and passing to
+polar coordinates <math><mrow><mo>(</mo><mi>r</mi><mo>,</mo><mi>&#x03B8;</mi><mo>)</mo></mrow></math> gives</p>
+<math display="block">
+  <msup><mi>I</mi><mn>2</mn></msup>
+  <mo>=</mo>
+  <msubsup><mo>&#x222B;</mo><mn>0</mn><mrow><mn>2</mn><mi>&#x03C0;</mi></mrow></msubsup>
+  <msubsup><mo>&#x222B;</mo><mn>0</mn><mi>&#x221E;</mi></msubsup>
+  <msup><mi>e</mi><mrow><mo>&#x2212;</mo><msup><mi>r</mi><mn>2</mn></msup></mrow></msup>
+  <mi>r</mi><mi>d</mi><mi>r</mi><mi>d</mi><mi>&#x03B8;</mi>
+  <mo>=</mo>
+  <mi>&#x03C0;</mi>
+</math>
+<p>Taking square roots yields the claim for <math><mi>n</mi><mo>=</mo><mn>1</mn></math>; the general case follows by
+diagonalising <math><mi>A</mi></math> with an orthogonal change of variables. <math><mo>&#x220E;</mo></math></p>
+</body>
+</html>

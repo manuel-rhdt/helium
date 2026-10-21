@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Series, Sums and Special Values</title>
+<style>
+  body { font-size: 11pt; line-height: 1.45; }
+  h1 { text-align: center; font-size: 19pt; }
+  h2 { font-size: 13pt; margin-top: 20px; }
+  p { text-align: justify; margin-top: 0; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<h1>Series, Sums and Special Values</h1>
+
+<h2>1. The Basel problem</h2>
+<p>Euler showed in 1734 that the sum of the reciprocal squares converges to a surprisingly clean value.
+Writing <math><mi>&#x03B6;</mi><mrow><mo>(</mo><mi>s</mi><mo>)</mo></mrow></math> for the Riemann zeta function, we have</p>
+<math display="block">
+  <mi>&#x03B6;</mi><mrow><mo>(</mo><mn>2</mn><mo>)</mo></mrow>
+  <mo>=</mo>
+  <munderover><mo>&#x2211;</mo><mrow><mi>n</mi><mo>=</mo><mn>1</mn></mrow><mi>&#x221E;</mi></munderover>
+  <mfrac><mn>1</mn><msup><mi>n</mi><mn>2</mn></msup></mfrac>
+  <mo>=</mo>
+  <mfrac><msup><mi>&#x03C0;</mi><mn>2</mn></msup><mn>6</mn></mfrac>
+</math>
+<p>More generally, <math><mi>&#x03B6;</mi><mrow><mo>(</mo><mi>s</mi><mo>)</mo></mrow><mo>=</mo><munder><mo>&#x220F;</mo><mi>p</mi></munder><msup><mrow><mo>(</mo><mn>1</mn><mo>&#x2212;</mo><msup><mi>p</mi><mrow><mo>&#x2212;</mo><mi>s</mi></mrow></msup><mo>)</mo></mrow><mrow><mo>&#x2212;</mo><mn>1</mn></mrow></msup></math>
+where the product runs over all primes <math><mi>p</mi></math> and <math><mi>s</mi><mo>&gt;</mo><mn>1</mn></math>.</p>
+
+<h2>2. Partial sums</h2>
+<p>Let <math><msub><mi>S</mi><mi>N</mi></msub><mo>=</mo><munderover><mo>&#x2211;</mo><mrow><mi>k</mi><mo>=</mo><mn>1</mn></mrow><mi>N</mi></munderover><mi>k</mi></math>
+denote the <math><mi>N</mi></math>-th triangular number. A short induction shows</p>
+<math display="block">
+  <munderover><mo>&#x2211;</mo><mrow><mi>k</mi><mo>=</mo><mn>1</mn></mrow><mi>N</mi></munderover>
+  <msup><mi>k</mi><mn>2</mn></msup>
+  <mo>=</mo>
+  <mfrac>
+    <mrow><mi>N</mi><mrow><mo>(</mo><mi>N</mi><mo>+</mo><mn>1</mn><mo>)</mo></mrow><mrow><mo>(</mo><mn>2</mn><mi>N</mi><mo>+</mo><mn>1</mn><mo>)</mo></mrow></mrow>
+    <mn>6</mn>
+  </mfrac>
+</math>
+<p>The same technique gives the closed form for the sum of cubes, which is the square of
+<math><msub><mi>S</mi><mi>N</mi></msub></math>:</p>
+<math display="block">
+  <munderover><mo>&#x2211;</mo><mrow><mi>k</mi><mo>=</mo><mn>1</mn></mrow><mi>N</mi></munderover>
+  <msup><mi>k</mi><mn>3</mn></msup>
+  <mo>=</mo>
+  <msup><mrow><mo>(</mo><mfrac><mrow><mi>N</mi><mrow><mo>(</mo><mi>N</mi><mo>+</mo><mn>1</mn><mo>)</mo></mrow></mrow><mn>2</mn></mfrac><mo>)</mo></mrow><mn>2</mn></msup>
+</math>
+
+<h2>3. Binomial coefficients</h2>
+<p>For non-negative integers <math><mi>n</mi><mo>&#x2265;</mo><mi>k</mi></math> the binomial coefficient is
+<math><mrow><mo>(</mo><mfrac linethickness="0"><mi>n</mi><mi>k</mi></mfrac><mo>)</mo></mrow><mo>=</mo><mfrac><mrow><mi>n</mi><mo>!</mo></mrow><mrow><mi>k</mi><mo>!</mo><mrow><mo>(</mo><mi>n</mi><mo>&#x2212;</mo><mi>k</mi><mo>)</mo></mrow><mo>!</mo></mrow></mfrac></math>,
+and the binomial theorem states that</p>
+<math display="block">
+  <msup><mrow><mo>(</mo><mi>x</mi><mo>+</mo><mi>y</mi><mo>)</mo></mrow><mi>n</mi></msup>
+  <mo>=</mo>
+  <munderover><mo>&#x2211;</mo><mrow><mi>k</mi><mo>=</mo><mn>0</mn></mrow><mi>n</mi></munderover>
+  <mrow><mo>(</mo><mfrac linethickness="0"><mi>n</mi><mi>k</mi></mfrac><mo>)</mo></mrow>
+  <msup><mi>x</mi><mrow><mi>n</mi><mo>&#x2212;</mo><mi>k</mi></mrow></msup>
+  <msup><mi>y</mi><mi>k</mi></msup>
+</math>
+
+<h2>4. A limit</h2>
+<p>Finally, the exponential function can be recovered from the compound-interest limit</p>
+<math display="block">
+  <munder><mo>lim</mo><mrow><mi>n</mi><mo>&#x2192;</mo><mi>&#x221E;</mi></mrow></munder>
+  <msup><mrow><mo>(</mo><mn>1</mn><mo>+</mo><mfrac><mi>x</mi><mi>n</mi></mfrac><mo>)</mo></mrow><mi>n</mi></msup>
+  <mo>=</mo>
+  <msup><mi>e</mi><mi>x</mi></msup>
+</math>
+<p>which, evaluated at <math><mi>x</mi><mo>=</mo><mn>1</mn></math>, defines Euler's number
+<math><mi>e</mi><mo>&#x2248;</mo><mn>2.71828</mn></math>.</p>
+</body>
+</html>
