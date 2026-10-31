@@ -31,6 +31,17 @@
 ;       -> list of (from to height baseline line-entity-id content-width)
 ;       Knuth-Plass line breaking is done in Rust; creates the line entities.
 ;
+;   (entity-inline-blocks entity-id) -> list of entity ids
+;       the inline-block boxes in the inline context of an entity
+;   (finish-inline-blocks! entity-id)
+;       tells the inline context the sizes of its inline-block boxes
+;
+; Inline-block boxes:
+;   (entity-inline-block-dims entity-id available-width) -> (decoration content-width)
+;   (begin-inline-block-group! entity-id) / (end-absolute-group!)
+;       everything that gets a position in between is the contents of the box
+;   (set-inline-block-size! entity-id width height baseline)
+;
 ; Write bindings (inline during eval):
 ;   (set-position! entity x y w h z page)
 ;   (set-decoration! entity decoration)
@@ -160,6 +171,44 @@
                              #f))
           pending)))))
 
+;; === Inline-block boxes ===
+
+; Lays out an inline-block box on its own and tells the inline context it is part of how big the
+; box is. The contents are laid out relative to the top left corner of the margin box of the
+; box. They are moved to the place of the box on its line after the lines are laid out.
+;   avail-w  the width of the line
+;   z        z index of the box
+; https://www.w3.org/TR/CSS22/visudet.html#inlineblock-width
+(define (layout-inline-block entity-id avail-w z)
+  (let* ((dims    (entity-inline-block-dims entity-id avail-w))
+         (deco    (car dims))
+         (width   (cadr dims))
+         (margin  (deco-margin deco))
+         (padding (deco-padding deco))
+         (border  (deco-border deco))
+         (ml (edge-left margin))   (mr (edge-right margin))
+         (mt (edge-top margin))    (mb (edge-bottom margin))
+         (pl (edge-left padding))  (pr (edge-right padding))
+         (pt (edge-top padding))   (pb (edge-bottom padding))
+         (bl (edge-left border))   (br (edge-right border))
+         (bt (edge-top border))    (bb (edge-bottom border))
+         (content-x (+ ml bl pl))
+         (content-y (+ mt bt pt)))
+    (begin-inline-block-group! entity-id)
+    (set-position! entity-id content-x content-y width 0.0 z 0)
+    (set-decoration! entity-id deco)
+    (let* ((flow       (layout-flow (entity-inner-context entity-id) content-x width content-y z #f))
+           (content-h  (- (car flow) content-y))
+           (css-h      (entity-css-height entity-id avail-w))
+           (height     (if css-h css-h content-h))
+           (total-w    (+ ml bl pl width pr br mr))
+           (total-h    (+ mt bt pt height pb bb mb))
+           (last-line  (caddr flow)))
+      (set-position! entity-id content-x content-y width height z 0)
+      (end-absolute-group!)
+      ; the baseline is the baseline of the last line, or the bottom margin edge without lines
+      (set-inline-block-size! entity-id total-w total-h (if last-line last-line total-h)))))
+
 ; === Flow layout ===
 
 ; Lays out a list of block-level elements.
@@ -171,7 +220,8 @@
 ;   icb      (x y w h) of the initial containing block: absolutely positioned boxes found in the
 ;            flow are placed relative to it right away. If #f their placement is postponed
 ;            because their containing block is not finished yet.
-; Returns (end-y pending) where pending are the postponed boxes as (entity static-x static-y).
+; Returns (end-y pending last-baseline) where pending are the postponed boxes as (entity static-x static-y)
+; and last-baseline is the position of the baseline of the last line or #f.
 (define (layout-flow elems base-x base-w start-y z-base icb)
 
   (define cursor (list start-y #f))
@@ -179,6 +229,8 @@
   (define pending '())
   ; the last entity that was placed in the flow
   (define last-entity #f)
+  ; the position of the baseline of the last line, or #f if there were no lines
+  (define last-baseline #f)
 
   (define (z-depth) (+ z-base 1 (length container-stack)))
 
@@ -257,10 +309,16 @@
                    (x        (car  xw))
                    (w        (cadr xw)))
               (set-position! line-ent x (cursor-vpos cursor) w height (z-depth) 0)
+              (set! last-baseline (+ (cursor-vpos cursor) (cadddr line)))
               (set! last-entity line-ent)
               (append-to-text-list! 'leaf line-ent)
               (set! cursor (cursor-add-content cursor height))
               (layout-lines (cdr lines) (+ line-num 1)))))
+        ; the inline-block boxes have to be laid out first: their sizes decide where lines break
+        (let ((boxes (entity-inline-blocks entity-id)))
+          (when (pair? boxes)
+            (for-each (lambda (b) (layout-inline-block b lw (z-depth))) boxes)
+            (finish-inline-blocks! entity-id)))
         (layout-lines (layout-inline-lines entity-id lw indent) 0))
       ; Non-inline leaf (replaced element with intrinsic size)
       (let ((is (entity-intrinsic-size entity-id)))
@@ -291,7 +349,7 @@
         (process-elements (cdr elems)))))
 
   (process-elements elems)
-  (list (cursor-vpos cursor) (reverse pending)))
+  (list (cursor-vpos cursor) (reverse pending) last-baseline))
 
 ; === Main entry point ===
 

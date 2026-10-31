@@ -125,6 +125,19 @@ impl Component for ComputedValues {
 //     type Storage = DenseVecStorage<Self>;
 // }
 
+/// The marker of a list item, drawn outside of the item's first line.
+#[derive(Debug, Clone)]
+pub struct ListMarker {
+    pub text: String,
+    pub font_name: String,
+    pub font_size: PixelLength,
+    pub color: crate::style::properties::computed::RGBA,
+}
+
+impl Component for ListMarker {
+    type Storage = DenseVecStorage<Self>;
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TextRun {
     pub text: String,
@@ -133,6 +146,8 @@ pub struct TextRun {
     pub font_size: PixelLength,
     pub line_height: PixelLength,
     pub baseline: PixelLength,
+    pub color: crate::style::properties::computed::RGBA,
+    pub decoration: crate::style::properties::specified::TextDecoration,
 }
 
 impl Component for TextRun {
@@ -167,6 +182,23 @@ impl<T> EdgeValues<T> {
             right: fill,
         }
     }
+}
+
+/// Marks a box that is split across pages. Its decoration is painted by the
+/// [`DecorationFragment`]s instead, one for every page the box is on.
+#[derive(Debug, Default, Copy, Clone)]
+pub struct Fragmented;
+
+impl Component for Fragmented {
+    type Storage = NullStorage<Self>;
+}
+
+/// The part of the decoration of a [`Fragmented`] box that is on one page.
+#[derive(Debug, Default, Copy, Clone)]
+pub struct DecorationFragment;
+
+impl Component for DecorationFragment {
+    type Storage = NullStorage<Self>;
 }
 
 /// Contains information needed to draw the background and outline of an element.
@@ -298,6 +330,7 @@ impl TransformMatrix {
 #[derive(Debug, Clone)]
 pub enum TextOperator {
     SetFont(String, PixelLength),
+    SetColor(crate::style::properties::computed::RGBA),
     Glyphs(Glyphs),
     KernedGlyphs(Vec<KernedGlyphs>),
     SetWordSpacing(PixelLength),
@@ -377,6 +410,8 @@ impl Component for MathBox {
 #[derive(Debug, Default)]
 pub struct VectorGraphics {
     pub ops: Vec<GraphicsOp>,
+    /// The stroke color, or `None` to keep whatever color is current.
+    pub color: Option<crate::style::properties::computed::RGBA>,
 }
 
 impl Component for VectorGraphics {
@@ -408,6 +443,12 @@ pub struct AbsoluteGroup {
     pub containing_block: Option<Entity>,
     /// All entities that got a position while laying out the group, each of them once.
     pub entities: Vec<Entity>,
+    /// The `inline-block` box this group is the contents of. Such a group is not placed with the
+    /// paginator: its contents are laid out relative to the margin box of the box and moved
+    /// to the final place once the line the box is on has been laid out.
+    pub owner: Option<Entity>,
+    /// The group that was open when this group was created.
+    pub parent: Option<usize>,
 }
 
 /// All groups of absolutely positioned boxes. A group always comes after the group of its

@@ -8,6 +8,7 @@ css/CSS2/normal-flow/max-width-003.xht
 css/CSS2/normal-flow/min-width-003.xht
 css/CSS2/normal-flow/width-003.xht
 css/CSS2/normal-flow/blocks-011.xht
+# inline-block works, but the reference sets its style in a CDATA section
 css/CSS2/normal-flow/block-non-replaced-width-001.xht
 
 # needs the Ahem font (/fonts/ahem.css) to cover the red box

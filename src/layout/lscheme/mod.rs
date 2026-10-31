@@ -110,7 +110,7 @@ where
 impl<'world> GetValue<'world> for Entities<'world> {
     fn get_value(&self) -> Result<Value<'world>, RuntimeError> {
         let value = self.join().map(Into::into).collect::<Vec<_>>();
-        Ok(Value::List(value))
+        Ok(Value::list(value))
     }
 }
 
@@ -120,7 +120,7 @@ where
 {
     fn get_value(&self) -> Result<Value<'world>, RuntimeError> {
         let value = self.join().map(Into::into).collect::<Vec<_>>();
-        Ok(Value::List(value))
+        Ok(Value::list(value))
     }
 }
 
@@ -132,7 +132,7 @@ impl From<Error<Rule>> for RuntimeError {
 
 impl From<Entity> for Value<'_> {
     fn from(ent: Entity) -> Self {
-        Value::List(vec![
+        Value::list(vec![
             Value::Number(ent.id() as f64),
             Value::Number(ent.r#gen().id() as f64),
         ])
@@ -160,6 +160,9 @@ resources!(Resource<'world>(
     Root: Read<'world, RootNode>)
 );
 
+/// A persistent list: cloning, `cdr` and `cons` share structure instead of copying the elements.
+pub type List<'world> = imbl::GenericVector<Value<'world>, imbl::shared_ptr::RcK>;
+
 #[derive(Clone)]
 pub enum Value<'world> {
     // immutable values
@@ -168,7 +171,7 @@ pub enum Value<'world> {
     Number(f64),
     String(String),
     Symbol(String),
-    List(Vec<Value<'world>>),
+    List(List<'world>),
 
     // The following values are created by the evaluator
     NativeFunc(for<'a> fn(&[Value<'a>]) -> Result<Value<'a>, RuntimeError>),
@@ -179,8 +182,9 @@ pub enum Value<'world> {
     // Represents a function including its environment.
     Closure {
         env: EnvRef<'world>,
-        arg_names: Vec<String>,
-        body: Vec<Value<'world>>,
+        arg_names: Rc<[String]>,
+        // a single expression: bodies with several expressions are wrapped in `begin`
+        body: Box<Value<'world>>,
     },
 
     // First-class continuation (captured call stack)
@@ -188,6 +192,13 @@ pub enum Value<'world> {
 
     // Native types
     Ecs(Rc<Resource<'world>>),
+}
+
+impl<'world> Value<'world> {
+    /// Builds a list value from the elements.
+    pub fn list(items: impl Into<List<'world>>) -> Self {
+        Value::List(items.into())
+    }
 }
 
 impl Value<'_> {
@@ -304,7 +315,7 @@ pub fn parse_lscheme<'world>(program: &str) -> Result<Vec<Value<'world>>, Error<
                     .into_inner()
                     .next()
                     .ok_or_else(|| custom_error(&pair, "quote without expression".to_string()))?;
-                Ok(Value::List(vec![Value::Symbol("quote".into()), parse_value(inner)?]))
+                Ok(Value::list(vec![Value::Symbol("quote".into()), parse_value(inner)?]))
             }
             other => Err(custom_error(&pair, format!("unexpected rule: {:?}", other))),
         }
@@ -486,11 +497,11 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
         }
         match &args[1] {
             Value::List(tail) => {
-                let mut new_list = vec![args[0].clone()];
-                new_list.extend(tail.iter().cloned());
+                let mut new_list = tail.clone();
+                new_list.push_front(args[0].clone());
                 Ok(Value::List(new_list))
             }
-            Value::Null => Ok(Value::List(vec![args[0].clone()])),
+            Value::Null => Ok(Value::list(vec![args[0].clone()])),
             _ => Err(RuntimeError::Message("cons: second argument must be a list".to_string())),
         }
     }
@@ -512,7 +523,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
             return Err(RuntimeError::Message("cdr requires exactly 1 argument".to_string()));
         }
         match &args[0] {
-            Value::List(list) if !list.is_empty() => Ok(Value::List(list[1..].to_vec())),
+            Value::List(list) if !list.is_empty() => Ok(Value::List(list.skip(1))),
             Value::List(_) => Err(RuntimeError::Message("cdr: empty list".to_string())),
             _ => Err(RuntimeError::Message(format!("cdr: expected list, got {:?}", args[0]))),
         }
@@ -520,7 +531,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     new_map.insert("cdr".to_string(), Value::NativeFunc(cdr));
 
     fn list<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        Ok(Value::List(args.to_vec()))
+        Ok(Value::list(args.to_vec()))
     }
     new_map.insert("list".to_string(), Value::NativeFunc(list));
 
@@ -628,10 +639,10 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     new_map.insert("sqrt".to_string(), Value::NativeFunc(sqrt_fn));
 
     fn append<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        let mut result = Vec::new();
+        let mut result = List::new();
         for arg in args {
             match arg {
-                Value::List(items) => result.extend(items.iter().cloned()),
+                Value::List(items) => result.append(items.clone()),
                 Value::Null => {}
                 _ => return Err(RuntimeError::Message(format!("append: expected list, got {:?}", arg))),
             }
@@ -646,9 +657,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
         }
         match &args[0] {
             Value::List(list) => {
-                let mut rev = list.clone();
-                rev.reverse();
-                Ok(Value::List(rev))
+                Ok(Value::list(list.iter().rev().cloned().collect::<Vec<_>>()))
             }
             _ => Err(RuntimeError::Message("reverse: expected list".to_string())),
         }
@@ -742,7 +751,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     fn cddr<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 { return Err(RuntimeError::Message("cddr requires 1 argument".to_string())); }
         match &args[0] {
-            Value::List(v) if v.len() >= 2 => Ok(Value::List(v[2..].to_vec())),
+            Value::List(v) if v.len() >= 2 => Ok(Value::List(v.skip(2))),
             Value::List(_) => Err(RuntimeError::Message("cddr: list too short".to_string())),
             _ => Err(RuntimeError::Message(format!("cddr: expected list, got {:?}", args[0]))),
         }
@@ -765,7 +774,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
         if args.len() != 1 { return Err(RuntimeError::Message("cdar requires 1 argument".to_string())); }
         match &args[0] {
             Value::List(v) if !v.is_empty() => match &v[0] {
-                Value::List(inner) if !inner.is_empty() => Ok(Value::List(inner[1..].to_vec())),
+                Value::List(inner) if !inner.is_empty() => Ok(Value::List(inner.skip(1))),
                 Value::List(_) => Err(RuntimeError::Message("cdar: car is empty list".to_string())),
                 _ => Err(RuntimeError::Message("cdar: car is not a list".to_string())),
             },
@@ -914,7 +923,7 @@ impl<'world> Environment<'world> {
 pub enum Continuation<'world> {
     ApplyFunction {
         proc: Option<Value<'world>>,
-        args: Vec<Value<'world>>,
+        args: List<'world>,
         evaluated_args: Vec<Value<'world>>,
         env: EnvRef<'world>,
     },
@@ -933,15 +942,15 @@ pub enum Continuation<'world> {
     },
     /// Evaluates a sequence, discarding intermediate values, tail-calling the last.
     Sequence {
-        remaining: Vec<Value<'world>>,
+        remaining: List<'world>,
         env: EnvRef<'world>,
     },
     And {
-        remaining: Vec<Value<'world>>,
+        remaining: List<'world>,
         env: EnvRef<'world>,
     },
     Or {
-        remaining: Vec<Value<'world>>,
+        remaining: List<'world>,
         env: EnvRef<'world>,
     },
 }
@@ -999,7 +1008,7 @@ impl<'world> Continuation<'world> {
                     let last = remaining[0].clone();
                     Ok(Thunk::TailCall(last, Rc::clone(env)))
                 } else {
-                    let next = remaining.remove(0);
+                    let next = remaining.pop_front().unwrap();
                     Ok(Thunk::Eval(next, Rc::clone(env)))
                 }
             }
@@ -1012,7 +1021,7 @@ impl<'world> Continuation<'world> {
                     let last = remaining[0].clone();
                     Ok(Thunk::TailCall(last, Rc::clone(env)))
                 } else {
-                    let next = remaining.remove(0);
+                    let next = remaining.pop_front().unwrap();
                     Ok(Thunk::Eval(next, Rc::clone(env)))
                 }
             }
@@ -1025,7 +1034,7 @@ impl<'world> Continuation<'world> {
                     let last = remaining[0].clone();
                     Ok(Thunk::TailCall(last, Rc::clone(env)))
                 } else {
-                    let next = remaining.remove(0);
+                    let next = remaining.pop_front().unwrap();
                     Ok(Thunk::Eval(next, Rc::clone(env)))
                 }
             }
@@ -1146,14 +1155,14 @@ fn eval_expr<'world>(
                                     "define: function name must be a symbol".to_string(),
                                 )),
                             };
-                            let params = Value::List(func_spec[1..].to_vec());
+                            let params = Value::List(func_spec.skip(1));
                             let lambda = Value::List(
                                 std::iter::once(Value::Symbol("lambda".into()))
                                     .chain(std::iter::once(params))
-                                    .chain(list[2..].iter().cloned())
+                                    .chain(list.iter().skip(2).cloned())
                                     .collect(),
                             );
-                            let desugared = Value::List(vec![
+                            let desugared = Value::list(vec![
                                 Value::Symbol("define".into()),
                                 Value::Symbol(fname),
                                 lambda,
@@ -1198,14 +1207,24 @@ fn eval_expr<'world>(
                                     "lambda argument must be a symbol"
                                 ))),
                             })
-                            .collect::<Result<_, _>>()?,
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into(),
                         _ => {
                             return Err(RuntimeError::Message(
                                 "lambda second argument must be a list of symbols".to_string(),
                             ));
                         }
                     };
-                    let body = list[2..].to_vec();
+                    let body = if list.len() == 3 {
+                        list[2].clone()
+                    } else {
+                        Value::List(
+                            std::iter::once(Value::Symbol("begin".into()))
+                                .chain(list.iter().skip(2).cloned())
+                                .collect(),
+                        )
+                    };
+                    let body = Box::new(body);
                     let closure = Value::Closure {
                         env: Rc::clone(&env),
                         arg_names,
@@ -1229,7 +1248,7 @@ fn eval_expr<'world>(
                     Ok(Thunk::Eval(list[1].clone(), env))
                 }
                 Value::Symbol(x) if x == "begin" => {
-                    let exprs = list[1..].to_vec();
+                    let exprs = list.skip(1);
                     if exprs.is_empty() {
                         return Ok(Thunk::Value(Value::Null));
                     }
@@ -1237,7 +1256,7 @@ fn eval_expr<'world>(
                         return Ok(Thunk::Eval(exprs[0].clone(), env));
                     }
                     let first = exprs[0].clone();
-                    let rest = exprs[1..].to_vec();
+                    let rest = exprs.skip(1);
                     stack.push_frame(Continuation::Sequence {
                         remaining: rest,
                         env: Rc::clone(&env),
@@ -1280,8 +1299,8 @@ fn eval_expr<'world>(
                     }
                     let lambda = Value::List(
                         std::iter::once(Value::Symbol("lambda".into()))
-                            .chain(std::iter::once(Value::List(params)))
-                            .chain(list[2..].iter().cloned())
+                            .chain(std::iter::once(Value::list(params)))
+                            .chain(list.iter().skip(2).cloned())
                             .collect(),
                     );
                     let application = Value::List(
@@ -1306,20 +1325,20 @@ fn eval_expr<'world>(
                     if bindings.is_empty() {
                         let begin_expr = Value::List(
                             std::iter::once(Value::Symbol("begin".into()))
-                                .chain(list[2..].iter().cloned())
+                                .chain(list.iter().skip(2).cloned())
                                 .collect(),
                         );
                         Ok(Thunk::Eval(begin_expr, env))
                     } else {
-                        let first_binding = Value::List(vec![bindings[0].clone()]);
-                        let rest_bindings = Value::List(bindings[1..].to_vec());
+                        let first_binding = Value::list(vec![bindings[0].clone()]);
+                        let rest_bindings = Value::List(bindings.skip(1));
                         let inner = Value::List(
                             std::iter::once(Value::Symbol("let*".into()))
                                 .chain(std::iter::once(rest_bindings))
-                                .chain(list[2..].iter().cloned())
+                                .chain(list.iter().skip(2).cloned())
                                 .collect(),
                         );
-                        let outer = Value::List(vec![
+                        let outer = Value::list(vec![
                             Value::Symbol("let".into()),
                             first_binding,
                             inner,
@@ -1328,7 +1347,7 @@ fn eval_expr<'world>(
                     }
                 }
                 Value::Symbol(x) if x == "and" => {
-                    let exprs = list[1..].to_vec();
+                    let exprs = list.skip(1);
                     if exprs.is_empty() {
                         return Ok(Thunk::Value(Value::Bool(true)));
                     }
@@ -1336,7 +1355,7 @@ fn eval_expr<'world>(
                     if exprs.len() == 1 {
                         return Ok(Thunk::Eval(first, env));
                     }
-                    let rest = exprs[1..].to_vec();
+                    let rest = exprs.skip(1);
                     stack.push_frame(Continuation::And {
                         remaining: rest,
                         env: Rc::clone(&env),
@@ -1344,7 +1363,7 @@ fn eval_expr<'world>(
                     Ok(Thunk::Eval(first, env))
                 }
                 Value::Symbol(x) if x == "or" => {
-                    let exprs = list[1..].to_vec();
+                    let exprs = list.skip(1);
                     if exprs.is_empty() {
                         return Ok(Thunk::Value(Value::Bool(false)));
                     }
@@ -1352,7 +1371,7 @@ fn eval_expr<'world>(
                     if exprs.len() == 1 {
                         return Ok(Thunk::Eval(first, env));
                     }
-                    let rest = exprs[1..].to_vec();
+                    let rest = exprs.skip(1);
                     stack.push_frame(Continuation::Or {
                         remaining: rest,
                         env: Rc::clone(&env),
@@ -1360,7 +1379,7 @@ fn eval_expr<'world>(
                     Ok(Thunk::Eval(first, env))
                 }
                 Value::Symbol(x) if x == "cond" => {
-                    fn desugar_cond<'w>(clauses: &[Value<'w>]) -> Result<Value<'w>, RuntimeError> {
+                    fn desugar_cond<'w>(clauses: &List<'w>) -> Result<Value<'w>, RuntimeError> {
                         if clauses.is_empty() {
                             return Ok(Value::Null);
                         }
@@ -1376,15 +1395,15 @@ fn eval_expr<'world>(
                         } else {
                             Value::List(
                                 std::iter::once(Value::Symbol("begin".into()))
-                                    .chain(clause[1..].iter().cloned())
+                                    .chain(clause.iter().skip(1).cloned())
                                     .collect(),
                             )
                         };
                         if matches!(test, Value::Symbol(s) if s == "else") {
                             Ok(body)
                         } else {
-                            let rest = desugar_cond(&clauses[1..])?;
-                            Ok(Value::List(vec![
+                            let rest = desugar_cond(&clauses.skip(1))?;
+                            Ok(Value::list(vec![
                                 Value::Symbol("if".into()),
                                 test.clone(),
                                 body,
@@ -1392,7 +1411,7 @@ fn eval_expr<'world>(
                             ]))
                         }
                     }
-                    let desugared = desugar_cond(&list[1..])?;
+                    let desugared = desugar_cond(&list.skip(1))?;
                     Ok(Thunk::Eval(desugared, env))
                 }
                 Value::Symbol(x) if x == "when" => {
@@ -1405,11 +1424,11 @@ fn eval_expr<'world>(
                     } else {
                         Value::List(
                             std::iter::once(Value::Symbol("begin".into()))
-                                .chain(list[2..].iter().cloned())
+                                .chain(list.iter().skip(2).cloned())
                                 .collect(),
                         )
                     };
-                    let if_expr = Value::List(vec![Value::Symbol("if".into()), test, body]);
+                    let if_expr = Value::list(vec![Value::Symbol("if".into()), test, body]);
                     Ok(Thunk::Eval(if_expr, env))
                 }
                 Value::Symbol(x) if x == "unless" => {
@@ -1422,12 +1441,12 @@ fn eval_expr<'world>(
                     } else {
                         Value::List(
                             std::iter::once(Value::Symbol("begin".into()))
-                                .chain(list[2..].iter().cloned())
+                                .chain(list.iter().skip(2).cloned())
                                 .collect(),
                         )
                     };
-                    let not_test = Value::List(vec![Value::Symbol("not".into()), test]);
-                    let if_expr = Value::List(vec![Value::Symbol("if".into()), not_test, body]);
+                    let not_test = Value::list(vec![Value::Symbol("not".into()), test]);
+                    let if_expr = Value::list(vec![Value::Symbol("if".into()), not_test, body]);
                     Ok(Thunk::Eval(if_expr, env))
                 }
                 Value::Symbol(x) if x == "call/cc" || x == "call-with-current-continuation" => {
@@ -1439,7 +1458,7 @@ fn eval_expr<'world>(
                     let captured_k = Value::Continuation(Rc::new(stack.clone()));
                     stack.push_frame(Continuation::ApplyFunction {
                         proc: None,
-                        args: vec![captured_k],
+                        args: List::unit(captured_k),
                         evaluated_args: vec![],
                         env: Rc::clone(&env),
                     });
@@ -1448,7 +1467,7 @@ fn eval_expr<'world>(
                 head => {
                     stack.push_frame(Continuation::ApplyFunction {
                         proc: None,
-                        args: list[1..].to_vec(),
+                        args: list.skip(1),
                         evaluated_args: vec![],
                         env: Rc::clone(&env),
                     });
@@ -1498,17 +1517,7 @@ fn eval_fn<'world>(
             for (arg_name, evaluated_arg) in arg_names.iter().zip(args) {
                 env_ref.borrow_mut().map.insert(arg_name.clone(), evaluated_arg.clone());
             }
-            if body.len() == 1 {
-                Ok(Thunk::TailCall(body[0].clone(), env_ref))
-            } else {
-                // Wrap multi-expr body in (begin ...) for proper sequencing
-                let begin_expr = Value::List(
-                    std::iter::once(Value::Symbol("begin".into()))
-                        .chain(body.iter().cloned())
-                        .collect(),
-                );
-                Ok(Thunk::TailCall(begin_expr, env_ref))
-            }
+            Ok(Thunk::TailCall((**body).clone(), env_ref))
         }
         Value::Continuation(saved_stack) => {
             let arg = match args {
@@ -1564,7 +1573,7 @@ mod test {
     #[test]
     fn test_parse_simple_list() {
         let program = "(+ 1 2)";
-        let expected = Ok(vec![Value::List(vec![
+        let expected = Ok(vec![Value::list(vec![
             Value::Symbol("+".to_string()),
             Value::Number(1.0),
             Value::Number(2.0),
@@ -1575,10 +1584,10 @@ mod test {
     #[test]
     fn test_parse_nested_list() {
         let program = "(define x (list 1 2))";
-        let expected = Ok(vec![Value::List(vec![
+        let expected = Ok(vec![Value::list(vec![
             Value::Symbol("define".to_string()),
             Value::Symbol("x".to_string()),
-            Value::List(vec![
+            Value::list(vec![
                 Value::Symbol("list".to_string()),
                 Value::Number(1.0),
                 Value::Number(2.0),
@@ -1591,12 +1600,12 @@ mod test {
     fn test_parse_multiple_top_level_expressions() {
         let program = "(+ 1 2) (define a 10)";
         let expected = Ok(vec![
-            Value::List(vec![
+            Value::list(vec![
                 Value::Symbol("+".to_string()),
                 Value::Number(1.0),
                 Value::Number(2.0),
             ]),
-            Value::List(vec![
+            Value::list(vec![
                 Value::Symbol("define".to_string()),
                 Value::Symbol("a".to_string()),
                 Value::Number(10.0),
@@ -1608,14 +1617,14 @@ mod test {
     #[test]
     fn test_parse_empty_list() {
         let program = "()";
-        let expected = Ok(vec![Value::List(vec![])]);
+        let expected = Ok(vec![Value::list(vec![])]);
         assert_eq!(parse_lscheme(program), expected);
     }
 
     #[test]
     fn test_parse_list_with_mixed_types() {
         let program = r#"(set! my-var "hello" 123)"#;
-        let expected = Ok(vec![Value::List(vec![
+        let expected = Ok(vec![Value::list(vec![
             Value::Symbol("set!".to_string()),
             Value::Symbol("my-var".to_string()),
             Value::String("hello".to_string()),
@@ -1627,7 +1636,7 @@ mod test {
     #[test]
     fn test_parse_with_whitespace() {
         let program = "  ( +   1   2   )  ";
-        let expected = Ok(vec![Value::List(vec![
+        let expected = Ok(vec![Value::list(vec![
             Value::Symbol("+".to_string()),
             Value::Number(1.0),
             Value::Number(2.0),
@@ -1698,7 +1707,7 @@ mod test {
         );
         assert_eq!(
             parse_and_eval("'(1 2 3)").unwrap(),
-            Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])
+            Value::list(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])
         );
     }
 
@@ -1786,11 +1795,11 @@ mod test {
         assert_eq!(parse_and_eval("(car '(1 2 3))").unwrap(), Value::Number(1.0));
         assert_eq!(
             parse_and_eval("(cdr '(1 2 3))").unwrap(),
-            Value::List(vec![Value::Number(2.0), Value::Number(3.0)])
+            Value::list(vec![Value::Number(2.0), Value::Number(3.0)])
         );
         assert_eq!(
             parse_and_eval("(cons 1 '(2 3))").unwrap(),
-            Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])
+            Value::list(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])
         );
         assert_eq!(parse_and_eval("(null? '())").unwrap(), Value::Bool(true));
         assert_eq!(parse_and_eval("(null? '(1))").unwrap(), Value::Bool(false));

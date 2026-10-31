@@ -389,10 +389,10 @@ impl Default for Position {
             border_bottom_style: BorderStyle::default(),
             border_left_style: BorderStyle::default(),
             border_right_style: BorderStyle::default(),
-            border_top_color: opaque(0, 0, 0),
-            border_bottom_color: opaque(0, 0, 0),
-            border_left_color: opaque(0, 0, 0),
-            border_right_color: opaque(0, 0, 0),
+            border_top_color: Color::CurrentColor,
+            border_bottom_color: Color::CurrentColor,
+            border_left_color: Color::CurrentColor,
+            border_right_color: Color::CurrentColor,
         }
     }
 }
@@ -453,7 +453,9 @@ impl ComputedValues {
         Arc::make_mut(&mut self.position).fixup();
         // https://www.w3.org/TR/CSS22/visuren.html#dis-pos-flo
         // An absolutely positioned box is always blockified.
-        if self.box_.position == PositionSpec::Absolute && self.box_.display == Display::Inline {
+        if self.box_.position == PositionSpec::Absolute
+            && matches!(self.box_.display, Display::Inline | Display::InlineBlock)
+        {
             Arc::make_mut(&mut self.box_).display = Display::Block;
         }
     }
@@ -471,7 +473,12 @@ impl StyleBuilder {
 
         let inherited = ComputedValues {
             font: inherited_values.font,
-            page: inherited_values.page,
+            // widows and orphans are inherited, the page break properties are not
+            page: Arc::new(Page {
+                widows: inherited_values.page.widows,
+                orphans: inherited_values.page.orphans,
+                ..Default::default()
+            }),
             math: Arc::new(Math {
                 math_style: inherited_values.math.math_style,
                 ..Default::default()
@@ -513,6 +520,9 @@ pub struct Font {
     pub font_weight: FontWeight,
     pub font_size: PixelLength,
     pub line_height: LineHeight,
+    pub color: Color,
+    pub list_style_type: specified::ListStyleType,
+    pub text_decoration: specified::TextDecoration,
 }
 
 impl Default for Font {
@@ -523,6 +533,9 @@ impl Default for Font {
             font_weight: FontWeight::default(),
             font_size: PixelLength::from_pt(12.0),
             line_height: LineHeight::default(),
+            color: opaque(0, 0, 0),
+            list_style_type: Default::default(),
+            text_decoration: Default::default(),
         }
     }
 }

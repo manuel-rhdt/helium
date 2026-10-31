@@ -168,9 +168,10 @@ impl<'a> System<'a> for DisplayDecoration {
         Entities<'a>,
         ReadStorage<'a, Position>,
         ReadStorage<'a, Decoration>,
+        ReadStorage<'a, crate::layout::components::Fragmented>,
     );
 
-    fn run(&mut self, (entities, positions, decorations): Self::SystemData) {
+    fn run(&mut self, (entities, positions, decorations, fragmented): Self::SystemData) {
         for (
             entity,
             &Position {
@@ -183,7 +184,8 @@ impl<'a> System<'a> for DisplayDecoration {
             },
             deco,
             _,
-        ) in (&entities, &positions, &decorations, &self.bitset).join()
+            _,
+        ) in (&entities, &positions, &decorations, &self.bitset, !&fragmented).join()
         {
             use PixelLength as Px;
 
@@ -301,6 +303,10 @@ impl<'a> System<'a> for DisplayVectorGraphics {
         for (entity, pos, vector_graphic, _) in
             (&entities, &positions, &vector_graphics, &self.bitset).join()
         {
+            if let Some(color) = vector_graphic.color {
+                self.display_list.append(DisplayItem::Push, entity, pos.z);
+                self.display_list.append(DisplayItem::StrokeColor(color), entity, pos.z);
+            }
             for op in &vector_graphic.ops {
                 match op {
                     GraphicsOp::Line {
@@ -324,6 +330,9 @@ impl<'a> System<'a> for DisplayVectorGraphics {
                         pos.z,
                     ),
                 }
+            }
+            if vector_graphic.color.is_some() {
+                self.display_list.append(DisplayItem::Pop, entity, pos.z);
             }
         }
     }

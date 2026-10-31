@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Headers and footers</title>
+<style>
+  @page {
+    @top-left { content: "Helium Report"; font-size: 9pt; color: #555; }
+    @top-right { content: "Draft"; font-size: 9pt; font-weight: bold; }
+    @bottom-center { content: "Page " counter(page) " of " counter(pages); font-size: 9pt; }
+  }
+  @page :first {
+    @top-left { content: none; }
+    @top-right { content: none; }
+  }
+  .next { page-break-before: always; }
+</style>
+</head>
+<body>
+  <h1>Chapter one</h1>
+  <p>The first page has no header, only a footer with the page number.</p>
+  <h1 class="next">Chapter two</h1>
+  <p>The second page has a header on the left and right.</p>
+  <h1 class="next">Chapter three</h1>
+  <p>And so does the third.</p>
+</body>
+</html>

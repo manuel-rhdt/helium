@@ -15,7 +15,7 @@ fn file_doesnt_exist() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn converts_loremipsum_to_pdf() -> Result<(), Box<dyn std::error::Error>> {
-    let input = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/loremipsum.html");
+    let input = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/documents/loremipsum.html");
     let output = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("loremipsum.pdf");
     // make sure a stale file from an earlier run cannot make the test pass
     if output.exists() {
@@ -114,4 +114,24 @@ fn dumps_layout_as_json() -> Result<(), Box<dyn std::error::Error>> {
         .stdout(predicate::str::contains(r#""margin": {"top": 3, "right": 0, "bottom": 3, "left": 3}"#));
 
     Ok(())
+}
+
+/// Selectors that look at sibling elements (`:first-of-type`, `+`, `~`) used to loop forever
+/// because the sibling iterators included the element itself.
+#[test]
+fn sibling_selectors_terminate() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("sibling_selectors.html");
+    std::fs::write(
+        &input,
+        "<html><head><style>h1:first-of-type { color: red } h1 + p { color: blue } h1 ~ h1 { color: green }</style></head>\
+         <body><h1>One</h1><p>Hi</p><h1>Two</h1></body></html>",
+    )
+    .unwrap();
+    Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(&input)
+        .arg(dir.join("sibling_selectors.pdf"))
+        .assert()
+        .success();
 }

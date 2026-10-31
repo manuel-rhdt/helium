@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Links and Text Decorations</title>
+<style>
+  body { font-family: serif; font-size: 11pt; line-height: 1.5; }
+  h1 { font-size: 20pt; }
+  .fancy { text-decoration: underline; color: #7a1f1f; }
+  .plain-link { text-decoration: none; }
+  .both { text-decoration: underline line-through; }
+</style>
+</head>
+<body>
+<h1>Links and Text Decorations</h1>
+
+<p>A paragraph with a <a href="https://example.com">hyperlink</a> in the middle, followed by a second link that is long enough that it has to wrap over the end of the line, <a href="https://example.org/a/very/long/path">which keeps its underline on both lines</a>, and then some trailing text.</p>
+
+<p>Links can be restyled: <a class="plain-link" href="#">no underline here</a>, <a class="fancy" href="#">or a custom colour</a>.</p>
+
+<p>The usual phrasing elements: <u>underlined</u>, <s>struck through</s>, <del>deleted</del>, <ins>inserted</ins>, and <span class="both">underlined and struck through</span>.</p>
+
+<p style="text-decoration: underline; text-align: justify">A decoration set on the paragraph applies to all of its text, including <b>bold</b> and <i>italic</i> descendants, and it follows justified text across the whole line. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+
+<ul>
+  <li><a href="#">A link inside a list item</a></li>
+  <li>An item with <u>some underlined</u> text</li>
+</ul>
+</body>
+</html>

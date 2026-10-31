@@ -24,6 +24,8 @@ use thiserror::Error;
 pub enum StyleParseError {
     #[error("unknown property {name}")]
     UnknownProperty { name: String },
+    #[error("unsupported value")]
+    InvalidValue,
     #[error("selector parser error {0:?}")]
     SelectorParserError(SelectorParseErrorKind),
 }
@@ -75,14 +77,86 @@ impl Styles {
 
 #[derive(Debug)]
 pub enum GeneralizedSelector {
-    AtPage,
+    AtPage(PageSelector),
     Selectors(SelectorList<Selectors>),
+}
+
+/// The page pseudo-class of an `@page` rule.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum PageSelector {
+    Any,
+    First,
+    Left,
+    Right,
+}
+
+/// The margin boxes that can hold headers and footers.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum MarginBoxKind {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+impl MarginBoxKind {
+    pub const ALL: [MarginBoxKind; 6] = [
+        MarginBoxKind::TopLeft,
+        MarginBoxKind::TopCenter,
+        MarginBoxKind::TopRight,
+        MarginBoxKind::BottomLeft,
+        MarginBoxKind::BottomCenter,
+        MarginBoxKind::BottomRight,
+    ];
+
+    fn from_name(name: &str) -> Option<Self> {
+        Some(match_ignore_ascii_case! { name,
+            "top-left" => MarginBoxKind::TopLeft,
+            "top-center" => MarginBoxKind::TopCenter,
+            "top-right" => MarginBoxKind::TopRight,
+            "bottom-left" => MarginBoxKind::BottomLeft,
+            "bottom-center" => MarginBoxKind::BottomCenter,
+            "bottom-right" => MarginBoxKind::BottomRight,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum CounterStyle {
+    Decimal,
+    LowerRoman,
+    UpperRoman,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum CounterName {
+    Page,
+    Pages,
+}
+
+/// One component of the value of the `content` property of a margin box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContentItem {
+    String(String),
+    Counter(CounterName, CounterStyle),
+}
+
+/// A margin at-rule such as `@bottom-center { content: counter(page) }` inside of `@page`.
+#[derive(Debug)]
+pub struct MarginBoxRule {
+    pub kind: MarginBoxKind,
+    pub properties: PropertyDeclarationBlock,
+    pub content: Option<Vec<ContentItem>>,
 }
 
 #[derive(Debug)]
 pub struct QualifiedRule {
     selectors: GeneralizedSelector,
     pub properties: PropertyDeclarationBlock,
+    pub margin_boxes: Vec<MarginBoxRule>,
 }
 
 impl QualifiedRule {
@@ -90,6 +164,7 @@ impl QualifiedRule {
         QualifiedRule {
             selectors: GeneralizedSelector::Selectors(selectors),
             properties,
+            margin_boxes: vec![],
         }
     }
 
@@ -111,10 +186,14 @@ impl QualifiedRule {
     }
 
     pub fn is_page_declaration(&self) -> bool {
-        if let GeneralizedSelector::AtPage = &self.selectors {
-            true
-        } else {
-            false
+        self.page_selector().is_some()
+    }
+
+    /// The page pseudo-class if this is an `@page` rule.
+    pub fn page_selector(&self) -> Option<PageSelector> {
+        match &self.selectors {
+            GeneralizedSelector::AtPage(selector) => Some(*selector),
+            _ => None,
         }
     }
 }
@@ -195,8 +274,137 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
 }
 
 impl<'i> AtRuleParser<'i> for TopLevelParser {
-    type Prelude = ();
+    type Prelude = PageSelector;
     type AtRule = QualifiedRule;
+    type Error = StyleParseError;
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
+        if !name.eq_ignore_ascii_case("page") {
+            return Err(ParseError::from_basic_kind(
+                BasicParseErrorKind::AtRuleInvalid,
+            ));
+        }
+        if input.is_exhausted() {
+            return Ok(PageSelector::Any);
+        }
+        input.expect_colon()?;
+        let ident = input.expect_ident()?.clone();
+        Ok(match_ignore_ascii_case! { &ident,
+            "first" => PageSelector::First,
+            "left" => PageSelector::Left,
+            "right" => PageSelector::Right,
+            _ => return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) }),
+        })
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &ParserState,
+        input: &mut Parser<'i>,
+    ) -> Result<Self::AtRule, ParseError<Self::Error>> {
+        let body = parse_page_body(input);
+        Ok(QualifiedRule {
+            selectors: GeneralizedSelector::AtPage(prelude),
+            properties: body.properties,
+            margin_boxes: body.margin_boxes,
+        })
+    }
+}
+
+#[derive(Default)]
+struct PageBody {
+    properties: PropertyDeclarationBlock,
+    content: Option<Vec<ContentItem>>,
+    margin_boxes: Vec<MarginBoxRule>,
+}
+
+enum PageBodyItem {
+    Declaration(PropertyDeclaration<'static>),
+    Content(Vec<ContentItem>),
+    MarginBox(MarginBoxRule),
+}
+
+/// Parses the contents of an `@page` rule or of a margin at-rule.
+fn parse_page_body(input: &mut Parser) -> PageBody {
+    let mut body = PageBody::default();
+    for item in RuleBodyParser::new(input, &mut PageBodyParser) {
+        match item {
+            Ok(PageBodyItem::Declaration(decl)) => body.properties.declarations.push(decl),
+            Ok(PageBodyItem::Content(content)) => body.content = Some(content),
+            Ok(PageBodyItem::MarginBox(margin_box)) => body.margin_boxes.push(margin_box),
+            Err((error, text, _location)) => {
+                warn!("Error while parsing declaration {:?}: {:?}", text, error)
+            }
+        }
+    }
+    body
+}
+
+fn parse_content<'i>(input: &mut Parser<'i>) -> Result<Vec<ContentItem>, ParseError<StyleParseError>> {
+    let mut items = vec![];
+    while !input.is_exhausted() {
+        let token = input.next()?.clone();
+        match token {
+            cssparser::Token::QuotedString(string) => items.push(ContentItem::String(string.to_string())),
+            cssparser::Token::Ident(ref ident)
+                if ident.eq_ignore_ascii_case("none") || ident.eq_ignore_ascii_case("normal") => {}
+            cssparser::Token::Function(ref name) if name.eq_ignore_ascii_case("counter") => {
+                let item = input.parse_nested_block(|input| {
+                    let counter = input.expect_ident()?.clone();
+                    let counter = match_ignore_ascii_case! { &counter,
+                        "page" => CounterName::Page,
+                        "pages" => CounterName::Pages,
+                        _ => return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) }),
+                    };
+                    let style = if input.try_parse(|input| input.expect_comma()).is_ok() {
+                        let style = input.expect_ident()?.clone();
+                        match_ignore_ascii_case! { &style,
+                            "decimal" => CounterStyle::Decimal,
+                            "lower-roman" => CounterStyle::LowerRoman,
+                            "upper-roman" => CounterStyle::UpperRoman,
+                            _ => return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) }),
+                        }
+                    } else {
+                        CounterStyle::Decimal
+                    };
+                    Ok(ContentItem::Counter(counter, style))
+                })?;
+                items.push(item);
+            }
+            token => return Err(ParseError::unexpected_token()),
+        }
+    }
+    Ok(items)
+}
+
+struct PageBodyParser;
+
+impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
+    type Declaration = PageBodyItem;
+    type Error = StyleParseError;
+
+    fn parse_value<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i>,
+        _declaration_start: &ParserState,
+    ) -> Result<Self::Declaration, ParseError<Self::Error>> {
+        if name.eq_ignore_ascii_case("content") {
+            Ok(PageBodyItem::Content(parse_content(input)?))
+        } else {
+            PropertyDeclaration::parse_declaration(name, input).map(PageBodyItem::Declaration)
+        }
+    }
+}
+
+impl<'i> AtRuleParser<'i> for PageBodyParser {
+    type Prelude = MarginBoxKind;
+    type AtRule = PageBodyItem;
     type Error = StyleParseError;
 
     fn parse_prelude<'t>(
@@ -204,25 +412,38 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
         name: CowRcStr<'i>,
         _input: &mut Parser<'i>,
     ) -> Result<Self::Prelude, ParseError<Self::Error>> {
-        if name.eq_ignore_ascii_case("page") {
-            Ok(())
-        } else {
-            Err(ParseError::from_basic_kind(
-                BasicParseErrorKind::AtRuleInvalid,
-            ))
-        }
+        MarginBoxKind::from_name(&name)
+            .ok_or_else(|| ParseError::from_basic_kind(BasicParseErrorKind::AtRuleInvalid))
     }
 
     fn parse_block<'t>(
         &mut self,
-        _prelude: Self::Prelude,
+        kind: Self::Prelude,
         _start: &ParserState,
         input: &mut Parser<'i>,
     ) -> Result<Self::AtRule, ParseError<Self::Error>> {
-        Ok(QualifiedRule {
-            selectors: GeneralizedSelector::AtPage,
-            properties: PropertyDeclarationBlock::parse_declarations(input),
-        })
+        let body = parse_page_body(input);
+        Ok(PageBodyItem::MarginBox(MarginBoxRule {
+            kind,
+            properties: body.properties,
+            content: body.content,
+        }))
+    }
+}
+
+impl<'i> QualifiedRuleParser<'i> for PageBodyParser {
+    type Prelude = ();
+    type QualifiedRule = PageBodyItem;
+    type Error = StyleParseError;
+}
+
+impl<'i> RuleBodyItemParser<'i, PageBodyItem, StyleParseError> for PageBodyParser {
+    fn parse_declarations(&self) -> bool {
+        true
+    }
+
+    fn parse_qualified(&self) -> bool {
+        false
     }
 }
 

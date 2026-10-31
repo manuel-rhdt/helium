@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Inline Blocks</title>
+<style>
+  body { font-family: serif; font-size: 11pt; line-height: 1.4; }
+  h1 { font-size: 20pt; }
+  .tag { display: inline-block; padding: 2px 8px; margin: 2px; background-color: #dde8f5; border: 1px solid #3b6ea5; }
+  .card { display: inline-block; width: 150px; padding: 10px; margin: 6px; background-color: #f6f1e4; border: 2px solid #c9b88a; }
+  .badge { display: inline-block; width: 22px; height: 22px; background-color: #7a1f1f; color: #ffffff; text-align: center; }
+  .outer { display: inline-block; padding: 8px; background-color: #e6f4ea; border: 2px solid #2e8b57; }
+  .inner { display: inline-block; width: 70px; height: 30px; margin: 4px; background-color: #fdecea; border: 1px solid #c0392b; }
+</style>
+</head>
+<body>
+<h1>Inline Blocks</h1>
+
+<p>Boxes with automatic width shrink to fit their content, like these tags:
+<span class="tag">layout</span> <span class="tag">pagination</span> <span class="tag">inline-block</span> <span class="tag">shrink to fit</span>
+and they sit on the baseline of the line, with the text around them.</p>
+
+<p>Boxes with a fixed width wrap their text and grow in height; the baseline of such a box is the baseline of its
+last line:
+<span class="card">The first card has a few words of text.</span><span class="card">The second card has a lot more text than the first one, so it is taller.</span><span class="card">Third.</span>
+and the text goes on after the cards.</p>
+
+<p>Numbered <span class="badge">1</span> badges <span class="badge">2</span> inside <span class="badge">3</span> a sentence.</p>
+
+<p>Boxes can be nested:
+<span class="outer">outer box with text <span class="inner"></span><span class="inner"></span> and more text</span>
+and the text continues here.</p>
+
+<p style="text-align: center">Centred text with a <span class="tag">tag</span> in the middle.</p>
+<p style="text-align: justify">Justified text with a <span class="tag">tag</span> in the middle; this paragraph is long enough that it takes more than one line, so the words of every line but the last are spread out to fill it, and the box has to move with the words in front of it. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+</body>
+</html>

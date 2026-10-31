@@ -5,6 +5,7 @@ pub mod construct;
 pub mod dump;
 pub mod inline;
 pub mod inline_size;
+mod margin_boxes;
 mod mathml;
 pub mod normal_formatting;
 mod paginate;
@@ -44,7 +45,7 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> Result<LayoutContext, 
     // get page style
     let mut style_builder = StyleBuilder::new(Default::default());
     for rule in flow_constructor.styles.rules_iter() {
-        if rule.is_page_declaration() {
+        if rule.page_selector() == Some(crate::style::parse::PageSelector::Any) {
             for declaration in rule.properties.declarations() {
                 style_builder.add_declaration(declaration);
             }
@@ -82,7 +83,14 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> Result<LayoutContext, 
         page_height = style.position.height.absolute(device.width, device.width);
     }
 
+    let margin_boxes = if crop {
+        Default::default()
+    } else {
+        flow_constructor.resolve_margin_boxes()
+    };
+
     let mut layout_context = flow_constructor.layout_context();
+    layout_context.insert(margin_boxes);
 
     layout_context.register::<components::IntrinsicSize>();
     layout_context.register::<components::ContainingBlock>();
@@ -122,16 +130,27 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> Result<LayoutContext, 
         page_height,
         margin,
     };
+    paginator.setup(&mut layout_context);
 
     time_before = Instant::now();
     paginator.run_now(&layout_context);
     info!("TIMED: paginate {:?}", time_before.elapsed());
+
+    let mut place_inline_blocks = inline::PlaceInlineBlocks;
+    place_inline_blocks.setup(&mut layout_context);
+    place_inline_blocks.run_now(&layout_context);
 
     let mut line_box_creator = inline::LineBoxCreator;
     line_box_creator.setup(&mut layout_context);
     time_before = Instant::now();
     line_box_creator.run_now(&layout_context);
     info!("TIMED: line boxes {:?}", time_before.elapsed());
+
+    let mut list_marker_creator = inline::ListMarkerCreator;
+    list_marker_creator.setup(&mut layout_context);
+    time_before = Instant::now();
+    list_marker_creator.run_now(&layout_context);
+    info!("TIMED: list markers {:?}", time_before.elapsed());
 
     let mut relative_positioning_system = RelativePositioningSystem;
     relative_positioning_system.run_now(&mut layout_context);
@@ -143,6 +162,9 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> Result<LayoutContext, 
     time_before = Instant::now();
     math_layout.run_now(&layout_context);
     info!("TIMED: math paint {:?}", time_before.elapsed());
+
+    // headers and footers need the final number of pages
+    margin_boxes::MarginBoxPaint.run_now(&layout_context);
 
     let mut pages_create = normal_formatting::PagesCreate {
         page_width,

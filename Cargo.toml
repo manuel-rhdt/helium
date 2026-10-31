@@ -27,6 +27,7 @@ pest_derive = "2.8.0"
 rustyline = "16"
 cssparser-color = "0.6"
 precomputed-hash = "0.1"
+imbl = "7"
 
 [dev-dependencies]
 assert_cmd = "1"
