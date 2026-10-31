@@ -282,7 +282,7 @@ impl BlockFormatter {
             .list
             .push(BlockLevelElement::ContainerEnd(fragment));
 
-        let mut pos = data.positions.get_mut(fragment).unwrap();
+        let pos = data.positions.get_mut(fragment).unwrap();
         let decoration = data.decorations.get(fragment).unwrap();
         let style = data.computed_values.get(fragment).unwrap();
         let page_cursor = &mut data.page_cursor;
