@@ -59,7 +59,7 @@ impl Font {
                     ];
                     write_font(self, Tag([0, 1, 0, 0]), &tables, &mut stream.bytes)?;
                 } else {
-                    let tables = &[
+                    let _tables = &[
                         Tag(*b"head"),
                         Tag(*b"CFF "),
                         Tag(*b"hhea"),

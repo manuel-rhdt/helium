@@ -495,14 +495,14 @@ impl<'i> PropertyValue<'i> for Quantity {
                 ..
             } if *val == 0 => (0.0, Ok(Unit::Px)),
             _ => {
-                let token = token.clone();
+                let _token = token.clone();
                 return Err(ParseError::unexpected_token());
             }
         };
 
         let unit = match unit {
             Err(_) => {
-                let token = token.clone();
+                let _token = token.clone();
                 return Err(ParseError::unexpected_token());
             }
             Ok(unit) => unit,
@@ -524,7 +524,7 @@ impl<'i> PropertyValue<'i> for Percentage {
         match token {
             Token::Percentage { unit_value, .. } => Ok(Percentage(*unit_value)),
             _ => {
-                let token = token.clone();
+                let _token = token.clone();
                 Err(ParseError::unexpected_token())
             }
         }
@@ -760,7 +760,7 @@ impl<'i> PropertyValue<'i> for f32 {
         match token {
             Token::Number { value, .. } => Ok(*value),
             _ => {
-                let token = token.clone();
+                let _token = token.clone();
                 Err(ParseError::unexpected_token())
             }
         }
@@ -780,7 +780,7 @@ impl<'i> PropertyValue<'i> for usize {
                 ..
             } => Ok(*val as usize),
             _ => {
-                let token = token.clone();
+                let _token = token.clone();
                 Err(ParseError::unexpected_token())
             }
         }
@@ -799,7 +799,7 @@ impl<'i> PropertyValue<'i> for bool {
         } else if val.eq_ignore_ascii_case("false") {
             Ok(false)
         } else {
-            let val = val.clone();
+            let _val = val.clone();
             Err(ParseError::unexpected_token())
         }
     }

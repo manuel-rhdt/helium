@@ -53,9 +53,9 @@ fn run_scheme_block_layout(
         //                         margin-bottom margin-left)
         use super::Value;
         let call = Value::list(vec![
-            Value::Symbol("run-block-layout".to_string()),
+            Value::Symbol("run-block-layout".into()),
             // quoted, otherwise the (id generation) list would be evaluated as a call
-            Value::list(vec![Value::Symbol("quote".to_string()), Value::from(root_entity)]),
+            Value::list(vec![Value::Symbol("quote".into()), Value::from(root_entity)]),
             Value::Number(page_width.0 as f64),
             Value::Number(page_height.0 as f64),
             Value::Number(margin.top.0 as f64),

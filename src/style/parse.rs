@@ -229,7 +229,7 @@ impl PropertyDeclarationBlock {
         block
     }
 
-    pub fn declarations(&self) -> impl Iterator<Item = &PropertyDeclaration> {
+    pub fn declarations(&self) -> impl Iterator<Item = &PropertyDeclaration<'_>> {
         let iter1 = self.declarations.iter().filter(|decl| match decl {
             PropertyDeclaration::Font(Font::FontSize(_)) => true,
             _ => false,
@@ -376,7 +376,7 @@ fn parse_content<'i>(input: &mut Parser<'i>) -> Result<Vec<ContentItem>, ParseEr
                 })?;
                 items.push(item);
             }
-            token => return Err(ParseError::unexpected_token()),
+            _token => return Err(ParseError::unexpected_token()),
         }
     }
     Ok(items)

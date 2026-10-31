@@ -1,11 +1,16 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    hash::{Hash, Hasher},
+    rc::Rc,
+};
 
-use font_parse::TableRecord;
 use pest::{Parser, error::{Error, ErrorVariant}, iterators::Pair};
 use pest_derive::Parser;
 
 use specs::{
-    prelude::{Entities, Join, ReadStorage, SystemData}, shred::{self, Fetch}, Entity, Read
+    prelude::{Entities, Join, ReadStorage, SystemData}, shred::{self}, Entity, Read
 };
 
 mod repl;
@@ -16,7 +21,7 @@ use crate::style::properties::computed::ComputedValues;
 
 pub use self::repl::repl;
 
-use super::components::{LayoutContext, RootNode};
+use super::components::RootNode;
 
 #[derive(Parser)]
 #[grammar = "layout/lscheme/grammar.pest"]
@@ -170,7 +175,7 @@ pub enum Value<'world> {
     Bool(bool),
     Number(f64),
     String(String),
-    Symbol(String),
+    Symbol(Symbol),
     List(List<'world>),
 
     // The following values are created by the evaluator
@@ -182,7 +187,7 @@ pub enum Value<'world> {
     // Represents a function including its environment.
     Closure {
         env: EnvRef<'world>,
-        arg_names: Rc<[String]>,
+        arg_names: Rc<[Symbol]>,
         // a single expression: bodies with several expressions are wrapped in `begin`
         body: Box<Value<'world>>,
     },
@@ -192,6 +197,82 @@ pub enum Value<'world> {
 
     // Native types
     Ecs(Rc<Resource<'world>>),
+}
+
+#[derive(Clone)]
+pub struct Symbol(Rc<str>);
+
+thread_local! {
+    static INTERNED_SYMBOLS: RefCell<HashSet<Rc<str>>> = RefCell::new(HashSet::new());
+}
+
+impl Symbol {
+    pub fn intern(name: &str) -> Self {
+        INTERNED_SYMBOLS.with(|symbols| {
+            let mut symbols = symbols.borrow_mut();
+            if let Some(symbol) = symbols.get(name) {
+                return Self(Rc::clone(symbol));
+            }
+
+            let symbol: Rc<str> = Rc::from(name);
+            symbols.insert(Rc::clone(&symbol));
+            Self(symbol)
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for Symbol {
+    fn from(name: &str) -> Self {
+        Self::intern(name)
+    }
+}
+
+impl From<String> for Symbol {
+    fn from(name: String) -> Self {
+        Self::intern(&name)
+    }
+}
+
+impl PartialEq for Symbol {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Symbol {}
+
+impl Hash for Symbol {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (Rc::as_ptr(&self.0) as *const () as usize).hash(state);
+    }
+}
+
+impl PartialEq<str> for Symbol {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for Symbol {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl std::fmt::Display for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Debug for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl<'world> Value<'world> {
@@ -335,7 +416,7 @@ pub fn parse_lscheme<'world>(program: &str) -> Result<Vec<Value<'world>>, Error<
 
 #[derive(Debug, Clone)]
 pub struct Environment<'world> {
-    map: HashMap<String, Value<'world>>,
+    map: HashMap<Symbol, Value<'world>>,
     parent: Option<EnvRef<'world>>,
 }
 
@@ -600,7 +681,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     }
     new_map.insert("display".to_string(), Value::NativeFunc(display));
 
-    fn newline<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
+    fn newline<'a>(_args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         println!();
         Ok(Value::Null)
     }
@@ -704,7 +785,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
             return Err(RuntimeError::Message("symbol->string requires exactly 1 argument".to_string()));
         }
         match &args[0] {
-            Value::Symbol(s) => Ok(Value::String(s.clone())),
+            Value::Symbol(s) => Ok(Value::String(s.as_str().to_string())),
             _ => Err(RuntimeError::Message("symbol->string: expected symbol".to_string())),
         }
     }
@@ -715,7 +796,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
             return Err(RuntimeError::Message("string->symbol requires exactly 1 argument".to_string()));
         }
         match &args[0] {
-            Value::String(s) => Ok(Value::Symbol(s.clone())),
+            Value::String(s) => Ok(Value::Symbol(Symbol::intern(s))),
             _ => Err(RuntimeError::Message("string->symbol: expected string".to_string())),
         }
     }
@@ -844,7 +925,10 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     new_map.insert("list-ref".to_string(), Value::NativeFunc(list_ref));
 
     let env = Rc::new(RefCell::new(Environment {
-        map: new_map,
+        map: new_map
+            .into_iter()
+            .map(|(name, value)| (Symbol::intern(&name), value))
+            .collect(),
         parent: None,
     }));
 
@@ -888,14 +972,14 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 type EnvRef<'world> = Rc<RefCell<Environment<'world>>>;
 
 impl<'world> Environment<'world> {
-    pub fn set(&mut self, k: String, v: Value<'world>) {
-        self.map.insert(k, v);
+    pub fn set(&mut self, k: impl Into<Symbol>, v: Value<'world>) {
+        self.map.insert(k.into(), v);
     }
 
     /// Mutate an existing binding, walking up the parent chain.
-    pub fn set_existing(&mut self, k: &str, v: Value<'world>) -> Result<(), RuntimeError> {
-        if self.map.contains_key(k) {
-            self.map.insert(k.to_string(), v);
+    pub fn set_existing(&mut self, k: Symbol, v: Value<'world>) -> Result<(), RuntimeError> {
+        if self.map.contains_key(&k) {
+            self.map.insert(k, v);
             Ok(())
         } else if let Some(parent) = &self.parent {
             parent.borrow_mut().set_existing(k, v)
@@ -904,7 +988,7 @@ impl<'world> Environment<'world> {
         }
     }
 
-    pub fn get(&self, k: &str) -> Option<Value<'world>> {
+    pub fn get(&self, k: &Symbol) -> Option<Value<'world>> {
         self.map
             .get(k)
             .cloned()
@@ -928,11 +1012,11 @@ pub enum Continuation<'world> {
         env: EnvRef<'world>,
     },
     EvaluateDefine {
-        name: String,
+        name: Symbol,
         env: EnvRef<'world>,
     },
     EvaluateSet {
-        name: String,
+        name: Symbol,
         env: EnvRef<'world>,
     },
     If {
@@ -989,7 +1073,7 @@ impl<'world> Continuation<'world> {
                 Ok(Thunk::Return(Value::Null))
             }
             Continuation::EvaluateSet { name, env } => {
-                env.borrow_mut().set_existing(name, val)?;
+                env.borrow_mut().set_existing(name.clone(), val)?;
                 Ok(Thunk::Return(Value::Null))
             }
             Continuation::If { consequent, alternate, env } => {
@@ -1566,15 +1650,26 @@ mod test {
     #[test]
     fn test_parse_symbol() {
         let program = "foo";
-        let expected = Ok(vec![Value::Symbol("foo".to_string())]);
+        let expected = Ok(vec![Value::Symbol("foo".into())]);
         assert_eq!(parse_lscheme(program), expected);
+    }
+
+    #[test]
+    fn symbols_are_interned() {
+        let first = Symbol::intern("shared-name");
+        let second = Symbol::intern(&"shared-name".to_string());
+
+        assert!(Rc::ptr_eq(&first.0, &second.0));
+        let mut values = HashMap::new();
+        values.insert(first, 42);
+        assert_eq!(values.get(&second), Some(&42));
     }
 
     #[test]
     fn test_parse_simple_list() {
         let program = "(+ 1 2)";
         let expected = Ok(vec![Value::list(vec![
-            Value::Symbol("+".to_string()),
+            Value::Symbol("+".into()),
             Value::Number(1.0),
             Value::Number(2.0),
         ])]);
@@ -1585,10 +1680,10 @@ mod test {
     fn test_parse_nested_list() {
         let program = "(define x (list 1 2))";
         let expected = Ok(vec![Value::list(vec![
-            Value::Symbol("define".to_string()),
-            Value::Symbol("x".to_string()),
+            Value::Symbol("define".into()),
+            Value::Symbol("x".into()),
             Value::list(vec![
-                Value::Symbol("list".to_string()),
+                Value::Symbol("list".into()),
                 Value::Number(1.0),
                 Value::Number(2.0),
             ]),
@@ -1601,13 +1696,13 @@ mod test {
         let program = "(+ 1 2) (define a 10)";
         let expected = Ok(vec![
             Value::list(vec![
-                Value::Symbol("+".to_string()),
+                Value::Symbol("+".into()),
                 Value::Number(1.0),
                 Value::Number(2.0),
             ]),
             Value::list(vec![
-                Value::Symbol("define".to_string()),
-                Value::Symbol("a".to_string()),
+                Value::Symbol("define".into()),
+                Value::Symbol("a".into()),
                 Value::Number(10.0),
             ]),
         ]);
@@ -1625,8 +1720,8 @@ mod test {
     fn test_parse_list_with_mixed_types() {
         let program = r#"(set! my-var "hello" 123)"#;
         let expected = Ok(vec![Value::list(vec![
-            Value::Symbol("set!".to_string()),
-            Value::Symbol("my-var".to_string()),
+            Value::Symbol("set!".into()),
+            Value::Symbol("my-var".into()),
             Value::String("hello".to_string()),
             Value::Number(123.0),
         ])]);
@@ -1637,7 +1732,7 @@ mod test {
     fn test_parse_with_whitespace() {
         let program = "  ( +   1   2   )  ";
         let expected = Ok(vec![Value::list(vec![
-            Value::Symbol("+".to_string()),
+            Value::Symbol("+".into()),
             Value::Number(1.0),
             Value::Number(2.0),
         ])]);
@@ -1699,11 +1794,11 @@ mod test {
     fn test_quote() {
         assert_eq!(
             parse_and_eval("'foo").unwrap(),
-            Value::Symbol("foo".to_string())
+            Value::Symbol("foo".into())
         );
         assert_eq!(
             parse_and_eval("(quote foo)").unwrap(),
-            Value::Symbol("foo".to_string())
+            Value::Symbol("foo".into())
         );
         assert_eq!(
             parse_and_eval("'(1 2 3)").unwrap(),

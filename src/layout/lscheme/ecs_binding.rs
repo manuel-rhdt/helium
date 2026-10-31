@@ -196,7 +196,7 @@ fn block_level_element_to_value<'w>(elem: BlockLevelElement) -> Value<'w> {
         BlockLevelElement::Leaf(e)           => ("leaf", e),
         BlockLevelElement::ContainerEnd(e)   => ("container-end", e),
     };
-    Value::list(vec![Value::Symbol(tag.to_string()), entity_to_value(ent)])
+    Value::list(vec![Value::Symbol(tag.into()), entity_to_value(ent)])
 }
 
 fn text_align_to_value<'w>(align: crate::style::properties::specified::TextAlign) -> Value<'w> {
@@ -207,7 +207,7 @@ fn text_align_to_value<'w>(align: crate::style::properties::specified::TextAlign
         TextAlign::Center  => "center",
         TextAlign::Justify => "justify",
     };
-    Value::Symbol(s.to_string())
+    Value::Symbol(s.into())
 }
 
 // ---------------------------------------------------------------------------
