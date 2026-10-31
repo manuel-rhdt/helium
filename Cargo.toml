@@ -28,6 +28,7 @@ rustyline = "16"
 cssparser-color = "0.6"
 precomputed-hash = "0.1"
 imbl = "7"
+smallvec = "1.16.3"
 
 [dev-dependencies]
 assert_cmd = "1"
