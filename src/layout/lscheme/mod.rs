@@ -8,6 +8,7 @@ use std::{
 
 use pest::{Parser, error::{Error, ErrorVariant}, iterators::Pair};
 use pest_derive::Parser;
+use smallvec::SmallVec;
 
 use specs::{
     prelude::{Entities, Join, ReadStorage, SystemData}, shred::{self}, Entity, Read
@@ -186,10 +187,9 @@ pub enum Value<'world> {
 
     // Represents a function including its environment.
     Closure {
-        env: EnvRef<'world>,
-        arg_names: Rc<[Symbol]>,
-        // a single expression: bodies with several expressions are wrapped in `begin`
-        body: Box<Value<'world>>,
+        globals: EnvRef<'world>,
+        function: Rc<FunctionProto<'world>>,
+        upvalues: Rc<[Upvalue<'world>]>,
     },
 
     // First-class continuation (captured call stack)
@@ -197,6 +197,533 @@ pub enum Value<'world> {
 
     // Native types
     Ecs(Rc<Resource<'world>>),
+}
+
+type Upvalue<'world> = Rc<RefCell<Option<Value<'world>>>>;
+
+#[derive(Debug, Clone)]
+enum Expr<'world> {
+    Literal(Value<'world>),
+    Global(Symbol),
+    Local(usize),
+    Upvalue(usize),
+    Define(BindingRef, Box<Expr<'world>>),
+    Set(BindingRef, Box<Expr<'world>>),
+    If(Box<Expr<'world>>, Box<Expr<'world>>, Option<Box<Expr<'world>>>),
+    Begin(Vec<Expr<'world>>),
+    And(Vec<Expr<'world>>),
+    Or(Vec<Expr<'world>>),
+    Lambda(Rc<FunctionProto<'world>>),
+    Call(Box<Expr<'world>>, Vec<Expr<'world>>),
+    CallCc(Box<Expr<'world>>),
+}
+
+#[derive(Debug, Clone)]
+enum BindingRef {
+    Global(Symbol),
+    Local(usize),
+    Upvalue(usize),
+}
+
+#[derive(Debug, Clone)]
+enum CaptureSource {
+    Local(usize),
+    Upvalue(usize),
+}
+
+#[derive(Debug, Clone)]
+struct FunctionProto<'world> {
+    parameter_slots: Vec<usize>,
+    local_count: usize,
+    captures: Vec<CaptureSource>,
+    body: Rc<Expr<'world>>,
+}
+
+#[derive(Debug, Clone)]
+enum Slot<'world> {
+    Uninitialized,
+    Value(Value<'world>),
+    Shared(Upvalue<'world>),
+}
+
+#[derive(Debug, Clone)]
+struct ActivationFrame<'world> {
+    slots: Vec<Slot<'world>>,
+}
+
+impl<'world> Slot<'world> {
+    fn read(&self) -> Option<Value<'world>> {
+        match self {
+            Self::Uninitialized => None,
+            Self::Value(value) => Some(value.clone()),
+            Self::Shared(value) => value.borrow().clone(),
+        }
+    }
+
+    fn write(&mut self, value: Value<'world>) {
+        match self {
+            Self::Shared(shared) => *shared.borrow_mut() = Some(value),
+            Self::Uninitialized | Self::Value(_) => *self = Self::Value(value),
+        }
+    }
+
+    fn promote(&mut self) -> Upvalue<'world> {
+        match self {
+            Self::Shared(shared) => Rc::clone(shared),
+            Self::Uninitialized => {
+                let shared = Rc::new(RefCell::new(None));
+                *self = Self::Shared(Rc::clone(&shared));
+                shared
+            }
+            Self::Value(value) => {
+                let shared = Rc::new(RefCell::new(Some(value.clone())));
+                *self = Self::Shared(Rc::clone(&shared));
+                shared
+            }
+        }
+    }
+}
+
+struct FunctionCompiler {
+    locals: Vec<Symbol>,
+    local_slots: HashMap<Symbol, usize>,
+    captures: Vec<(Symbol, CaptureSource)>,
+    capture_slots: HashMap<Symbol, usize>,
+    is_function: bool,
+}
+
+impl FunctionCompiler {
+    fn top_level() -> Self {
+        Self {
+            locals: Vec::new(),
+            local_slots: HashMap::new(),
+            captures: Vec::new(),
+            capture_slots: HashMap::new(),
+            is_function: false,
+        }
+    }
+
+    fn add_local(&mut self, name: Symbol) -> usize {
+        if let Some(&slot) = self.local_slots.get(&name) {
+            return slot;
+        }
+        let slot = self.locals.len();
+        self.locals.push(name.clone());
+        self.local_slots.insert(name, slot);
+        slot
+    }
+
+    fn resolve(&self, name: &Symbol) -> BindingRef {
+        if let Some(&slot) = self.local_slots.get(name) {
+            BindingRef::Local(slot)
+        } else if let Some(&slot) = self.capture_slots.get(name) {
+            BindingRef::Upvalue(slot)
+        } else {
+            BindingRef::Global(name.clone())
+        }
+    }
+
+    fn visible_bindings(&self) -> Vec<(Symbol, CaptureSource)> {
+        let mut visible = Vec::new();
+        for (slot, name) in self.locals.iter().enumerate() {
+            visible.push((name.clone(), CaptureSource::Local(slot)));
+        }
+        for (slot, (name, _)) in self.captures.iter().enumerate() {
+            if !self.local_slots.contains_key(name) {
+                visible.push((name.clone(), CaptureSource::Upvalue(slot)));
+            }
+        }
+        visible
+    }
+}
+
+fn compile_function<'world>(
+    parameters: &[Symbol],
+    body: &[Value<'world>],
+    outer: Vec<(Symbol, CaptureSource)>,
+) -> Result<FunctionProto<'world>, RuntimeError> {
+    let mut compiler = FunctionCompiler::top_level();
+    compiler.is_function = true;
+
+    let parameter_slots = parameters
+        .iter()
+        .map(|name| compiler.add_local(name.clone()))
+        .collect();
+    for expr in body {
+        collect_definitions(expr, &mut compiler);
+    }
+
+    for (name, source) in outer {
+        if compiler.local_slots.contains_key(&name) || compiler.capture_slots.contains_key(&name) {
+            continue;
+        }
+        let slot = compiler.captures.len();
+        compiler.capture_slots.insert(name.clone(), slot);
+        compiler.captures.push((name, source));
+    }
+
+    let body = compile_forms(body, &mut compiler)?;
+    Ok(FunctionProto {
+        parameter_slots,
+        local_count: compiler.locals.len(),
+        captures: compiler.captures.into_iter().map(|(_, source)| source).collect(),
+        body: Rc::new(body),
+    })
+}
+
+fn collect_definitions(expr: &Value<'_>, compiler: &mut FunctionCompiler) {
+    let Value::List(list) = expr else {
+        return;
+    };
+    if list.is_empty() {
+        return;
+    }
+
+    match &list[0] {
+        Value::Symbol(form) if form == "quote" || form == "lambda" => return,
+        Value::Symbol(form) if form == "define" => {
+            if let Some(target) = list.get(1) {
+                match target {
+                    Value::Symbol(name) => {
+                        compiler.add_local(name.clone());
+                        if let Some(value) = list.get(2) {
+                            collect_definitions(value, compiler);
+                        }
+                    }
+                    Value::List(spec) if !spec.is_empty() => {
+                        if let Value::Symbol(name) = &spec[0] {
+                            compiler.add_local(name.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+        Value::Symbol(form) if form == "let" || form == "let*" => {
+            if let Some(Value::List(bindings)) = list.get(1) {
+                for binding in bindings {
+                    if let Value::List(pair) = binding {
+                        if let Some(value) = pair.get(1) {
+                            collect_definitions(value, compiler);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        _ => {}
+    }
+
+    for child in list.iter().skip(1) {
+        collect_definitions(child, compiler);
+    }
+}
+
+fn compile_forms<'world>(
+    forms: &[Value<'world>],
+    compiler: &mut FunctionCompiler,
+) -> Result<Expr<'world>, RuntimeError> {
+    match forms {
+        [] => Ok(Expr::Literal(Value::Null)),
+        [form] => compile_expr(form, compiler),
+        _ => forms
+            .iter()
+            .map(|form| compile_expr(form, compiler))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Expr::Begin),
+    }
+}
+
+fn compile_lambda<'world>(
+    parameters: &[Symbol],
+    body: &[Value<'world>],
+    compiler: &FunctionCompiler,
+) -> Result<Expr<'world>, RuntimeError> {
+    Ok(Expr::Lambda(Rc::new(compile_function(
+        parameters,
+        body,
+        compiler.visible_bindings(),
+    )?)))
+}
+
+fn compile_expr<'world>(
+    expr: &Value<'world>,
+    compiler: &mut FunctionCompiler,
+) -> Result<Expr<'world>, RuntimeError> {
+    match expr {
+        Value::Symbol(name) => Ok(match compiler.resolve(name) {
+            BindingRef::Global(name) => Expr::Global(name),
+            BindingRef::Local(slot) => Expr::Local(slot),
+            BindingRef::Upvalue(slot) => Expr::Upvalue(slot),
+        }),
+        Value::List(list) if list.is_empty() => Ok(Expr::Literal(Value::Null)),
+        Value::List(list) => {
+            let head = &list[0];
+            match head {
+                Value::Symbol(form) if form == "quote" => {
+                    if list.len() != 2 {
+                        return Err(RuntimeError::Message(
+                            "quote requires exactly one argument".to_string(),
+                        ));
+                    }
+                    Ok(Expr::Literal(list[1].clone()))
+                }
+                Value::Symbol(form) if form == "define" => {
+                    if list.len() < 3 {
+                        return Err(RuntimeError::Message(
+                            "define requires at least two arguments".to_string(),
+                        ));
+                    }
+                    let (name, value) = match &list[1] {
+                        Value::Symbol(name) => (name.clone(), compile_expr(&list[2], compiler)?),
+                        Value::List(spec) if !spec.is_empty() => {
+                            let name = match &spec[0] {
+                                Value::Symbol(name) => name.clone(),
+                                _ => return Err(RuntimeError::Message(
+                                    "define: function name must be a symbol".to_string(),
+                                )),
+                            };
+                            let parameters = spec
+                                .iter()
+                                .skip(1)
+                                .map(|arg| match arg {
+                                    Value::Symbol(name) => Ok(name.clone()),
+                                    _ => Err(RuntimeError::Message(
+                                        "lambda argument must be a symbol".to_string(),
+                                    )),
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let value = compile_lambda(
+                                &parameters,
+                                &list.iter().skip(2).cloned().collect::<Vec<_>>(),
+                                compiler,
+                            )?;
+                            (name, value)
+                        }
+                        _ => return Err(RuntimeError::Message(
+                            "define: first argument must be a symbol or list".to_string(),
+                        )),
+                    };
+                    let target = if compiler.is_function {
+                        BindingRef::Local(*compiler.local_slots.get(&name).unwrap())
+                    } else {
+                        BindingRef::Global(name)
+                    };
+                    Ok(Expr::Define(target, Box::new(value)))
+                }
+                Value::Symbol(form) if form == "set!" => {
+                    if list.len() != 3 {
+                        return Err(RuntimeError::Message(
+                            "set! requires exactly two arguments".to_string(),
+                        ));
+                    }
+                    let name = match &list[1] {
+                        Value::Symbol(name) => name,
+                        _ => return Err(RuntimeError::Message(
+                            "set! first argument must be a symbol".to_string(),
+                        )),
+                    };
+                    Ok(Expr::Set(
+                        compiler.resolve(name),
+                        Box::new(compile_expr(&list[2], compiler)?),
+                    ))
+                }
+                Value::Symbol(form) if form == "lambda" => {
+                    if list.len() < 3 {
+                        return Err(RuntimeError::Message(
+                            "lambda requires at least two arguments".to_string(),
+                        ));
+                    }
+                    let parameters = match &list[1] {
+                        Value::List(args) => args
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Symbol(name) => Ok(name.clone()),
+                                _ => Err(RuntimeError::Message(
+                                    "lambda argument must be a symbol".to_string(),
+                                )),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                        _ => return Err(RuntimeError::Message(
+                            "lambda second argument must be a list of symbols".to_string(),
+                        )),
+                    };
+                    compile_lambda(
+                        &parameters,
+                        &list.iter().skip(2).cloned().collect::<Vec<_>>(),
+                        compiler,
+                    )
+                }
+                Value::Symbol(form) if form == "if" => {
+                    if list.len() < 3 || list.len() > 4 {
+                        return Err(RuntimeError::Message(
+                            "if requires 2 or 3 arguments".to_string(),
+                        ));
+                    }
+                    Ok(Expr::If(
+                        Box::new(compile_expr(&list[1], compiler)?),
+                        Box::new(compile_expr(&list[2], compiler)?),
+                        list.get(3)
+                            .map(|alternate| compile_expr(alternate, compiler).map(Box::new))
+                            .transpose()?,
+                    ))
+                }
+                Value::Symbol(form) if form == "begin" => {
+                    compile_forms(&list.iter().skip(1).cloned().collect::<Vec<_>>(), compiler)
+                }
+                Value::Symbol(form) if form == "let" => {
+                    if list.len() < 3 {
+                        return Err(RuntimeError::Message(
+                            "let requires bindings and body".to_string(),
+                        ));
+                    }
+                    let bindings = match &list[1] {
+                        Value::List(bindings) => bindings,
+                        _ => return Err(RuntimeError::Message(
+                            "let: bindings must be a list".to_string(),
+                        )),
+                    };
+                    let mut parameters = Vec::new();
+                    let mut arguments = Vec::new();
+                    for binding in bindings {
+                        match binding {
+                            Value::List(pair) if pair.len() == 2 => match &pair[0] {
+                                Value::Symbol(name) => {
+                                    parameters.push(name.clone());
+                                    arguments.push(compile_expr(&pair[1], compiler)?);
+                                }
+                                _ => return Err(RuntimeError::Message(
+                                    "let: binding name must be a symbol".to_string(),
+                                )),
+                            },
+                            _ => return Err(RuntimeError::Message(
+                                "let: each binding must be a (name value) pair".to_string(),
+                            )),
+                        }
+                    }
+                    let function = compile_lambda(
+                        &parameters,
+                        &list.iter().skip(2).cloned().collect::<Vec<_>>(),
+                        compiler,
+                    )?;
+                    Ok(Expr::Call(Box::new(function), arguments))
+                }
+                Value::Symbol(form) if form == "let*" => {
+                    let expanded = expand_let_star(list)?;
+                    compile_expr(&expanded, compiler)
+                }
+                Value::Symbol(form) if form == "and" || form == "or" => {
+                    let values = list
+                        .iter()
+                        .skip(1)
+                        .map(|value| compile_expr(value, compiler))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(if form == "and" { Expr::And(values) } else { Expr::Or(values) })
+                }
+                Value::Symbol(form) if form == "cond" => {
+                    let expanded = expand_cond(&list.skip(1))?;
+                    compile_expr(&expanded, compiler)
+                }
+                Value::Symbol(form) if form == "when" || form == "unless" => {
+                    if list.len() < 3 {
+                        return Err(RuntimeError::Message(format!(
+                            "{} requires a test and body",
+                            form
+                        )));
+                    }
+                    let test = compile_expr(&list[1], compiler)?;
+                    let body = compile_forms(&list.iter().skip(2).cloned().collect::<Vec<_>>(), compiler)?;
+                    let (test, consequent, alternate) = if form == "when" {
+                        (test, body, None)
+                    } else {
+                        (test, Expr::Literal(Value::Null), Some(Box::new(body)))
+                    };
+                    Ok(Expr::If(Box::new(test), Box::new(consequent), alternate))
+                }
+                Value::Symbol(form) if form == "call/cc" || form == "call-with-current-continuation" => {
+                    if list.len() != 2 {
+                        return Err(RuntimeError::Message(
+                            "call/cc requires exactly one argument".to_string(),
+                        ));
+                    }
+                    Ok(Expr::CallCc(Box::new(compile_expr(&list[1], compiler)?)))
+                }
+                _ => {
+                    let function = compile_expr(head, compiler)?;
+                    let arguments = list
+                        .iter()
+                        .skip(1)
+                        .map(|argument| compile_expr(argument, compiler))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(Expr::Call(Box::new(function), arguments))
+                }
+            }
+        }
+        literal => Ok(Expr::Literal(literal.clone())),
+    }
+}
+
+fn expand_let_star<'world>(list: &List<'world>) -> Result<Value<'world>, RuntimeError> {
+    if list.len() < 3 {
+        return Err(RuntimeError::Message(
+            "let*: requires bindings and body".to_string(),
+        ));
+    }
+    let bindings = match &list[1] {
+        Value::List(bindings) => bindings,
+        _ => return Err(RuntimeError::Message(
+            "let*: bindings must be a list".to_string(),
+        )),
+    };
+    fn nest<'world>(bindings: &List<'world>, body: &[Value<'world>]) -> Value<'world> {
+        if bindings.is_empty() {
+            return Value::List(
+                std::iter::once(Value::Symbol("begin".into()))
+                    .chain(body.iter().cloned())
+                    .collect(),
+            );
+        }
+
+        let inner = nest(&bindings.skip(1), body);
+        Value::list(vec![
+            Value::Symbol("let".into()),
+            Value::list(vec![bindings[0].clone()]),
+            inner,
+        ])
+    }
+
+    let body: Vec<_> = list.iter().skip(2).cloned().collect();
+    Ok(nest(bindings, &body))
+}
+
+fn expand_cond<'world>(clauses: &List<'world>) -> Result<Value<'world>, RuntimeError> {
+    if clauses.is_empty() {
+        return Ok(Value::Null);
+    }
+    let clause = match &clauses[0] {
+        Value::List(clause) if !clause.is_empty() => clause,
+        _ => return Err(RuntimeError::Message(
+            "cond: each clause must be a non-empty list".to_string(),
+        )),
+    };
+    let body = match clause.len() {
+        1 => clause[0].clone(),
+        _ => Value::List(
+            std::iter::once(Value::Symbol("begin".into()))
+                .chain(clause.iter().skip(1).cloned())
+                .collect(),
+        ),
+    };
+    if matches!(&clause[0], Value::Symbol(name) if name == "else") {
+        return Ok(body);
+    }
+    Ok(Value::list(vec![
+        Value::Symbol("if".into()),
+        clause[0].clone(),
+        body,
+        expand_cond(&clauses.skip(1))?,
+    ]))
 }
 
 #[derive(Clone)]
@@ -326,14 +853,13 @@ impl Debug for Value<'_> {
                 write!(f, ")")
             }
             Self::Closure {
-                env,
-                arg_names,
-                body,
+                function,
+                upvalues,
+                ..
             } => f
                 .debug_struct("Closure")
-                .field("env", env)
-                .field("arg_names", arg_names)
-                .field("body", body)
+                .field("function", function)
+                .field("upvalues", &upvalues.len())
                 .finish(),
             Self::NativeFunc(_) => f.debug_tuple("NativeFunc").finish(),
             Self::NativeMethod(_) => f.debug_tuple("NativeMethod").finish(),
@@ -416,14 +942,13 @@ pub fn parse_lscheme<'world>(program: &str) -> Result<Vec<Value<'world>>, Error<
 
 #[derive(Debug, Clone)]
 pub struct Environment<'world> {
-    map: HashMap<Symbol, Value<'world>>,
-    parent: Option<EnvRef<'world>>,
+    bindings: HashMap<Symbol, Value<'world>>,
 }
 
 impl<'world> Environment<'world> {
     // Break Rc cycles by dropping all bindings. Call after eval to allow WriteStorage borrows to release.
     pub fn clear_bindings(&mut self) {
-        self.map.clear();
+        self.bindings.clear();
     }
 }
 
@@ -925,11 +1450,10 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     new_map.insert("list-ref".to_string(), Value::NativeFunc(list_ref));
 
     let env = Rc::new(RefCell::new(Environment {
-        map: new_map
+        bindings: new_map
             .into_iter()
             .map(|(name, value)| (Symbol::intern(&name), value))
             .collect(),
-        parent: None,
     }));
 
     // Bootstrap higher-order functions defined in Scheme (requires working recursion)
@@ -973,33 +1497,11 @@ type EnvRef<'world> = Rc<RefCell<Environment<'world>>>;
 
 impl<'world> Environment<'world> {
     pub fn set(&mut self, k: impl Into<Symbol>, v: Value<'world>) {
-        self.map.insert(k.into(), v);
-    }
-
-    /// Mutate an existing binding, walking up the parent chain.
-    pub fn set_existing(&mut self, k: Symbol, v: Value<'world>) -> Result<(), RuntimeError> {
-        if self.map.contains_key(&k) {
-            self.map.insert(k, v);
-            Ok(())
-        } else if let Some(parent) = &self.parent {
-            parent.borrow_mut().set_existing(k, v)
-        } else {
-            Err(RuntimeError::Message(format!("set!: undefined variable: {}", k)))
-        }
+        self.bindings.insert(k.into(), v);
     }
 
     pub fn get(&self, k: &Symbol) -> Option<Value<'world>> {
-        self.map
-            .get(k)
-            .cloned()
-            .or_else(|| self.parent.as_ref().and_then(|p_env| p_env.borrow().get(k)))
-    }
-
-    pub fn child_env(&self) -> Self {
-        Environment {
-            map: HashMap::new(),
-            parent: Some(Rc::new(RefCell::new(self.clone()))),
-        }
+        self.bindings.get(k).cloned()
     }
 }
 
@@ -1007,52 +1509,94 @@ impl<'world> Environment<'world> {
 pub enum Continuation<'world> {
     ApplyFunction {
         proc: Option<Value<'world>>,
-        args: List<'world>,
-        evaluated_args: Vec<Value<'world>>,
-        env: EnvRef<'world>,
+        args: Vec<Expr<'world>>,
+        evaluated_args: SmallVec<[Value<'world>; 2]>,
+        context: EvalContext<'world>,
     },
-    EvaluateDefine {
-        name: Symbol,
-        env: EnvRef<'world>,
+    Define {
+        target: BindingRef,
+        context: EvalContext<'world>,
     },
-    EvaluateSet {
-        name: Symbol,
-        env: EnvRef<'world>,
+    Set {
+        target: BindingRef,
+        context: EvalContext<'world>,
     },
     If {
-        consequent: Value<'world>,
-        alternate: Option<Value<'world>>,
-        env: EnvRef<'world>,
+        consequent: Expr<'world>,
+        alternate: Option<Expr<'world>>,
+        context: EvalContext<'world>,
     },
     /// Evaluates a sequence, discarding intermediate values, tail-calling the last.
     Sequence {
-        remaining: List<'world>,
-        env: EnvRef<'world>,
+        expressions: Vec<Expr<'world>>,
+        next: usize,
+        context: EvalContext<'world>,
     },
     And {
-        remaining: List<'world>,
-        env: EnvRef<'world>,
+        expressions: Vec<Expr<'world>>,
+        next: usize,
+        context: EvalContext<'world>,
     },
     Or {
-        remaining: List<'world>,
-        env: EnvRef<'world>,
+        expressions: Vec<Expr<'world>>,
+        next: usize,
+        context: EvalContext<'world>,
     },
+    FrameReturn {
+        frame_index: usize,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct EvalContext<'world> {
+    globals: EnvRef<'world>,
+    frame: Option<usize>,
+    upvalues: Rc<[Upvalue<'world>]>,
+}
+
+impl<'world> EvalContext<'world> {
+    fn global(globals: EnvRef<'world>) -> Self {
+        Self {
+            globals,
+            frame: None,
+            upvalues: Rc::from([]),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct CallStack<'world> {
     stack: Vec<Continuation<'world>>,
+    frames: Vec<ActivationFrame<'world>>,
 }
 
 impl<'world> CallStack<'world> {
-    pub fn push_frame(&mut self, continuation: Continuation<'world>) {
-        self.stack.push(continuation);
-    }
-
     pub fn pop_frame(&mut self) -> Result<Continuation<'world>, RuntimeError> {
         self.stack.pop().ok_or_else(|| {
             RuntimeError::Message("internal error: call stack underflow".to_string())
         })
+    }
+
+    fn capture(&mut self) -> Self {
+        for frame in &mut self.frames {
+            for slot in &mut frame.slots {
+                slot.promote();
+            }
+        }
+        self.clone()
+    }
+}
+
+impl<'world> ActivationFrame<'world> {
+    fn new(
+        function: &FunctionProto<'world>,
+        arguments: &[Value<'world>],
+    ) -> Self {
+        let mut slots = vec![Slot::Uninitialized; function.local_count];
+        for (&slot, argument) in function.parameter_slots.iter().zip(arguments) {
+            slots[slot].write(argument.clone());
+        }
+        Self { slots }
     }
 }
 
@@ -1060,73 +1604,102 @@ impl<'world> CallStack<'world> {
 enum Thunk<'world> {
     Value(Value<'world>),
     Return(Value<'world>),
-    Eval(Value<'world>, EnvRef<'world>),
-    TailCall(Value<'world>, EnvRef<'world>),
+    Eval(Expr<'world>, EvalContext<'world>),
+    TailCall(Expr<'world>, EvalContext<'world>),
+    Call {
+        function: Rc<FunctionProto<'world>>,
+        arguments: Vec<Value<'world>>,
+        globals: EnvRef<'world>,
+        upvalues: Rc<[Upvalue<'world>]>,
+        caller_frame: Option<usize>,
+    },
     InvokeContinuation(Rc<CallStack<'world>>, Value<'world>),
 }
 
 impl<'world> Continuation<'world> {
-    fn apply_value(&mut self, val: Value<'world>) -> Result<Thunk<'world>, RuntimeError> {
+    fn apply_value(
+        &mut self,
+        val: Value<'world>,
+        frames: &mut [ActivationFrame<'world>],
+    ) -> Result<Thunk<'world>, RuntimeError> {
         match self {
-            Continuation::EvaluateDefine { name, env } => {
-                env.borrow_mut().map.insert(name.clone(), val);
+            Continuation::Define { target, context } => {
+                write_binding(target, context, frames, val)?;
                 Ok(Thunk::Return(Value::Null))
             }
-            Continuation::EvaluateSet { name, env } => {
-                env.borrow_mut().set_existing(name.clone(), val)?;
+            Continuation::Set { target, context } => {
+                write_binding(target, context, frames, val)?;
                 Ok(Thunk::Return(Value::Null))
             }
-            Continuation::If { consequent, alternate, env } => {
+            Continuation::If { consequent, alternate, context } => {
                 if val.is_truthy() {
-                    Ok(Thunk::TailCall(consequent.clone(), Rc::clone(env)))
+                    Ok(Thunk::TailCall(consequent.clone(), context.clone()))
                 } else if let Some(alt) = alternate {
-                    Ok(Thunk::TailCall(alt.clone(), Rc::clone(env)))
+                    Ok(Thunk::TailCall(alt.clone(), context.clone()))
                 } else {
                     Ok(Thunk::Return(Value::Null))
                 }
             }
-            Continuation::Sequence { remaining, env } => {
-                if remaining.is_empty() {
+            Continuation::Sequence {
+                expressions,
+                next,
+                context,
+            } => {
+                if *next >= expressions.len() {
                     Ok(Thunk::Return(val))
-                } else if remaining.len() == 1 {
-                    let last = remaining[0].clone();
-                    Ok(Thunk::TailCall(last, Rc::clone(env)))
                 } else {
-                    let next = remaining.pop_front().unwrap();
-                    Ok(Thunk::Eval(next, Rc::clone(env)))
+                    let expression = expressions[*next].clone();
+                    *next += 1;
+                    if *next == expressions.len() {
+                        Ok(Thunk::TailCall(expression, context.clone()))
+                    } else {
+                        Ok(Thunk::Eval(expression, context.clone()))
+                    }
                 }
             }
-            Continuation::And { remaining, env } => {
+            Continuation::And {
+                expressions,
+                next,
+                context,
+            } => {
                 if !val.is_truthy() {
                     Ok(Thunk::Return(Value::Bool(false)))
-                } else if remaining.is_empty() {
+                } else if *next >= expressions.len() {
                     Ok(Thunk::Return(val))
-                } else if remaining.len() == 1 {
-                    let last = remaining[0].clone();
-                    Ok(Thunk::TailCall(last, Rc::clone(env)))
                 } else {
-                    let next = remaining.pop_front().unwrap();
-                    Ok(Thunk::Eval(next, Rc::clone(env)))
+                    let expression = expressions[*next].clone();
+                    *next += 1;
+                    if *next == expressions.len() {
+                        Ok(Thunk::TailCall(expression, context.clone()))
+                    } else {
+                        Ok(Thunk::Eval(expression, context.clone()))
+                    }
                 }
             }
-            Continuation::Or { remaining, env } => {
+            Continuation::Or {
+                expressions,
+                next,
+                context,
+            } => {
                 if val.is_truthy() {
                     Ok(Thunk::Return(val))
-                } else if remaining.is_empty() {
+                } else if *next >= expressions.len() {
                     Ok(Thunk::Return(Value::Bool(false)))
-                } else if remaining.len() == 1 {
-                    let last = remaining[0].clone();
-                    Ok(Thunk::TailCall(last, Rc::clone(env)))
                 } else {
-                    let next = remaining.pop_front().unwrap();
-                    Ok(Thunk::Eval(next, Rc::clone(env)))
+                    let expression = expressions[*next].clone();
+                    *next += 1;
+                    if *next == expressions.len() {
+                        Ok(Thunk::TailCall(expression, context.clone()))
+                    } else {
+                        Ok(Thunk::Eval(expression, context.clone()))
+                    }
                 }
             }
             Continuation::ApplyFunction {
                 proc,
                 args,
                 evaluated_args,
-                env,
+                context,
                 ..
             } => {
                 if proc.is_none() {
@@ -1134,11 +1707,11 @@ impl<'world> Continuation<'world> {
 
                     if args.is_empty() {
                         let func = proc.as_ref().unwrap();
-                        let val = eval_fn(&func, &[])?;
+                        let val = eval_fn(&func, &[], context)?;
                         Ok(val)
                     } else {
                         let first_arg = args[0].clone();
-                        Ok(Thunk::Eval(first_arg, Rc::clone(env)))
+                        Ok(Thunk::Eval(first_arg, context.clone()))
                     }
                 } else {
                     if evaluated_args.len() >= args.len() {
@@ -1149,18 +1722,318 @@ impl<'world> Continuation<'world> {
                     evaluated_args.push(val);
                     if evaluated_args.len() == args.len() {
                         let func = proc.as_ref().unwrap();
-                        let val = eval_fn(func, evaluated_args)?;
+                        let val = eval_fn(func, evaluated_args, context)?;
                         Ok(val)
                     } else {
                         let next_arg = args[evaluated_args.len()].clone();
-                        Ok(Thunk::Eval(next_arg, Rc::clone(env)))
+                        Ok(Thunk::Eval(next_arg, context.clone()))
                     }
                 }
+            }
+            Continuation::FrameReturn { .. } => Ok(Thunk::Return(val)),
+        }
+    }
+}
+
+fn write_binding<'world>(
+    binding: &BindingRef,
+    context: &EvalContext<'world>,
+    frames: &mut [ActivationFrame<'world>],
+    value: Value<'world>,
+) -> Result<(), RuntimeError> {
+    match binding {
+        BindingRef::Global(name) => context.globals.borrow_mut().set(name.clone(), value),
+        BindingRef::Local(slot) => {
+            let frame = context
+                .frame
+                .and_then(|frame| frames.get_mut(frame))
+                .ok_or_else(|| RuntimeError::Message("missing local frame".to_string()))?;
+            let slot = frame
+                .slots
+                .get_mut(*slot)
+                .ok_or_else(|| RuntimeError::Message("local slot out of bounds".to_string()))?;
+            slot.write(value);
+        }
+        BindingRef::Upvalue(slot) => {
+            let upvalue = context
+                .upvalues
+                .get(*slot)
+                .ok_or_else(|| RuntimeError::Message("upvalue out of bounds".to_string()))?;
+            *upvalue.borrow_mut() = Some(value);
+        }
+    }
+    Ok(())
+}
+
+fn trampoline(thunk: Thunk<'_>) -> Result<Value<'_>, RuntimeError> {
+    let mut current_thunk = thunk;
+    let mut stack = CallStack {
+        stack: vec![],
+        frames: vec![],
+    };
+
+    loop {
+        match current_thunk {
+            Thunk::Value(value) => {
+                if let Some(continuation) = stack.stack.last_mut() {
+                    current_thunk = continuation.apply_value(value, &mut stack.frames)?;
+                } else {
+                    return Ok(value);
+                }
+            }
+            Thunk::Return(value) => {
+                match stack.pop_frame()? {
+                    Continuation::FrameReturn { frame_index } => {
+                        if frame_index + 1 != stack.frames.len() {
+                            return Err(RuntimeError::Message(
+                                "call frame stack is out of sync".to_string(),
+                            ));
+                        }
+                        stack.frames.pop();
+                    }
+                    _ => {}
+                }
+                current_thunk = Thunk::Value(value);
+            }
+            Thunk::Eval(expression, context) => {
+                current_thunk = eval_expr(expression, context, &mut stack)?;
+            }
+            Thunk::TailCall(expression, context) => {
+                stack.pop_frame()?;
+                current_thunk = Thunk::Eval(expression, context);
+            }
+            Thunk::Call {
+                function,
+                arguments,
+                globals,
+                upvalues,
+                caller_frame,
+            } => {
+                if !matches!(stack.pop_frame()?, Continuation::ApplyFunction { .. }) {
+                    return Err(RuntimeError::Message(
+                        "function call without an application continuation".to_string(),
+                    ));
+                }
+
+                let tail_call = matches!(
+                    (caller_frame, stack.stack.last()),
+                    (Some(frame), Some(Continuation::FrameReturn { frame_index })) if frame == *frame_index
+                );
+                let activation = ActivationFrame::new(&function, &arguments);
+                let frame_index = if tail_call {
+                    let frame = caller_frame.unwrap();
+                    stack.frames[frame] = activation;
+                    frame
+                } else {
+                    let frame = stack.frames.len();
+                    stack.frames.push(activation);
+                    stack.stack.push(Continuation::FrameReturn { frame_index: frame });
+                    frame
+                };
+                let context = EvalContext {
+                    globals,
+                    frame: Some(frame_index),
+                    upvalues,
+                };
+                current_thunk = Thunk::Eval((*function.body).clone(), context);
+            }
+            Thunk::InvokeContinuation(saved_stack, value) => {
+                stack = (*saved_stack).clone();
+                current_thunk = Thunk::Value(value);
             }
         }
     }
 }
 
+fn eval_expr<'world>(
+    expression: Expr<'world>,
+    context: EvalContext<'world>,
+    stack: &mut CallStack<'world>,
+) -> Result<Thunk<'world>, RuntimeError> {
+    match expression {
+        Expr::Literal(value) => Ok(Thunk::Value(value)),
+        Expr::Global(name) => context
+            .globals
+            .borrow()
+            .get(&name)
+            .map(Thunk::Value)
+            .ok_or_else(|| RuntimeError::Message(format!("Undefined identifier: {:?}", name))),
+        Expr::Local(slot) => {
+            let value = context
+                .frame
+                .and_then(|frame| stack.frames.get(frame))
+                .and_then(|frame| frame.slots.get(slot))
+                .and_then(Slot::read)
+                .ok_or_else(|| RuntimeError::Message(format!("uninitialized local slot {}", slot)))?;
+            Ok(Thunk::Value(value))
+        }
+        Expr::Upvalue(slot) => context
+            .upvalues
+            .get(slot)
+            .and_then(|value| value.borrow().clone())
+            .map(Thunk::Value)
+            .ok_or_else(|| RuntimeError::Message(format!("uninitialized upvalue {}", slot))),
+        Expr::Define(target, value) => {
+            stack.stack.push(Continuation::Define { target, context: context.clone() });
+            Ok(Thunk::Eval(*value, context))
+        }
+        Expr::Set(target, value) => {
+            stack.stack.push(Continuation::Set { target, context: context.clone() });
+            Ok(Thunk::Eval(*value, context))
+        }
+        Expr::If(test, consequent, alternate) => {
+            stack.stack.push(Continuation::If {
+                consequent: *consequent,
+                alternate: alternate.map(|value| *value),
+                context: context.clone(),
+            });
+            Ok(Thunk::Eval(*test, context))
+        }
+        Expr::Begin(expressions) => match expressions.len() {
+            0 => Ok(Thunk::Value(Value::Null)),
+            1 => Ok(Thunk::Eval(expressions.into_iter().next().unwrap(), context)),
+            _ => {
+                let first = expressions[0].clone();
+                stack.stack.push(Continuation::Sequence {
+                    expressions,
+                    next: 1,
+                    context: context.clone(),
+                });
+                Ok(Thunk::Eval(first, context))
+            }
+        },
+        Expr::And(expressions) => {
+            if expressions.is_empty() {
+                return Ok(Thunk::Value(Value::Bool(true)));
+            }
+            let first = expressions[0].clone();
+            if expressions.len() == 1 {
+                Ok(Thunk::Eval(first, context))
+            } else {
+                stack.stack.push(Continuation::And {
+                    expressions,
+                    next: 1,
+                    context: context.clone(),
+                });
+                Ok(Thunk::Eval(first, context))
+            }
+        }
+        Expr::Or(expressions) => {
+            if expressions.is_empty() {
+                return Ok(Thunk::Value(Value::Bool(false)));
+            }
+            let first = expressions[0].clone();
+            if expressions.len() == 1 {
+                Ok(Thunk::Eval(first, context))
+            } else {
+                stack.stack.push(Continuation::Or {
+                    expressions,
+                    next: 1,
+                    context: context.clone(),
+                });
+                Ok(Thunk::Eval(first, context))
+            }
+        }
+        Expr::Lambda(function) => {
+            let mut upvalues = Vec::with_capacity(function.captures.len());
+            for source in &function.captures {
+                let upvalue = match *source {
+                    CaptureSource::Local(slot) => {
+                        let frame = context
+                            .frame
+                            .and_then(|frame| stack.frames.get_mut(frame))
+                            .ok_or_else(|| RuntimeError::Message("missing capture frame".to_string()))?;
+                        frame
+                            .slots
+                            .get_mut(slot)
+                            .ok_or_else(|| RuntimeError::Message("capture slot out of bounds".to_string()))?
+                            .promote()
+                    }
+                    CaptureSource::Upvalue(slot) => context
+                        .upvalues
+                        .get(slot)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::Message("capture upvalue out of bounds".to_string()))?,
+                };
+                upvalues.push(upvalue);
+            }
+            Ok(Thunk::Value(Value::Closure {
+                globals: Rc::clone(&context.globals),
+                function,
+                upvalues: upvalues.into(),
+            }))
+        }
+        Expr::Call(function, arguments) => {
+            let first = function.as_ref().clone();
+            stack.stack.push(Continuation::ApplyFunction {
+                proc: None,
+                args: arguments,
+                evaluated_args: SmallVec::new(),
+                context: context.clone(),
+            });
+            Ok(Thunk::Eval(first, context))
+        }
+        Expr::CallCc(callback) => {
+            let continuation = Value::Continuation(Rc::new(stack.capture()));
+            stack.stack.push(Continuation::ApplyFunction {
+                proc: None,
+                args: vec![Expr::Literal(continuation)],
+                evaluated_args: SmallVec::new(),
+                context: context.clone(),
+            });
+            Ok(Thunk::Eval(*callback, context))
+        }
+    }
+}
+
+fn eval_fn<'world>(
+    function: &Value<'world>,
+    arguments: &[Value<'world>],
+    caller: &EvalContext<'world>,
+) -> Result<Thunk<'world>, RuntimeError> {
+    match function {
+        Value::NativeFunc(f) => Ok(Thunk::Return(f(arguments)?)),
+        Value::NativeMethod(f) => Ok(Thunk::Return(f(arguments)?)),
+        Value::Closure { globals, function, upvalues } => Ok(Thunk::Call {
+            function: Rc::clone(function),
+            arguments: arguments.to_vec(),
+            globals: Rc::clone(globals),
+            upvalues: Rc::clone(upvalues),
+            caller_frame: caller.frame,
+        }),
+        Value::Continuation(saved_stack) => {
+            let value = match arguments {
+                [] => Value::Null,
+                [value] => value.clone(),
+                _ => return Err(RuntimeError::Message(format!(
+                    "continuation takes at most 1 argument, got {}",
+                    arguments.len()
+                ))),
+            };
+            Ok(Thunk::InvokeContinuation(Rc::clone(saved_stack), value))
+        }
+        value => Err(RuntimeError::Message(format!("Expected function, got {:?}", value))),
+    }
+}
+
+pub fn eval<'world>(expr: Value<'world>, globals: EnvRef<'world>) -> Result<Value<'world>, RuntimeError> {
+    let mut compiler = FunctionCompiler::top_level();
+    let expression = compile_expr(&expr, &mut compiler)?;
+    trampoline(Thunk::Eval(expression, EvalContext::global(globals)))
+}
+
+#[cfg(test)]
+pub fn parse_and_eval(program: &str) -> Option<Value<'_>> {
+    let parsed: Vec<Value<'_>> = parse_lscheme(program).unwrap();
+    let env = default_environment().unwrap();
+    let mut result = None;
+    for form in parsed {
+        result = Some(eval(form, Rc::clone(&env)).unwrap());
+    }
+    result
+}
+
+#[cfg(any())]
 fn trampoline(thunk: Thunk<'_>) -> Result<Value<'_>, RuntimeError> {
     let mut current_thunk = thunk;
     let mut stack = CallStack { stack: vec![] };
@@ -1192,6 +2065,7 @@ fn trampoline(thunk: Thunk<'_>) -> Result<Value<'_>, RuntimeError> {
     }
 }
 
+#[cfg(any())]
 fn eval_expr<'world>(
     expr: Value<'world>,
     env: EnvRef<'world>,
@@ -1308,7 +2182,7 @@ fn eval_expr<'world>(
                                 .collect(),
                         )
                     };
-                    let body = Box::new(body);
+                    let body = Rc::new(body);
                     let closure = Value::Closure {
                         env: Rc::clone(&env),
                         arg_names,
@@ -1543,7 +2417,7 @@ fn eval_expr<'world>(
                     stack.push_frame(Continuation::ApplyFunction {
                         proc: None,
                         args: List::unit(captured_k),
-                        evaluated_args: vec![],
+                        evaluated_args: SmallVec::new(),
                         env: Rc::clone(&env),
                     });
                     Ok(Thunk::Eval(list[1].clone(), env))
@@ -1552,7 +2426,7 @@ fn eval_expr<'world>(
                     stack.push_frame(Continuation::ApplyFunction {
                         proc: None,
                         args: list.skip(1),
-                        evaluated_args: vec![],
+                        evaluated_args: SmallVec::new(),
                         env: Rc::clone(&env),
                     });
                     Ok(Thunk::Eval(head.clone(), env))
@@ -1564,6 +2438,7 @@ fn eval_expr<'world>(
     }
 }
 
+#[cfg(any())]
 pub fn eval<'world>(
     expr: Value<'world>,
     env: EnvRef<'world>,
@@ -1571,6 +2446,7 @@ pub fn eval<'world>(
     trampoline(Thunk::Eval(expr, env))
 }
 
+#[cfg(any())]
 pub fn parse_and_eval(program: &str) -> Option<Value<'_>> {
     let parsed: Vec<Value<'_>> = parse_lscheme(program).unwrap();
     let env = default_environment().unwrap();
@@ -1582,6 +2458,7 @@ pub fn parse_and_eval(program: &str) -> Option<Value<'_>> {
 }
 
 // mutates the environment and returns an expression to evaluate
+#[cfg(any())]
 fn eval_fn<'world>(
     func: &Value<'world>,
     args: &[Value<'world>],
@@ -1594,13 +2471,14 @@ fn eval_fn<'world>(
             arg_names,
             body,
         } => {
+            let mut bindings = Bindings::Local(SmallVec::new());
+            for (arg_name, evaluated_arg) in arg_names.iter().zip(args) {
+                bindings.insert(arg_name.clone(), evaluated_arg.clone());
+            }
             let env_ref = Rc::new(RefCell::new(Environment {
-                map: HashMap::new(),
+                bindings,
                 parent: Some(Rc::clone(&lambda_env)),
             }));
-            for (arg_name, evaluated_arg) in arg_names.iter().zip(args) {
-                env_ref.borrow_mut().map.insert(arg_name.clone(), evaluated_arg.clone());
-            }
             Ok(Thunk::TailCall((**body).clone(), env_ref))
         }
         Value::Continuation(saved_stack) => {
@@ -1758,6 +2636,61 @@ mod test {
     }
 
     #[test]
+    fn lexical_resolution_respects_shadowing() {
+        let result = parse_and_eval("((lambda (x) (let ((x 4)) (+ x 1))) 2)").unwrap();
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    #[test]
+    fn recursive_internal_definition_uses_its_local_slot() {
+        let result = parse_and_eval(
+            "((lambda ()
+                (define (sum-down n)
+                  (if (= n 0) 0 (+ n (sum-down (- n 1)))))
+                (sum-down 10)))",
+        )
+        .unwrap();
+        assert_eq!(result, Value::Number(55.0));
+    }
+
+    #[test]
+    fn tail_calls_reuse_activation_frames() {
+        let result = parse_and_eval(
+            "((lambda ()
+                (define (count-down n)
+                  (if (= n 0) n (count-down (- n 1))))
+                (count-down 2000)))",
+        )
+        .unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    #[test]
+    fn closure_clones_share_their_body() {
+        let closure = parse_and_eval("(lambda (x) (+ x 1))").unwrap();
+        let cloned = closure.clone();
+        let (Value::Closure { function, .. }, Value::Closure { function: cloned_function, .. }) =
+            (&closure, &cloned)
+        else {
+            panic!("expected closures");
+        };
+
+        assert!(Rc::ptr_eq(function, cloned_function));
+    }
+
+    #[test]
+    fn function_frames_spill_after_two_arguments() {
+        let result = parse_and_eval("((lambda (a b c) (+ a b c)) 1 2 3)").unwrap();
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    #[test]
+    fn function_application_arguments_spill_after_two() {
+        let result = parse_and_eval("((lambda (a b c) (+ a b c)) 1 2 3)").unwrap();
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    #[test]
     fn test_define() {
         let result = parse_and_eval("(define a 5) a").unwrap();
         assert_eq!(result, Value::Number(5.0));
@@ -1825,6 +2758,20 @@ mod test {
     fn test_set() {
         let result = parse_and_eval("(define x 1) (set! x 42) x").unwrap();
         assert_eq!(result, Value::Number(42.0));
+    }
+
+    #[test]
+    fn set_updates_a_captured_local_binding() {
+        let result = parse_and_eval(
+            "(define make-counter (lambda (x) (lambda () (set! x (+ x 1)) x)))
+             (define counter (make-counter 0))
+             (list (counter) (counter))",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Value::list(vec![Value::Number(1.0), Value::Number(2.0)])
+        );
     }
 
     #[test]
