@@ -3,16 +3,17 @@ use super::{
     text::{font::GlyphIndex, Font},
     FontMap,
 };
-use crate::style::properties::computed::{ComputedValues, PixelLength as Px, TextAlign};
+use crate::style::properties::computed::{ComputedValues, PixelLength as Px, TextAlign, RGBA};
 
 use crate::layout::text::shape;
 
-use components::{Glyphs, IntrinsicSize, KernedGlyphs, Position};
+use components::{GraphicsOp, Glyphs, IntrinsicSize, KernedGlyphs, Position};
 use lemon_pdf::font::FontUnit;
 use specs::{Component, DenseVecStorage, Entity};
+use specs::storage::GenericReadStorage;
 use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Copy, Clone)]
 pub struct Line {
@@ -32,6 +33,9 @@ pub struct InlineFormattingContext {
     pub absolutes: Vec<Entity>,
     pub break_points: Vec<BreakPoint>,
     pub lines: Vec<Line>,
+    /// The `inline-block` boxes in `elements` and the advance at which they start. Before the
+    /// boxes are measured they have no width.
+    pub atom_offsets: Vec<(Entity, Px)>,
 }
 
 impl InlineFormattingContext {
@@ -46,7 +50,7 @@ impl InlineFormattingContext {
         indent: Px,
         entities: &Entities,
         text_runs: &ReadStorage<components::TextRun>,
-        intrinsic_sizes: &ReadStorage<components::IntrinsicSize>,
+        intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
     ) -> Result<(), String> {
         let breakpoints = &self.break_points;
         if breakpoints.is_empty() {
@@ -115,7 +119,7 @@ impl InlineFormattingContext {
         from_index: usize,
         to_index: usize,
         text_runs: &ReadStorage<components::TextRun>,
-        intrinsic_sizes: &ReadStorage<components::IntrinsicSize>,
+        intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
     ) -> (Px, Px) {
         let from = self.break_points[from_index];
         let to = self.break_points[to_index];
@@ -158,6 +162,44 @@ impl InlineFormattingContext {
     }
 }
 
+impl InlineFormattingContext {
+    /// Takes the widths of the `inline-block` boxes into account, which were not known when the
+    /// break points were found. Must be called once with the widths of all boxes of
+    /// `atom_offsets`.
+    pub fn apply_atom_widths(&mut self, widths: &HashMap<Entity, Px>) {
+        let position = |entity: Entity| self.elements.iter().position(|&e| e == entity);
+        let atoms: Vec<(usize, Px)> = self
+            .atom_offsets
+            .iter()
+            .filter_map(|&(entity, _)| Some((position(entity)?, widths.get(&entity).copied()?)))
+            .collect();
+        let shifts: Vec<Px> = self
+            .break_points
+            .iter()
+            .enumerate()
+            .map(|(index, bp)| {
+                if index == 0 {
+                    return Px(0.0);
+                }
+                let element = position(bp.entity).unwrap_or(0);
+                atoms
+                    .iter()
+                    .filter(|&&(atom, _)| atom <= element)
+                    .fold(Px(0.0), |sum, &(_, width)| sum + width)
+            })
+            .collect();
+        for (bp, shift) in self.break_points.iter_mut().zip(shifts) {
+            bp.advance_before += shift;
+            bp.advance_after += shift;
+        }
+        let mut shift = Px(0.0);
+        for (entity, offset) in &mut self.atom_offsets {
+            *offset += shift;
+            shift += widths.get(entity).copied().unwrap_or_default();
+        }
+    }
+}
+
 impl Component for InlineFormattingContext {
     type Storage = DenseVecStorage<Self>;
 }
@@ -190,6 +232,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
         for InlineFormattingContext {
             elements,
             break_points,
+            atom_offsets,
             ..
         } in (&mut inline_formatting_contexts).join()
         {
@@ -235,6 +278,11 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     }
                 } else if let Some(intrinsic_size) = intrinsic_sizes.get(entity) {
                     advance += intrinsic_size.width().unwrap_or_default();
+                } else if computed_values.get(entity).map_or(false, |style| {
+                    style.box_.display == crate::style::properties::specified::Display::InlineBlock
+                }) {
+                    // the width is only known once the box has been laid out
+                    atom_offsets.push((entity, advance));
                 }
                 if let Some(style) = computed_values.get(entity) {
                     if style.text.line_break
@@ -270,6 +318,242 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
     }
 }
 
+/// Creates the paragraphs that draw the markers of list items. Runs after the line boxes are
+/// created, because the marker is aligned with the first line of the item.
+pub struct ListMarkerCreator;
+
+impl<'a> System<'a> for ListMarkerCreator {
+    type SystemData = (
+        Entities<'a>,
+        Read<'a, components::TextList>,
+        ReadStorage<'a, InlineFormattingContext>,
+        ReadStorage<'a, components::ListMarker>,
+        WriteStorage<'a, components::Position>,
+        WriteStorage<'a, Paragraph>,
+        WriteStorage<'a, components::VectorGraphics>,
+        Read<'a, FontMap>,
+    );
+
+    fn run(
+        &mut self,
+        (entities, text_list, ifcs, markers, mut positions, mut paragraphs, mut graphics, font_map): Self::SystemData,
+    ) {
+        use components::BlockLevelElement;
+        // the markers whose item has not yet produced its first line
+        let mut pending: Vec<Entity> = vec![];
+        let mut created = vec![];
+        let baselines: HashMap<Entity, Px> = ifcs
+            .join()
+            .flat_map(|ifc| ifc.lines.iter().map(|line| (line.entity, line.baseline)))
+            .collect();
+        for &elem in &text_list.list {
+            match elem {
+                BlockLevelElement::ContainerStart(entity) => {
+                    if markers.get(entity).is_some() {
+                        pending.push(entity);
+                    }
+                }
+                BlockLevelElement::Leaf(leaf) => {
+                    if pending.is_empty() {
+                        continue;
+                    }
+                    // the leaves of inline content are the line boxes
+                    let baseline = match baselines.get(&leaf) {
+                        Some(&baseline) => baseline,
+                        None => continue,
+                    };
+                    let line_pos = *positions.get(leaf).unwrap();
+                    for item in pending.drain(..) {
+                        let marker = markers.get(item).unwrap();
+                        let item_x = positions.get(item).map_or(line_pos.x, |pos| pos.x);
+                        created.push((item_x, line_pos, baseline, marker.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for (item_x, line_pos, baseline, marker) in created {
+            let size = marker.font_size;
+            // These shapes are not available in most fonts, so they are drawn instead.
+            let shape = match marker.text.as_str() {
+                "\u{25E6}" => Some((size * 0.36, false)),
+                "\u{25AA}" => Some((size * 0.3, true)),
+                _ => None,
+            };
+            if let Some((diameter, filled)) = shape {
+                let center_x = item_x - size * 0.4 - diameter / 2.0;
+                let center_y = line_pos.y + baseline - size * 0.3;
+                let mut ops = vec![];
+                if filled {
+                    // a horizontal line as thick as it is wide
+                    ops.push(GraphicsOp::Line {
+                        from_x: center_x - diameter / 2.0,
+                        from_y: center_y,
+                        to_x: center_x + diameter / 2.0,
+                        to_y: center_y,
+                        thickness: diameter,
+                    });
+                } else {
+                    let stroke = size * 0.06;
+                    let radius = (diameter - stroke) / 2.0;
+                    const SEGMENTS: usize = 24;
+                    let point = |i: usize| {
+                        let angle = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+                        (center_x + radius * angle.cos(), center_y + radius * angle.sin())
+                    };
+                    for i in 0..SEGMENTS {
+                        let (from_x, from_y) = point(i);
+                        let (to_x, to_y) = point(i + 1);
+                        ops.push(GraphicsOp::Line { from_x, from_y, to_x, to_y, thickness: stroke });
+                    }
+                }
+                entities
+                    .build_entity()
+                    .with(
+                        components::Position { y: line_pos.y, height: Px(0.0), ..line_pos },
+                        &mut positions,
+                    )
+                    .with(
+                        components::VectorGraphics { ops, color: Some(marker.color) },
+                        &mut graphics,
+                    )
+                    .build();
+                continue;
+            }
+            let font = &font_map[&marker.font_name];
+            let mut ops = vec![
+                TextOperator::SetFont(marker.font_name.clone(), marker.font_size),
+                TextOperator::SetColor(marker.color),
+            ];
+            let width = shape_piece(&marker.text, font, marker.font_size, Px(0.0), &mut ops);
+            let gap = marker.font_size * 0.4;
+            entities
+                .build_entity()
+                .with(
+                    components::Position {
+                        y: line_pos.y,
+                        height: Px(0.0),
+                        ..line_pos
+                    },
+                    &mut positions,
+                )
+                .with(
+                    Paragraph {
+                        start_pos: (item_x - gap - width, line_pos.y + baseline),
+                        ops,
+                    },
+                    &mut paragraphs,
+                )
+                .build();
+        }
+    }
+}
+
+/// Moves the contents of `inline-block` boxes to the place of the box on its line.
+///
+/// The contents of a box are laid out relative to the margin box of the box, see
+/// [`components::AbsoluteGroup::owner`]. This runs after pagination because the line the box is
+/// on can be on any page, and before the line boxes are created, because everything that is
+/// drawn is derived from the final positions.
+pub struct PlaceInlineBlocks;
+
+impl<'a> System<'a> for PlaceInlineBlocks {
+    type SystemData = (
+        Read<'a, components::AbsoluteGroups>,
+        ReadStorage<'a, InlineFormattingContext>,
+        ReadStorage<'a, IntrinsicSize>,
+        WriteStorage<'a, Position>,
+    );
+
+    fn run(&mut self, (groups, ifcs, intrinsic_sizes, mut positions): Self::SystemData) {
+        const EPSILON: f32 = 0.01;
+
+        // where the margin box of every box is, as (x, y, page)
+        let mut placements: HashMap<Entity, (Px, Px, usize)> = HashMap::new();
+
+        for ifc in ifcs.join() {
+            if ifc.atom_offsets.is_empty() {
+                continue;
+            }
+            for (line_num, line) in ifc.lines.iter().enumerate() {
+                let line_pos = match positions.get(line.entity) {
+                    Some(&pos) => pos,
+                    None => continue,
+                };
+                let from = ifc.break_points[line.from_break];
+                let to = ifc.break_points[line.to_break];
+
+                // the same word spacing as the line box creator uses
+                let is_last_line = line_num == ifc.lines.len() - 1;
+                let num_spaces = line.to_break - line.from_break - 1;
+                let word_spacing = if !is_last_line
+                    && ifc.text_align == crate::style::properties::specified::TextAlign::Justify
+                    && num_spaces > 0
+                {
+                    (line_pos.width - (to.advance_before - from.advance_after)) / num_spaces as f32
+                } else {
+                    Px(0.0)
+                };
+
+                for &(atom, offset) in &ifc.atom_offsets {
+                    let (width, baseline) = match intrinsic_sizes.get(atom) {
+                        Some(&IntrinsicSize::SizeWithBaseline { width, baseline, .. }) => (width, baseline),
+                        _ => continue,
+                    };
+                    let _ = width;
+                    if offset.0 + EPSILON < from.advance_after.0 || offset.0 >= to.advance_before.0 - EPSILON {
+                        continue;
+                    }
+                    let spaces = (line.from_break + 1..line.to_break)
+                        .filter(|&b| ifc.break_points[b].advance_before.0 < offset.0 - EPSILON)
+                        .count();
+                    let x = line_pos.x + (offset - from.advance_after) + word_spacing * spaces as f32;
+                    let y = line_pos.y + line.baseline - baseline;
+                    placements.insert(atom, (x, y, line_pos.page));
+                }
+            }
+        }
+
+        // The contents of a box that is inside of another box move with that box, so the outer
+        // boxes are placed first.
+        let depth = |mut group: usize| {
+            let mut depth = 0;
+            while let Some(parent) = groups.groups[group].parent {
+                group = parent;
+                depth += 1;
+            }
+            depth
+        };
+        let mut order: Vec<usize> = (0..groups.groups.len())
+            .filter(|&g| groups.groups[g].owner.map_or(false, |owner| placements.contains_key(&owner)))
+            .collect();
+        order.sort_by_key(|&g| depth(g));
+
+        for group in order {
+            let owner = groups.groups[group].owner.unwrap();
+            let (dx, dy, page) = placements[&owner];
+            for &entity in &groups.groups[group].entities {
+                if let Some(pos) = positions.get_mut(entity) {
+                    pos.x += dx;
+                    pos.y += dy;
+                    pos.page = page;
+                }
+            }
+            for (child, other) in groups.groups.iter().enumerate() {
+                if other.parent != Some(group) || child == group {
+                    continue;
+                }
+                if let Some(placement) = other.owner.and_then(|owner| placements.get_mut(&owner)) {
+                    placement.0 += dx;
+                    placement.1 += dy;
+                    placement.2 = page;
+                }
+            }
+        }
+    }
+}
+
 pub struct LineBoxCreator;
 
 impl<'a> System<'a> for LineBoxCreator {
@@ -278,8 +562,10 @@ impl<'a> System<'a> for LineBoxCreator {
         ReadStorage<'a, InlineFormattingContext>,
         ReadStorage<'a, components::TextRun>,
         ReadStorage<'a, components::IntrinsicSize>,
+        ReadStorage<'a, ComputedValues>,
         WriteStorage<'a, components::Position>,
         WriteStorage<'a, Paragraph>,
+        WriteStorage<'a, components::VectorGraphics>,
         Read<'a, FontMap>,
     );
 
@@ -290,8 +576,10 @@ impl<'a> System<'a> for LineBoxCreator {
             inline_formatting_contexts,
             text_runs,
             intrinsic_sizes,
+            computed_values,
             mut positions,
             mut paragraphs,
+            mut graphics,
             font_map,
         ): Self::SystemData,
     ) {
@@ -314,6 +602,7 @@ impl<'a> System<'a> for LineBoxCreator {
 
             let mut ops: Vec<TextOperator> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
+            let mut previous_color: Option<RGBA> = None;
             let mut paragraph_pos: Option<components::Position> = None;
 
             // position of the first baseline of the paragraph
@@ -372,6 +661,9 @@ impl<'a> System<'a> for LineBoxCreator {
                             previous_font.1,
                         ))
                     }
+                    if let Some(previous_color) = previous_color {
+                        ops.push(TextOperator::SetColor(previous_color));
+                    }
                     paragraph_pos = Some(components::Position {
                         y: line_pos.y,
                         height: Px(0.0),
@@ -395,6 +687,11 @@ impl<'a> System<'a> for LineBoxCreator {
                                 previous_font = Some((run.font_name.clone(), run.font_size));
                             }
 
+                            if previous_color != Some(run.color) {
+                                ops.push(TextOperator::SetColor(run.color));
+                                previous_color = Some(run.color);
+                            }
+
                             // get the string slice of the current text fragment
                             let start = if entity == from_break.entity {
                                 from_break.char_index
@@ -410,7 +707,43 @@ impl<'a> System<'a> for LineBoxCreator {
                             let characters = &run.text[start..end];
                             let font = &font_map[&run.font_name];
 
-                            shape_piece(characters, font, run.font_size, word_spacing, &mut ops)
+                            let piece_width =
+                                shape_piece(characters, font, run.font_size, word_spacing, &mut ops);
+                            if !run.decoration.is_none() && piece_width > Px(0.0) {
+                                let page_pos = components::Position {
+                                    y: line_pos.y,
+                                    height: Px(0.0),
+                                    ..line_pos
+                                };
+                                let x = line_pos.x + advance;
+                                let baseline = line_pos.y + line.baseline;
+                                for ((offset, thickness), enabled) in
+                                    decoration_lines(run.font_size, run.decoration)
+                                {
+                                    if !enabled {
+                                        continue;
+                                    }
+                                    let y = baseline + offset;
+                                    entities
+                                        .build_entity()
+                                        .with(page_pos, &mut positions)
+                                        .with(
+                                            components::VectorGraphics {
+                                                ops: vec![GraphicsOp::Line {
+                                                    from_x: x,
+                                                    from_y: y,
+                                                    to_x: x + piece_width,
+                                                    to_y: y,
+                                                    thickness,
+                                                }],
+                                                color: Some(run.color),
+                                            },
+                                            &mut graphics,
+                                        )
+                                        .build();
+                                }
+                            }
+                            piece_width
                         } else {
                             Px(0.0)
                         }
@@ -426,18 +759,25 @@ impl<'a> System<'a> for LineBoxCreator {
                         });
                         text_cursor = advance + width;
 
-                        positions
-                            .insert(
-                                entity,
-                                Position {
-                                    x: line_pos.x + advance,
-                                    y: line_pos.y + line.baseline - baseline,
-                                    width,
-                                    height,
-                                    ..paragraph_pos.unwrap()
-                                },
-                            )
-                            .unwrap();
+                        // The contents of an `inline-block` box are placed by `PlaceInlineBlocks`.
+                        let is_inline_block = computed_values.get(entity).map_or(false, |style| {
+                            style.box_.display
+                                == crate::style::properties::specified::Display::InlineBlock
+                        });
+                        if !is_inline_block {
+                            positions
+                                .insert(
+                                    entity,
+                                    Position {
+                                        x: line_pos.x + advance,
+                                        y: line_pos.y + line.baseline - baseline,
+                                        width,
+                                        height,
+                                        ..paragraph_pos.unwrap()
+                                    },
+                                )
+                                .unwrap();
+                        }
                         width
                     } else {
                         log::error!("unsopported inline element type");
@@ -479,7 +819,21 @@ impl<'a> System<'a> for LineBoxCreator {
     }
 }
 
-fn shape_piece(
+/// The vertical offset from the baseline (positive is down) and the thickness of the lines drawn
+/// for a text decoration, together with whether each of the lines is enabled.
+fn decoration_lines(
+    font_size: Px,
+    decoration: crate::style::properties::specified::TextDecoration,
+) -> [((Px, Px), bool); 3] {
+    let thickness = (font_size * 0.06).max(Px(1.0));
+    [
+        ((font_size * 0.12 + thickness / 2.0, thickness), decoration.underline),
+        ((-(font_size * 0.3), thickness), decoration.line_through),
+        ((-(font_size * 0.8), thickness), decoration.overline),
+    ]
+}
+
+pub(super) fn shape_piece(
     characters: &str,
     font: &Font,
     font_size: Px,

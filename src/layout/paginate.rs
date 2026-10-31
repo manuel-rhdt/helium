@@ -1,8 +1,9 @@
 use super::components::{
-    AbsoluteGroups, BlockLevelElement, Decoration, EdgeValues, Position, TextList,
+    AbsoluteGroups, BlockLevelElement, Decoration, DecorationFragment, EdgeValues, Fragmented,
+    Position, TextList,
 };
 use crate::style::properties::computed::{ComputedValues, PageBreak, PixelLength};
-use specs::{Read, ReadStorage, System, WriteStorage};
+use specs::{Entities, Entity, Read, ReadStorage, System, WriteStorage};
 use std::collections::HashSet;
 
 pub struct Paginator {
@@ -26,15 +27,27 @@ struct PageBreakOpportunity {
 
 impl<'world> System<'world> for Paginator {
     type SystemData = (
+        Entities<'world>,
         Read<'world, TextList>,
         Read<'world, AbsoluteGroups>,
         WriteStorage<'world, Position>,
-        ReadStorage<'world, Decoration>,
+        WriteStorage<'world, Decoration>,
+        WriteStorage<'world, Fragmented>,
+        WriteStorage<'world, DecorationFragment>,
         ReadStorage<'world, ComputedValues>,
     );
     fn run(
         &mut self,
-        (text_list, absolute_groups, mut positions, _decorations, computed_values): Self::SystemData,
+        (
+            entities,
+            text_list,
+            absolute_groups,
+            mut positions,
+            mut decorations,
+            mut fragmented,
+            mut fragments,
+            computed_values,
+        ): Self::SystemData,
     ) {
         let mut break_points = vec![PageBreakOpportunity {
             before_index: 0,
@@ -93,6 +106,7 @@ impl<'world> System<'world> for Paginator {
             advance_after: content_height,
         });
 
+        let last_break_point = break_points.len() - 1;
         let optimal_sequence =
             super::paragraph::compute_breakpoints(break_points.len(), &mut |from, to| {
                 let height = break_points[to].advance_after - break_points[from].advance_before;
@@ -102,6 +116,10 @@ impl<'world> System<'world> for Paginator {
                 } else {
                     if break_points[to].forced {
                         return std::f64::NEG_INFINITY;
+                    }
+                    if to == last_break_point {
+                        // the last page is allowed to be partially filled
+                        return 0.0;
                     }
                     (self.content_height().0 as f64 - height.0 as f64).powi(3)
                 }
@@ -121,6 +139,9 @@ impl<'world> System<'world> for Paginator {
         // we keep track of which entities we already processed
         let mut processed_entities = HashSet::new();
 
+        // the page of every element in the text list
+        let mut page_of_index = Vec::with_capacity(text_list.list.len());
+
         // TODO: Split block containers appropriately
         for (index, &elem) in text_list.list.iter().enumerate() {
             match next_break {
@@ -137,6 +158,8 @@ impl<'world> System<'world> for Paginator {
                 _ => {}
             };
 
+            page_of_index.push(current_page);
+
             if processed_entities.insert(elem.entity()) {
                 if let Some(Position { page, y, .. }) = positions.get_mut(elem.entity()) {
                     *page = current_page;
@@ -145,9 +168,76 @@ impl<'world> System<'world> for Paginator {
             }
         }
 
+        // Boxes that contain a page break are split: every page gets the part of the decoration
+        // that is on that page. A box has no border or padding at the edges of a break.
+        let mut open: Vec<(Entity, usize)> = vec![];
+        let mut to_split = vec![];
+        for (index, &elem) in text_list.list.iter().enumerate() {
+            match elem {
+                BlockLevelElement::ContainerStart(entity) => open.push((entity, index)),
+                BlockLevelElement::ContainerEnd(entity) => {
+                    if let Some((start_entity, start)) = open.pop() {
+                        debug_assert_eq!(start_entity, entity);
+                        if page_of_index[start] != page_of_index[index] {
+                            to_split.push((entity, page_of_index[start], page_of_index[index]));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let page_top = self.margin.top;
+        let page_bottom = self.margin.top + self.content_height();
+        for (entity, first_page, last_page) in to_split {
+            let (pos, deco) = match (positions.get(entity).copied(), decorations.get(entity).copied()) {
+                (Some(pos), Some(deco)) => (pos, deco),
+                _ => continue,
+            };
+            let visible = deco.background_color.alpha > 0
+                || deco.border.top > PixelLength(0.0)
+                || deco.border.bottom > PixelLength(0.0)
+                || deco.border.left > PixelLength(0.0)
+                || deco.border.right > PixelLength(0.0);
+            if !visible {
+                continue;
+            }
+            let layout_y = pos.y - page_offsets[first_page];
+            let top_edge = layout_y - deco.padding.top - deco.border.top;
+            let bottom_edge = layout_y + pos.height + deco.padding.bottom + deco.border.bottom;
+            fragmented.insert(entity, Fragmented).unwrap();
+            for page in first_page..=last_page {
+                let is_first = page == first_page;
+                let is_last = page == last_page;
+                let top = if is_first { top_edge + page_offsets[page] } else { page_top };
+                let bottom = if is_last { bottom_edge + page_offsets[page] } else { page_bottom };
+                let mut fragment_deco = deco;
+                if !is_first {
+                    fragment_deco.padding.top = PixelLength(0.0);
+                    fragment_deco.border.top = PixelLength(0.0);
+                }
+                if !is_last {
+                    fragment_deco.padding.bottom = PixelLength(0.0);
+                    fragment_deco.border.bottom = PixelLength(0.0);
+                }
+                let content_top = top + fragment_deco.border.top + fragment_deco.padding.top;
+                let content_bottom = bottom - fragment_deco.border.bottom - fragment_deco.padding.bottom;
+                let height = if content_bottom > content_top {
+                    content_bottom - content_top
+                } else {
+                    PixelLength(0.0)
+                };
+                entities
+                    .build_entity()
+                    .with(Position { y: content_top, height, page, ..pos }, &mut positions)
+                    .with(fragment_deco, &mut decorations)
+                    .with(DecorationFragment, &mut fragments)
+                    .build();
+            }
+        }
+
         // Absolutely positioned boxes are not part of the text list. They are placed on the page
         // of their containing block, which for the initial containing block is the first page.
-        for group in &absolute_groups.groups {
+        for group in absolute_groups.groups.iter().filter(|group| group.owner.is_none()) {
             let page = group
                 .containing_block
                 .and_then(|cb| positions.get(cb))

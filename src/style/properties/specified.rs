@@ -258,6 +258,16 @@ pub enum Font {
     FontSize(FontSize),
     #[property]
     LineHeight(LineHeight),
+    /// Inherited like the font properties, so it lives in the same style struct.
+    #[property]
+    Color(Color),
+    /// Inherited, so it lives here as well.
+    #[property]
+    ListStyleType(ListStyleType),
+    /// Inherited instead of propagated to the inline boxes of the descendants, which has the same
+    /// effect for everything that is supported.
+    #[property]
+    TextDecoration(TextDecoration),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -327,6 +337,7 @@ pub enum Display {
     None,
     Block,
     Inline,
+    InlineBlock,
 }
 
 impl Default for Display {
@@ -598,6 +609,108 @@ impl Default for WhiteSpace {
     }
 }
 
+/// The lines of `text-decoration-line`. Styles and colors of the lines are not supported and
+/// ignored.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct TextDecoration {
+    pub underline: bool,
+    pub overline: bool,
+    pub line_through: bool,
+}
+
+impl TextDecoration {
+    pub fn is_none(self) -> bool {
+        self == TextDecoration::default()
+    }
+}
+
+impl<'i> PropertyValue<'i> for TextDecoration {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let mut result = TextDecoration::default();
+        // at least one component is required
+        let mut token = input.next()?.clone();
+        loop {
+            if let Token::Ident(ident) = &token {
+                match &*ident.to_ascii_lowercase() {
+                    "underline" => result.underline = true,
+                    "overline" => result.overline = true,
+                    "line-through" => result.line_through = true,
+                    // `none` and the unsupported style and color components
+                    _ => {}
+                }
+            }
+            if input.is_exhausted() {
+                return Ok(result);
+            }
+            token = input.next()?.clone();
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum ListStyleType {
+    Disc,
+    Circle,
+    Square,
+    Decimal,
+    LowerAlpha,
+    UpperAlpha,
+    LowerRoman,
+    UpperRoman,
+    None,
+}
+
+impl Default for ListStyleType {
+    fn default() -> Self {
+        ListStyleType::Disc
+    }
+}
+
+impl ListStyleType {
+    /// The text of the marker of the `ordinal`th (1-based) list item, without any spacing.
+    pub fn marker_text(self, ordinal: usize) -> Option<String> {
+        fn alpha(mut n: usize, first: u8) -> String {
+            let mut letters = vec![];
+            while n > 0 {
+                n -= 1;
+                letters.push(first + (n % 26) as u8);
+                n /= 26;
+            }
+            letters.reverse();
+            String::from_utf8(letters).unwrap()
+        }
+        fn roman(mut n: usize) -> String {
+            const NUMERALS: [(usize, &str); 13] = [
+                (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
+                (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+            ];
+            let mut out = String::new();
+            for &(value, numeral) in &NUMERALS {
+                while n >= value {
+                    out.push_str(numeral);
+                    n -= value;
+                }
+            }
+            out
+        }
+        Some(match self {
+            ListStyleType::Disc => "\u{2022}".to_string(),
+            ListStyleType::Circle => "\u{25E6}".to_string(),
+            ListStyleType::Square => "\u{25AA}".to_string(),
+            ListStyleType::None => return None,
+            // roman numerals and letters are only defined for positive numbers
+            ListStyleType::Decimal => format!("{}.", ordinal),
+            _ if ordinal == 0 => format!("{}.", ordinal),
+            ListStyleType::LowerAlpha => format!("{}.", alpha(ordinal, b'a')),
+            ListStyleType::UpperAlpha => format!("{}.", alpha(ordinal, b'A')),
+            ListStyleType::LowerRoman => format!("{}.", roman(ordinal).to_lowercase()),
+            ListStyleType::UpperRoman => format!("{}.", roman(ordinal)),
+        })
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
 pub enum TextAlign {
     Left,
@@ -746,7 +859,7 @@ impl<'a> List<'a, Border> {
                 _ => None,
             })
             .next()
-            .unwrap_or(super::computed::opaque(0, 0, 0))
+            .unwrap_or(Color::CurrentColor)
     }
 }
 

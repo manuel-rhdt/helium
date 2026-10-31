@@ -2,14 +2,15 @@ use super::components::{
     self, BlockLevelElement, LayoutEntity, MathExpression, Position, RootNode,
 };
 use super::inline::InlineFormattingContext;
+use super::margin_boxes::{self, MarginBoxes, ResolvedMarginBox};
 use super::normal_formatting::BlockFormattingContext;
 use super::{text::Font, FontMap};
 use crate::parser::{ElementData, ParsedData};
-use crate::style::parse::{PropertyDeclarationBlock, Styles};
+use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, Styles};
 use crate::style::properties::computed::{
-    ComputedValues, Display, LineHeight, PositionSpec, StyleBuilder,
+    color_to_rgba, ComputedValues, Display, LineHeight, PositionSpec, StyleBuilder, TextAlign,
 };
-use crate::style::properties::specified::MathFamily;
+use crate::style::properties::specified::{MathFamily, PropertyDeclaration, Text};
 use crate::traverse::Traversal;
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
@@ -32,6 +33,60 @@ impl FlowConstructor {
         FlowConstructor {
             styles: Default::default(),
             entity_constructor: EntityConstructor::new(world),
+        }
+    }
+
+    /// Resolves the styles and fonts of the margin boxes (headers and footers) of the document.
+    pub fn resolve_margin_boxes(&mut self) -> MarginBoxes {
+        let mut resolve = |first: bool, left: bool| {
+            let mut resolved = vec![];
+            for kind in MarginBoxKind::ALL {
+                let mut style_builder = StyleBuilder::new(Default::default());
+                let mut content = None;
+                let mut text_align = None;
+                for rule in self.styles.rules_iter() {
+                    let Some(selector) = rule.page_selector() else { continue };
+                    if !margin_boxes::selector_matches(selector, first, left) {
+                        continue;
+                    }
+                    for margin_box in rule.margin_boxes.iter().filter(|b| b.kind == kind) {
+                        for declaration in margin_box.properties.declarations() {
+                            if let PropertyDeclaration::Text(Text::TextAlign(align)) = declaration {
+                                text_align = Some(*align);
+                            }
+                            style_builder.add_declaration(declaration);
+                        }
+                        if margin_box.content.is_some() {
+                            content = margin_box.content.clone();
+                        }
+                    }
+                }
+                let content = match content {
+                    Some(content) if !content.is_empty() => content,
+                    _ => continue,
+                };
+                let style = style_builder.build();
+                let font_name = self.entity_constructor.match_font(&style).postscript_name();
+                resolved.push(ResolvedMarginBox {
+                    kind,
+                    content,
+                    font_name,
+                    font_size: style.font.font_size,
+                    color: color_to_rgba(style.font.color),
+                    text_align: text_align.unwrap_or(match kind {
+                        MarginBoxKind::TopCenter | MarginBoxKind::BottomCenter => TextAlign::Center,
+                        MarginBoxKind::TopRight | MarginBoxKind::BottomRight => TextAlign::Right,
+                        MarginBoxKind::TopLeft | MarginBoxKind::BottomLeft => TextAlign::Left,
+                    }),
+                });
+            }
+            resolved
+        };
+        // the first page is a right page
+        MarginBoxes {
+            first: resolve(true, false),
+            left: resolve(false, true),
+            right: resolve(false, false),
         }
     }
 
@@ -222,6 +277,7 @@ impl EntityConstructor {
         world.register::<BlockFormattingContext>();
         world.register::<Position>();
         world.register::<components::TextRun>();
+        world.register::<components::ListMarker>();
         world.register::<components::Decoration>();
         world.register::<MathExpression>();
         world.insert(FontMap::new());
@@ -270,7 +326,44 @@ impl EntityConstructor {
                     self.trim_next_inline_whitespace = true;
                 }
 
-                self.build_default_entity(style)
+                let is_list_item = element_data.name == QualName::new(None, ns!(html), local_name!("li"));
+                let ordinal = if is_list_item {
+                    // the number of `li` siblings up to and including this one
+                    let mut count = 1;
+                    let mut sibling = node.previous_sibling();
+                    while let Some(s) = sibling {
+                        if let ParsedData::Element(data) = s.html_data() {
+                            if data.name == QualName::new(None, ns!(html), local_name!("li")) {
+                                count += 1;
+                            }
+                        }
+                        sibling = s.previous_sibling();
+                    }
+                    count
+                } else {
+                    0
+                };
+                let marker_text = style.font.list_style_type.marker_text(ordinal).filter(|_| is_list_item);
+                let marker = marker_text.map(|text| {
+                    let font_name = self.match_font(&style).postscript_name();
+                    components::ListMarker {
+                        text,
+                        font_name,
+                        font_size: style.font.font_size,
+                        color: crate::style::properties::computed::color_to_rgba(style.font.color),
+                    }
+                });
+
+                if style.box_.display == Display::InlineBlock {
+                    // its contents are a block of their own
+                    self.trim_next_inline_whitespace = true;
+                }
+                let entity = self.build_default_entity(style);
+                if let Some(marker) = marker {
+                    let LayoutEntity(e) = entity;
+                    self.world.write_storage::<components::ListMarker>().insert(e, marker).unwrap();
+                }
+                entity
             }
             ParsedData::Document(_) => self.build_root_entity(),
             ParsedData::Text(string) => {
@@ -279,7 +372,7 @@ impl EntityConstructor {
                 let mut text = string.borrow_mut();
 
                 match node.previous_sibling() {
-                    Some(node) if node.style().box_.display == Display::Inline => {}
+                    Some(node) if matches!(node.style().box_.display, Display::Inline | Display::InlineBlock) => {}
                     _ => self.trim_next_inline_whitespace = true,
                 };
 
@@ -330,6 +423,8 @@ impl EntityConstructor {
         let line_gap = line_height - font_height;
         let baseline = font.scale_to_px(font.ascent(), font_size) + line_gap / 2.0;
 
+        let color = crate::style::properties::computed::color_to_rgba(style.font.color);
+        let decoration = style.font.text_decoration;
         let entity = self
             .world
             .create_entity()
@@ -340,6 +435,8 @@ impl EntityConstructor {
                 font_size,
                 line_height,
                 baseline,
+                color,
+                decoration,
             })
             .build();
         LayoutEntity(entity)
@@ -356,6 +453,11 @@ impl EntityConstructor {
         if self.mathml_context.is_some() {
             self.build_math_expression(node);
             return;
+        }
+
+        if node.style().box_.display == Display::InlineBlock {
+            // an inline-block box is content, so the whitespace after it must be kept
+            self.trim_next_inline_whitespace = false;
         }
 
         let is_display_inline = |node: &Node| match node.style().box_.display {
@@ -387,6 +489,7 @@ impl EntityConstructor {
                     absolutes: vec![],
                     break_points: vec![],
                     lines: vec![],
+                    atom_offsets: vec![],
                     text_align: style.text.text_align,
                 },
                 inline_formatting_contexts,
@@ -431,6 +534,12 @@ impl EntityConstructor {
 
             if position == PositionSpec::Absolute {
                 block_level_elements.push(BlockLevelElement::Absolute(elem));
+                continue;
+            }
+
+            if display == Display::InlineBlock {
+                // an atomic inline-level box: its contents stay in its own formatting context
+                inline_level_elements.push(elem);
                 continue;
             }
 
@@ -518,6 +627,7 @@ impl EntityConstructor {
                         text_align: style.text.text_align,
                         break_points: vec![],
                         lines: vec![],
+                        atom_offsets: vec![],
                     },
                 )
                 .unwrap();
@@ -563,6 +673,7 @@ impl EntityConstructor {
             absolutes: vec![],
             break_points: vec![],
             lines: vec![],
+            atom_offsets: vec![],
             text_align: node.style().text.text_align,
         };
         for child in node.children() {
@@ -574,6 +685,11 @@ impl EntityConstructor {
             let child_style = child.style();
             if child_style.box_.position == PositionSpec::Absolute {
                 inline_formatting_context.absolutes.push(child_entity);
+                continue;
+            }
+
+            if child_style.box_.display == Display::InlineBlock {
+                inline_formatting_context.elements.push(child_entity);
                 continue;
             }
 

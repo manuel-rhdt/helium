@@ -18,6 +18,7 @@ pub fn calculate_padding_and_border(
     ComputedValues {
         position,
         background,
+        font,
         ..
     }: &ComputedValues,
 ) -> Decoration {
@@ -37,7 +38,11 @@ pub fn calculate_padding_and_border(
     deco.margin.top = position.margin_top.absolute(Px(0.0), container_size);
     deco.margin.bottom = position.margin_bottom.absolute(Px(0.0), container_size);
 
-    use crate::style::properties::computed::color_to_rgba as get_color;
+    use crate::style::properties::computed::{color_to_rgba, Color};
+    let get_color = |color: Color| match color {
+        Color::CurrentColor => color_to_rgba(font.color),
+        color => color_to_rgba(color),
+    };
 
     deco.background_color = get_color(background.background_color);
     deco.border_color.top = get_color(position.border_top_color);

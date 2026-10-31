@@ -1,0 +1,60 @@
+//! Tests for the `color` property, expressed against the layout dump.
+
+use assert_cmd::prelude::*;
+use serde_json::Value;
+use std::process::Command;
+
+fn dump(name: &str, html: &str) -> Value {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join(format!("{}.html", name));
+    std::fs::write(&input, html).unwrap();
+    std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
+    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg("--dump-layout")
+        .arg("-")
+        .arg(&input)
+        .arg(dir.join("wpt-pdfs").join(format!("color__{}.pdf", name)))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+/// The values of all `color` ops in drawing order.
+fn text_colors(dump: &Value) -> Vec<Value> {
+    dump["paint"]["text"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|run| run["ops"].as_array().unwrap())
+        .filter(|op| op["op"] == "color")
+        .map(|op| op["value"].clone())
+        .collect()
+}
+
+#[test]
+fn text_color_is_applied_and_inherited() {
+    let dump = dump("inherit", r#"<p style="color: #ff0000">red <span>still red</span></p>"#);
+    let colors = text_colors(&dump);
+    assert!(!colors.is_empty());
+    assert!(colors.iter().all(|c| *c == colors[0]), "{:?}", colors);
+    assert!(colors[0].to_string().contains("255"), "{:?}", colors[0]);
+}
+
+#[test]
+fn nested_element_overrides_color() {
+    let dump = dump("override", r#"<p style="color: #ff0000">a <span style="color: #0000ff">b</span> c</p>"#);
+    // red, blue, red again
+    assert_eq!(text_colors(&dump).len(), 3, "{:?}", text_colors(&dump));
+}
+
+#[test]
+fn border_defaults_to_current_color() {
+    let dump = dump("border", r#"<div style="color: #00ff00; border: 2px solid; width: 10px; height: 10px"></div>"#);
+    let rects = dump["paint"]["rects"].as_array().unwrap();
+    assert_eq!(rects.len(), 4);
+    for rect in rects {
+        assert_eq!(rect["color"], serde_json::json!([0, 255, 0, 255]));
+    }
+}

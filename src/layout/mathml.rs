@@ -14,7 +14,7 @@ use math_render::{
 };
 use specs::{Entities, Entity, Join, Read, ReadStorage, System, WriteStorage};
 
-use crate::style::properties::computed::{ComputedValues, MathStyle, PixelLength};
+use crate::style::properties::computed::{color_to_rgba, ComputedValues, MathStyle, PixelLength};
 use std::collections::BTreeMap;
 
 pub struct MathFormat {}
@@ -287,11 +287,12 @@ impl<'world> System<'world> for LayoutMathGlyphs {
         WriteStorage<'world, Paragraph>,
         WriteStorage<'world, VectorGraphics>,
         ReadStorage<'world, TextRun>,
+        ReadStorage<'world, ComputedValues>,
         Read<'world, FontMap>,
     );
     fn run(
         &mut self,
-        (entities, math_boxes, positions, mut paragraphs, mut vector_graphics, text_runs, font_map): Self::SystemData,
+        (entities, math_boxes, positions, mut paragraphs, mut vector_graphics, text_runs, computed_values, font_map): Self::SystemData,
     ) {
         for (entity, math_box, pos) in (&entities, &math_boxes, &positions).join() {
             let mut para = Paragraph::new(PixelLength(0.0), PixelLength(0.0));
@@ -301,6 +302,9 @@ impl<'world> System<'world> for LayoutMathGlyphs {
                 math_box.font_name.clone(),
                 math_box.font_size,
             ));
+            if let Some(style) = computed_values.get(entity) {
+                para.ops.push(TextOperator::SetColor(color_to_rgba(style.font.color)));
+            }
             let scale = |val| val as f32 / font.upem as f32 * math_box.font_size;
             let mut to_unicode_map = BTreeMap::new();
             self.generate_elements(

@@ -157,6 +157,14 @@ pub fn write_pdf(
                                     let key = page_context.add_font(font_ref);
                                     page_context.set_font(&key, (*size).into())?;
                                 }
+                                &TextOperator::SetColor(color) => {
+                                    let floatize = |val: u8| f64::from(val) / f64::from(u8::max_value());
+                                    page_context.device_rgb_fill_color(
+                                        floatize(color.red),
+                                        floatize(color.green),
+                                        floatize(color.blue),
+                                    )?;
+                                }
                                 TextOperator::Glyphs(glyphs) => {
                                     page_context.push_operand(glyphs)?;
                                     page_context.apply_operator("Tj")?;
@@ -240,3 +248,4 @@ pub fn write_pdf(
 //         })
 //         .collect()
 // }
+

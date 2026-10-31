@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lists</title>
+<style>
+  body { font-family: serif; font-size: 11pt; line-height: 1.4; }
+  h1 { font-size: 20pt; }
+  h2 { font-size: 13pt; margin-bottom: 0; }
+  .roman { list-style-type: upper-roman; }
+  .alpha { list-style-type: lower-alpha; }
+  .plain { list-style-type: none; }
+</style>
+</head>
+<body>
+<h1>Lists</h1>
+
+<h2>Unordered, with nesting</h2>
+<ul>
+  <li>Apples</li>
+  <li>Citrus
+    <ul>
+      <li>Oranges</li>
+      <li>Lemons
+        <ul>
+          <li>Meyer lemons, which are sweeter than the common kind and have a thin skin that makes them hard to ship long distances</li>
+          <li>Eureka</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Pears</li>
+</ul>
+
+<h2>Ordered</h2>
+<ol>
+  <li>Preheat the oven to 200 degrees and grease a large baking tin with butter.</li>
+  <li>Mix the flour, sugar and salt in a bowl, then add the eggs one at a time while stirring continuously until the batter is smooth.</li>
+  <li>Bake for thirty minutes.
+    <ol class="alpha">
+      <li>Check after twenty minutes</li>
+      <li>Rotate the tin once</li>
+    </ol>
+  </li>
+  <li>Let it cool before serving.</li>
+</ol>
+
+<h2>Roman numerals and no markers</h2>
+<ol class="roman">
+  <li>Introduction</li>
+  <li>Methods</li>
+  <li>Results</li>
+  <li>Discussion</li>
+</ol>
+<ul class="plain">
+  <li>No marker here</li>
+  <li>Nor here</li>
+</ul>
+
+<h2>List items containing blocks</h2>
+<ul>
+  <li><p>A paragraph inside an item.</p></li>
+  <li><p style="color: #7a1f1f">A coloured paragraph, with a coloured marker.</p></li>
+</ul>
+</body>
+</html>

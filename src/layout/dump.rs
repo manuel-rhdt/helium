@@ -8,14 +8,14 @@
 //!
 //! `paint` lists what ends up on the page independent of the document structure, which is what a
 //! reftest compares: the filled `rects` (backgrounds and borders) and the `text` paragraphs with
-//! their glyph runs.
+//! their glyph runs, and the stroked `lines`.
 
 use std::fmt::Write;
 
 use specs::{Join, World, WorldExt};
 
 use crate::layout::components::{
-    Decoration, EdgeValues, KernedGlyphs, LayoutEntity, Paragraph, Position, TextOperator, TextRun,
+    Decoration, DecorationFragment, EdgeValues, Fragmented, KernedGlyphs, LayoutEntity, Paragraph, Position, TextOperator, TextRun,
 };
 use crate::layout::construct::AssignLayoutEntity;
 use crate::parser::ParsedData;
@@ -28,9 +28,12 @@ pub fn dump_layout(dom: &DomRef, world: &World) -> String {
     out.push_str(",\n\"paint\": {\n\"rects\": [");
     let mut rects = Vec::new();
     collect_rects(dom, world, &mut rects);
+    collect_fragment_rects(world, &mut rects);
     out.push_str(&rects.join(",\n"));
     out.push_str("],\n\"text\": [");
     out.push_str(&dump_paragraphs(world).join(",\n"));
+    out.push_str("],\n\"lines\": [");
+    out.push_str(&dump_lines(world).join(",\n"));
     out.push_str("]\n}\n}\n");
     out
 }
@@ -120,34 +123,50 @@ fn color(c: RGBA) -> String {
 }
 
 /// Collects the rectangles that are filled with a solid color for the element tree below `node`.
+/// Boxes that are split across pages are painted by their fragments, which are collected
+/// separately.
 fn collect_rects(node: &DomRef, world: &World, rects: &mut Vec<String>) {
     let entity = node.layout_entity().map(|LayoutEntity(e)| e);
     if let (ParsedData::Element(_), Some(entity)) = (&node.html_data, entity) {
-        if let Some(pos) = world.read_storage::<Position>().get(entity).copied() {
-            let deco = world.read_storage::<Decoration>().get(entity).copied().unwrap_or_default();
-            let (pad, bor) = (deco.padding, deco.border);
-            let (x, y) = (pos.x.0 - pad.left.0 - bor.left.0, pos.y.0 - pad.top.0 - bor.top.0);
-            let width = pos.width.0 + pad.left.0 + pad.right.0 + bor.left.0 + bor.right.0;
-            let height = pos.height.0 + pad.top.0 + pad.bottom.0 + bor.top.0 + bor.bottom.0;
-            let mut push = |c: RGBA, x: f32, y: f32, width: f32, height: f32| {
-                if c.alpha > 0 && width > 0.0 && height > 0.0 {
-                    rects.push(format!(
-                        "{{\"page\": {}, \"x\": {}, \"y\": {}, \"width\": {}, \"height\": {}, \"color\": {}}}",
-                        pos.page, number(x), number(y), number(width), number(height), color(c)
-                    ));
-                }
-            };
-            // the background is painted below the borders
-            push(deco.background_color, x, y, width, height);
-            let bc = deco.border_color;
-            push(bc.top, x, y, width, bor.top.0);
-            push(bc.bottom, x, y + height - bor.bottom.0, width, bor.bottom.0);
-            push(bc.left, x, y, bor.left.0, height);
-            push(bc.right, x + width - bor.right.0, y, bor.right.0, height);
+        if world.read_storage::<Fragmented>().get(entity).is_none() {
+            push_rects(entity, world, rects);
         }
     }
     for child in TreeLinked::children(node) {
         collect_rects(&child, world, rects);
+    }
+}
+
+fn collect_fragment_rects(world: &World, rects: &mut Vec<String>) {
+    let entities = world.entities();
+    let fragments = world.read_storage::<DecorationFragment>();
+    for (entity, _) in (&entities, &fragments).join() {
+        push_rects(entity, world, rects);
+    }
+}
+
+fn push_rects(entity: specs::Entity, world: &World, rects: &mut Vec<String>) {
+    if let Some(pos) = world.read_storage::<Position>().get(entity).copied() {
+        let deco = world.read_storage::<Decoration>().get(entity).copied().unwrap_or_default();
+        let (pad, bor) = (deco.padding, deco.border);
+        let (x, y) = (pos.x.0 - pad.left.0 - bor.left.0, pos.y.0 - pad.top.0 - bor.top.0);
+        let width = pos.width.0 + pad.left.0 + pad.right.0 + bor.left.0 + bor.right.0;
+        let height = pos.height.0 + pad.top.0 + pad.bottom.0 + bor.top.0 + bor.bottom.0;
+        let mut push = |c: RGBA, x: f32, y: f32, width: f32, height: f32| {
+            if c.alpha > 0 && width > 0.0 && height > 0.0 {
+                rects.push(format!(
+                    "{{\"page\": {}, \"x\": {}, \"y\": {}, \"width\": {}, \"height\": {}, \"color\": {}}}",
+                    pos.page, number(x), number(y), number(width), number(height), color(c)
+                ));
+            }
+        };
+        // the background is painted below the borders
+        push(deco.background_color, x, y, width, height);
+        let bc = deco.border_color;
+        push(bc.top, x, y, width, bor.top.0);
+        push(bc.bottom, x, y + height - bor.bottom.0, width, bor.bottom.0);
+        push(bc.left, x, y, bor.left.0, height);
+        push(bc.right, x + width - bor.right.0, y, bor.right.0, height);
     }
 }
 
@@ -168,6 +187,30 @@ fn dump_paragraphs(world: &World) -> Vec<String> {
     out
 }
 
+/// The straight lines that are stroked, such as text decorations and fraction bars.
+fn dump_lines(world: &World) -> Vec<String> {
+    use crate::layout::components::{GraphicsOp, VectorGraphics};
+    let positions = world.read_storage::<Position>();
+    let graphics = world.read_storage::<VectorGraphics>();
+    let mut out = Vec::new();
+    for (pos, graphic) in (&positions, &graphics).join() {
+        for op in &graphic.ops {
+            let GraphicsOp::Line { from_x, from_y, to_x, to_y, thickness } = op;
+            out.push(format!(
+                "{{\"page\": {}, \"from\": [{}, {}], \"to\": [{}, {}], \"thickness\": {}, \"color\": {}}}",
+                pos.page,
+                number(from_x.0),
+                number(from_y.0),
+                number(to_x.0),
+                number(to_y.0),
+                number(thickness.0),
+                graphic.color.map_or("null".to_string(), color),
+            ));
+        }
+    }
+    out
+}
+
 fn glyph_ids(glyphs: &crate::layout::components::Glyphs) -> String {
     let ids: Vec<String> = glyphs.0.iter().map(|g| g.0.to_string()).collect();
     format!("[{}]", ids.join(", "))
@@ -178,6 +221,7 @@ fn op_json(op: &TextOperator) -> String {
         TextOperator::SetFont(name, size) => {
             format!("{{\"op\": \"font\", \"name\": {}, \"size\": {}}}", json_string(name), number(size.0))
         }
+        TextOperator::SetColor(c) => format!("{{\"op\": \"color\", \"value\": {}}}", color(*c)),
         TextOperator::Glyphs(glyphs) => format!("{{\"op\": \"glyphs\", \"glyphs\": {}}}", glyph_ids(glyphs)),
         TextOperator::KernedGlyphs(items) => {
             let items: Vec<String> = items

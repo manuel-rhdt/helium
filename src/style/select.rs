@@ -38,6 +38,8 @@ impl selectors::Element for ElementRef {
     fn prev_sibling_element(&self) -> Option<Self> {
         self.as_node()
             .preceding_siblings()
+            // the iterator starts with the node itself
+            .skip(1)
             .filter_map(DomRef::into_element_ref)
             .next()
     }
@@ -45,6 +47,8 @@ impl selectors::Element for ElementRef {
     fn next_sibling_element(&self) -> Option<Self> {
         self.as_node()
             .following_siblings()
+            // the iterator starts with the node itself
+            .skip(1)
             .filter_map(DomRef::into_element_ref)
             .next()
     }

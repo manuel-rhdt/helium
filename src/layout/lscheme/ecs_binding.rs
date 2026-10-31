@@ -79,7 +79,7 @@ fn px<'w>(v: PixelLength) -> Value<'w> {
 }
 
 fn position_to_value<'w>(pos: &Position) -> Value<'w> {
-    Value::List(vec![
+    Value::list(vec![
         px(pos.x), px(pos.y), px(pos.width), px(pos.height),
         Value::Number(pos.z.0 as f64),
         Value::Number(pos.page as f64),
@@ -87,7 +87,7 @@ fn position_to_value<'w>(pos: &Position) -> Value<'w> {
 }
 
 fn text_run_to_value<'w>(tr: &TextRun) -> Value<'w> {
-    Value::List(vec![
+    Value::list(vec![
         Value::String(tr.text.clone()),
         Value::String(tr.font_name.clone()),
         px(tr.font_size), px(tr.line_height), px(tr.baseline),
@@ -95,23 +95,29 @@ fn text_run_to_value<'w>(tr: &TextRun) -> Value<'w> {
 }
 
 fn edge_values_to_value<'w>(e: EdgeValues<PixelLength>) -> Value<'w> {
-    Value::List(vec![px(e.top), px(e.right), px(e.bottom), px(e.left)])
+    Value::list(vec![px(e.top), px(e.right), px(e.bottom), px(e.left)])
 }
 
 fn rgba_to_value<'w>(c: RGBA) -> Value<'w> {
-    Value::List(vec![
+    Value::list(vec![
         Value::Number(c.red as f64), Value::Number(c.green as f64),
         Value::Number(c.blue as f64), Value::Number(c.alpha as f64),
     ])
 }
 
 pub fn decoration_to_value<'w>(d: &Decoration) -> Value<'w> {
-    Value::List(vec![
+    Value::list(vec![
         edge_values_to_value(d.margin),
         edge_values_to_value(d.padding),
         edge_values_to_value(d.border),
         rgba_to_value(d.background_color),
-        rgba_to_value(d.border_color.top),
+        // the border colors, in the order top, left, bottom, right
+        Value::list(vec![
+            rgba_to_value(d.border_color.top),
+            rgba_to_value(d.border_color.left),
+            rgba_to_value(d.border_color.bottom),
+            rgba_to_value(d.border_color.right),
+        ]),
     ])
 }
 
@@ -122,8 +128,16 @@ fn value_to_decoration(v: &Value) -> Result<Decoration, RuntimeError> {
             let padding = value_to_edges(&items[1])?;
             let border  = value_to_edges(&items[2])?;
             let bg      = value_to_rgba(&items[3])?;
-            let bc      = value_to_rgba(&items[4])?;
-            Ok(Decoration { margin, padding, border, background_color: bg, border_color: EdgeValues::all(bc) })
+            let border_color = match &items[4] {
+                Value::List(colors) if colors.len() == 4 => EdgeValues {
+                    top: value_to_rgba(&colors[0])?,
+                    left: value_to_rgba(&colors[1])?,
+                    bottom: value_to_rgba(&colors[2])?,
+                    right: value_to_rgba(&colors[3])?,
+                },
+                color => EdgeValues::all(value_to_rgba(color)?),
+            };
+            Ok(Decoration { margin, padding, border, background_color: bg, border_color })
         }
         _ => Err(RuntimeError::Message(format!(
             "expected decoration (5-element list), got {:?}", v
@@ -161,18 +175,18 @@ fn value_to_rgba(v: &Value) -> Result<RGBA, RuntimeError> {
 
 fn intrinsic_size_to_value<'w>(is: &IntrinsicSize) -> Value<'w> {
     match *is {
-        IntrinsicSize::Width(w) => Value::List(vec![px(w), Value::Bool(false), Value::Bool(false)]),
-        IntrinsicSize::Height(h) => Value::List(vec![Value::Bool(false), px(h), Value::Bool(false)]),
-        IntrinsicSize::Size { width, height } => Value::List(vec![px(width), px(height), Value::Bool(false)]),
+        IntrinsicSize::Width(w) => Value::list(vec![px(w), Value::Bool(false), Value::Bool(false)]),
+        IntrinsicSize::Height(h) => Value::list(vec![Value::Bool(false), px(h), Value::Bool(false)]),
+        IntrinsicSize::Size { width, height } => Value::list(vec![px(width), px(height), Value::Bool(false)]),
         IntrinsicSize::SizeWithBaseline { width, height, baseline } => {
-            Value::List(vec![px(width), px(height), px(baseline)])
+            Value::list(vec![px(width), px(height), px(baseline)])
         }
     }
 }
 
 fn inline_context_to_value<'w>(ictx: &InlineFormattingContext) -> Value<'w> {
     let elements: Vec<Value<'w>> = ictx.elements.iter().map(|&e| entity_to_value(e)).collect();
-    Value::List(elements)
+    Value::list(elements)
 }
 
 fn block_level_element_to_value<'w>(elem: BlockLevelElement) -> Value<'w> {
@@ -182,7 +196,7 @@ fn block_level_element_to_value<'w>(elem: BlockLevelElement) -> Value<'w> {
         BlockLevelElement::Leaf(e)           => ("leaf", e),
         BlockLevelElement::ContainerEnd(e)   => ("container-end", e),
     };
-    Value::List(vec![Value::Symbol(tag.to_string()), entity_to_value(ent)])
+    Value::list(vec![Value::Symbol(tag.to_string()), entity_to_value(ent)])
 }
 
 fn text_align_to_value<'w>(align: crate::style::properties::specified::TextAlign) -> Value<'w> {
@@ -214,7 +228,7 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // Read-only storages
     let text_runs       = Rc::new(ReadStorage::<'world, TextRun>::fetch(world));
     let computed_values = Rc::new(ReadStorage::<'world, ComputedValues>::fetch(world));
-    let intrinsic_sizes = Rc::new(ReadStorage::<'world, IntrinsicSize>::fetch(world));
+    let intrinsic_sizes = Rc::new(RefCell::new(WriteStorage::<'world, IntrinsicSize>::fetch(world)));
     let block_ctxs      = Rc::new(ReadStorage::<'world, BlockFormattingContext>::fetch(world));
     let entities        = Rc::new(Entities::<'world>::fetch(world));
     let root_node       = Rc::new(Read::<'world, crate::layout::components::RootNode>::fetch(world));
@@ -234,7 +248,7 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
         let entities = Rc::clone(&entities);
         inject(env, "all-entities", move |_args| {
             let list: Vec<Value<'world>> = (&*entities).join().map(entity_to_value).collect();
-            Ok(Value::List(list))
+            Ok(Value::list(list))
         });
     }
 
@@ -297,6 +311,7 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
         inject(env, "entity-intrinsic-size", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
+            let intrinsic_sizes = intrinsic_sizes.borrow();
             match ent.and_then(|e| intrinsic_sizes.get(e)) {
                 Some(is) => Ok(intrinsic_size_to_value(is)),
                 None     => Ok(Value::Bool(false)),
@@ -345,7 +360,7 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
                     let list: Vec<Value<'world>> = ctx.elements.iter()
                         .map(|&elem| block_level_element_to_value(elem))
                         .collect();
-                    Ok(Value::List(list))
+                    Ok(Value::list(list))
                 }
                 None => Ok(Value::Bool(false)),
             }
@@ -368,9 +383,9 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
             let ent = find_entity(&entities, id);
             match ent.and_then(|e| computed_values.get(e).map(|cv| (e, cv))) {
                 Some((e, style)) => {
-                    let intrinsic = intrinsic_sizes.get(e).cloned();
+                    let intrinsic = intrinsic_sizes.borrow().get(e).cloned();
                     let dims = compute_element_dimensions(container_width, intrinsic, style);
-                    Ok(Value::List(vec![
+                    Ok(Value::list(vec![
                         decoration_to_value(&dims.decoration),
                         px(dims.inline_size),
                         px(dims.inline_offset()),
@@ -465,10 +480,10 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
             let ifm = inline_mut.get_mut(ent).ok_or_else(|| RuntimeError::Message(
                 format!("layout-inline-lines: entity {} has no inline context", id)
             ))?;
-            ifm.break_lines(line_width, indent, &*entities, &*text_runs, &*intrinsic_sizes)
+            ifm.break_lines(line_width, indent, &*entities, &*text_runs, &*intrinsic_sizes.borrow())
                 .map_err(|e| RuntimeError::Message(format!("layout-inline-lines: {}", e)))?;
             let lines = ifm.lines.iter().map(|line| {
-                Value::List(vec![
+                Value::list(vec![
                     Value::Number(line.from_break as f64),
                     Value::Number(line.to_break as f64),
                     px(line.height),
@@ -573,7 +588,7 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
                 let (min, max) = intrinsic.of_contents(ent);
                 absolute::shrink_to_fit(min, max, available)
             });
-            Ok(Value::List(vec![
+            Ok(Value::list(vec![
                 Value::Number(result.start as f64),
                 Value::Number(result.size as f64),
                 Value::Number(result.margin_start as f64),
@@ -625,13 +640,159 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
                 static_start: static_top,
             };
             let result = absolute::solve_vertical(axis, content_height);
-            Ok(Value::List(vec![
+            Ok(Value::list(vec![
                 Value::Number(result.start as f64),
                 Value::Number(result.size as f64),
                 Value::Number(result.margin_start as f64),
                 Value::Number(result.margin_end as f64),
                 Value::Bool(axis.start.is_none()),
             ]))
+        });
+    }
+
+    // --- Inline-block boxes ---
+
+    // (entity-inline-blocks entity-id) → list of entity ids
+    // The `inline-block` boxes that are part of an inline context.
+    {
+        let inline_ctxs = Rc::clone(&inline_ctxs);
+        let entities    = Rc::clone(&entities);
+        inject(env, "entity-inline-blocks", move |args| {
+            let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
+            let ifcs = inline_ctxs.borrow();
+            let list = find_entity(&entities, id)
+                .and_then(|e| ifcs.get(e))
+                .map(|ifc| ifc.atom_offsets.iter().map(|&(e, _)| entity_to_value(e)).collect())
+                .unwrap_or_default();
+            Ok(Value::List(list))
+        });
+    }
+
+    // (entity-inline-block-dims entity-id available-width) → (decoration content-width)
+    // The margins, padding and border of an `inline-block` box and the width of its content.
+    // `auto` margins are 0, an `auto` width is the shrink-to-fit width.
+    {
+        let computed_values = Rc::clone(&computed_values);
+        let block_ctxs      = Rc::clone(&block_ctxs);
+        let inline_ctxs     = Rc::clone(&inline_ctxs);
+        let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
+        let entities        = Rc::clone(&entities);
+        inject(env, "entity-inline-block-dims", move |args| {
+            if args.len() != 2 {
+                return Err(RuntimeError::Message("entity-inline-block-dims requires 2 arguments".to_string()));
+            }
+            let id = value_to_entity_ref(&args[0])?;
+            let available = PixelLength(num(&args[1])? as f32);
+            let ent = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
+                format!("entity-inline-block-dims: entity {} not found", id)
+            ))?;
+            let style = computed_values.get(ent).ok_or_else(|| RuntimeError::Message(
+                format!("entity-inline-block-dims: entity {} has no style", id)
+            ))?;
+            let pos = &style.position;
+            let mut deco = crate::layout::inline_size::calculate_padding_and_border(available, style);
+            let zero = PixelLength(0.0);
+            deco.margin = EdgeValues {
+                top: pos.margin_top.absolute(zero, available),
+                right: pos.margin_right.absolute(zero, available),
+                bottom: pos.margin_bottom.absolute(zero, available),
+                left: pos.margin_left.absolute(zero, available),
+            };
+            let width = match pos.width {
+                GenericSize::LengthPercentage(lp) => lp.absolute(available).0,
+                GenericSize::Auto => {
+                    let intrinsic = IntrinsicWidths {
+                        block_ctxs: &block_ctxs,
+                        inline_ctxs: &inline_ctxs,
+                        computed_values: &computed_values,
+                        intrinsic_sizes: &intrinsic_sizes,
+                    };
+                    let (min, max) = intrinsic.of_contents(ent);
+                    let extras = deco.margin.left.0 + deco.margin.right.0
+                        + deco.padding.left.0 + deco.padding.right.0
+                        + deco.border.left.0 + deco.border.right.0;
+                    absolute::shrink_to_fit(min, max, (available.0 - extras).max(0.0))
+                }
+            };
+            Ok(Value::list(vec![decoration_to_value(&deco), Value::Number(width as f64)]))
+        });
+    }
+
+    // (begin-inline-block-group! entity-id)
+    // From now on every entity that gets a position belongs to the contents of the `inline-block`
+    // box. Close the group with `end-absolute-group!`.
+    {
+        let abs_groups  = Rc::clone(&abs_groups);
+        let group_stack = Rc::clone(&group_stack);
+        let entities    = Rc::clone(&entities);
+        inject(env, "begin-inline-block-group!", move |args| {
+            let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
+            let owner = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
+                format!("begin-inline-block-group!: entity {} not found", id)
+            ))?;
+            let mut groups = abs_groups.borrow_mut();
+            let parent = group_stack.borrow().last().copied();
+            groups.groups.push(AbsoluteGroup {
+                containing_block: None,
+                entities: vec![],
+                owner: Some(owner),
+                parent,
+            });
+            group_stack.borrow_mut().push(groups.groups.len() - 1);
+            Ok(Value::Null)
+        });
+    }
+
+    // (set-inline-block-size! entity-id width height baseline)
+    // The size of the margin box of an `inline-block` box and the distance of its baseline from
+    // the top, which the inline layout needs to place the box on a line.
+    {
+        let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
+        let entities        = Rc::clone(&entities);
+        inject(env, "set-inline-block-size!", move |args| {
+            if args.len() != 4 {
+                return Err(RuntimeError::Message("set-inline-block-size! requires 4 arguments".to_string()));
+            }
+            let id = value_to_entity_ref(&args[0])?;
+            let ent = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
+                format!("set-inline-block-size!: entity {} not found", id)
+            ))?;
+            let size = IntrinsicSize::SizeWithBaseline {
+                width: PixelLength(num(&args[1])? as f32),
+                height: PixelLength(num(&args[2])? as f32),
+                baseline: PixelLength(num(&args[3])? as f32),
+            };
+            intrinsic_sizes.borrow_mut().insert(ent, size).map_err(|e| RuntimeError::Message(
+                format!("set-inline-block-size!: {}", e)
+            ))?;
+            Ok(Value::Null)
+        });
+    }
+
+    // (finish-inline-blocks! entity-id)
+    // Call after the sizes of all `inline-block` boxes of an inline context are set: the context
+    // takes their widths into account when it breaks lines.
+    {
+        let inline_ctxs     = Rc::clone(&inline_ctxs);
+        let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
+        let entities        = Rc::clone(&entities);
+        inject(env, "finish-inline-blocks!", move |args| {
+            let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
+            let ent = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
+                format!("finish-inline-blocks!: entity {} not found", id)
+            ))?;
+            let mut ifcs = inline_ctxs.borrow_mut();
+            let ifc = ifcs.get_mut(ent).ok_or_else(|| RuntimeError::Message(
+                format!("finish-inline-blocks!: entity {} has no inline context", id)
+            ))?;
+            let sizes = intrinsic_sizes.borrow();
+            let widths = ifc
+                .atom_offsets
+                .iter()
+                .filter_map(|&(atom, _)| Some((atom, sizes.get(atom)?.width()?)))
+                .collect();
+            ifc.apply_atom_widths(&widths);
+            Ok(Value::Null)
         });
     }
 
@@ -653,7 +814,7 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
                 }
             };
             let mut groups = abs_groups.borrow_mut();
-            groups.groups.push(AbsoluteGroup { containing_block, entities: vec![] });
+            groups.groups.push(AbsoluteGroup { containing_block, entities: vec![], owner: None, parent: group_stack.borrow().last().copied() });
             group_stack.borrow_mut().push(groups.groups.len() - 1);
             Ok(Value::Null)
         });
@@ -851,7 +1012,7 @@ struct IntrinsicWidths<'a, 'w> {
     block_ctxs: &'a ReadStorage<'w, BlockFormattingContext>,
     inline_ctxs: &'a RefCell<WriteStorage<'w, InlineFormattingContext>>,
     computed_values: &'a ReadStorage<'w, ComputedValues>,
-    intrinsic_sizes: &'a ReadStorage<'w, IntrinsicSize>,
+    intrinsic_sizes: &'a RefCell<WriteStorage<'w, IntrinsicSize>>,
 }
 
 impl IntrinsicWidths<'_, '_> {
@@ -900,8 +1061,19 @@ impl IntrinsicWidths<'_, '_> {
     fn of_leaf(&self, entity: Entity) -> (f32, f32) {
         if let Some(ifc) = self.inline_ctxs.borrow().get(entity) {
             let breaks = &ifc.break_points;
+            // `inline-block` boxes that were not laid out yet have no width in the break points
+            let (mut atoms_min, mut atoms_max) = (0.0f32, 0.0f32);
+            for &(atom, _) in &ifc.atom_offsets {
+                if self.intrinsic_sizes.borrow().get(atom).is_some() {
+                    continue;
+                }
+                let (extras, fixed_width) = self.box_extras(atom);
+                let (min, max) = fixed_width.map_or_else(|| self.of_contents(atom), |w| (w, w));
+                atoms_min = atoms_min.max(min + extras);
+                atoms_max += max + extras;
+            }
             if breaks.len() < 2 {
-                return (0.0, 0.0);
+                return (atoms_min, atoms_max);
             }
             // the longest unbreakable piece and the longest line that only breaks when forced
             let mut min = 0.0f32;
@@ -914,8 +1086,8 @@ impl IntrinsicWidths<'_, '_> {
                     line_start = i;
                 }
             }
-            (min, max)
-        } else if let Some(width) = self.intrinsic_sizes.get(entity).and_then(|s| s.width()) {
+            (min.max(atoms_min), max + atoms_max)
+        } else if let Some(width) = self.intrinsic_sizes.borrow().get(entity).and_then(|s| s.width()) {
             (width.0, width.0)
         } else {
             (0.0, 0.0)

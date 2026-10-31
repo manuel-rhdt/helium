@@ -53,8 +53,10 @@ pub fn compute_breakpoints(
             let weight_ij = weight(node.position, i);
             let forced_break = weight_ij == f64::NEG_INFINITY;
 
+            // a forced break adds no demerits for the segment before it, but the best way to get
+            // to the start of that segment still has to be chosen
             let current_weight = if forced_break {
-                0.0
+                node.weight
             } else {
                 weight_ij + node.weight
             };
@@ -64,7 +66,7 @@ pub fn compute_breakpoints(
                 j += 1;
             }
 
-            if current_weight < minimal_observed_weight || forced_break {
+            if current_weight < minimal_observed_weight {
                 minimal_observed_weight = current_weight;
                 optimal_node = Some(Node {
                     position: i,
