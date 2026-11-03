@@ -54,8 +54,7 @@ fn run_scheme_block_layout(
         use super::Value;
         let call = Value::list(vec![
             Value::Symbol("run-block-layout".into()),
-            // quoted, otherwise the (id generation) list would be evaluated as a call
-            Value::list(vec![Value::Symbol("quote".into()), Value::from(root_entity)]),
+            Value::from(root_entity),
             Value::Number(page_width.0 as f64),
             Value::Number(page_height.0 as f64),
             Value::Number(margin.top.0 as f64),
@@ -292,8 +291,19 @@ mod tests {
     }
 
     fn eval_in_layout_env(world: &mut World, program: &str) -> Result<(), RuntimeError> {
+        eval_in_layout_env_with_entity(world, None, program)
+    }
+
+    fn eval_in_layout_env_with_entity(
+        world: &mut World,
+        entity: Option<Entity>,
+        program: &str,
+    ) -> Result<(), RuntimeError> {
         let env = default_environment()?;
         setup_ecs_env(&env, world);
+        if let Some(entity) = entity {
+            env.borrow_mut().set("test-entity", entity.into());
+        }
         let mut result = Ok(());
         for form in parse_lscheme(program)? {
             result = eval(form, Rc::clone(&env)).map(|_| ());
@@ -306,16 +316,11 @@ mod tests {
     }
 
     #[test]
-    fn test_stale_entity_generation_is_error() {
+    fn test_entity_pair_lists_are_rejected() {
         let html = html(vec![div(vec![])]);
         let mut world = html.construct();
         world.insert(TextList::default());
-        let ent = html.entity();
-        let call = |generation: i32| {
-            format!("(set-position! (list {} {}) 0 0 1 1 0 0)", ent.id(), generation)
-        };
-        assert!(eval_in_layout_env(&mut world, &call(ent.r#gen().id())).is_ok());
-        assert!(eval_in_layout_env(&mut world, &call(ent.r#gen().id() + 1)).is_err());
+        assert!(eval_in_layout_env(&mut world, "(entity-position (list 1 1))").is_err());
     }
 
     #[test]
@@ -325,12 +330,16 @@ mod tests {
         world.insert(TextList::default());
         // wrong number of arguments
         assert!(eval_in_layout_env(&mut world, "(layout-inline-lines (list 1 1) 100.0)").is_err());
-        // unknown entity
-        assert!(eval_in_layout_env(&mut world, "(layout-inline-lines (list 999999 1) 100.0 0.0)").is_err());
+        // entity pair lists are not entity values
+        assert!(eval_in_layout_env(&mut world, "(entity-position (list 999999 1))").is_err());
         // entity without inline context
         let ent = html.entity();
-        let call = format!("(layout-inline-lines (list {} {}) 100.0 0.0)", ent.id(), ent.r#gen().id());
-        assert!(eval_in_layout_env(&mut world, &call).is_err());
+        assert!(eval_in_layout_env_with_entity(
+            &mut world,
+            Some(ent),
+            "(layout-inline-lines test-entity 100.0 0.0)",
+        )
+        .is_err());
 
     }
 }
