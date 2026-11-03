@@ -235,6 +235,14 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     }
     new_map.insert("symbol?".to_string(), Value::NativeFunc(is_symbol));
 
+    fn is_entity<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::Message("entity? requires exactly 1 argument".to_string()));
+        }
+        Ok(Value::Bool(args[0].is_entity()))
+    }
+    new_map.insert("entity?".to_string(), Value::NativeFunc(is_entity));
+
     fn is_boolean<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
             return Err(RuntimeError::Message("boolean? requires exactly 1 argument".to_string()));
@@ -446,6 +454,7 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
             (Value::Null, Value::Null) => true,
             (Value::List(a), Value::List(b)) => a.is_empty() && b.is_empty(),
             (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Entity(a), Value::Entity(b)) => a == b,
             _ => false,
         };
         Ok(Value::Bool(result))

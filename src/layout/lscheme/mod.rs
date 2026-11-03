@@ -140,10 +140,7 @@ impl From<Error<Rule>> for RuntimeError {
 
 impl From<Entity> for Value<'_> {
     fn from(ent: Entity) -> Self {
-        Value::list(vec![
-            Value::Number(ent.id() as f64),
-            Value::Number(ent.r#gen().id() as f64),
-        ])
+        Value::Entity(ent)
     }
 }
 
@@ -180,6 +177,7 @@ pub enum Value<'world> {
     String(String),
     Symbol(Symbol),
     List(List<'world>),
+    Entity(Entity),
 
     // The following values are created by the evaluator
     NativeFunc(for<'a> fn(&[Value<'a>]) -> Result<Value<'a>, RuntimeError>),
@@ -832,6 +830,10 @@ impl Value<'_> {
         matches!(self, Self::List(_))
     }
 
+    pub fn is_entity(&self) -> bool {
+        matches!(self, Self::Entity(_))
+    }
+
     /// R7RS truthiness: only #f is false.
     pub fn is_truthy(&self) -> bool {
         !matches!(self, Self::Bool(false))
@@ -854,6 +856,12 @@ impl Debug for Value<'_> {
                 }
                 write!(f, ")")
             }
+            Self::Entity(entity) => write!(
+                f,
+                "#<entity {} {}>",
+                entity.id(),
+                entity.r#gen().id()
+            ),
             Self::Closure {
                 function,
                 upvalues,
@@ -880,6 +888,7 @@ impl PartialEq for Value<'_> {
             (Self::String(l0), Self::String(r0)) => l0 == r0,
             (Self::Symbol(l0), Self::Symbol(r0)) => l0 == r0,
             (Self::List(l0), Self::List(r0)) => l0 == r0,
+            (Self::Entity(l0), Self::Entity(r0)) => l0 == r0,
             _ => false,
         }
     }

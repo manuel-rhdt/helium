@@ -53,13 +53,49 @@ impl std::fmt::Display for EntityRef {
 
 fn value_to_entity_ref(val: &Value) -> Result<EntityRef, RuntimeError> {
     match val {
-        Value::List(items) if items.len() == 2 => Ok(EntityRef {
-            id: num(&items[0])? as u32,
-            generation: num(&items[1])? as i32,
+        Value::Entity(entity) => Ok(EntityRef {
+            id: entity.id(),
+            generation: entity.r#gen().id(),
         }),
         _ => Err(RuntimeError::Message(format!(
-            "entity: expected (id generation) list, got {:?}", val
+            "entity: expected entity, got {:?}", val
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use specs::Builder;
+
+    #[test]
+    fn specs_entities_are_first_class_values() {
+        let mut world = World::new();
+        let entity = world.create_entity().build();
+        let value = entity_to_value(entity);
+
+        assert_eq!(value, Value::Entity(entity));
+        assert!(value_to_entity_ref(&Value::list(vec![
+            Value::Number(entity.id() as f64),
+            Value::Number(entity.r#gen().id() as f64),
+        ]))
+        .is_err());
+        assert_eq!(
+            value_to_entity_ref(&value).unwrap(),
+            EntityRef {
+                id: entity.id(),
+                generation: entity.r#gen().id(),
+            }
+        );
+
+        let env = super::super::default_environment().unwrap();
+        env.borrow_mut().set("test-entity", value);
+        let expr = super::super::parse_lscheme(
+            "(and (entity? test-entity) (eq? test-entity test-entity))",
+        )
+            .unwrap()
+            .remove(0);
+        assert_eq!(super::super::eval(expr, env).unwrap(), Value::Bool(true));
     }
 }
 
