@@ -23,7 +23,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libfontconfig1-dev
+        sudo apt-get install -y libfontconfig1-dev fonts-stix fonts-lmodern
     - name: Build
       run: cargo build --verbose
     - name: Run tests
