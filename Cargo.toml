@@ -7,7 +7,7 @@ edition = "2024"
 [dependencies]
 structopt = ">= 0.2"
 derive_more = { version = "*", features = ["full"] }
-font-kit = "0.8.0"
+font-kit = "0.14.0"
 html5ever = "0.40"
 log = { version = "0.4.8", features = ["std", "max_level_trace", "release_max_level_trace"] }
 cssparser = "0.38"
