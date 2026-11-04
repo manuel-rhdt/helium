@@ -6,10 +6,7 @@ use specs::{Entity, World};
 use crate::layout::components::{EdgeValues, Position, TextList, ZIndex};
 use crate::style::properties::computed::PixelLength;
 
-use super::{
-    default_environment, eval, parse_lscheme, RuntimeError,
-    ecs_binding::setup_ecs_env,
-};
+use super::{RuntimeError, default_environment, ecs_binding::setup_ecs_env, eval, parse_lscheme};
 
 static BLOCK_LAYOUT_SCM: &str = include_str!("block_layout.scm");
 
@@ -81,8 +78,8 @@ mod tests {
 
     use std::convert::TryInto;
 
+    use crate::simple_dom::{Quantity::*, body, div, html};
     use specs::prelude::*;
-    use crate::simple_dom::{body, div, html, Quantity::*};
 
     struct SchemeLayoutTest<'a> {
         html: &'a crate::simple_dom::Node,
@@ -119,7 +116,11 @@ mod tests {
                 .margin_bottom(Px(30.0)),
             div(vec![]),
         ]);
-        let world = SchemeLayoutTest { html, page_width: Px(100.0) }.layout();
+        let world = SchemeLayoutTest {
+            html,
+            page_width: Px(100.0),
+        }
+        .layout();
 
         let positions = world.read_storage();
         let pos1: &Position = html[0].get(&positions);
@@ -135,7 +136,11 @@ mod tests {
             div(vec![]).height(Px(10.0)),
             div(vec![]).height(Px(40.0)),
         ]);
-        let world = SchemeLayoutTest { html, page_width: Px(100.0) }.layout();
+        let world = SchemeLayoutTest {
+            html,
+            page_width: Px(100.0),
+        }
+        .layout();
 
         let positions = world.read_storage();
         let pos: &Position = html.get(&positions);
@@ -158,11 +163,19 @@ mod tests {
     #[test]
     fn test_scheme_nested_elements() {
         let child = div(vec![]).height(Px(20.0)).margin_bottom(Px(30.0));
-        let html = &html(vec![body(vec![div(vec![child.clone(), child])
-            .padding(Px(10.0))
-            .margin_top(Px(5.0))])
-        .margin_left(Px(10.0))]);
-        let world = SchemeLayoutTest { html, page_width: Px(100.0) }.layout();
+        let html = &html(vec![
+            body(vec![
+                div(vec![child.clone(), child])
+                    .padding(Px(10.0))
+                    .margin_top(Px(5.0)),
+            ])
+            .margin_left(Px(10.0)),
+        ]);
+        let world = SchemeLayoutTest {
+            html,
+            page_width: Px(100.0),
+        }
+        .layout();
 
         let positions = world.read_storage();
         let container_pos: &Position = html["body"][0].get(&positions);
@@ -186,9 +199,13 @@ mod tests {
     #[test]
     fn test_scheme_left_margin() {
         let html = &html(vec![
-            div(vec![div(vec![]).margin_left(Px(15.0))]).margin_left(Px(20.0))
+            div(vec![div(vec![]).margin_left(Px(15.0))]).margin_left(Px(20.0)),
         ]);
-        let world = SchemeLayoutTest { html, page_width: Px(100.0) }.layout();
+        let world = SchemeLayoutTest {
+            html,
+            page_width: Px(100.0),
+        }
+        .layout();
 
         let positions = world.read_storage();
         let pos: &Position = html["div"].get(&positions);
@@ -222,7 +239,11 @@ mod tests {
     #[test]
     fn test_scheme_margin_top_offsets_first_element() {
         let html = &html(vec![div(vec![]).margin_top(Px(10.0))]);
-        let world = SchemeLayoutTest { html, page_width: Px(100.0) }.layout();
+        let world = SchemeLayoutTest {
+            html,
+            page_width: Px(100.0),
+        }
+        .layout();
 
         let positions = world.read_storage();
         let pos: &Position = html[0].get(&positions);
@@ -246,7 +267,11 @@ mod tests {
             div(vec![]).height(Px(10.0)).margin_bottom(Px(30.0)),
             div(vec![]).height(Px(10.0)).margin_top(Px(10.0)),
         ]);
-        let world = SchemeLayoutTest { html, page_width: Px(100.0) }.layout();
+        let world = SchemeLayoutTest {
+            html,
+            page_width: Px(100.0),
+        }
+        .layout();
 
         let positions = world.read_storage();
         let pos2: &Position = html[1].get(&positions);
@@ -260,7 +285,11 @@ mod tests {
             div(vec![]).width(Percent(50.0)),
             div(vec![]).width(Percent(150.0)),
         ]);
-        let world = SchemeLayoutTest { html, page_width: Px(100.0) }.layout();
+        let world = SchemeLayoutTest {
+            html,
+            page_width: Px(100.0),
+        }
+        .layout();
 
         let positions = world.read_storage();
         let pos1: &Position = html[0].get(&positions);
@@ -334,12 +363,13 @@ mod tests {
         assert!(eval_in_layout_env(&mut world, "(entity-position (list 999999 1))").is_err());
         // entity without inline context
         let ent = html.entity();
-        assert!(eval_in_layout_env_with_entity(
-            &mut world,
-            Some(ent),
-            "(layout-inline-lines test-entity 100.0 0.0)",
-        )
-        .is_err());
-
+        assert!(
+            eval_in_layout_env_with_entity(
+                &mut world,
+                Some(ent),
+                "(layout-inline-lines test-entity 100.0 0.0)",
+            )
+            .is_err()
+        );
     }
 }

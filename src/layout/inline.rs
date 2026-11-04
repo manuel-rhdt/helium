@@ -1,17 +1,19 @@
-use super::components::{self, Paragraph, TextOperator};
+use super::components::{self, EntityHrefs, Hyperlink, Hyperlinks, Paragraph, TextOperator};
 use super::{
-    text::{font::GlyphIndex, Font},
     FontMap,
+    text::{Font, font::GlyphIndex},
 };
-use crate::style::properties::computed::{ComputedValues, PixelLength as Px, TextAlign, RGBA};
+use crate::style::properties::computed::{ComputedValues, PixelLength as Px, RGBA, TextAlign};
 
+use crate::display_list::Rect;
 use crate::layout::text::shape;
 
-use components::{GraphicsOp, Glyphs, IntrinsicSize, KernedGlyphs, Position};
+use components::{Glyphs, GraphicsOp, IntrinsicSize, KernedGlyphs, Position};
+use hyphenation::{Hyphenator, Language, Load, Standard};
 use lemon_pdf::font::FontUnit;
-use specs::{Component, DenseVecStorage, Entity};
 use specs::storage::GenericReadStorage;
-use specs::{Entities, Join, Read, ReadStorage, System, WriteStorage};
+use specs::{Component, DenseVecStorage, Entity};
+use specs::{Entities, Join, Read, ReadStorage, System, Write, WriteStorage};
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -37,13 +39,8 @@ pub struct InlineFormattingContext {
     /// boxes are measured they have no width.
     pub atom_offsets: Vec<(Entity, Px)>,
 }
-
 impl InlineFormattingContext {
-    /// Breaks the paragraph into lines using the Knuth-Plass algorithm.
-    ///
-    /// `line_width` is the width available to every line; the first line is shortened by
-    /// `indent`. For every resulting line a new entity is created from `entities`. The result
-    /// is stored in `self.lines`.
+    /// Breaks the paragraph into lines using adjustment-ratio badness and breakpoint demerits.
     pub fn break_lines(
         &mut self,
         line_width: Px,
@@ -64,28 +61,41 @@ impl InlineFormattingContext {
             ));
         }
 
-        // weight for computing optimal break points
-        let mut weight = |from: usize, to: usize| {
-            if (to - from) >= 2 && breakpoints[from + 1..to].iter().any(|b| b.forced) {
-                return std::f64::INFINITY;
-            }
-            let indent = if from == 0 { indent } else { Px(0.0) };
-            let advance = breakpoints[to].advance_before - breakpoints[from].advance_after;
-            let line_width = line_width - indent;
-            if to == breakpoints.len() - 1 && advance <= line_width {
-                // the last line does not need to be justified
-                0.0
-            } else if advance > line_width {
-                std::f64::INFINITY
-            } else {
-                ((line_width - advance).0 as f64).powi(3)
-            }
-        };
+        let opportunities: Vec<_> = breakpoints
+            .iter()
+            .map(|breakpoint| super::paragraph::BreakOpportunity {
+                forced: breakpoint.forced,
+                hyphen: breakpoint.hyphen,
+                penalty: breakpoint.penalty,
+            })
+            .collect();
+        let mut glue_prefix = Vec::with_capacity(breakpoints.len() + 1);
+        glue_prefix.push(super::paragraph::GlueTotals::default());
+        for breakpoint in breakpoints {
+            let previous = *glue_prefix.last().unwrap();
+            glue_prefix.push(super::paragraph::GlueTotals {
+                stretch: previous.stretch + f64::from(breakpoint.glue_stretch.0),
+                shrink: previous.shrink + f64::from(breakpoint.glue_shrink.0),
+            });
+        }
+        let sequence = super::paragraph::compute_paragraph_breakpoints(
+            &opportunities,
+            |from, to| {
+                let natural_width = breakpoints[to].advance_before
+                    - breakpoints[from].advance_after
+                    + breakpoints[to].hyphen_width;
+                let start_glue = glue_prefix[from + 1];
+                let end_glue = glue_prefix[to];
+                let glue = super::paragraph::GlueTotals {
+                    stretch: end_glue.stretch - start_glue.stretch,
+                    shrink: end_glue.shrink - start_glue.shrink,
+                };
+                Some((f64::from(natural_width.0), glue))
+            },
+            |from| f64::from((line_width - if from == 0 { indent } else { Px(0.0) }).0),
+        );
 
-        let break_point_sequence =
-            super::paragraph::compute_breakpoints(breakpoints.len(), &mut weight);
-
-        let lines = break_point_sequence
+        let lines = sequence
             .windows(2)
             .map(|window| {
                 let (baseline, height) =
@@ -112,6 +122,14 @@ impl InlineFormattingContext {
     /// The width of the content between two break points.
     pub fn content_width(&self, from_break: usize, to_break: usize) -> Px {
         self.break_points[to_break].advance_before - self.break_points[from_break].advance_after
+            + self.break_points[to_break].hyphen_width
+    }
+
+    fn space_count(&self, from_break: usize, to_break: usize) -> usize {
+        self.break_points[from_break + 1..to_break]
+            .iter()
+            .filter(|break_point| break_point.space)
+            .count()
     }
 
     pub fn line_height(
@@ -213,6 +231,12 @@ pub struct BreakPoint {
     pub advance_before: Px,
     pub advance_after: Px,
     pub forced: bool,
+    pub space: bool,
+    pub hyphen: bool,
+    pub hyphen_width: Px,
+    pub glue_stretch: Px,
+    pub glue_shrink: Px,
+    pub penalty: i32,
 }
 
 // TODO: test this
@@ -229,6 +253,9 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
         &mut self,
         (mut inline_formatting_contexts, mut text_runs, intrinsic_sizes, computed_values, font_map): Self::SystemData,
     ) {
+        let dictionary = Standard::from_embedded(Language::EnglishUS)
+            .expect("embedded English hyphenation dictionary should load");
+
         for InlineFormattingContext {
             elements,
             break_points,
@@ -248,6 +275,12 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 advance_before: Px(0.0),
                 advance_after: Px(0.0),
                 forced: false,
+                space: false,
+                hyphen: false,
+                hyphen_width: Px(0.0),
+                glue_stretch: Px(0.0),
+                glue_shrink: Px(0.0),
+                penalty: 0,
             });
 
             let mut advance = Px(0.0);
@@ -256,6 +289,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 if let Some(text_run) = text_runs.get_mut(entity) {
                     let font = &font_map[&text_run.font_name];
                     let shaped = shape(&text_run.text, font);
+                    let run_start_advance = advance;
                     for (pos, glyph_info) in &shaped {
                         let cur_char = &text_run.text[glyph_info.cluster as usize..];
                         if cur_char.starts_with(|chr: char| chr.is_whitespace()) {
@@ -271,9 +305,80 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 advance_before,
                                 advance_after,
                                 forced: false,
+                                space: true,
+                                hyphen: false,
+                                hyphen_width: Px(0.0),
+                                glue_stretch: Px(
+                                    pos.x_advance.0 as f32 * text_run.font_size.0 / 2000.0
+                                ),
+                                glue_shrink: Px(
+                                    pos.x_advance.0 as f32 * text_run.font_size.0 / 3000.0
+                                ),
+                                penalty: 0,
                             })
                         } else {
                             advance += font.scale_to_px(pos.x_advance, text_run.font_size);
+                        }
+                    }
+                    let hyphenation = match text_run.hyphens {
+                        crate::style::properties::specified::Hyphens::None => Vec::new(),
+                        crate::style::properties::specified::Hyphens::Manual
+                            if text_run.manual_hyphen_points.is_empty() =>
+                        {
+                            Vec::new()
+                        }
+                        crate::style::properties::specified::Hyphens::Manual => {
+                            text_run.manual_hyphen_points.clone()
+                        }
+                        crate::style::properties::specified::Hyphens::Auto
+                            if !text_run.manual_hyphen_points.is_empty() =>
+                        {
+                            text_run.manual_hyphen_points.clone()
+                        }
+                        crate::style::properties::specified::Hyphens::Auto => {
+                            word_ranges(&text_run.text)
+                                .into_iter()
+                                .flat_map(|(word_start, word_end)| {
+                                    dictionary
+                                        .hyphenate(&text_run.text[word_start..word_end])
+                                        .breaks
+                                        .into_iter()
+                                        .map(move |offset| word_start + offset)
+                                })
+                                .collect()
+                        }
+                    };
+                    if !hyphenation.is_empty() {
+                        let hyphen_width = shape("-", font)
+                            .iter()
+                            .map(|(position, _)| {
+                                font.scale_to_px(position.x_advance, text_run.font_size)
+                            })
+                            .fold(Px(0.0), |sum, width| sum + width);
+                        for char_index in hyphenation {
+                            if !text_run.text.is_char_boundary(char_index) || char_index == 0 {
+                                continue;
+                            }
+                            let prefix = &text_run.text[..char_index];
+                            let prefix_width = shape(prefix, font)
+                                .iter()
+                                .map(|(position, _)| {
+                                    font.scale_to_px(position.x_advance, text_run.font_size)
+                                })
+                                .fold(Px(0.0), |sum, width| sum + width);
+                            break_points.push(BreakPoint {
+                                entity,
+                                char_index,
+                                advance_before: run_start_advance + prefix_width,
+                                advance_after: run_start_advance + prefix_width,
+                                forced: false,
+                                space: false,
+                                hyphen: true,
+                                hyphen_width,
+                                glue_stretch: Px(0.0),
+                                glue_shrink: Px(0.0),
+                                penalty: 50,
+                            });
                         }
                     }
                 } else if let Some(intrinsic_size) = intrinsic_sizes.get(entity) {
@@ -294,6 +399,12 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             advance_before: advance,
                             advance_after: advance,
                             forced: true,
+                            space: false,
+                            hyphen: false,
+                            hyphen_width: Px(0.0),
+                            glue_stretch: Px(0.0),
+                            glue_shrink: Px(0.0),
+                            penalty: -10_000,
                         })
                     }
                 }
@@ -313,9 +424,41 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 advance_before: advance,
                 advance_after: advance,
                 forced: false,
-            })
+                space: false,
+                hyphen: false,
+                hyphen_width: Px(0.0),
+                glue_stretch: Px(0.0),
+                glue_shrink: Px(0.0),
+                penalty: 0,
+            });
+
+            let element_order = |entity| {
+                elements
+                    .iter()
+                    .position(|&item| item == entity)
+                    .unwrap_or(usize::MAX)
+            };
+            break_points.sort_by_key(|break_point| {
+                (element_order(break_point.entity), break_point.char_index)
+            });
         }
     }
+}
+
+fn word_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut start = None;
+    for (index, character) in text.char_indices() {
+        if character.is_alphabetic() {
+            start.get_or_insert(index);
+        } else if let Some(word_start) = start.take() {
+            ranges.push((word_start, index));
+        }
+    }
+    if let Some(word_start) = start {
+        ranges.push((word_start, text.len()));
+    }
+    ranges
 }
 
 /// Creates the paragraphs that draw the markers of list items. Runs after the line boxes are
@@ -400,22 +543,38 @@ impl<'a> System<'a> for ListMarkerCreator {
                     const SEGMENTS: usize = 24;
                     let point = |i: usize| {
                         let angle = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-                        (center_x + radius * angle.cos(), center_y + radius * angle.sin())
+                        (
+                            center_x + radius * angle.cos(),
+                            center_y + radius * angle.sin(),
+                        )
                     };
                     for i in 0..SEGMENTS {
                         let (from_x, from_y) = point(i);
                         let (to_x, to_y) = point(i + 1);
-                        ops.push(GraphicsOp::Line { from_x, from_y, to_x, to_y, thickness: stroke });
+                        ops.push(GraphicsOp::Line {
+                            from_x,
+                            from_y,
+                            to_x,
+                            to_y,
+                            thickness: stroke,
+                        });
                     }
                 }
                 entities
                     .build_entity()
                     .with(
-                        components::Position { y: line_pos.y, height: Px(0.0), ..line_pos },
+                        components::Position {
+                            y: line_pos.y,
+                            height: Px(0.0),
+                            ..line_pos
+                        },
                         &mut positions,
                     )
                     .with(
-                        components::VectorGraphics { ops, color: Some(marker.color) },
+                        components::VectorGraphics {
+                            ops,
+                            color: Some(marker.color),
+                        },
                         &mut graphics,
                     )
                     .build();
@@ -486,29 +645,35 @@ impl<'a> System<'a> for PlaceInlineBlocks {
 
                 // the same word spacing as the line box creator uses
                 let is_last_line = line_num == ifc.lines.len() - 1;
-                let num_spaces = line.to_break - line.from_break - 1;
+                let num_spaces = ifc.space_count(line.from_break, line.to_break);
                 let word_spacing = if !is_last_line
                     && ifc.text_align == crate::style::properties::specified::TextAlign::Justify
                     && num_spaces > 0
                 {
-                    (line_pos.width - (to.advance_before - from.advance_after)) / num_spaces as f32
+                    (line_pos.width - ifc.content_width(line.from_break, line.to_break))
+                        / num_spaces as f32
                 } else {
                     Px(0.0)
                 };
 
                 for &(atom, offset) in &ifc.atom_offsets {
                     let (width, baseline) = match intrinsic_sizes.get(atom) {
-                        Some(&IntrinsicSize::SizeWithBaseline { width, baseline, .. }) => (width, baseline),
+                        Some(&IntrinsicSize::SizeWithBaseline {
+                            width, baseline, ..
+                        }) => (width, baseline),
                         _ => continue,
                     };
                     let _ = width;
-                    if offset.0 + EPSILON < from.advance_after.0 || offset.0 >= to.advance_before.0 - EPSILON {
+                    if offset.0 + EPSILON < from.advance_after.0
+                        || offset.0 >= to.advance_before.0 - EPSILON
+                    {
                         continue;
                     }
                     let spaces = (line.from_break + 1..line.to_break)
                         .filter(|&b| ifc.break_points[b].advance_before.0 < offset.0 - EPSILON)
                         .count();
-                    let x = line_pos.x + (offset - from.advance_after) + word_spacing * spaces as f32;
+                    let x =
+                        line_pos.x + (offset - from.advance_after) + word_spacing * spaces as f32;
                     let y = line_pos.y + line.baseline - baseline;
                     placements.insert(atom, (x, y, line_pos.page));
                 }
@@ -526,7 +691,11 @@ impl<'a> System<'a> for PlaceInlineBlocks {
             depth
         };
         let mut order: Vec<usize> = (0..groups.groups.len())
-            .filter(|&g| groups.groups[g].owner.map_or(false, |owner| placements.contains_key(&owner)))
+            .filter(|&g| {
+                groups.groups[g]
+                    .owner
+                    .map_or(false, |owner| placements.contains_key(&owner))
+            })
             .collect();
         order.sort_by_key(|&g| depth(g));
 
@@ -563,6 +732,8 @@ impl<'a> System<'a> for LineBoxCreator {
         ReadStorage<'a, components::TextRun>,
         ReadStorage<'a, components::IntrinsicSize>,
         ReadStorage<'a, ComputedValues>,
+        Read<'a, EntityHrefs>,
+        Write<'a, Hyperlinks>,
         WriteStorage<'a, components::Position>,
         WriteStorage<'a, Paragraph>,
         WriteStorage<'a, components::VectorGraphics>,
@@ -577,6 +748,8 @@ impl<'a> System<'a> for LineBoxCreator {
             text_runs,
             intrinsic_sizes,
             computed_values,
+            entity_hrefs,
+            mut hyperlinks,
             mut positions,
             mut paragraphs,
             mut graphics,
@@ -608,6 +781,11 @@ impl<'a> System<'a> for LineBoxCreator {
             // position of the first baseline of the paragraph
             let mut paragraph_start = (Px(0.0), Px(0.0));
 
+            // The x-intervals on the current line of every hyperlink that has text on it.
+            // `link_intervals: href -> (start, end)`; adjacent intervals of the same link are
+            // merged as the text runs of a link are visited in order.
+            let mut link_intervals: HashMap<&str, (Px, Px)> = HashMap::new();
+
             for (line_num, line) in lines.iter().enumerate() {
                 let from = line.from_break;
                 let to = line.to_break;
@@ -622,19 +800,23 @@ impl<'a> System<'a> for LineBoxCreator {
 
                 // if we want to justify the text we have to add word-spacing
                 let is_last_line = line_num == lines.len() - 1;
-                let word_spacing: Px = if (!is_last_line) && *text_align == TextAlign::Justify {
-                    // the ideal and maximal width of the line
-                    let desired_width = line_pos.width;
-                    // the number of stretchable spaces in the current line (needed for justification)
-                    let num_spaces = to - from - 1;
-                    // the actual width of the unstretched characters in the line
-                    let line_width =
-                        break_points[to].advance_before - break_points[from].advance_after;
-                    (desired_width - line_width) / num_spaces as f32
-                } else {
-                    // no adjustment needed since this line should not be justified
-                    Px(0.0)
-                };
+                let num_spaces = break_points[from + 1..to]
+                    .iter()
+                    .filter(|break_point| break_point.space)
+                    .count();
+                let word_spacing: Px =
+                    if !is_last_line && *text_align == TextAlign::Justify && num_spaces > 0 {
+                        // the ideal and maximal width of the line
+                        let desired_width = line_pos.width;
+                        // the actual width of the unstretched characters in the line
+                        let line_width = break_points[to].advance_before
+                            - break_points[from].advance_after
+                            + break_points[to].hyphen_width;
+                        (desired_width - line_width) / num_spaces as f32
+                    } else {
+                        // no adjustment needed since this line should not be justified
+                        Px(0.0)
+                    };
 
                 // Check if a page break happened between this line and the previous. If a page
                 // break happend we have to add the existing (partial) paragraph to the previous
@@ -677,7 +859,10 @@ impl<'a> System<'a> for LineBoxCreator {
                 let mut advance = Px(0.0);
                 let mut text_cursor = Px(0.0);
                 loop {
-                    advance += if let Some(run) = text_runs.get(entity) {
+                    // The x position of the current piece on the line, before its width is
+                    // added to `advance`.
+                    let piece_start = advance;
+                    let piece_width = if let Some(run) = text_runs.get(entity) {
                         if !run.text.is_empty() {
                             if previous_font != Some((run.font_name.clone(), run.font_size)) {
                                 ops.push(TextOperator::SetFont(
@@ -707,8 +892,17 @@ impl<'a> System<'a> for LineBoxCreator {
                             let characters = &run.text[start..end];
                             let font = &font_map[&run.font_name];
 
-                            let piece_width =
-                                shape_piece(characters, font, run.font_size, word_spacing, &mut ops);
+                            let mut piece_width = shape_piece(
+                                characters,
+                                font,
+                                run.font_size,
+                                word_spacing,
+                                &mut ops,
+                            );
+                            if to_break.hyphen && entity == to_break.entity {
+                                piece_width +=
+                                    shape_piece("-", font, run.font_size, Px(0.0), &mut ops);
+                            }
                             if !run.decoration.is_none() && piece_width > Px(0.0) {
                                 let page_pos = components::Position {
                                     y: line_pos.y,
@@ -783,6 +977,17 @@ impl<'a> System<'a> for LineBoxCreator {
                         log::error!("unsopported inline element type");
                         Px(0.0)
                     };
+                    advance += piece_width;
+
+                    // Extend the interval of the hyperlink this piece belongs to, if any.
+                    if piece_width > Px(0.0) {
+                        if let Some(href) = entity_hrefs.href_of(entity) {
+                            let interval = link_intervals
+                                .entry(href)
+                                .or_insert_with(|| (piece_start, piece_start));
+                            interval.1 = advance;
+                        }
+                    }
 
                     if entity == to_break.entity {
                         break;
@@ -799,6 +1004,24 @@ impl<'a> System<'a> for LineBoxCreator {
                     ops.push(TextOperator::NewLine {
                         x_offset: next_line_pos.x - line_pos.x - text_cursor,
                         leading: (line.height - line.baseline) + next_line.baseline,
+                    });
+                }
+
+                // Convert the intervals of this line into clickable areas for the hyperlinks.
+                for (href, (start, end)) in link_intervals.drain() {
+                    if end <= start {
+                        continue;
+                    }
+                    hyperlinks.0.push(Hyperlink {
+                        page: line_pos.page,
+                        rect: Rect {
+                            x: line_pos.x + start,
+                            y: line_pos.y,
+                            width: end - start,
+                            height: line.height,
+                        },
+                        href: href.to_owned(),
+                        destination: None, // resolved later, once all positions are final
                     });
                 }
             }
@@ -827,7 +1050,10 @@ fn decoration_lines(
 ) -> [((Px, Px), bool); 3] {
     let thickness = (font_size * 0.06).max(Px(1.0));
     [
-        ((font_size * 0.12 + thickness / 2.0, thickness), decoration.underline),
+        (
+            (font_size * 0.12 + thickness / 2.0, thickness),
+            decoration.underline,
+        ),
         ((-(font_size * 0.3), thickness), decoration.line_through),
         ((-(font_size * 0.8), thickness), decoration.overline),
     ]
@@ -875,6 +1101,8 @@ pub(super) fn shape_piece(
             kern.0 -= word_spacing.0;
         }
 
+        // 0.1/1000 em is far below anything visible; the coarser values compress better
+        kern.0 = (kern.0 * 10.0).round() / 10.0;
         if kern.0.abs() >= 0.1 {
             kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs.clone())));
             kerned_glyphs.push(KernedGlyphs::Kern(kern));

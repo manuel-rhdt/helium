@@ -6,9 +6,9 @@
 use specs::{World, WorldExt};
 
 use crate::layout::components::{Decoration, LayoutEntity, PageGeometry, Position};
-use crate::style::properties::computed::PositionSpec;
 use crate::layout::construct::AssignLayoutEntity;
 use crate::parser::ParsedData;
+use crate::style::properties::computed::PositionSpec;
 use crate::tree::{DomRef, TreeLinked};
 
 /// Tolerance used by `assert_tolerance` in check-layout-th.js.
@@ -43,12 +43,24 @@ pub fn check_layout(dom: &DomRef, world: &World) -> CheckReport {
 /// The border box of the node's layout box as `(x, y, width, height)`.
 fn border_box(entity: specs::Entity, world: &World) -> Option<(f32, f32, f32, f32)> {
     let pos = world.read_storage::<Position>().get(entity).copied()?;
-    let deco = world.read_storage::<Decoration>().get(entity).copied().unwrap_or_default();
+    let deco = world
+        .read_storage::<Decoration>()
+        .get(entity)
+        .copied()
+        .unwrap_or_default();
     Some((
         pos.x.0 - deco.padding.left.0 - deco.border.left.0,
         pos.y.0 - deco.padding.top.0 - deco.border.top.0,
-        pos.width.0 + deco.padding.left.0 + deco.padding.right.0 + deco.border.left.0 + deco.border.right.0,
-        pos.height.0 + deco.padding.top.0 + deco.padding.bottom.0 + deco.border.top.0 + deco.border.bottom.0,
+        pos.width.0
+            + deco.padding.left.0
+            + deco.padding.right.0
+            + deco.border.left.0
+            + deco.border.right.0,
+        pos.height.0
+            + deco.padding.top.0
+            + deco.padding.bottom.0
+            + deco.border.top.0
+            + deco.border.bottom.0,
     ))
 }
 
@@ -67,8 +79,15 @@ fn offset(node: &DomRef, world: &World) -> Option<(f32, f32)> {
             .map_or(false, |style| style.box_.position != PositionSpec::Static);
         if positioned {
             if let Some(parent_entity) = parent.layout_entity().map(|LayoutEntity(e)| e) {
-                let pos = world.read_storage::<Position>().get(parent_entity).copied()?;
-                let deco = world.read_storage::<Decoration>().get(parent_entity).copied().unwrap_or_default();
+                let pos = world
+                    .read_storage::<Position>()
+                    .get(parent_entity)
+                    .copied()?;
+                let deco = world
+                    .read_storage::<Decoration>()
+                    .get(parent_entity)
+                    .copied()
+                    .unwrap_or_default();
                 // the offset is relative to the padding edge of the offset parent
                 let padding_edge_x = pos.x.0 - deco.padding.left.0;
                 let padding_edge_y = pos.y.0 - deco.padding.top.0;
@@ -78,7 +97,10 @@ fn offset(node: &DomRef, world: &World) -> Option<(f32, f32)> {
         ancestor = parent.parent();
     }
 
-    let geometry = world.try_fetch::<PageGeometry>().map(|g| *g).unwrap_or_default();
+    let geometry = world
+        .try_fetch::<PageGeometry>()
+        .map(|g| *g)
+        .unwrap_or_default();
     Some((x - geometry.margin.left.0, y - geometry.margin.top.0))
 }
 
@@ -109,7 +131,11 @@ fn check_element(
         .borrow()
         .iter()
         .map(|(name, attr)| (name.local.to_string(), attr.value.to_string()))
-        .filter(|(name, _)| name.starts_with("data-expected-") || name.starts_with("data-offset-") || name.starts_with("data-total-"))
+        .filter(|(name, _)| {
+            name.starts_with("data-expected-")
+                || name.starts_with("data-offset-")
+                || name.starts_with("data-total-")
+        })
         .collect();
     if attrs.is_empty() {
         return;
@@ -134,31 +160,51 @@ fn check_element(
         let expected: f32 = match value.trim().parse() {
             Ok(v) => v,
             Err(_) => {
-                report.failures.push(format!("{}: {}=\"{}\" is not a number", path, name, value));
+                report
+                    .failures
+                    .push(format!("{}: {}=\"{}\" is not a number", path, name, value));
                 continue;
             }
         };
         let (pos, deco) = match &boxes {
             Some(b) => *b,
             None => {
-                report.failures.push(format!("{}: {} but element has no layout box", path, name));
+                report
+                    .failures
+                    .push(format!("{}: {} but element has no layout box", path, name));
                 continue;
             }
         };
         let actual = match name.as_str() {
             "data-offset-x" | "data-offset-y" => match offset(node, world) {
-                Some((x, y)) => if name == "data-offset-x" { x } else { y },
+                Some((x, y)) => {
+                    if name == "data-offset-x" {
+                        x
+                    } else {
+                        y
+                    }
+                }
                 None => {
-                    report.failures.push(format!("{}: {} but element has no layout box", path, name));
+                    report
+                        .failures
+                        .push(format!("{}: {} but element has no layout box", path, name));
                     continue;
                 }
             },
             // offsetWidth/offsetHeight are border-box sizes
             "data-expected-width" | "data-expected-bounding-client-rect-width" => {
-                pos.width.0 + deco.padding.left.0 + deco.padding.right.0 + deco.border.left.0 + deco.border.right.0
+                pos.width.0
+                    + deco.padding.left.0
+                    + deco.padding.right.0
+                    + deco.border.left.0
+                    + deco.border.right.0
             }
             "data-expected-height" | "data-expected-bounding-client-rect-height" => {
-                pos.height.0 + deco.padding.top.0 + deco.padding.bottom.0 + deco.border.top.0 + deco.border.bottom.0
+                pos.height.0
+                    + deco.padding.top.0
+                    + deco.padding.bottom.0
+                    + deco.border.top.0
+                    + deco.border.bottom.0
             }
             "data-expected-padding-top" => deco.padding.top.0,
             "data-expected-padding-bottom" => deco.padding.bottom.0,
@@ -175,9 +221,10 @@ fn check_element(
         };
         report.checked += 1;
         if (actual - expected).abs() >= TOLERANCE {
-            report
-                .failures
-                .push(format!("{}: {} expected {} but got {}", path, name, expected, actual));
+            report.failures.push(format!(
+                "{}: {} expected {} but got {}",
+                path, name, expected, actual
+            ));
         }
     }
 }

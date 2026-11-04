@@ -1,7 +1,7 @@
 use super::parse::{self, CssIdent, CssNamespace, CssString};
 use crate::tree::{DomRef, ElementRef, TreeLinked};
 
-use html5ever::{local_name, ns, LocalName, Namespace, QualName};
+use html5ever::{LocalName, Namespace, QualName, local_name, ns};
 use selectors::{
     attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint, SELECTOR_WHITESPACE},
     bloom::BloomFilter,
@@ -109,17 +109,17 @@ impl selectors::Element for ElementRef {
     fn has_class(&self, name: &CssIdent, case_sensitivity: CaseSensitivity) -> bool {
         let name = name.0.as_bytes();
         !name.is_empty()
-            && match self.attributes
-                    .borrow()
-                    .get(&QualName::new(None, ns!(), local_name!("class")))
-            { Some(class_attr) => {
-                class_attr
+            && match self
+                .attributes
+                .borrow()
+                .get(&QualName::new(None, ns!(), local_name!("class")))
+            {
+                Some(class_attr) => class_attr
                     .value
                     .split(SELECTOR_WHITESPACE)
-                    .any(|class| case_sensitivity.eq(class.as_bytes(), name))
-            } _ => {
-                false
-            }}
+                    .any(|class| case_sensitivity.eq(class.as_bytes(), name)),
+                _ => false,
+            }
     }
 
     #[inline]

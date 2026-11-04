@@ -7,11 +7,11 @@
 //! line, aligned with `text-align` inside the content area of the page and centered vertically in
 //! the margin.
 
+use super::FontMap;
 use super::components::{PageGeometry, Paragraph, Position, TextOperator, ZIndex};
 use super::inline::shape_piece;
-use super::FontMap;
 use crate::style::parse::{ContentItem, CounterName, CounterStyle, MarginBoxKind, PageSelector};
-use crate::style::properties::computed::{PixelLength as Px, TextAlign, RGBA};
+use crate::style::properties::computed::{PixelLength as Px, RGBA, TextAlign};
 use specs::{Entities, Read, ReadExpect, System, WriteStorage};
 
 /// A margin box whose style and font are resolved.
@@ -132,7 +132,11 @@ impl<'a> System<'a> for MarginBoxPaint {
         if margin_boxes.is_empty() {
             return;
         }
-        let num_pages = (&positions).join().map(|pos| pos.page + 1).max().unwrap_or(0);
+        let num_pages = (&positions)
+            .join()
+            .map(|pos| pos.page + 1)
+            .max()
+            .unwrap_or(0);
 
         let area_left = geometry.margin.left;
         let area_width = geometry.width - geometry.margin.left - geometry.margin.right;

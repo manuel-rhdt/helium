@@ -35,7 +35,6 @@ mod tree;
 use crate::parser::generate_render_tree;
 use crate::style::device::Device;
 use style::properties::computed::PixelLength;
-  
 
 use log::info;
 
@@ -119,7 +118,11 @@ fn main() -> Result<(), Error> {
         for line in &report.failures {
             eprintln!("FAIL {}", line);
         }
-        println!("checked {} expectations, {} failed", report.checked, report.failures.len());
+        println!(
+            "checked {} expectations, {} failed",
+            report.checked,
+            report.failures.len()
+        );
         if !report.failures.is_empty() {
             Some(1)
         } else if report.checked == 0 {

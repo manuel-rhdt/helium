@@ -31,18 +31,33 @@ fn example_documents_render_to_pdf() {
         // make sure a stale file from an earlier run cannot make the test pass
         let _ = std::fs::remove_file(&output);
 
-        let result = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap().arg(input).arg(&output).output().unwrap();
+        let result = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+            .unwrap()
+            .arg(input)
+            .arg(&output)
+            .output()
+            .unwrap();
         let name = input.file_name().unwrap().to_string_lossy();
         if !result.status.success() {
-            failures.push(format!("{}: {}", name, String::from_utf8_lossy(&result.stderr)));
+            failures.push(format!(
+                "{}: {}",
+                name,
+                String::from_utf8_lossy(&result.stderr)
+            ));
             continue;
         }
         match std::fs::read(&output) {
-            Ok(pdf) if pdf.starts_with(b"%PDF-") && pdf.windows(5).rev().take(1024).any(|w| w == b"%%EOF") => {}
+            Ok(pdf)
+                if pdf.starts_with(b"%PDF-")
+                    && pdf.windows(5).rev().take(1024).any(|w| w == b"%%EOF") => {}
             Ok(_) => failures.push(format!("{}: output is not a well-formed PDF", name)),
             Err(e) => failures.push(format!("{}: no output written ({})", name, e)),
         }
     }
-    assert!(failures.is_empty(), "failed to render:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "failed to render:\n{}",
+        failures.join("\n")
+    );
     eprintln!("rendered {} documents to {}", docs.len(), out_dir.display());
 }

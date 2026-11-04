@@ -21,7 +21,6 @@ pub fn transform_text(text: &mut String, after_whitespace: bool) {
         last_whitespace = is_whitespace(ch);
         should_keep
     });
-    
 }
 
 #[cfg(test)]

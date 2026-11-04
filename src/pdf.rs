@@ -38,7 +38,7 @@ pub fn write_pdf(
 
     log::info!("Write {} pages.", print_pages.pages.len());
 
-    for mut print_page in print_pages.pages {
+    for (page_index, mut print_page) in print_pages.pages.into_iter().enumerate() {
         let mut page = Page::new();
         let page_height = print_page.height;
 
@@ -158,7 +158,8 @@ pub fn write_pdf(
                                     page_context.set_font(&key, (*size).into())?;
                                 }
                                 &TextOperator::SetColor(color) => {
-                                    let floatize = |val: u8| f64::from(val) / f64::from(u8::max_value());
+                                    let floatize =
+                                        |val: u8| f64::from(val) / f64::from(u8::max_value());
                                     page_context.device_rgb_fill_color(
                                         floatize(color.red),
                                         floatize(color.green),
@@ -206,6 +207,58 @@ pub fn write_pdf(
             Ok(())
         })?;
 
+        // Write the annotations of this page (currently only hyperlinks). The media box of a
+        // cropped page starts at the content rect, so link coordinates must be offset by it.
+        for hyperlink in print_pages
+            .hyperlinks
+            .iter()
+            .filter(|link| link.page == page_index)
+        {
+            let (offset_x, offset_y) = if crop {
+                (print_page.content_rect.x, print_page.content_rect.y)
+            } else {
+                (
+                    crate::style::properties::computed::PixelLength(0.0),
+                    crate::style::properties::computed::PixelLength(0.0),
+                )
+            };
+            let xmin = hyperlink.rect.x - offset_x;
+            let ymin = hyperlink.rect.y - offset_y;
+            let xmax = hyperlink.rect.xmax() - offset_x;
+            let ymax = hyperlink.rect.ymax() - offset_y;
+
+            use lemon_pdf::annotation::{GoToAction, LinkAction, UriAction};
+            let action = if let Some(destination) = &hyperlink.destination {
+                // a cross-reference: jump to the position of the target element
+                let x = Pt::from(destination.x - offset_x);
+                // the destination y is the top of the target element; keep it in the same
+                // coordinate space as the link rect (bottom-left origin)
+                let y = Pt::from(page_height - (destination.y - offset_y));
+                LinkAction::GoTo(GoToAction {
+                    destination: lemon_pdf::annotation::Destination {
+                        page_index: destination.page as u32,
+                        point: (x, y),
+                    },
+                })
+            } else {
+                LinkAction::Uri(UriAction {
+                    uri: hyperlink.href.clone(),
+                })
+            };
+
+            let annotation =
+                lemon_pdf::annotation::Annotation::Link(lemon_pdf::annotation::LinkAnnotation {
+                    rect: [
+                        Pt::from(xmin),
+                        Pt::from(page_height - ymin - (ymax - ymin)),
+                        Pt::from(xmax),
+                        Pt::from(page_height - ymin),
+                    ],
+                    action,
+                });
+            page.add_annotation(&mut context, annotation)?;
+        }
+
         context.add_page(page);
     }
     context.finish()?;
@@ -248,4 +301,3 @@ pub fn write_pdf(
 //         })
 //         .collect()
 // }
-

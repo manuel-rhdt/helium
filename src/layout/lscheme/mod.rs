@@ -6,17 +6,23 @@ use std::{
     rc::Rc,
 };
 
-use pest::{Parser, error::{Error, ErrorVariant}, iterators::Pair};
+use pest::{
+    Parser,
+    error::{Error, ErrorVariant},
+    iterators::Pair,
+};
 use pest_derive::Parser;
 use smallvec::SmallVec;
 
 use specs::{
-    prelude::{Entities, Join, ReadStorage, SystemData}, shred::{self}, Entity, Read
+    Entity, Read,
+    prelude::{Entities, Join, ReadStorage, SystemData},
+    shred::{self},
 };
 
-mod repl;
 mod default_env;
 pub mod ecs_binding;
+mod repl;
 pub mod scheme_layout;
 
 use crate::style::properties::computed::ComputedValues;
@@ -209,7 +215,11 @@ enum Expr<'world> {
     Upvalue(usize),
     Define(BindingRef, Box<Expr<'world>>),
     Set(BindingRef, Box<Expr<'world>>),
-    If(Box<Expr<'world>>, Box<Expr<'world>>, Option<Box<Expr<'world>>>),
+    If(
+        Box<Expr<'world>>,
+        Box<Expr<'world>>,
+        Option<Box<Expr<'world>>>,
+    ),
     Begin(Vec<Expr<'world>>),
     And(Vec<Expr<'world>>),
     Or(Vec<Expr<'world>>),
@@ -366,7 +376,11 @@ fn compile_function<'world>(
     Ok(FunctionProto {
         parameter_slots,
         local_count: compiler.locals.len(),
-        captures: compiler.captures.into_iter().map(|(_, source)| source).collect(),
+        captures: compiler
+            .captures
+            .into_iter()
+            .map(|(_, source)| source)
+            .collect(),
         body: Rc::new(body),
     })
 }
@@ -480,9 +494,11 @@ fn compile_expr<'world>(
                         Value::List(spec) if !spec.is_empty() => {
                             let name = match &spec[0] {
                                 Value::Symbol(name) => name.clone(),
-                                _ => return Err(RuntimeError::Message(
-                                    "define: function name must be a symbol".to_string(),
-                                )),
+                                _ => {
+                                    return Err(RuntimeError::Message(
+                                        "define: function name must be a symbol".to_string(),
+                                    ));
+                                }
                             };
                             let parameters = spec
                                 .iter()
@@ -501,9 +517,11 @@ fn compile_expr<'world>(
                             )?;
                             (name, value)
                         }
-                        _ => return Err(RuntimeError::Message(
-                            "define: first argument must be a symbol or list".to_string(),
-                        )),
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "define: first argument must be a symbol or list".to_string(),
+                            ));
+                        }
                     };
                     let target = if compiler.is_function {
                         BindingRef::Local(*compiler.local_slots.get(&name).unwrap())
@@ -520,9 +538,11 @@ fn compile_expr<'world>(
                     }
                     let name = match &list[1] {
                         Value::Symbol(name) => name,
-                        _ => return Err(RuntimeError::Message(
-                            "set! first argument must be a symbol".to_string(),
-                        )),
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "set! first argument must be a symbol".to_string(),
+                            ));
+                        }
                     };
                     Ok(Expr::Set(
                         compiler.resolve(name),
@@ -545,9 +565,11 @@ fn compile_expr<'world>(
                                 )),
                             })
                             .collect::<Result<Vec<_>, _>>()?,
-                        _ => return Err(RuntimeError::Message(
-                            "lambda second argument must be a list of symbols".to_string(),
-                        )),
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "lambda second argument must be a list of symbols".to_string(),
+                            ));
+                        }
                     };
                     compile_lambda(
                         &parameters,
@@ -580,9 +602,11 @@ fn compile_expr<'world>(
                     }
                     let bindings = match &list[1] {
                         Value::List(bindings) => bindings,
-                        _ => return Err(RuntimeError::Message(
-                            "let: bindings must be a list".to_string(),
-                        )),
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "let: bindings must be a list".to_string(),
+                            ));
+                        }
                     };
                     let mut parameters = Vec::new();
                     let mut arguments = Vec::new();
@@ -593,13 +617,17 @@ fn compile_expr<'world>(
                                     parameters.push(name.clone());
                                     arguments.push(compile_expr(&pair[1], compiler)?);
                                 }
-                                _ => return Err(RuntimeError::Message(
-                                    "let: binding name must be a symbol".to_string(),
-                                )),
+                                _ => {
+                                    return Err(RuntimeError::Message(
+                                        "let: binding name must be a symbol".to_string(),
+                                    ));
+                                }
                             },
-                            _ => return Err(RuntimeError::Message(
-                                "let: each binding must be a (name value) pair".to_string(),
-                            )),
+                            _ => {
+                                return Err(RuntimeError::Message(
+                                    "let: each binding must be a (name value) pair".to_string(),
+                                ));
+                            }
                         }
                     }
                     let function = compile_lambda(
@@ -619,7 +647,11 @@ fn compile_expr<'world>(
                         .skip(1)
                         .map(|value| compile_expr(value, compiler))
                         .collect::<Result<Vec<_>, _>>()?;
-                    Ok(if form == "and" { Expr::And(values) } else { Expr::Or(values) })
+                    Ok(if form == "and" {
+                        Expr::And(values)
+                    } else {
+                        Expr::Or(values)
+                    })
                 }
                 Value::Symbol(form) if form == "cond" => {
                     let expanded = expand_cond(&list.skip(1))?;
@@ -633,7 +665,8 @@ fn compile_expr<'world>(
                         )));
                     }
                     let test = compile_expr(&list[1], compiler)?;
-                    let body = compile_forms(&list.iter().skip(2).cloned().collect::<Vec<_>>(), compiler)?;
+                    let body =
+                        compile_forms(&list.iter().skip(2).cloned().collect::<Vec<_>>(), compiler)?;
                     let (test, consequent, alternate) = if form == "when" {
                         (test, body, None)
                     } else {
@@ -641,7 +674,9 @@ fn compile_expr<'world>(
                     };
                     Ok(Expr::If(Box::new(test), Box::new(consequent), alternate))
                 }
-                Value::Symbol(form) if form == "call/cc" || form == "call-with-current-continuation" => {
+                Value::Symbol(form)
+                    if form == "call/cc" || form == "call-with-current-continuation" =>
+                {
                     if list.len() != 2 {
                         return Err(RuntimeError::Message(
                             "call/cc requires exactly one argument".to_string(),
@@ -672,9 +707,11 @@ fn expand_let_star<'world>(list: &List<'world>) -> Result<Value<'world>, Runtime
     }
     let bindings = match &list[1] {
         Value::List(bindings) => bindings,
-        _ => return Err(RuntimeError::Message(
-            "let*: bindings must be a list".to_string(),
-        )),
+        _ => {
+            return Err(RuntimeError::Message(
+                "let*: bindings must be a list".to_string(),
+            ));
+        }
     };
     fn nest<'world>(bindings: &List<'world>, body: &[Value<'world>]) -> Value<'world> {
         if bindings.is_empty() {
@@ -703,9 +740,11 @@ fn expand_cond<'world>(clauses: &List<'world>) -> Result<Value<'world>, RuntimeE
     }
     let clause = match &clauses[0] {
         Value::List(clause) if !clause.is_empty() => clause,
-        _ => return Err(RuntimeError::Message(
-            "cond: each clause must be a non-empty list".to_string(),
-        )),
+        _ => {
+            return Err(RuntimeError::Message(
+                "cond: each clause must be a non-empty list".to_string(),
+            ));
+        }
     };
     let body = match clause.len() {
         1 => clause[0].clone(),
@@ -856,16 +895,9 @@ impl Debug for Value<'_> {
                 }
                 write!(f, ")")
             }
-            Self::Entity(entity) => write!(
-                f,
-                "#<entity {} {}>",
-                entity.id(),
-                entity.r#gen().id()
-            ),
+            Self::Entity(entity) => write!(f, "#<entity {} {}>", entity.id(), entity.r#gen().id()),
             Self::Closure {
-                function,
-                upvalues,
-                ..
+                function, upvalues, ..
             } => f
                 .debug_struct("Closure")
                 .field("function", function)
@@ -897,7 +929,10 @@ impl PartialEq for Value<'_> {
 fn expect_number(val: &Value) -> Result<f64, RuntimeError> {
     match val {
         Value::Number(num) => Ok(*num),
-        _ => Err(RuntimeError::Message(format!("expected number, got {:?}", val))),
+        _ => Err(RuntimeError::Message(format!(
+            "expected number, got {:?}",
+            val
+        ))),
     }
 }
 
@@ -916,24 +951,27 @@ pub fn parse_lscheme<'world>(program: &str) -> Result<Vec<Value<'world>>, Error<
                 Ok(Value::Number(n))
             }
             Rule::String => {
-                let inner = pair
-                    .clone()
-                    .into_inner()
-                    .next()
-                    .ok_or_else(|| custom_error(&pair, "string without contents".to_string()))?;
+                let inner =
+                    pair.clone().into_inner().next().ok_or_else(|| {
+                        custom_error(&pair, "string without contents".to_string())
+                    })?;
                 Ok(Value::String(inner.as_str().into()))
             }
             Rule::Ident => Ok(Value::Symbol(pair.as_str().into())),
             Rule::List => Ok(Value::List(
-                pair.into_inner().map(parse_value).collect::<Result<_, _>>()?,
+                pair.into_inner()
+                    .map(parse_value)
+                    .collect::<Result<_, _>>()?,
             )),
             Rule::Quote => {
-                let inner = pair
-                    .clone()
-                    .into_inner()
-                    .next()
-                    .ok_or_else(|| custom_error(&pair, "quote without expression".to_string()))?;
-                Ok(Value::list(vec![Value::Symbol("quote".into()), parse_value(inner)?]))
+                let inner =
+                    pair.clone().into_inner().next().ok_or_else(|| {
+                        custom_error(&pair, "quote without expression".to_string())
+                    })?;
+                Ok(Value::list(vec![
+                    Value::Symbol("quote".into()),
+                    parse_value(inner)?,
+                ]))
             }
             other => Err(custom_error(&pair, format!("unexpected rule: {:?}", other))),
         }
@@ -943,7 +981,9 @@ pub fn parse_lscheme<'world>(program: &str) -> Result<Vec<Value<'world>>, Error<
         .next()
         .ok_or_else(|| {
             Error::new_from_pos(
-                ErrorVariant::CustomError { message: "empty parse result".to_string() },
+                ErrorVariant::CustomError {
+                    message: "empty parse result".to_string(),
+                },
                 pest::Position::from_start(program),
             )
         })?;
@@ -1058,10 +1098,7 @@ impl<'world> CallStack<'world> {
 }
 
 impl<'world> ActivationFrame<'world> {
-    fn new(
-        function: &FunctionProto<'world>,
-        arguments: &[Value<'world>],
-    ) -> Self {
+    fn new(function: &FunctionProto<'world>, arguments: &[Value<'world>]) -> Self {
         let mut slots = vec![Slot::Uninitialized; function.local_count];
         for (&slot, argument) in function.parameter_slots.iter().zip(arguments) {
             slots[slot].write(argument.clone());
@@ -1101,7 +1138,11 @@ impl<'world> Continuation<'world> {
                 write_binding(target, context, frames, val)?;
                 Ok(Thunk::Return(Value::Null))
             }
-            Continuation::If { consequent, alternate, context } => {
+            Continuation::If {
+                consequent,
+                alternate,
+                context,
+            } => {
                 if val.is_truthy() {
                     Ok(Thunk::TailCall(consequent.clone(), context.clone()))
                 } else if let Some(alt) = alternate {
@@ -1186,7 +1227,8 @@ impl<'world> Continuation<'world> {
                 } else {
                     if evaluated_args.len() >= args.len() {
                         return Err(RuntimeError::Message(
-                            "internal error: continuation called after it was exhausted".to_string(),
+                            "internal error: continuation called after it was exhausted"
+                                .to_string(),
                         ));
                     }
                     evaluated_args.push(val);
@@ -1297,7 +1339,9 @@ fn trampoline(thunk: Thunk<'_>) -> Result<Value<'_>, RuntimeError> {
                 } else {
                     let frame = stack.frames.len();
                     stack.frames.push(activation);
-                    stack.stack.push(Continuation::FrameReturn { frame_index: frame });
+                    stack
+                        .stack
+                        .push(Continuation::FrameReturn { frame_index: frame });
                     frame
                 };
                 let context = EvalContext {
@@ -1334,7 +1378,9 @@ fn eval_expr<'world>(
                 .and_then(|frame| stack.frames.get(frame))
                 .and_then(|frame| frame.slots.get(slot))
                 .and_then(Slot::read)
-                .ok_or_else(|| RuntimeError::Message(format!("uninitialized local slot {}", slot)))?;
+                .ok_or_else(|| {
+                    RuntimeError::Message(format!("uninitialized local slot {}", slot))
+                })?;
             Ok(Thunk::Value(value))
         }
         Expr::Upvalue(slot) => context
@@ -1344,11 +1390,17 @@ fn eval_expr<'world>(
             .map(Thunk::Value)
             .ok_or_else(|| RuntimeError::Message(format!("uninitialized upvalue {}", slot))),
         Expr::Define(target, value) => {
-            stack.stack.push(Continuation::Define { target, context: context.clone() });
+            stack.stack.push(Continuation::Define {
+                target,
+                context: context.clone(),
+            });
             Ok(Thunk::Eval(*value, context))
         }
         Expr::Set(target, value) => {
-            stack.stack.push(Continuation::Set { target, context: context.clone() });
+            stack.stack.push(Continuation::Set {
+                target,
+                context: context.clone(),
+            });
             Ok(Thunk::Eval(*value, context))
         }
         Expr::If(test, consequent, alternate) => {
@@ -1361,7 +1413,10 @@ fn eval_expr<'world>(
         }
         Expr::Begin(expressions) => match expressions.len() {
             0 => Ok(Thunk::Value(Value::Null)),
-            1 => Ok(Thunk::Eval(expressions.into_iter().next().unwrap(), context)),
+            1 => Ok(Thunk::Eval(
+                expressions.into_iter().next().unwrap(),
+                context,
+            )),
             _ => {
                 let first = expressions[0].clone();
                 stack.stack.push(Continuation::Sequence {
@@ -1412,18 +1467,22 @@ fn eval_expr<'world>(
                         let frame = context
                             .frame
                             .and_then(|frame| stack.frames.get_mut(frame))
-                            .ok_or_else(|| RuntimeError::Message("missing capture frame".to_string()))?;
+                            .ok_or_else(|| {
+                                RuntimeError::Message("missing capture frame".to_string())
+                            })?;
                         frame
                             .slots
                             .get_mut(slot)
-                            .ok_or_else(|| RuntimeError::Message("capture slot out of bounds".to_string()))?
+                            .ok_or_else(|| {
+                                RuntimeError::Message("capture slot out of bounds".to_string())
+                            })?
                             .promote()
                     }
-                    CaptureSource::Upvalue(slot) => context
-                        .upvalues
-                        .get(slot)
-                        .cloned()
-                        .ok_or_else(|| RuntimeError::Message("capture upvalue out of bounds".to_string()))?,
+                    CaptureSource::Upvalue(slot) => {
+                        context.upvalues.get(slot).cloned().ok_or_else(|| {
+                            RuntimeError::Message("capture upvalue out of bounds".to_string())
+                        })?
+                    }
                 };
                 upvalues.push(upvalue);
             }
@@ -1464,7 +1523,11 @@ fn eval_fn<'world>(
     match function {
         Value::NativeFunc(f) => Ok(Thunk::Return(f(arguments)?)),
         Value::NativeMethod(f) => Ok(Thunk::Return(f(arguments)?)),
-        Value::Closure { globals, function, upvalues } => Ok(Thunk::Call {
+        Value::Closure {
+            globals,
+            function,
+            upvalues,
+        } => Ok(Thunk::Call {
             function: Rc::clone(function),
             arguments: arguments.to_vec(),
             globals: Rc::clone(globals),
@@ -1475,18 +1538,26 @@ fn eval_fn<'world>(
             let value = match arguments {
                 [] => Value::Null,
                 [value] => value.clone(),
-                _ => return Err(RuntimeError::Message(format!(
-                    "continuation takes at most 1 argument, got {}",
-                    arguments.len()
-                ))),
+                _ => {
+                    return Err(RuntimeError::Message(format!(
+                        "continuation takes at most 1 argument, got {}",
+                        arguments.len()
+                    )));
+                }
             };
             Ok(Thunk::InvokeContinuation(Rc::clone(saved_stack), value))
         }
-        value => Err(RuntimeError::Message(format!("Expected function, got {:?}", value))),
+        value => Err(RuntimeError::Message(format!(
+            "Expected function, got {:?}",
+            value
+        ))),
     }
 }
 
-pub fn eval<'world>(expr: Value<'world>, globals: EnvRef<'world>) -> Result<Value<'world>, RuntimeError> {
+pub fn eval<'world>(
+    expr: Value<'world>,
+    globals: EnvRef<'world>,
+) -> Result<Value<'world>, RuntimeError> {
     let mut compiler = FunctionCompiler::top_level();
     let expression = compile_expr(&expr, &mut compiler)?;
     trampoline(Thunk::Eval(expression, EvalContext::global(globals)))
@@ -1579,9 +1650,11 @@ fn eval_expr<'world>(
                             // (define (f x y) body...) → (define f (lambda (x y) body...))
                             let fname = match &func_spec[0] {
                                 Value::Symbol(s) => s.clone(),
-                                _ => return Err(RuntimeError::Message(
-                                    "define: function name must be a symbol".to_string(),
-                                )),
+                                _ => {
+                                    return Err(RuntimeError::Message(
+                                        "define: function name must be a symbol".to_string(),
+                                    ));
+                                }
                             };
                             let params = Value::List(func_spec.skip(1));
                             let lambda = Value::List(
@@ -1610,9 +1683,11 @@ fn eval_expr<'world>(
                     }
                     let name = match &list[1] {
                         Value::Symbol(s) => s.clone(),
-                        _ => return Err(RuntimeError::Message(
-                            "set! first argument must be a symbol".to_string(),
-                        )),
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "set! first argument must be a symbol".to_string(),
+                            ));
+                        }
                     };
                     stack.push_frame(Continuation::EvaluateSet {
                         name,
@@ -1708,9 +1783,11 @@ fn eval_expr<'world>(
                     }
                     let bindings = match &list[1] {
                         Value::List(b) => b.clone(),
-                        _ => return Err(RuntimeError::Message(
-                            "let: bindings must be a list".to_string(),
-                        )),
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "let: bindings must be a list".to_string(),
+                            ));
+                        }
                     };
                     let mut params = Vec::new();
                     let mut vals = Vec::new();
@@ -1720,9 +1797,11 @@ fn eval_expr<'world>(
                                 params.push(pair[0].clone());
                                 vals.push(pair[1].clone());
                             }
-                            _ => return Err(RuntimeError::Message(
-                                "let: each binding must be a (name value) pair".to_string(),
-                            )),
+                            _ => {
+                                return Err(RuntimeError::Message(
+                                    "let: each binding must be a (name value) pair".to_string(),
+                                ));
+                            }
                         }
                     }
                     let lambda = Value::List(
@@ -1731,9 +1810,7 @@ fn eval_expr<'world>(
                             .chain(list.iter().skip(2).cloned())
                             .collect(),
                     );
-                    let application = Value::List(
-                        std::iter::once(lambda).chain(vals).collect(),
-                    );
+                    let application = Value::List(std::iter::once(lambda).chain(vals).collect());
                     Ok(Thunk::Eval(application, env))
                 }
                 Value::Symbol(x) if x == "let*" => {
@@ -1746,9 +1823,11 @@ fn eval_expr<'world>(
                     }
                     let bindings = match &list[1] {
                         Value::List(b) => b.clone(),
-                        _ => return Err(RuntimeError::Message(
-                            "let*: bindings must be a list".to_string(),
-                        )),
+                        _ => {
+                            return Err(RuntimeError::Message(
+                                "let*: bindings must be a list".to_string(),
+                            ));
+                        }
                     };
                     if bindings.is_empty() {
                         let begin_expr = Value::List(
@@ -1766,11 +1845,8 @@ fn eval_expr<'world>(
                                 .chain(list.iter().skip(2).cloned())
                                 .collect(),
                         );
-                        let outer = Value::list(vec![
-                            Value::Symbol("let".into()),
-                            first_binding,
-                            inner,
-                        ]);
+                        let outer =
+                            Value::list(vec![Value::Symbol("let".into()), first_binding, inner]);
                         Ok(Thunk::Eval(outer, env))
                     }
                 }
@@ -1813,9 +1889,11 @@ fn eval_expr<'world>(
                         }
                         let clause = match &clauses[0] {
                             Value::List(l) if !l.is_empty() => l,
-                            _ => return Err(RuntimeError::Message(
-                                "cond: each clause must be a non-empty list".to_string(),
-                            )),
+                            _ => {
+                                return Err(RuntimeError::Message(
+                                    "cond: each clause must be a non-empty list".to_string(),
+                                ));
+                            }
                         };
                         let test = &clause[0];
                         let body = if clause.len() == 2 {
@@ -1844,7 +1922,9 @@ fn eval_expr<'world>(
                 }
                 Value::Symbol(x) if x == "when" => {
                     if list.len() < 3 {
-                        return Err(RuntimeError::Message("when requires test and body".to_string()));
+                        return Err(RuntimeError::Message(
+                            "when requires test and body".to_string(),
+                        ));
                     }
                     let test = list[1].clone();
                     let body = if list.len() == 3 {
@@ -1861,7 +1941,9 @@ fn eval_expr<'world>(
                 }
                 Value::Symbol(x) if x == "unless" => {
                     if list.len() < 3 {
-                        return Err(RuntimeError::Message("unless requires test and body".to_string()));
+                        return Err(RuntimeError::Message(
+                            "unless requires test and body".to_string(),
+                        ));
                     }
                     let test = list[1].clone();
                     let body = if list.len() == 3 {
@@ -1959,7 +2041,7 @@ fn eval_fn<'world>(
                     return Err(RuntimeError::Message(format!(
                         "continuation takes at most 1 argument, got {}",
                         args.len()
-                    )))
+                    )));
                 }
             };
             Ok(Thunk::InvokeContinuation(Rc::clone(saved_stack), arg))
@@ -2139,8 +2221,13 @@ mod test {
     fn closure_clones_share_their_body() {
         let closure = parse_and_eval("(lambda (x) (+ x 1))").unwrap();
         let cloned = closure.clone();
-        let (Value::Closure { function, .. }, Value::Closure { function: cloned_function, .. }) =
-            (&closure, &cloned)
+        let (
+            Value::Closure { function, .. },
+            Value::Closure {
+                function: cloned_function,
+                ..
+            },
+        ) = (&closure, &cloned)
         else {
             panic!("expected closures");
         };
@@ -2195,17 +2282,18 @@ mod test {
 
     #[test]
     fn test_quote() {
-        assert_eq!(
-            parse_and_eval("'foo").unwrap(),
-            Value::Symbol("foo".into())
-        );
+        assert_eq!(parse_and_eval("'foo").unwrap(), Value::Symbol("foo".into()));
         assert_eq!(
             parse_and_eval("(quote foo)").unwrap(),
             Value::Symbol("foo".into())
         );
         assert_eq!(
             parse_and_eval("'(1 2 3)").unwrap(),
-            Value::list(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])
+            Value::list(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0)
+            ])
         );
     }
 
@@ -2304,14 +2392,21 @@ mod test {
 
     #[test]
     fn test_list_builtins() {
-        assert_eq!(parse_and_eval("(car '(1 2 3))").unwrap(), Value::Number(1.0));
+        assert_eq!(
+            parse_and_eval("(car '(1 2 3))").unwrap(),
+            Value::Number(1.0)
+        );
         assert_eq!(
             parse_and_eval("(cdr '(1 2 3))").unwrap(),
             Value::list(vec![Value::Number(2.0), Value::Number(3.0)])
         );
         assert_eq!(
             parse_and_eval("(cons 1 '(2 3))").unwrap(),
-            Value::list(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])
+            Value::list(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0)
+            ])
         );
         assert_eq!(parse_and_eval("(null? '())").unwrap(), Value::Bool(true));
         assert_eq!(parse_and_eval("(null? '(1))").unwrap(), Value::Bool(false));
@@ -2374,14 +2469,23 @@ mod test {
     fn test_errors_are_raised() {
         // type error in `=` must not be treated as "not equal"
         assert!(matches!(eval_err("(= 1 'a)"), RuntimeError::Message(_)));
-        assert!(matches!(eval_err("(undefined-fn 1)"), RuntimeError::Message(_)));
+        assert!(matches!(
+            eval_err("(undefined-fn 1)"),
+            RuntimeError::Message(_)
+        ));
         assert!(matches!(eval_err("(car '())"), RuntimeError::Message(_)));
-        assert!(matches!(eval_err("(call/cc (lambda (k) (k 1 2)))"), RuntimeError::Message(_)));
+        assert!(matches!(
+            eval_err("(call/cc (lambda (k) (k 1 2)))"),
+            RuntimeError::Message(_)
+        ));
     }
 
     #[test]
     fn test_error_in_callback_propagates() {
         // errors raised inside nested evaluation reach the caller
-        assert!(matches!(eval_err("((lambda () (+ 1 'a)))"), RuntimeError::Message(_)));
+        assert!(matches!(
+            eval_err("((lambda () (+ 1 'a)))"),
+            RuntimeError::Message(_)
+        ));
     }
 }

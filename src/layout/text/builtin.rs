@@ -1,7 +1,7 @@
 //! Contains the builtin PDF fonts
 
-pub use lemon_pdf::font::builtin::BuiltInFont;
 pub use lemon_pdf::font::FontUnit;
+pub use lemon_pdf::font::builtin::BuiltInFont;
 
 use super::font::{FontInstance, GlyphIndex, GlyphMetricsProvide};
 use crate::style::properties::computed::PixelLength;

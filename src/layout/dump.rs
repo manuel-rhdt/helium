@@ -15,7 +15,8 @@ use std::fmt::Write;
 use specs::{Join, World, WorldExt};
 
 use crate::layout::components::{
-    Decoration, DecorationFragment, EdgeValues, Fragmented, KernedGlyphs, LayoutEntity, Paragraph, Position, TextOperator, TextRun,
+    Decoration, DecorationFragment, EdgeValues, Fragmented, KernedGlyphs, LayoutEntity, Paragraph,
+    Position, TextOperator, TextRun,
 };
 use crate::layout::construct::AssignLayoutEntity;
 use crate::parser::ParsedData;
@@ -53,7 +54,12 @@ fn dump_node(node: &DomRef, world: &World, depth: usize, out: &mut String) {
                     .find(|(qname, _)| &*qname.local == name)
                     .map(|(_, attr)| attr.value.to_string())
             };
-            write!(out, "\"type\": \"element\", \"tag\": {}", json_string(&element.name.local)).unwrap();
+            write!(
+                out,
+                "\"type\": \"element\", \"tag\": {}",
+                json_string(&element.name.local)
+            )
+            .unwrap();
             if let Some(id) = attr("id") {
                 write!(out, ", \"id\": {}", json_string(&id)).unwrap();
             }
@@ -106,7 +112,12 @@ fn write_boxes(out: &mut String, pos: Position, deco: Decoration) {
         width: pos.width.0 + pad.left.0 + pad.right.0 + bor.left.0 + bor.right.0,
         height: pos.height.0 + pad.top.0 + pad.bottom.0 + bor.top.0 + bor.bottom.0,
     };
-    let content = Rect { x: pos.x.0, y: pos.y.0, width: pos.width.0, height: pos.height.0 };
+    let content = Rect {
+        x: pos.x.0,
+        y: pos.y.0,
+        width: pos.width.0,
+        height: pos.height.0,
+    };
     write!(out, ", \"page\": {}", pos.page).unwrap();
     write!(out, ", \"border_box\": {}", border_box).unwrap();
     write!(out, ", \"content_box\": {}", content).unwrap();
@@ -147,9 +158,16 @@ fn collect_fragment_rects(world: &World, rects: &mut Vec<String>) {
 
 fn push_rects(entity: specs::Entity, world: &World, rects: &mut Vec<String>) {
     if let Some(pos) = world.read_storage::<Position>().get(entity).copied() {
-        let deco = world.read_storage::<Decoration>().get(entity).copied().unwrap_or_default();
+        let deco = world
+            .read_storage::<Decoration>()
+            .get(entity)
+            .copied()
+            .unwrap_or_default();
         let (pad, bor) = (deco.padding, deco.border);
-        let (x, y) = (pos.x.0 - pad.left.0 - bor.left.0, pos.y.0 - pad.top.0 - bor.top.0);
+        let (x, y) = (
+            pos.x.0 - pad.left.0 - bor.left.0,
+            pos.y.0 - pad.top.0 - bor.top.0,
+        );
         let width = pos.width.0 + pad.left.0 + pad.right.0 + bor.left.0 + bor.right.0;
         let height = pos.height.0 + pad.top.0 + pad.bottom.0 + bor.top.0 + bor.bottom.0;
         let mut push = |c: RGBA, x: f32, y: f32, width: f32, height: f32| {
@@ -179,8 +197,8 @@ fn dump_paragraphs(world: &World) -> Vec<String> {
         out.push(format!(
             "{{\"page\": {}, \"x\": {}, \"y\": {}, \"ops\": [{}]}}",
             pos.page,
-            number(paragraph.start_pos.0 .0),
-            number(paragraph.start_pos.1 .0),
+            number(paragraph.start_pos.0.0),
+            number(paragraph.start_pos.1.0),
             ops.join(", ")
         ));
     }
@@ -195,7 +213,13 @@ fn dump_lines(world: &World) -> Vec<String> {
     let mut out = Vec::new();
     for (pos, graphic) in (&positions, &graphics).join() {
         for op in &graphic.ops {
-            let GraphicsOp::Line { from_x, from_y, to_x, to_y, thickness } = op;
+            let GraphicsOp::Line {
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+                thickness,
+            } = op;
             out.push(format!(
                 "{{\"page\": {}, \"from\": [{}, {}], \"to\": [{}, {}], \"thickness\": {}, \"color\": {}}}",
                 pos.page,
@@ -219,10 +243,16 @@ fn glyph_ids(glyphs: &crate::layout::components::Glyphs) -> String {
 fn op_json(op: &TextOperator) -> String {
     match op {
         TextOperator::SetFont(name, size) => {
-            format!("{{\"op\": \"font\", \"name\": {}, \"size\": {}}}", json_string(name), number(size.0))
+            format!(
+                "{{\"op\": \"font\", \"name\": {}, \"size\": {}}}",
+                json_string(name),
+                number(size.0)
+            )
         }
         TextOperator::SetColor(c) => format!("{{\"op\": \"color\", \"value\": {}}}", color(*c)),
-        TextOperator::Glyphs(glyphs) => format!("{{\"op\": \"glyphs\", \"glyphs\": {}}}", glyph_ids(glyphs)),
+        TextOperator::Glyphs(glyphs) => {
+            format!("{{\"op\": \"glyphs\", \"glyphs\": {}}}", glyph_ids(glyphs))
+        }
         TextOperator::KernedGlyphs(items) => {
             let items: Vec<String> = items
                 .iter()
@@ -234,15 +264,24 @@ fn op_json(op: &TextOperator) -> String {
             format!("{{\"op\": \"kerned\", \"items\": [{}]}}", items.join(", "))
         }
         TextOperator::SetWordSpacing(spacing) => {
-            format!("{{\"op\": \"word_spacing\", \"value\": {}}}", number(spacing.0))
+            format!(
+                "{{\"op\": \"word_spacing\", \"value\": {}}}",
+                number(spacing.0)
+            )
         }
         TextOperator::SetTransform(m) => format!(
             "{{\"op\": \"transform\", \"matrix\": [{}, {}, {}, {}, {}, {}]}}",
-            number(m.a), number(m.b), number(m.c), number(m.d), number(m.e.0), number(m.f.0)
+            number(m.a),
+            number(m.b),
+            number(m.c),
+            number(m.d),
+            number(m.e.0),
+            number(m.f.0)
         ),
         TextOperator::NewLine { x_offset, leading } => format!(
             "{{\"op\": \"newline\", \"x_offset\": {}, \"leading\": {}}}",
-            number(x_offset.0), number(leading.0)
+            number(x_offset.0),
+            number(leading.0)
         ),
     }
 }

@@ -29,7 +29,10 @@ fn dump_layout(input: &Path) -> Result<Value, String> {
         .unwrap();
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("helium failed: {}", stderr.lines().last().unwrap_or("")));
+        return Err(format!(
+            "helium failed: {}",
+            stderr.lines().last().unwrap_or("")
+        ));
     }
     serde_json::from_slice(&output.stdout).map_err(|e| format!("invalid layout dump: {}", e))
 }
@@ -52,10 +55,16 @@ fn find_reference(test: &Path) -> Option<PathBuf> {
 
 fn approx_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Number(x), Value::Number(y)) => (x.as_f64().unwrap() - y.as_f64().unwrap()).abs() <= TOLERANCE,
-        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(a, b)| approx_eq(a, b)),
+        (Value::Number(x), Value::Number(y)) => {
+            (x.as_f64().unwrap() - y.as_f64().unwrap()).abs() <= TOLERANCE
+        }
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(a, b)| approx_eq(a, b))
+        }
         (Value::Object(x), Value::Object(y)) => {
-            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).map_or(false, |w| approx_eq(v, w)))
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).map_or(false, |w| approx_eq(v, w)))
         }
         _ => a == b,
     }
@@ -93,12 +102,17 @@ fn run_reftest(test: &Path) -> Result<(), String> {
     if paints_red(&actual) {
         return Err("paints red".into());
     }
-    let (rects, ref_rects) = (paint_items(&actual, "rects"), paint_items(&expected, "rects"));
+    let (rects, ref_rects) = (
+        paint_items(&actual, "rects"),
+        paint_items(&expected, "rects"),
+    );
     let (text, ref_text) = (paint_items(&actual, "text"), paint_items(&expected, "text"));
     if rects.is_empty() && text.is_empty() && ref_rects.is_empty() && ref_text.is_empty() {
         return Err("nothing was painted, the comparison is vacuous".into());
     }
-    let equal = |a: &[Value], b: &[Value]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| approx_eq(a, b));
+    let equal = |a: &[Value], b: &[Value]| {
+        a.len() == b.len() && a.iter().zip(b).all(|(a, b)| approx_eq(a, b))
+    };
     if !equal(&rects, &ref_rects) {
         return Err(format!(
             "rectangles differ\n  test:      {}\n  reference: {}",
@@ -123,11 +137,18 @@ fn wpt_reftests() {
     let mut tests = Vec::new();
     collect_tests(&wpt_root(), &mut tests);
     tests.retain(|t| {
-        let is_reference = t.file_stem().and_then(|s| s.to_str()).map_or(false, |s| s.ends_with("-ref"));
+        let is_reference = t
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map_or(false, |s| s.ends_with("-ref"));
         !is_reference && find_reference(t).is_some()
     });
     tests.sort();
-    assert!(!tests.is_empty(), "no WPT reftests found in {}", wpt_root().display());
+    assert!(
+        !tests.is_empty(),
+        "no WPT reftests found in {}",
+        wpt_root().display()
+    );
 
     let mut problems = stale_expectations(&known_failures);
     for test in &tests {

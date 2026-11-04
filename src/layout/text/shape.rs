@@ -1,11 +1,11 @@
 use harfbuzz_rs::{
-    shape as hb_shape, ClusterLevel, Font as HbFont,
-    GlyphInfo as HbGlyphInfo, Shared, UnicodeBuffer,
+    ClusterLevel, Font as HbFont, GlyphInfo as HbGlyphInfo, Shared, UnicodeBuffer,
+    shape as hb_shape,
 };
 
 use super::{
-    font::{FontUnit, GlyphIndex},
     Font,
+    font::{FontUnit, GlyphIndex},
 };
 
 pub type HarfbuzzFont = Shared<HbFont<'static>>;

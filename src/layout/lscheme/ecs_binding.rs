@@ -3,21 +3,20 @@
 /// Read-only components are captured in Rc<ReadStorage> closures.
 /// Writable components use Rc<RefCell<WriteStorage>>.
 /// All writes happen inline during eval; no deferred write log.
-
 use std::{cell::RefCell, rc::Rc};
 
 use specs::{
-    prelude::{Entities, Join, Read, ReadStorage, SystemData, Write, WriteStorage},
     Entity, World, WorldExt,
+    prelude::{Entities, Join, Read, ReadStorage, SystemData, Write, WriteStorage},
 };
 
 use crate::{
     layout::{
-        components::{
-            AbsoluteGroup, AbsoluteGroups, BlockLevelElement, Decoration, EdgeValues, IntrinsicSize,
-            Position, TextList, TextRun, ZIndex,
-        },
         absolute,
+        components::{
+            AbsoluteGroup, AbsoluteGroups, BlockLevelElement, Decoration, EdgeValues,
+            IntrinsicSize, Position, TextList, TextRun, ZIndex,
+        },
         inline::InlineFormattingContext,
         normal_formatting::{BlockFormattingContext, compute_element_dimensions},
     },
@@ -58,7 +57,8 @@ fn value_to_entity_ref(val: &Value) -> Result<EntityRef, RuntimeError> {
             generation: entity.r#gen().id(),
         }),
         _ => Err(RuntimeError::Message(format!(
-            "entity: expected entity, got {:?}", val
+            "entity: expected entity, got {:?}",
+            val
         ))),
     }
 }
@@ -75,11 +75,13 @@ mod tests {
         let value = entity_to_value(entity);
 
         assert_eq!(value, Value::Entity(entity));
-        assert!(value_to_entity_ref(&Value::list(vec![
-            Value::Number(entity.id() as f64),
-            Value::Number(entity.r#gen().id() as f64),
-        ]))
-        .is_err());
+        assert!(
+            value_to_entity_ref(&Value::list(vec![
+                Value::Number(entity.id() as f64),
+                Value::Number(entity.r#gen().id() as f64),
+            ]))
+            .is_err()
+        );
         assert_eq!(
             value_to_entity_ref(&value).unwrap(),
             EntityRef {
@@ -93,8 +95,8 @@ mod tests {
         let expr = super::super::parse_lscheme(
             "(and (entity? test-entity) (eq? test-entity test-entity))",
         )
-            .unwrap()
-            .remove(0);
+        .unwrap()
+        .remove(0);
         assert_eq!(super::super::eval(expr, env).unwrap(), Value::Bool(true));
     }
 }
@@ -116,7 +118,10 @@ fn px<'w>(v: PixelLength) -> Value<'w> {
 
 fn position_to_value<'w>(pos: &Position) -> Value<'w> {
     Value::list(vec![
-        px(pos.x), px(pos.y), px(pos.width), px(pos.height),
+        px(pos.x),
+        px(pos.y),
+        px(pos.width),
+        px(pos.height),
         Value::Number(pos.z.0 as f64),
         Value::Number(pos.page as f64),
     ])
@@ -126,7 +131,9 @@ fn text_run_to_value<'w>(tr: &TextRun) -> Value<'w> {
     Value::list(vec![
         Value::String(tr.text.clone()),
         Value::String(tr.font_name.clone()),
-        px(tr.font_size), px(tr.line_height), px(tr.baseline),
+        px(tr.font_size),
+        px(tr.line_height),
+        px(tr.baseline),
     ])
 }
 
@@ -136,8 +143,10 @@ fn edge_values_to_value<'w>(e: EdgeValues<PixelLength>) -> Value<'w> {
 
 fn rgba_to_value<'w>(c: RGBA) -> Value<'w> {
     Value::list(vec![
-        Value::Number(c.red as f64), Value::Number(c.green as f64),
-        Value::Number(c.blue as f64), Value::Number(c.alpha as f64),
+        Value::Number(c.red as f64),
+        Value::Number(c.green as f64),
+        Value::Number(c.blue as f64),
+        Value::Number(c.alpha as f64),
     ])
 }
 
@@ -160,10 +169,10 @@ pub fn decoration_to_value<'w>(d: &Decoration) -> Value<'w> {
 fn value_to_decoration(v: &Value) -> Result<Decoration, RuntimeError> {
     match v {
         Value::List(items) if items.len() == 5 => {
-            let margin  = value_to_edges(&items[0])?;
+            let margin = value_to_edges(&items[0])?;
             let padding = value_to_edges(&items[1])?;
-            let border  = value_to_edges(&items[2])?;
-            let bg      = value_to_rgba(&items[3])?;
+            let border = value_to_edges(&items[2])?;
+            let bg = value_to_rgba(&items[3])?;
             let border_color = match &items[4] {
                 Value::List(colors) if colors.len() == 4 => EdgeValues {
                     top: value_to_rgba(&colors[0])?,
@@ -173,10 +182,17 @@ fn value_to_decoration(v: &Value) -> Result<Decoration, RuntimeError> {
                 },
                 color => EdgeValues::all(value_to_rgba(color)?),
             };
-            Ok(Decoration { margin, padding, border, background_color: bg, border_color })
+            Ok(Decoration {
+                margin,
+                padding,
+                border,
+                background_color: bg,
+                border_color,
+            })
         }
         _ => Err(RuntimeError::Message(format!(
-            "expected decoration (5-element list), got {:?}", v
+            "expected decoration (5-element list), got {:?}",
+            v
         ))),
     }
 }
@@ -184,13 +200,14 @@ fn value_to_decoration(v: &Value) -> Result<Decoration, RuntimeError> {
 fn value_to_edges(v: &Value) -> Result<EdgeValues<PixelLength>, RuntimeError> {
     match v {
         Value::List(items) if items.len() == 4 => Ok(EdgeValues {
-            top:    PixelLength(num(&items[0])? as f32),
-            right:  PixelLength(num(&items[1])? as f32),
+            top: PixelLength(num(&items[0])? as f32),
+            right: PixelLength(num(&items[1])? as f32),
             bottom: PixelLength(num(&items[2])? as f32),
-            left:   PixelLength(num(&items[3])? as f32),
+            left: PixelLength(num(&items[3])? as f32),
         }),
         _ => Err(RuntimeError::Message(format!(
-            "expected edge values (4-element list), got {:?}", v
+            "expected edge values (4-element list), got {:?}",
+            v
         ))),
     }
 }
@@ -198,13 +215,14 @@ fn value_to_edges(v: &Value) -> Result<EdgeValues<PixelLength>, RuntimeError> {
 fn value_to_rgba(v: &Value) -> Result<RGBA, RuntimeError> {
     match v {
         Value::List(items) if items.len() == 4 => Ok(RGBA {
-            red:   num(&items[0])? as u8,
+            red: num(&items[0])? as u8,
             green: num(&items[1])? as u8,
-            blue:  num(&items[2])? as u8,
+            blue: num(&items[2])? as u8,
             alpha: num(&items[3])? as u8,
         }),
         _ => Err(RuntimeError::Message(format!(
-            "expected RGBA (4-element list), got {:?}", v
+            "expected RGBA (4-element list), got {:?}",
+            v
         ))),
     }
 }
@@ -212,11 +230,17 @@ fn value_to_rgba(v: &Value) -> Result<RGBA, RuntimeError> {
 fn intrinsic_size_to_value<'w>(is: &IntrinsicSize) -> Value<'w> {
     match *is {
         IntrinsicSize::Width(w) => Value::list(vec![px(w), Value::Bool(false), Value::Bool(false)]),
-        IntrinsicSize::Height(h) => Value::list(vec![Value::Bool(false), px(h), Value::Bool(false)]),
-        IntrinsicSize::Size { width, height } => Value::list(vec![px(width), px(height), Value::Bool(false)]),
-        IntrinsicSize::SizeWithBaseline { width, height, baseline } => {
-            Value::list(vec![px(width), px(height), px(baseline)])
+        IntrinsicSize::Height(h) => {
+            Value::list(vec![Value::Bool(false), px(h), Value::Bool(false)])
         }
+        IntrinsicSize::Size { width, height } => {
+            Value::list(vec![px(width), px(height), Value::Bool(false)])
+        }
+        IntrinsicSize::SizeWithBaseline {
+            width,
+            height,
+            baseline,
+        } => Value::list(vec![px(width), px(height), px(baseline)]),
     }
 }
 
@@ -228,9 +252,9 @@ fn inline_context_to_value<'w>(ictx: &InlineFormattingContext) -> Value<'w> {
 fn block_level_element_to_value<'w>(elem: BlockLevelElement) -> Value<'w> {
     let (tag, ent) = match elem {
         BlockLevelElement::ContainerStart(e) => ("container-start", e),
-        BlockLevelElement::Absolute(e)       => ("absolute", e),
-        BlockLevelElement::Leaf(e)           => ("leaf", e),
-        BlockLevelElement::ContainerEnd(e)   => ("container-end", e),
+        BlockLevelElement::Absolute(e) => ("absolute", e),
+        BlockLevelElement::Leaf(e) => ("leaf", e),
+        BlockLevelElement::ContainerEnd(e) => ("container-end", e),
     };
     Value::list(vec![Value::Symbol(tag.into()), entity_to_value(ent)])
 }
@@ -238,9 +262,9 @@ fn block_level_element_to_value<'w>(elem: BlockLevelElement) -> Value<'w> {
 fn text_align_to_value<'w>(align: crate::style::properties::specified::TextAlign) -> Value<'w> {
     use crate::style::properties::specified::TextAlign;
     let s = match align {
-        TextAlign::Left    => "left",
-        TextAlign::Right   => "right",
-        TextAlign::Center  => "center",
+        TextAlign::Left => "left",
+        TextAlign::Right => "right",
+        TextAlign::Center => "center",
         TextAlign::Justify => "justify",
     };
     Value::Symbol(s.into())
@@ -262,19 +286,27 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     }
 
     // Read-only storages
-    let text_runs       = Rc::new(ReadStorage::<'world, TextRun>::fetch(world));
+    let text_runs = Rc::new(ReadStorage::<'world, TextRun>::fetch(world));
     let computed_values = Rc::new(ReadStorage::<'world, ComputedValues>::fetch(world));
-    let intrinsic_sizes = Rc::new(RefCell::new(WriteStorage::<'world, IntrinsicSize>::fetch(world)));
-    let block_ctxs      = Rc::new(ReadStorage::<'world, BlockFormattingContext>::fetch(world));
-    let entities        = Rc::new(Entities::<'world>::fetch(world));
-    let root_node       = Rc::new(Read::<'world, crate::layout::components::RootNode>::fetch(world));
+    let intrinsic_sizes = Rc::new(RefCell::new(WriteStorage::<'world, IntrinsicSize>::fetch(
+        world,
+    )));
+    let block_ctxs = Rc::new(ReadStorage::<'world, BlockFormattingContext>::fetch(world));
+    let entities = Rc::new(Entities::<'world>::fetch(world));
+    let root_node = Rc::new(Read::<'world, crate::layout::components::RootNode>::fetch(
+        world,
+    ));
 
     // Read-write storages
-    let positions    = Rc::new(RefCell::new(WriteStorage::<'world, Position>::fetch(world)));
-    let decorations  = Rc::new(RefCell::new(WriteStorage::<'world, Decoration>::fetch(world)));
-    let inline_ctxs  = Rc::new(RefCell::new(WriteStorage::<'world, InlineFormattingContext>::fetch(world)));
-    let text_list    = Rc::new(RefCell::new(Write::<'world, TextList>::fetch(world)));
-    let abs_groups   = Rc::new(RefCell::new(Write::<'world, AbsoluteGroups>::fetch(world)));
+    let positions = Rc::new(RefCell::new(WriteStorage::<'world, Position>::fetch(world)));
+    let decorations = Rc::new(RefCell::new(WriteStorage::<'world, Decoration>::fetch(
+        world,
+    )));
+    let inline_ctxs = Rc::new(RefCell::new(
+        WriteStorage::<'world, InlineFormattingContext>::fetch(world),
+    ));
+    let text_list = Rc::new(RefCell::new(Write::<'world, TextList>::fetch(world)));
+    let abs_groups = Rc::new(RefCell::new(Write::<'world, AbsoluteGroups>::fetch(world)));
     // indices of the absolute groups that are currently being laid out, innermost last
     let group_stack: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -299,14 +331,14 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-position entity-id) → (x y w h z page) | #f
     {
         let positions = Rc::clone(&positions);
-        let entities  = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-position", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
             let positions_ref = positions.borrow();
             match ent.and_then(|e| positions_ref.get(e)) {
                 Some(pos) => Ok(position_to_value(pos)),
-                None      => Ok(Value::Bool(false)),
+                None => Ok(Value::Bool(false)),
             }
         });
     }
@@ -314,13 +346,13 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-text-run entity-id) → list | #f
     {
         let text_runs = Rc::clone(&text_runs);
-        let entities  = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-text-run", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
             match ent.and_then(|e| text_runs.get(e)) {
                 Some(tr) => Ok(text_run_to_value(tr)),
-                None     => Ok(Value::Bool(false)),
+                None => Ok(Value::Bool(false)),
             }
         });
     }
@@ -328,14 +360,14 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-decoration entity-id) → list | #f
     {
         let decorations = Rc::clone(&decorations);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-decoration", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
             let decorations_ref = decorations.borrow();
             match ent.and_then(|e| decorations_ref.get(e)) {
                 Some(d) => Ok(decoration_to_value(d)),
-                None    => Ok(Value::Bool(false)),
+                None => Ok(Value::Bool(false)),
             }
         });
     }
@@ -343,14 +375,14 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-intrinsic-size entity-id) → (w h baseline) | #f
     {
         let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-intrinsic-size", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
             let intrinsic_sizes = intrinsic_sizes.borrow();
             match ent.and_then(|e| intrinsic_sizes.get(e)) {
                 Some(is) => Ok(intrinsic_size_to_value(is)),
-                None     => Ok(Value::Bool(false)),
+                None => Ok(Value::Bool(false)),
             }
         });
     }
@@ -358,14 +390,14 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-inline-context entity-id) → (list entity-id ...) | #f
     {
         let inline_ctxs = Rc::clone(&inline_ctxs);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-inline-context", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
             let inline_ref = inline_ctxs.borrow();
             match ent.and_then(|e| inline_ref.get(e)) {
                 Some(ictx) => Ok(inline_context_to_value(ictx)),
-                None       => Ok(Value::Bool(false)),
+                None => Ok(Value::Bool(false)),
             }
         });
     }
@@ -373,13 +405,16 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-has-inline-context entity-id) → #t | #f
     {
         let inline_ctxs = Rc::clone(&inline_ctxs);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-has-inline-context", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
-            let ent = ent.ok_or_else(|| RuntimeError::Message(
-                format!("entity-has-inline-context: entity {} not found", id)
-            ))?;
+            let ent = ent.ok_or_else(|| {
+                RuntimeError::Message(format!(
+                    "entity-has-inline-context: entity {} not found",
+                    id
+                ))
+            })?;
             Ok(Value::Bool(inline_ctxs.borrow().contains(ent)))
         });
     }
@@ -387,13 +422,15 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-block-context entity-id) → list of (type entity-id) | #f
     {
         let block_ctxs = Rc::clone(&block_ctxs);
-        let entities   = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-block-context", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
             match ent.and_then(|e| block_ctxs.get(e)) {
                 Some(ctx) => {
-                    let list: Vec<Value<'world>> = ctx.elements.iter()
+                    let list: Vec<Value<'world>> = ctx
+                        .elements
+                        .iter()
                         .map(|&elem| block_level_element_to_value(elem))
                         .collect();
                     Ok(Value::list(list))
@@ -407,11 +444,11 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     {
         let computed_values = Rc::clone(&computed_values);
         let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-compute-dims", move |args| {
             if args.len() != 2 {
                 return Err(RuntimeError::Message(
-                    "entity-compute-dims requires 2 arguments".to_string()
+                    "entity-compute-dims requires 2 arguments".to_string(),
                 ));
             }
             let id = value_to_entity_ref(&args[0])?;
@@ -435,11 +472,11 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-css-height entity-id parent-width) → number | #f
     {
         let computed_values = Rc::clone(&computed_values);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-css-height", move |args| {
             if args.len() != 2 {
                 return Err(RuntimeError::Message(
-                    "entity-css-height requires 2 arguments".to_string()
+                    "entity-css-height requires 2 arguments".to_string(),
                 ));
             }
             let id = value_to_entity_ref(&args[0])?;
@@ -460,14 +497,14 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-inline-text-align entity-id) → symbol | #f
     {
         let inline_ctxs = Rc::clone(&inline_ctxs);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-inline-text-align", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ent = find_entity(&entities, id);
             let inline_ref = inline_ctxs.borrow();
             match ent.and_then(|e| inline_ref.get(e)) {
                 Some(ifm) => Ok(text_align_to_value(ifm.text_align)),
-                None      => Ok(Value::Bool(false)),
+                None => Ok(Value::Bool(false)),
             }
         });
     }
@@ -475,17 +512,19 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (entity-text-indent entity-id line-width) → number
     {
         let computed_values = Rc::clone(&computed_values);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-text-indent", move |args| {
             if args.len() != 2 {
-                return Err(RuntimeError::Message("entity-text-indent requires 2 args".to_string()));
+                return Err(RuntimeError::Message(
+                    "entity-text-indent requires 2 args".to_string(),
+                ));
             }
             let id = value_to_entity_ref(&args[0])?;
             let line_width = PixelLength(num(&args[1])? as f32);
             let ent = find_entity(&entities, id);
             match ent.and_then(|e| computed_values.get(e)) {
                 Some(style) => Ok(px(style.text.text_indent.absolute(line_width))),
-                None        => Ok(Value::Number(0.0)),
+                None => Ok(Value::Number(0.0)),
             }
         });
     }
@@ -495,39 +534,51 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // entity per line and stores the lines in the inline context.
     // Each line is (from-break to-break height baseline line-entity-id content-width).
     {
-        let inline_ctxs     = Rc::clone(&inline_ctxs);
-        let text_runs       = Rc::clone(&text_runs);
+        let inline_ctxs = Rc::clone(&inline_ctxs);
+        let text_runs = Rc::clone(&text_runs);
         let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "layout-inline-lines", move |args| {
             if args.len() != 3 {
                 return Err(RuntimeError::Message(
-                    "layout-inline-lines requires 3 args: entity line-width indent".to_string()
+                    "layout-inline-lines requires 3 args: entity line-width indent".to_string(),
                 ));
             }
-            let id         = value_to_entity_ref(&args[0])?;
+            let id = value_to_entity_ref(&args[0])?;
             let line_width = PixelLength(num(&args[1])? as f32);
-            let indent     = PixelLength(num(&args[2])? as f32);
-            let ent = find_entity(&entities, id)
-                .ok_or_else(|| RuntimeError::Message(
-                    format!("layout-inline-lines: entity {} not found", id)
-                ))?;
+            let indent = PixelLength(num(&args[2])? as f32);
+            let ent = find_entity(&entities, id).ok_or_else(|| {
+                RuntimeError::Message(format!("layout-inline-lines: entity {} not found", id))
+            })?;
             let mut inline_mut = inline_ctxs.borrow_mut();
-            let ifm = inline_mut.get_mut(ent).ok_or_else(|| RuntimeError::Message(
-                format!("layout-inline-lines: entity {} has no inline context", id)
-            ))?;
-            ifm.break_lines(line_width, indent, &*entities, &*text_runs, &*intrinsic_sizes.borrow())
-                .map_err(|e| RuntimeError::Message(format!("layout-inline-lines: {}", e)))?;
-            let lines = ifm.lines.iter().map(|line| {
-                Value::list(vec![
-                    Value::Number(line.from_break as f64),
-                    Value::Number(line.to_break as f64),
-                    px(line.height),
-                    px(line.baseline),
-                    entity_to_value(line.entity),
-                    px(ifm.content_width(line.from_break, line.to_break)),
-                ])
-            }).collect();
+            let ifm = inline_mut.get_mut(ent).ok_or_else(|| {
+                RuntimeError::Message(format!(
+                    "layout-inline-lines: entity {} has no inline context",
+                    id
+                ))
+            })?;
+            ifm.break_lines(
+                line_width,
+                indent,
+                &*entities,
+                &*text_runs,
+                &*intrinsic_sizes.borrow(),
+            )
+            .map_err(|e| RuntimeError::Message(format!("layout-inline-lines: {}", e)))?;
+            let lines = ifm
+                .lines
+                .iter()
+                .map(|line| {
+                    Value::list(vec![
+                        Value::Number(line.from_break as f64),
+                        Value::Number(line.to_break as f64),
+                        px(line.height),
+                        px(line.baseline),
+                        entity_to_value(line.entity),
+                        px(ifm.content_width(line.from_break, line.to_break)),
+                    ])
+                })
+                .collect();
             Ok(Value::List(lines))
         });
     }
@@ -538,18 +589,20 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // The flow inside of a box that is laid out on its own: the contents of its block formatting
     // context without the box itself, or its lines if it only contains inline content.
     {
-        let block_ctxs  = Rc::clone(&block_ctxs);
+        let block_ctxs = Rc::clone(&block_ctxs);
         let inline_ctxs = Rc::clone(&inline_ctxs);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-inner-context", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
-            let ent = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
-                format!("entity-inner-context: entity {} not found", id)
-            ))?;
-            Ok(Value::List(inner_context(ent, &block_ctxs, &inline_ctxs)
-                .into_iter()
-                .map(block_level_element_to_value)
-                .collect()))
+            let ent = find_entity(&entities, id).ok_or_else(|| {
+                RuntimeError::Message(format!("entity-inner-context: entity {} not found", id))
+            })?;
+            Ok(Value::List(
+                inner_context(ent, &block_ctxs, &inline_ctxs)
+                    .into_iter()
+                    .map(block_level_element_to_value)
+                    .collect(),
+            ))
         });
     }
 
@@ -557,17 +610,25 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // Padding, border and colors of an absolutely positioned box. The margins are 0.
     {
         let computed_values = Rc::clone(&computed_values);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-absolute-decoration", move |args| {
             if args.len() != 2 {
-                return Err(RuntimeError::Message("entity-absolute-decoration requires 2 arguments".to_string()));
+                return Err(RuntimeError::Message(
+                    "entity-absolute-decoration requires 2 arguments".to_string(),
+                ));
             }
             let id = value_to_entity_ref(&args[0])?;
             let cb_width = PixelLength(num(&args[1])? as f32);
-            let style = find_entity(&entities, id).and_then(|e| computed_values.get(e)).ok_or_else(|| {
-                RuntimeError::Message(format!("entity-absolute-decoration: entity {} not found", id))
-            })?;
-            let mut deco = crate::layout::inline_size::calculate_padding_and_border(cb_width, style);
+            let style = find_entity(&entities, id)
+                .and_then(|e| computed_values.get(e))
+                .ok_or_else(|| {
+                    RuntimeError::Message(format!(
+                        "entity-absolute-decoration: entity {} not found",
+                        id
+                    ))
+                })?;
+            let mut deco =
+                crate::layout::inline_size::calculate_padding_and_border(cb_width, style);
             deco.margin = EdgeValues::all(PixelLength(0.0));
             Ok(decoration_to_value(&deco))
         });
@@ -577,23 +638,31 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     //     → (left width margin-left margin-right)
     {
         let computed_values = Rc::clone(&computed_values);
-        let block_ctxs      = Rc::clone(&block_ctxs);
-        let inline_ctxs     = Rc::clone(&inline_ctxs);
+        let block_ctxs = Rc::clone(&block_ctxs);
+        let inline_ctxs = Rc::clone(&inline_ctxs);
         let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-absolute-horizontal", move |args| {
             if args.len() != 3 {
-                return Err(RuntimeError::Message("entity-absolute-horizontal requires 3 arguments".to_string()));
+                return Err(RuntimeError::Message(
+                    "entity-absolute-horizontal requires 3 arguments".to_string(),
+                ));
             }
             let id = value_to_entity_ref(&args[0])?;
             let cb_width = num(&args[1])? as f32;
             let static_left = num(&args[2])? as f32;
-            let ent = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
-                format!("entity-absolute-horizontal: entity {} not found", id)
-            ))?;
-            let style = computed_values.get(ent).ok_or_else(|| RuntimeError::Message(
-                format!("entity-absolute-horizontal: entity {} has no style", id)
-            ))?;
+            let ent = find_entity(&entities, id).ok_or_else(|| {
+                RuntimeError::Message(format!(
+                    "entity-absolute-horizontal: entity {} not found",
+                    id
+                ))
+            })?;
+            let style = computed_values.get(ent).ok_or_else(|| {
+                RuntimeError::Message(format!(
+                    "entity-absolute-horizontal: entity {} has no style",
+                    id
+                ))
+            })?;
             let pos = &style.position;
             let basis = PixelLength(cb_width);
             let resolve = |size: GenericSize| match size {
@@ -637,19 +706,26 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     //     → (top height margin-top margin-bottom top-is-auto)
     {
         let computed_values = Rc::clone(&computed_values);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-absolute-vertical", move |args| {
             if args.len() != 5 {
-                return Err(RuntimeError::Message("entity-absolute-vertical requires 5 arguments".to_string()));
+                return Err(RuntimeError::Message(
+                    "entity-absolute-vertical requires 5 arguments".to_string(),
+                ));
             }
             let id = value_to_entity_ref(&args[0])?;
             let cb_width = PixelLength(num(&args[1])? as f32);
             let cb_height = num(&args[2])? as f32;
             let static_top = num(&args[3])? as f32;
             let content_height = num(&args[4])? as f32;
-            let style = find_entity(&entities, id).and_then(|e| computed_values.get(e)).ok_or_else(|| {
-                RuntimeError::Message(format!("entity-absolute-vertical: entity {} not found", id))
-            })?;
+            let style = find_entity(&entities, id)
+                .and_then(|e| computed_values.get(e))
+                .ok_or_else(|| {
+                    RuntimeError::Message(format!(
+                        "entity-absolute-vertical: entity {} not found",
+                        id
+                    ))
+                })?;
             let pos = &style.position;
             let basis = PixelLength(cb_height);
             let resolve = |size: GenericSize| match size {
@@ -692,13 +768,18 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // The `inline-block` boxes that are part of an inline context.
     {
         let inline_ctxs = Rc::clone(&inline_ctxs);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-inline-blocks", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
             let ifcs = inline_ctxs.borrow();
             let list = find_entity(&entities, id)
                 .and_then(|e| ifcs.get(e))
-                .map(|ifc| ifc.atom_offsets.iter().map(|&(e, _)| entity_to_value(e)).collect())
+                .map(|ifc| {
+                    ifc.atom_offsets
+                        .iter()
+                        .map(|&(e, _)| entity_to_value(e))
+                        .collect()
+                })
                 .unwrap_or_default();
             Ok(Value::List(list))
         });
@@ -709,24 +790,30 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // `auto` margins are 0, an `auto` width is the shrink-to-fit width.
     {
         let computed_values = Rc::clone(&computed_values);
-        let block_ctxs      = Rc::clone(&block_ctxs);
-        let inline_ctxs     = Rc::clone(&inline_ctxs);
+        let block_ctxs = Rc::clone(&block_ctxs);
+        let inline_ctxs = Rc::clone(&inline_ctxs);
         let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "entity-inline-block-dims", move |args| {
             if args.len() != 2 {
-                return Err(RuntimeError::Message("entity-inline-block-dims requires 2 arguments".to_string()));
+                return Err(RuntimeError::Message(
+                    "entity-inline-block-dims requires 2 arguments".to_string(),
+                ));
             }
             let id = value_to_entity_ref(&args[0])?;
             let available = PixelLength(num(&args[1])? as f32);
-            let ent = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
-                format!("entity-inline-block-dims: entity {} not found", id)
-            ))?;
-            let style = computed_values.get(ent).ok_or_else(|| RuntimeError::Message(
-                format!("entity-inline-block-dims: entity {} has no style", id)
-            ))?;
+            let ent = find_entity(&entities, id).ok_or_else(|| {
+                RuntimeError::Message(format!("entity-inline-block-dims: entity {} not found", id))
+            })?;
+            let style = computed_values.get(ent).ok_or_else(|| {
+                RuntimeError::Message(format!(
+                    "entity-inline-block-dims: entity {} has no style",
+                    id
+                ))
+            })?;
             let pos = &style.position;
-            let mut deco = crate::layout::inline_size::calculate_padding_and_border(available, style);
+            let mut deco =
+                crate::layout::inline_size::calculate_padding_and_border(available, style);
             let zero = PixelLength(0.0);
             deco.margin = EdgeValues {
                 top: pos.margin_top.absolute(zero, available),
@@ -744,13 +831,19 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
                         intrinsic_sizes: &intrinsic_sizes,
                     };
                     let (min, max) = intrinsic.of_contents(ent);
-                    let extras = deco.margin.left.0 + deco.margin.right.0
-                        + deco.padding.left.0 + deco.padding.right.0
-                        + deco.border.left.0 + deco.border.right.0;
+                    let extras = deco.margin.left.0
+                        + deco.margin.right.0
+                        + deco.padding.left.0
+                        + deco.padding.right.0
+                        + deco.border.left.0
+                        + deco.border.right.0;
                     absolute::shrink_to_fit(min, max, (available.0 - extras).max(0.0))
                 }
             };
-            Ok(Value::list(vec![decoration_to_value(&deco), Value::Number(width as f64)]))
+            Ok(Value::list(vec![
+                decoration_to_value(&deco),
+                Value::Number(width as f64),
+            ]))
         });
     }
 
@@ -758,14 +851,17 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // From now on every entity that gets a position belongs to the contents of the `inline-block`
     // box. Close the group with `end-absolute-group!`.
     {
-        let abs_groups  = Rc::clone(&abs_groups);
+        let abs_groups = Rc::clone(&abs_groups);
         let group_stack = Rc::clone(&group_stack);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "begin-inline-block-group!", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
-            let owner = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
-                format!("begin-inline-block-group!: entity {} not found", id)
-            ))?;
+            let owner = find_entity(&entities, id).ok_or_else(|| {
+                RuntimeError::Message(format!(
+                    "begin-inline-block-group!: entity {} not found",
+                    id
+                ))
+            })?;
             let mut groups = abs_groups.borrow_mut();
             let parent = group_stack.borrow().last().copied();
             groups.groups.push(AbsoluteGroup {
@@ -784,23 +880,26 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // the top, which the inline layout needs to place the box on a line.
     {
         let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "set-inline-block-size!", move |args| {
             if args.len() != 4 {
-                return Err(RuntimeError::Message("set-inline-block-size! requires 4 arguments".to_string()));
+                return Err(RuntimeError::Message(
+                    "set-inline-block-size! requires 4 arguments".to_string(),
+                ));
             }
             let id = value_to_entity_ref(&args[0])?;
-            let ent = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
-                format!("set-inline-block-size!: entity {} not found", id)
-            ))?;
+            let ent = find_entity(&entities, id).ok_or_else(|| {
+                RuntimeError::Message(format!("set-inline-block-size!: entity {} not found", id))
+            })?;
             let size = IntrinsicSize::SizeWithBaseline {
                 width: PixelLength(num(&args[1])? as f32),
                 height: PixelLength(num(&args[2])? as f32),
                 baseline: PixelLength(num(&args[3])? as f32),
             };
-            intrinsic_sizes.borrow_mut().insert(ent, size).map_err(|e| RuntimeError::Message(
-                format!("set-inline-block-size!: {}", e)
-            ))?;
+            intrinsic_sizes
+                .borrow_mut()
+                .insert(ent, size)
+                .map_err(|e| RuntimeError::Message(format!("set-inline-block-size!: {}", e)))?;
             Ok(Value::Null)
         });
     }
@@ -809,18 +908,21 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // Call after the sizes of all `inline-block` boxes of an inline context are set: the context
     // takes their widths into account when it breaks lines.
     {
-        let inline_ctxs     = Rc::clone(&inline_ctxs);
+        let inline_ctxs = Rc::clone(&inline_ctxs);
         let intrinsic_sizes = Rc::clone(&intrinsic_sizes);
-        let entities        = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "finish-inline-blocks!", move |args| {
             let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
-            let ent = find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
-                format!("finish-inline-blocks!: entity {} not found", id)
-            ))?;
+            let ent = find_entity(&entities, id).ok_or_else(|| {
+                RuntimeError::Message(format!("finish-inline-blocks!: entity {} not found", id))
+            })?;
             let mut ifcs = inline_ctxs.borrow_mut();
-            let ifc = ifcs.get_mut(ent).ok_or_else(|| RuntimeError::Message(
-                format!("finish-inline-blocks!: entity {} has no inline context", id)
-            ))?;
+            let ifc = ifcs.get_mut(ent).ok_or_else(|| {
+                RuntimeError::Message(format!(
+                    "finish-inline-blocks!: entity {} has no inline context",
+                    id
+                ))
+            })?;
             let sizes = intrinsic_sizes.borrow();
             let widths = ifc
                 .atom_offsets
@@ -836,21 +938,29 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // From now on every entity that gets a position belongs to a new group of an absolutely
     // positioned box. Groups can be nested.
     {
-        let abs_groups  = Rc::clone(&abs_groups);
+        let abs_groups = Rc::clone(&abs_groups);
         let group_stack = Rc::clone(&group_stack);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "begin-absolute-group!", move |args| {
             let containing_block = match args.get(0) {
                 Some(Value::Bool(false)) | None => None,
                 Some(value) => {
                     let id = value_to_entity_ref(value)?;
-                    Some(find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
-                        format!("begin-absolute-group!: entity {} not found", id)
-                    ))?)
+                    Some(find_entity(&entities, id).ok_or_else(|| {
+                        RuntimeError::Message(format!(
+                            "begin-absolute-group!: entity {} not found",
+                            id
+                        ))
+                    })?)
                 }
             };
             let mut groups = abs_groups.borrow_mut();
-            groups.groups.push(AbsoluteGroup { containing_block, entities: vec![], owner: None, parent: group_stack.borrow().last().copied() });
+            groups.groups.push(AbsoluteGroup {
+                containing_block,
+                entities: vec![],
+                owner: None,
+                parent: group_stack.borrow().last().copied(),
+            });
             group_stack.borrow_mut().push(groups.groups.len() - 1);
             Ok(Value::Null)
         });
@@ -859,22 +969,25 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (set-group-containing-block! entity-or-#f)
     // Changes the entity whose page the innermost open group is placed on.
     {
-        let abs_groups  = Rc::clone(&abs_groups);
+        let abs_groups = Rc::clone(&abs_groups);
         let group_stack = Rc::clone(&group_stack);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "set-group-containing-block!", move |args| {
             let containing_block = match args.get(0) {
                 Some(Value::Bool(false)) | None => None,
                 Some(value) => {
                     let id = value_to_entity_ref(value)?;
-                    Some(find_entity(&entities, id).ok_or_else(|| RuntimeError::Message(
-                        format!("set-group-containing-block!: entity {} not found", id)
-                    ))?)
+                    Some(find_entity(&entities, id).ok_or_else(|| {
+                        RuntimeError::Message(format!(
+                            "set-group-containing-block!: entity {} not found",
+                            id
+                        ))
+                    })?)
                 }
             };
-            let group = *group_stack.borrow().last().ok_or_else(|| RuntimeError::Message(
-                "set-group-containing-block!: no group is open".to_string()
-            ))?;
+            let group = *group_stack.borrow().last().ok_or_else(|| {
+                RuntimeError::Message("set-group-containing-block!: no group is open".to_string())
+            })?;
             abs_groups.borrow_mut().groups[group].containing_block = containing_block;
             Ok(Value::Null)
         });
@@ -884,9 +997,9 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     {
         let group_stack = Rc::clone(&group_stack);
         inject(env, "end-absolute-group!", move |_args| {
-            group_stack.borrow_mut().pop().ok_or_else(|| RuntimeError::Message(
-                "end-absolute-group!: no group is open".to_string()
-            ))?;
+            group_stack.borrow_mut().pop().ok_or_else(|| {
+                RuntimeError::Message("end-absolute-group!: no group is open".to_string())
+            })?;
             Ok(Value::Null)
         });
     }
@@ -894,14 +1007,14 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (translate-group! dy)
     // Moves everything in the innermost open group down by dy.
     {
-        let abs_groups  = Rc::clone(&abs_groups);
+        let abs_groups = Rc::clone(&abs_groups);
         let group_stack = Rc::clone(&group_stack);
-        let positions   = Rc::clone(&positions);
+        let positions = Rc::clone(&positions);
         inject(env, "translate-group!", move |args| {
             let dy = PixelLength(num(args.get(0).unwrap_or(&Value::Null))? as f32);
-            let group = *group_stack.borrow().last().ok_or_else(|| RuntimeError::Message(
-                "translate-group!: no group is open".to_string()
-            ))?;
+            let group = *group_stack.borrow().last().ok_or_else(|| {
+                RuntimeError::Message("translate-group!: no group is open".to_string())
+            })?;
             let groups = abs_groups.borrow();
             let mut positions = positions.borrow_mut();
             for &entity in &groups.groups[group].entities {
@@ -918,26 +1031,25 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (set-position! entity-id x y width height z page)
     {
         let positions = Rc::clone(&positions);
-        let entities  = Rc::clone(&entities);
-        let abs_groups  = Rc::clone(&abs_groups);
+        let entities = Rc::clone(&entities);
+        let abs_groups = Rc::clone(&abs_groups);
         let group_stack = Rc::clone(&group_stack);
         inject(env, "set-position!", move |args| {
             if args.len() != 7 {
                 return Err(RuntimeError::Message(
-                    "set-position! requires 7 args: entity x y w h z page".to_string()
+                    "set-position! requires 7 args: entity x y w h z page".to_string(),
                 ));
             }
             let entity_id = value_to_entity_ref(&args[0])?;
-            let x      = num(&args[1])? as f32;
-            let y      = num(&args[2])? as f32;
-            let width  = num(&args[3])? as f32;
+            let x = num(&args[1])? as f32;
+            let y = num(&args[2])? as f32;
+            let width = num(&args[3])? as f32;
             let height = num(&args[4])? as f32;
-            let z      = num(&args[5])? as i64;
-            let page   = num(&args[6])? as usize;
-            let ent = find_entity(&entities, entity_id)
-                .ok_or_else(|| RuntimeError::Message(
-                    format!("set-position!: entity {} not found", entity_id)
-                ))?;
+            let z = num(&args[5])? as i64;
+            let page = num(&args[6])? as usize;
+            let ent = find_entity(&entities, entity_id).ok_or_else(|| {
+                RuntimeError::Message(format!("set-position!: entity {} not found", entity_id))
+            })?;
             if let Some(&group) = group_stack.borrow().last() {
                 let mut groups = abs_groups.borrow_mut();
                 let entities = &mut groups.groups[group].entities;
@@ -946,13 +1058,16 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
                 }
             }
             let mut positions = positions.borrow_mut();
-            let entry = positions.entry(ent).map_err(|e| RuntimeError::Message(
-                format!("set-position!: {}", e)
-            ))?;
+            let entry = positions
+                .entry(ent)
+                .map_err(|e| RuntimeError::Message(format!("set-position!: {}", e)))?;
             entry.replace(Position {
-                x: PixelLength(x), y: PixelLength(y),
-                width: PixelLength(width), height: PixelLength(height),
-                z: ZIndex(z), page,
+                x: PixelLength(x),
+                y: PixelLength(y),
+                width: PixelLength(width),
+                height: PixelLength(height),
+                z: ZIndex(z),
+                page,
             });
             Ok(Value::Null)
         });
@@ -961,22 +1076,22 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (set-decoration! entity-id decoration)
     {
         let decorations = Rc::clone(&decorations);
-        let entities    = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         inject(env, "set-decoration!", move |args| {
             if args.len() != 2 {
                 return Err(RuntimeError::Message(
-                    "set-decoration! requires 2 args".to_string()
+                    "set-decoration! requires 2 args".to_string(),
                 ));
             }
-            let entity_id  = value_to_entity_ref(&args[0])?;
+            let entity_id = value_to_entity_ref(&args[0])?;
             let decoration = value_to_decoration(&args[1])?;
-            let ent = find_entity(&entities, entity_id)
-                .ok_or_else(|| RuntimeError::Message(
-                    format!("set-decoration!: entity {} not found", entity_id)
-                ))?;
-            decorations.borrow_mut().insert(ent, decoration).map_err(|e| RuntimeError::Message(
-                format!("set-decoration!: {}", e)
-            ))?;
+            let ent = find_entity(&entities, entity_id).ok_or_else(|| {
+                RuntimeError::Message(format!("set-decoration!: entity {} not found", entity_id))
+            })?;
+            decorations
+                .borrow_mut()
+                .insert(ent, decoration)
+                .map_err(|e| RuntimeError::Message(format!("set-decoration!: {}", e)))?;
             Ok(Value::Null)
         });
     }
@@ -984,26 +1099,30 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
     // (append-to-text-list! type entity-id)
     {
         let text_list = Rc::clone(&text_list);
-        let entities  = Rc::clone(&entities);
+        let entities = Rc::clone(&entities);
         let group_stack = Rc::clone(&group_stack);
         inject(env, "append-to-text-list!", move |args| {
             if args.len() != 2 {
                 return Err(RuntimeError::Message(
-                    "append-to-text-list! requires 2 args".to_string()
+                    "append-to-text-list! requires 2 args".to_string(),
                 ));
             }
-            let id  = value_to_entity_ref(&args[1])?;
-            let ent = find_entity(&entities, id)
-                .ok_or_else(|| RuntimeError::Message(
-                    format!("append-to-text-list!: entity {} not found", id)
-                ))?;
+            let id = value_to_entity_ref(&args[1])?;
+            let ent = find_entity(&entities, id).ok_or_else(|| {
+                RuntimeError::Message(format!("append-to-text-list!: entity {} not found", id))
+            })?;
             let elem = match &args[0] {
-                Value::Symbol(s) if s == "container-start" => BlockLevelElement::ContainerStart(ent),
-                Value::Symbol(s) if s == "leaf"            => BlockLevelElement::Leaf(ent),
-                Value::Symbol(s) if s == "container-end"   => BlockLevelElement::ContainerEnd(ent),
-                other => return Err(RuntimeError::Message(
-                    format!("append-to-text-list!: unknown type {:?}", other)
-                )),
+                Value::Symbol(s) if s == "container-start" => {
+                    BlockLevelElement::ContainerStart(ent)
+                }
+                Value::Symbol(s) if s == "leaf" => BlockLevelElement::Leaf(ent),
+                Value::Symbol(s) if s == "container-end" => BlockLevelElement::ContainerEnd(ent),
+                other => {
+                    return Err(RuntimeError::Message(format!(
+                        "append-to-text-list!: unknown type {:?}",
+                        other
+                    )));
+                }
             };
             // absolutely positioned boxes are not paginated with the main flow
             if group_stack.borrow().is_empty() {
@@ -1017,7 +1136,6 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
 
 /// The flow of a box that is laid out on its own, see `entity-inner-context`.
 fn inner_context(
@@ -1123,7 +1241,12 @@ impl IntrinsicWidths<'_, '_> {
                 }
             }
             (min.max(atoms_min), max + atoms_max)
-        } else if let Some(width) = self.intrinsic_sizes.borrow().get(entity).and_then(|s| s.width()) {
+        } else if let Some(width) = self
+            .intrinsic_sizes
+            .borrow()
+            .get(entity)
+            .and_then(|s| s.width())
+        {
             (width.0, width.0)
         } else {
             (0.0, 0.0)
@@ -1154,7 +1277,10 @@ impl IntrinsicWidths<'_, '_> {
 fn num(v: &Value) -> Result<f64, RuntimeError> {
     match v {
         Value::Number(n) => Ok(*n),
-        _ => Err(RuntimeError::Message(format!("expected number, got {:?}", v))),
+        _ => Err(RuntimeError::Message(format!(
+            "expected number, got {:?}",
+            v
+        ))),
     }
 }
 

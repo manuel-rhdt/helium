@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use crate::layout::components::LayoutContext;
 
-
 use super::{default_environment, eval, insert_components, parse_lscheme};
 use rustyline;
 

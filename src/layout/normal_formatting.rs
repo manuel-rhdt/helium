@@ -385,8 +385,14 @@ impl<'data> System<'data> for InlineFormatter {
             // needed for borrow checker
             let text_runs = &data.text_runs;
             let intrinsic_sizes = &data.intrinsic_sizes;
-            ifm.break_lines(self.line_width, indent, entities, text_runs, intrinsic_sizes)
-                .expect("could not break inline context into lines");
+            ifm.break_lines(
+                self.line_width,
+                indent,
+                entities,
+                text_runs,
+                intrinsic_sizes,
+            )
+            .expect("could not break inline context into lines");
             let breakpoints = &ifm.break_points;
 
             for (line_num, &line) in ifm.lines.iter().enumerate() {
@@ -610,7 +616,7 @@ mod test {
 
     use std::convert::TryInto;
 
-    use crate::simple_dom::{body, div, html, Quantity::*};
+    use crate::simple_dom::{Quantity::*, body, div, html};
     use crate::style::properties::computed::PixelLength;
 
     #[derive(Debug, Copy, Clone)]
@@ -694,10 +700,14 @@ mod test {
     #[test]
     fn test_nested_elements_are_positioned_correctly() {
         let child = div(vec![]).height(Px(20.0)).margin_bottom(Px(30.0));
-        let html = &html(vec![body(vec![div(vec![child.clone(), child])
-            .padding(Px(10.0))
-            .margin_top(Px(5.0))])
-        .margin_left(Px(10.0))]);
+        let html = &html(vec![
+            body(vec![
+                div(vec![child.clone(), child])
+                    .padding(Px(10.0))
+                    .margin_top(Px(5.0)),
+            ])
+            .margin_left(Px(10.0)),
+        ]);
         let test = BlockLayoutTest {
             html,
             page_width: Px(100.0),
@@ -726,7 +736,7 @@ mod test {
     #[test]
     fn test_left_margin_in_absolute_units_is_respected() {
         let html = &html(vec![
-            div(vec![div(vec![]).margin_left(Px(15.0))]).margin_left(Px(20.0))
+            div(vec![div(vec![]).margin_left(Px(15.0))]).margin_left(Px(20.0)),
         ]);
         let test = BlockLayoutTest {
             html,

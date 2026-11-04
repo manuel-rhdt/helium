@@ -22,7 +22,12 @@ pub struct RGBA {
 
 impl RGBA {
     pub const fn new(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
-        RGBA { red, green, blue, alpha }
+        RGBA {
+            red,
+            green,
+            blue,
+            alpha,
+        }
     }
 
     pub const fn transparent() -> Self {
@@ -41,7 +46,12 @@ pub fn color_to_rgba(color: Color) -> RGBA {
         (value * 255.0).round().clamp(0.0, 255.0) as u8
     }
     fn from_floats((r, g, b): (f32, f32, f32), alpha: Option<f32>) -> RGBA {
-        RGBA::new(channel(r), channel(g), channel(b), channel(alpha.unwrap_or(1.0)))
+        RGBA::new(
+            channel(r),
+            channel(g),
+            channel(b),
+            channel(alpha.unwrap_or(1.0)),
+        )
     }
 
     match color {
@@ -473,6 +483,10 @@ impl StyleBuilder {
 
         let inherited = ComputedValues {
             font: inherited_values.font,
+            text: Arc::new(Text {
+                hyphens: inherited_values.text.hyphens,
+                ..Default::default()
+            }),
             // widows and orphans are inherited, the page break properties are not
             page: Arc::new(Page {
                 widows: inherited_values.page.widows,
@@ -545,6 +559,7 @@ pub struct Text {
     pub white_space: specified::WhiteSpace,
     pub text_indent: LengthPercentage,
     pub text_align: specified::TextAlign,
+    pub hyphens: specified::Hyphens,
     pub line_break: specified::LineBreak,
 }
 

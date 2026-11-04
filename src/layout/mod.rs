@@ -5,6 +5,7 @@ pub mod construct;
 pub mod dump;
 pub mod inline;
 pub mod inline_size;
+pub(crate) mod lscheme;
 mod margin_boxes;
 mod mathml;
 pub mod normal_formatting;
@@ -12,13 +13,14 @@ mod paginate;
 pub(crate) mod paragraph;
 mod relative_positioning;
 pub mod text;
-pub(crate) mod lscheme;
 
-use crate::layout::components::{LayoutContext, RootNode};
+use crate::PixelLength;
+use crate::layout::components::{
+    EntityHrefs, GoToDestination, Hyperlinks, LayoutContext, Position, RootNode,
+};
 use crate::style::{device::Device, properties::computed::StyleBuilder};
 use crate::traverse::Traverse;
 use crate::tree::DomRef;
-use crate::PixelLength;
 use construct::FlowConstructor;
 
 use components::{EdgeValues, TextList};
@@ -30,7 +32,135 @@ use log::info;
 
 pub type FontMap = std::collections::HashMap<String, text::Font>;
 
-pub fn layout(dom: DomRef, device: Device, crop: bool) -> Result<LayoutContext, lscheme::RuntimeError> {
+/// Collects every layout entity that is inside an `<a href>` element and remembers its href.
+///
+/// Only elements and text nodes with a layout entity are recorded; the entity of the `<a>`
+/// element itself is not recorded because its content is drawn by its descendants (text runs,
+/// line boxes, ...).
+fn collect_entity_hrefs(dom: &DomRef) -> EntityHrefs {
+    use crate::parser::ElementData;
+    use html5ever::{QualName, local_name, ns};
+
+    fn walk(
+        node: &DomRef,
+        current_href: Option<&str>,
+        map: &mut std::collections::HashMap<u32, String>,
+    ) {
+        // If this node is an element with an href, it becomes the new current link for its
+        // descendants. Other elements pass the current link through. An `<a>` without an href
+        // ends the link chain.
+        let owned_href;
+        let mut node_href = current_href;
+        if let Some(element) = node.clone().into_element_ref() {
+            let ElementData {
+                name, attributes, ..
+            } = &*element;
+            if name.ns == ns!(html) && name.local == local_name!("a") {
+                if let Some(href) =
+                    attributes
+                        .borrow()
+                        .get(&QualName::new(None, ns!(), local_name!("href")))
+                {
+                    owned_href = Some(href.value.clone());
+                    node_href = owned_href.as_deref();
+                } else {
+                    node_href = None;
+                }
+            }
+        }
+
+        // Record the node's layout entity, if it has one and is inside a link.
+        if let (Some(href), Some(entity)) = (node_href, node.layout_entity.get()) {
+            let id = entity.0.id();
+            map.entry(id).or_insert_with(|| href.to_owned());
+        }
+
+        for child in crate::tree::TreeLinked::children(node) {
+            walk(&child, node_href, map);
+        }
+    }
+
+    let mut map = std::collections::HashMap::new();
+    walk(dom, None, &mut map);
+    EntityHrefs(map)
+}
+
+/// Resolves cross-reference hyperlinks (`<a href="#fragment">`) to destinations.
+///
+/// Returns a map `fragment -> entity`: the layout entity of the element that has this `id`, to be
+/// looked up in the world's `Position` storage once the positions are final.
+fn collect_id_targets(dom: &DomRef) -> std::collections::HashMap<String, specs::Entity> {
+    use crate::parser::ElementData;
+    use html5ever::{QualName, local_name, ns};
+
+    fn walk(node: &DomRef, targets: &mut std::collections::HashMap<String, specs::Entity>) {
+        if let Some(element) = node.clone().into_element_ref() {
+            let ElementData {
+                name, attributes, ..
+            } = &*element;
+            if name.ns == ns!(html) {
+                if let Some(id) =
+                    attributes
+                        .borrow()
+                        .get(&QualName::new(None, ns!(), local_name!("id")))
+                {
+                    if let Some(entity) = node.layout_entity.get() {
+                        targets
+                            .entry(id.value.as_ref().to_owned())
+                            .or_insert(entity.0);
+                    }
+                }
+            }
+        }
+        for child in crate::tree::TreeLinked::children(node) {
+            walk(&child, targets);
+        }
+    }
+
+    let mut targets = std::collections::HashMap::new();
+    walk(dom, &mut targets);
+    targets
+}
+
+/// Rewrites the destinations of cross-reference hyperlinks.
+///
+/// A link with `href="#fragment"` becomes a `GoTo` link to the position of the element with
+/// `id="fragment"`. Links pointing at unknown fragments keep `destination: None` (no jump).
+/// Must run after pagination, when every position has its final page and page-relative
+/// coordinates.
+pub fn resolve_hyperlink_destinations(world: &mut World, dom: &DomRef) {
+    let targets = collect_id_targets(dom);
+    let positions = world.read_storage::<Position>();
+    let mut hyperlinks = world.write_resource::<Hyperlinks>();
+
+    for link in &mut hyperlinks.0 {
+        let Some(fragment) = link.href.strip_prefix('#') else {
+            continue;
+        };
+        if fragment.is_empty() {
+            // `href="#"` jumps to the top of the document (page 0, y = 0).
+            link.destination = Some(GoToDestination {
+                page: 0,
+                x: PixelLength(0.0),
+                y: PixelLength(0.0),
+            });
+            continue;
+        }
+        let Some(&entity) = targets.get(fragment) else {
+            continue;
+        };
+        let Some(&Position { x, y, page, .. }) = positions.get(entity) else {
+            continue;
+        };
+        link.destination = Some(GoToDestination { page, x, y });
+    }
+}
+
+pub fn layout(
+    dom: DomRef,
+    device: Device,
+    crop: bool,
+) -> Result<LayoutContext, lscheme::RuntimeError> {
     // here we set the layout passes
     let world = World::new();
 
@@ -91,6 +221,12 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> Result<LayoutContext, 
 
     let mut layout_context = flow_constructor.layout_context();
     layout_context.insert(margin_boxes);
+
+    // Record which layout entities are part of a hyperlink so that the clickable areas can be
+    // computed when the line boxes are created.
+    let entity_hrefs = collect_entity_hrefs(&dom);
+    layout_context.insert(entity_hrefs);
+    layout_context.insert(Hyperlinks::default());
 
     layout_context.register::<components::IntrinsicSize>();
     layout_context.register::<components::ContainingBlock>();
@@ -172,6 +308,11 @@ pub fn layout(dom: DomRef, device: Device, crop: bool) -> Result<LayoutContext, 
     };
     pages_create.setup(&mut layout_context);
     pages_create.run_now(&layout_context);
+
+    // Resolve cross-reference links (`href="#..."`) to their destinations now that all positions
+    // are final. Only possible here because the page of every element is only known after
+    // pagination.
+    resolve_hyperlink_destinations(&mut layout_context, &dom);
 
     Ok(layout_context)
 }

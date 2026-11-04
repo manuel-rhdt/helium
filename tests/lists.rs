@@ -17,7 +17,11 @@ fn dump(name: &str, html: &str) -> Value {
         .arg(dir.join("wpt-pdfs").join(format!("lists__{}.pdf", name)))
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
@@ -25,15 +29,22 @@ fn find<'a>(node: &'a Value, id: &str) -> Option<&'a Value> {
     if node["id"] == id {
         return Some(node);
     }
-    node["children"].as_array()?.iter().find_map(|child| find(child, id))
+    node["children"]
+        .as_array()?
+        .iter()
+        .find_map(|child| find(child, id))
 }
 
 fn y(dump: &Value, id: &str) -> f64 {
-    find(&dump["document"], id).unwrap()["border_box"]["y"].as_f64().unwrap()
+    find(&dump["document"], id).unwrap()["border_box"]["y"]
+        .as_f64()
+        .unwrap()
 }
 
 fn x(dump: &Value, id: &str) -> f64 {
-    find(&dump["document"], id).unwrap()["border_box"]["x"].as_f64().unwrap()
+    find(&dump["document"], id).unwrap()["border_box"]["x"]
+        .as_f64()
+        .unwrap()
 }
 
 /// The number of text runs (paragraphs) in the dump.
@@ -63,7 +74,10 @@ fn list_is_indented() {
 #[test]
 fn every_item_gets_a_marker_unless_none() {
     let with = dump("markers", r#"<ol><li>a</li><li>b</li><li>c</li></ol>"#);
-    let without = dump("no_markers", r#"<ol style="list-style-type: none"><li>a</li><li>b</li><li>c</li></ol>"#);
+    let without = dump(
+        "no_markers",
+        r#"<ol style="list-style-type: none"><li>a</li><li>b</li><li>c</li></ol>"#,
+    );
     assert_eq!(runs(&with), runs(&without) + 3);
 }
 

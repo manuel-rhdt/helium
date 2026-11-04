@@ -1,5 +1,6 @@
 use crate::layout::components::{
-    Decoration, Glyphs, GraphicsOp, Paragraph, Position, VectorGraphics, ZIndex,
+    Decoration, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, VectorGraphics,
+    ZIndex,
 };
 use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{PixelLength, RGBA};
@@ -149,6 +150,8 @@ pub struct PrintPage {
 pub struct PrintPages {
     pub font_map: crate::layout::FontMap,
     pub pages: Vec<PrintPage>,
+    /// All hyperlinks in the document, in page order.
+    pub hyperlinks: Vec<Hyperlink>,
 }
 
 impl PrintPages {
@@ -185,10 +188,16 @@ impl<'a> System<'a> for DisplayDecoration {
             deco,
             _,
             _,
-        ) in (&entities, &positions, &decorations, &self.bitset, !&fragmented).join()
+        ) in (
+            &entities,
+            &positions,
+            &decorations,
+            &self.bitset,
+            !&fragmented,
+        )
+            .join()
         {
             use PixelLength as Px;
-
 
             let &Decoration {
                 padding,
@@ -305,7 +314,8 @@ impl<'a> System<'a> for DisplayVectorGraphics {
         {
             if let Some(color) = vector_graphic.color {
                 self.display_list.append(DisplayItem::Push, entity, pos.z);
-                self.display_list.append(DisplayItem::StrokeColor(color), entity, pos.z);
+                self.display_list
+                    .append(DisplayItem::StrokeColor(color), entity, pos.z);
             }
             for op in &vector_graphic.ops {
                 match op {
@@ -359,7 +369,7 @@ impl<'a> System<'a> for ContentRectCalculator {
         ) in (&positions, &self.bitset).join()
         {
             if width == PixelLength(0.0) || height == PixelLength(0.0) {
-                continue
+                continue;
             }
             if let Some(r) = self.content_rect {
                 self.content_rect = Some(r.union(Rect {
@@ -437,5 +447,6 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
     PrintPages {
         font_map: (*world.read_resource::<crate::layout::FontMap>()).clone(),
         pages: page_vec,
+        hyperlinks: world.read_resource::<Hyperlinks>().0.clone(),
     }
 }
