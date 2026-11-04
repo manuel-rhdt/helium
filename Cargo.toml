@@ -14,8 +14,8 @@ cssparser = "0.38"
 selectors = "0.41"
 specs = { version = "0.20", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
-lemon_pdf = { path = "/home/reinhardt/projects/lemon_pdf" }
-lemon_pdf_derive = { path = "/home/reinhardt/projects/lemon_pdf/lemon_pdf_derive" }
+lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
+lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
 font_parse = { git = "https://github.com/manuel-rhdt/font_parse" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
 math-render = { git = "https://github.com/manuel-rhdt/mlayout" }

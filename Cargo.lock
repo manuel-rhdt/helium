@@ -925,6 +925,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 [[package]]
 name = "lemon_pdf"
 version = "0.1.0"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git#e3a315dbd8956f43668ced9bd1ff355a5d98c0c8"
 dependencies = [
  "Inflector",
  "afm",
@@ -947,6 +948,7 @@ dependencies = [
 [[package]]
 name = "lemon_pdf_derive"
 version = "0.1.0"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git#e3a315dbd8956f43668ced9bd1ff355a5d98c0c8"
 dependencies = [
  "Inflector",
  "proc-macro2 0.4.30",
