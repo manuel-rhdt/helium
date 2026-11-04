@@ -16,7 +16,11 @@ fn wpt_layout_checks() {
     // reftests and helium's own files live next to the checkLayout tests
     tests.retain(|t| std::fs::read_to_string(t).map_or(false, |s| s.contains("data-expected-")));
     tests.sort();
-    assert!(!tests.is_empty(), "no WPT layout tests found in {}", wpt_root().display());
+    assert!(
+        !tests.is_empty(),
+        "no WPT layout tests found in {}",
+        wpt_root().display()
+    );
 
     let mut problems = stale_expectations(&known_failures);
     for test in &tests {

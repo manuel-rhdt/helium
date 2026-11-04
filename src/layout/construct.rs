@@ -4,18 +4,18 @@ use super::components::{
 use super::inline::InlineFormattingContext;
 use super::margin_boxes::{self, MarginBoxes, ResolvedMarginBox};
 use super::normal_formatting::BlockFormattingContext;
-use super::{text::Font, FontMap};
+use super::{FontMap, text::Font};
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, Styles};
 use crate::style::properties::computed::{
-    color_to_rgba, ComputedValues, Display, LineHeight, PositionSpec, StyleBuilder, TextAlign,
+    ComputedValues, Display, LineHeight, PositionSpec, StyleBuilder, TextAlign, color_to_rgba,
 };
 use crate::style::properties::specified::{MathFamily, PropertyDeclaration, Text};
 use crate::traverse::Traversal;
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
-use html5ever::{local_name, ns, Attribute, QualName};
-use math_render::{mathmlparser, Field};
+use html5ever::{Attribute, QualName, local_name, ns};
+use math_render::{Field, mathmlparser};
 use specs::{Builder, Entities, Entity, SystemData, World, WorldExt, WriteStorage};
 
 use components::TextRun;
@@ -45,7 +45,9 @@ impl FlowConstructor {
                 let mut content = None;
                 let mut text_align = None;
                 for rule in self.styles.rules_iter() {
-                    let Some(selector) = rule.page_selector() else { continue };
+                    let Some(selector) = rule.page_selector() else {
+                        continue;
+                    };
                     if !margin_boxes::selector_matches(selector, first, left) {
                         continue;
                     }
@@ -133,39 +135,42 @@ impl Traversal<DomRef> for FlowConstructor {
         self.read_stylesheet(&node);
 
         // TODO: Selector matching, Cascade
-        match &node.clone().into_element_ref() { Some(element_ref) => {
-            let parent_style = element_ref
-                .as_node()
-                .parent()
-                .and_then(|parent| NodeData::style(&parent));
-            let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
-            for matched_rule in self
-                .styles
-                .rules_iter()
-                .filter(|rule| rule.matches(element_ref))
-            {
-                let properties = &matched_rule.properties;
-                for declaration in properties.declarations() {
-                    style_builder.add_declaration(declaration);
+        match &node.clone().into_element_ref() {
+            Some(element_ref) => {
+                let parent_style = element_ref
+                    .as_node()
+                    .parent()
+                    .and_then(|parent| NodeData::style(&parent));
+                let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
+                for matched_rule in self
+                    .styles
+                    .rules_iter()
+                    .filter(|rule| rule.matches(element_ref))
+                {
+                    let properties = &matched_rule.properties;
+                    for declaration in properties.declarations() {
+                        style_builder.add_declaration(declaration);
+                    }
                 }
-            }
-            // declarations in the `style` attribute override all matched rules
-            let inline_style = element_ref
-                .attributes
-                .borrow()
-                .get(&QualName::new(None, ns!(), local_name!("style")))
-                .map(|attr| PropertyDeclarationBlock::parse_inline(&attr.value));
-            if let Some(block) = &inline_style {
-                for declaration in block.declarations() {
-                    style_builder.add_declaration(declaration);
+                // declarations in the `style` attribute override all matched rules
+                let inline_style = element_ref
+                    .attributes
+                    .borrow()
+                    .get(&QualName::new(None, ns!(), local_name!("style")))
+                    .map(|attr| PropertyDeclarationBlock::parse_inline(&attr.value));
+                if let Some(block) = &inline_style {
+                    for declaration in block.declarations() {
+                        style_builder.add_declaration(declaration);
+                    }
                 }
+                element_ref.as_node().set_style(style_builder.build());
             }
-            element_ref.as_node().set_style(style_builder.build());
-        } _ => {
-            let parent_style = node.parent().and_then(|parent| NodeData::style(&parent));
-            let style = StyleBuilder::new(parent_style.unwrap_or_default()).build();
-            node.set_style(style);
-        }}
+            _ => {
+                let parent_style = node.parent().and_then(|parent| NodeData::style(&parent));
+                let style = StyleBuilder::new(parent_style.unwrap_or_default()).build();
+                node.set_style(style);
+            }
+        }
 
         self.entity_constructor.build_entity(node)
     }
@@ -326,7 +331,8 @@ impl EntityConstructor {
                     self.trim_next_inline_whitespace = true;
                 }
 
-                let is_list_item = element_data.name == QualName::new(None, ns!(html), local_name!("li"));
+                let is_list_item =
+                    element_data.name == QualName::new(None, ns!(html), local_name!("li"));
                 let ordinal = if is_list_item {
                     // the number of `li` siblings up to and including this one
                     let mut count = 1;
@@ -343,7 +349,11 @@ impl EntityConstructor {
                 } else {
                     0
                 };
-                let marker_text = style.font.list_style_type.marker_text(ordinal).filter(|_| is_list_item);
+                let marker_text = style
+                    .font
+                    .list_style_type
+                    .marker_text(ordinal)
+                    .filter(|_| is_list_item);
                 let marker = marker_text.map(|text| {
                     let font_name = self.match_font(&style).postscript_name();
                     components::ListMarker {
@@ -361,7 +371,10 @@ impl EntityConstructor {
                 let entity = self.build_default_entity(style);
                 if let Some(marker) = marker {
                     let LayoutEntity(e) = entity;
-                    self.world.write_storage::<components::ListMarker>().insert(e, marker).unwrap();
+                    self.world
+                        .write_storage::<components::ListMarker>()
+                        .insert(e, marker)
+                        .unwrap();
                 }
                 entity
             }
@@ -372,7 +385,11 @@ impl EntityConstructor {
                 let mut text = string.borrow_mut();
 
                 match node.previous_sibling() {
-                    Some(node) if matches!(node.style().box_.display, Display::Inline | Display::InlineBlock) => {}
+                    Some(node)
+                        if matches!(
+                            node.style().box_.display,
+                            Display::Inline | Display::InlineBlock
+                        ) => {}
                     _ => self.trim_next_inline_whitespace = true,
                 };
 
@@ -413,6 +430,15 @@ impl EntityConstructor {
     fn build_text_entity(&mut self, style: ComputedValues, text: &str) -> LayoutEntity {
         let font = self.match_font(&style);
         let font_name = font.postscript_name();
+        let mut visible_text = String::with_capacity(text.len());
+        let mut manual_hyphen_points = Vec::new();
+        for character in text.chars() {
+            if character == '\u{00ad}' {
+                manual_hyphen_points.push(visible_text.len());
+            } else {
+                visible_text.push(character);
+            }
+        }
 
         let font_size = style.font.font_size;
         let font_height = font.scale_to_px(font.font_height(), font_size);
@@ -425,18 +451,21 @@ impl EntityConstructor {
 
         let color = crate::style::properties::computed::color_to_rgba(style.font.color);
         let decoration = style.font.text_decoration;
+        let hyphens = style.text.hyphens;
         let entity = self
             .world
             .create_entity()
             .with(style)
             .with(components::TextRun {
                 font_name,
-                text: text.to_owned(),
+                text: visible_text,
                 font_size,
                 line_height,
                 baseline,
                 color,
                 decoration,
+                hyphens,
+                manual_hyphen_points,
             })
             .build();
         LayoutEntity(entity)
@@ -518,7 +547,11 @@ impl EntityConstructor {
                 } else {
                     ble.push(BlockLevelElement::ContainerStart(entity));
                     if let Some(ifc) = inline_formatting_contexts.get(entity) {
-                        ble.extend(ifc.absolutes.iter().map(|&a| BlockLevelElement::Absolute(a)));
+                        ble.extend(
+                            ifc.absolutes
+                                .iter()
+                                .map(|&a| BlockLevelElement::Absolute(a)),
+                        );
                     }
                     ble.push(BlockLevelElement::Leaf(entity));
                     ble.push(BlockLevelElement::ContainerEnd(entity));
@@ -559,10 +592,18 @@ impl EntityConstructor {
                     );
                     inline_level_elements.clear();
                 }
-                push_block(block_level_elements, elem, block_formatting_contexts, inline_formatting_contexts);
+                push_block(
+                    block_level_elements,
+                    elem,
+                    block_formatting_contexts,
+                    inline_formatting_contexts,
+                );
             } else {
-                if let Some(InlineFormattingContext { elements, absolutes, .. }) =
-                    inline_formatting_contexts.remove(elem)
+                if let Some(InlineFormattingContext {
+                    elements,
+                    absolutes,
+                    ..
+                }) = inline_formatting_contexts.remove(elem)
                 {
                     block_level_elements
                         .extend(absolutes.into_iter().map(BlockLevelElement::Absolute));
@@ -617,7 +658,10 @@ impl EntityConstructor {
             .any(|elem| !matches!(elem, BlockLevelElement::Absolute(_)));
         if !has_block_level_elements {
             // no block-level elements were found, so we create a inline_formatting_context
-            let absolutes = block_level_elements.iter().map(|elem| elem.entity()).collect();
+            let absolutes = block_level_elements
+                .iter()
+                .map(|elem| elem.entity())
+                .collect();
             inline_formatting_contexts
                 .insert(
                     entity,
@@ -694,8 +738,11 @@ impl EntityConstructor {
             }
 
             // merge child's InlineFormattingContext into the current context
-            if let Some(InlineFormattingContext { elements, absolutes, .. }) =
-                self.world.write_storage().remove(child_entity)
+            if let Some(InlineFormattingContext {
+                elements,
+                absolutes,
+                ..
+            }) = self.world.write_storage().remove(child_entity)
             {
                 inline_formatting_context
                     .elements
@@ -730,9 +777,8 @@ impl EntityConstructor {
 
         match node.html_data() {
             ParsedData::Element(element_data) => {
-                let elem =
-                    mathmlparser::match_math_element((*element_data.name.local).as_bytes())
-                        .unwrap_or_default();
+                let elem = mathmlparser::match_math_element((*element_data.name.local).as_bytes())
+                    .unwrap_or_default();
 
                 let is_default_variant_mi = elem.is("mi")
                     && !element_data
@@ -748,13 +794,12 @@ impl EntityConstructor {
                             use math_render::mathmlparser::StringExtMathml;
                             // By default, an `mi` is only italic if it consists of a single
                             // character, longer identifiers (e.g. `sin`) are upright.
-                            let variant = if is_default_variant_mi
-                                && text_run.text.chars().count() != 1
-                            {
-                                MathFamily::Normal
-                            } else {
-                                style.math.math_variant
-                            };
+                            let variant =
+                                if is_default_variant_mi && text_run.text.chars().count() != 1 {
+                                    MathFamily::Normal
+                                } else {
+                                    style.math.math_variant
+                                };
                             let text = text_run
                                 .text
                                 .adapt_to_family(Some(variant.into()))
@@ -793,7 +838,9 @@ impl EntityConstructor {
                                 .attributes
                                 .borrow()
                                 .get(&QualName::new(None, ns!(), local_name!("width")))
-                                .and_then(|attr| parse_math_length(&attr.value, style.font.font_size.0))
+                                .and_then(|attr| {
+                                    parse_math_length(&attr.value, style.font.font_size.0)
+                                })
                                 .map(math_render::Length::em)
                         } else {
                             None
@@ -892,14 +939,17 @@ pub mod test {
         assert_eq!(parse_math_length("-8px", 16.0), Some(-0.5));
         assert_eq!(parse_math_length("0", 16.0), Some(0.0));
         assert_eq!(parse_math_length("thinmathspace", 16.0), Some(3.0 / 18.0));
-        assert_eq!(parse_math_length("negativethinmathspace", 16.0), Some(-3.0 / 18.0));
+        assert_eq!(
+            parse_math_length("negativethinmathspace", 16.0),
+            Some(-3.0 / 18.0)
+        );
         assert_eq!(parse_math_length("3", 16.0), None);
         assert_eq!(parse_math_length("wide", 16.0), None);
     }
 
     use super::*;
 
-    use crate::simple_dom::{div, p, span, text, Quantity::Px};
+    use crate::simple_dom::{Quantity::Px, div, p, span, text};
 
     use crate::style::properties::computed::{ComputedValues, GenericSize};
 

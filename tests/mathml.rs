@@ -17,7 +17,11 @@ fn dump(name: &str, html: &str) -> Value {
         .arg(dir.join("wpt-pdfs").join(format!("mathml__{}.pdf", name)))
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
@@ -25,11 +29,15 @@ fn find<'a>(node: &'a Value, id: &str) -> Option<&'a Value> {
     if node["id"] == id {
         return Some(node);
     }
-    node["children"].as_array()?.iter().find_map(|child| find(child, id))
+    node["children"]
+        .as_array()?
+        .iter()
+        .find_map(|child| find(child, id))
 }
 
 fn height(dump: &Value, id: &str) -> f64 {
-    find(&dump["document"], id).unwrap_or_else(|| panic!("no element with id {}", id))["border_box"]["height"]
+    find(&dump["document"], id).unwrap_or_else(|| panic!("no element with id {}", id))["border_box"]
+        ["height"]
         .as_f64()
         .unwrap()
 }
@@ -54,7 +62,12 @@ fn math_elements_are_kept_in_the_tree() {
     );
     let math = find(&dump["document"], "m").unwrap();
     assert_eq!(math["tag"], "math");
-    let tags: Vec<&str> = math["children"].as_array().unwrap().iter().map(|c| c["tag"].as_str().unwrap()).collect();
+    let tags: Vec<&str> = math["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["tag"].as_str().unwrap())
+        .collect();
     assert_eq!(tags, ["mi", "mo", "mn"]);
     assert_eq!(find(&dump["document"], "n").unwrap()["tag"], "mn");
 }
@@ -72,10 +85,21 @@ fn inline_math_does_not_break_the_line() {
 
 #[test]
 fn math_text_uses_a_math_font() {
-    let dump = dump("font", r#"<p>a <math><mi>x</mi><mo>+</mo><mn>1</mn></math> b</p>"#);
+    let dump = dump(
+        "font",
+        r#"<p>a <math><mi>x</mi><mo>+</mo><mn>1</mn></math> b</p>"#,
+    );
     let fonts = fonts(&dump);
-    assert!(fonts.iter().any(|f| f.contains("Math")), "no math font in {:?}", fonts);
-    assert!(fonts.iter().any(|f| !f.contains("Math")), "surrounding text should keep its font: {:?}", fonts);
+    assert!(
+        fonts.iter().any(|f| f.contains("Math")),
+        "no math font in {:?}",
+        fonts
+    );
+    assert!(
+        fonts.iter().any(|f| !f.contains("Math")),
+        "surrounding text should keep its font: {:?}",
+        fonts
+    );
 }
 
 #[test]
@@ -85,7 +109,11 @@ fn text_after_math_flows_on() {
         r#"<style>body { margin: 0 }</style>
            <p id="p" style="margin: 0"><math><mi>x</mi></math></p><div id="d">after</div>"#,
     );
-    let y = |id: &str| find(&dump["document"], id).unwrap()["border_box"]["y"].as_f64().unwrap();
+    let y = |id: &str| {
+        find(&dump["document"], id).unwrap()["border_box"]["y"]
+            .as_f64()
+            .unwrap()
+    };
     assert!(y("d") >= y("p") + height(&dump, "p") - 0.001);
 }
 
@@ -120,7 +148,12 @@ fn gap_between_a_and_b(name: &str, width: &str) -> f64 {
 fn mspace_adds_horizontal_space() {
     let none = gap_between_a_and_b("mspace_none", "0");
     let px = gap_between_a_and_b("mspace_px", "48px");
-    assert!((px - none - 48.0).abs() < 0.01, "none: {}, 48px: {}", none, px);
+    assert!(
+        (px - none - 48.0).abs() < 0.01,
+        "none: {}, 48px: {}",
+        none,
+        px
+    );
 }
 
 #[test]
@@ -128,16 +161,31 @@ fn mspace_supports_em_and_named_spaces() {
     let none = gap_between_a_and_b("mspace_none2", "0");
     // the font size is 16px
     let em = gap_between_a_and_b("mspace_em", "2em");
-    assert!((em - none - 32.0).abs() < 0.01, "none: {}, 2em: {}", none, em);
+    assert!(
+        (em - none - 32.0).abs() < 0.01,
+        "none: {}, 2em: {}",
+        none,
+        em
+    );
     let named = gap_between_a_and_b("mspace_named", "thickmathspace");
-    assert!((named - none - 16.0 * 5.0 / 18.0).abs() < 0.05, "none: {}, thick: {}", none, named);
+    assert!(
+        (named - none - 16.0 * 5.0 / 18.0).abs() < 0.05,
+        "none: {}, thick: {}",
+        none,
+        named
+    );
 }
 
 #[test]
 fn mspace_with_negative_width_moves_back() {
     let none = gap_between_a_and_b("mspace_none3", "0");
     let negative = gap_between_a_and_b("mspace_negative", "-8px");
-    assert!((none - negative - 8.0).abs() < 0.01, "none: {}, -8px: {}", none, negative);
+    assert!(
+        (none - negative - 8.0).abs() < 0.01,
+        "none: {}, -8px: {}",
+        none,
+        negative
+    );
 }
 
 fn glyph_count_in_math_font(dump: &Value) -> usize {
@@ -160,7 +208,13 @@ fn multi_letter_identifiers_are_upright_unless_a_variant_is_given() {
         for run in dump["paint"]["text"].as_array().unwrap() {
             for op in run["ops"].as_array().unwrap() {
                 if op["op"] == "glyphs" {
-                    ids.extend(op["glyphs"].as_array().unwrap().iter().map(|g| g.as_u64().unwrap()));
+                    ids.extend(
+                        op["glyphs"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|g| g.as_u64().unwrap()),
+                    );
                 }
             }
         }
@@ -177,5 +231,8 @@ fn multi_letter_identifiers_are_upright_unless_a_variant_is_given() {
     let single_normal = glyphs("mi_single_normal", r#"<mi mathvariant="normal">x</mi>"#);
     assert_eq!(single, single_italic);
     assert_ne!(single, single_normal);
-    assert_eq!(glyph_count_in_math_font(&dump("mi_count", "<math><mi>sin</mi></math>")), 3);
+    assert_eq!(
+        glyph_count_in_math_font(&dump("mi_count", "<math><mi>sin</mi></math>")),
+        3
+    );
 }

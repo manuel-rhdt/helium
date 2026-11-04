@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use super::super::parse::StyleParseError;
 use super::computed::PixelLength;
-use cssparser::{match_ignore_ascii_case, CowRcStr, ParseError, Parser, Token};
+use cssparser::{CowRcStr, ParseError, Parser, Token, match_ignore_ascii_case};
 use cssparser_color::Color;
 use helium_derive::{ParseDeclaration, PropertyValue};
 
@@ -25,9 +25,7 @@ pub trait ApplyToComputedValues {
 
 pub trait PropertyValue<'i>: Sized {
     type Error: 'i;
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<Self::Error>>
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>>
     where
         Self: Sized;
 
@@ -49,9 +47,7 @@ pub trait ComputedValue<T>: Sized {
 impl<'i> PropertyValue<'i> for String {
     type Error = ();
 
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<Self::Error>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         Ok(input.expect_ident_or_string()?.to_string())
     }
 }
@@ -62,9 +58,7 @@ where
 {
     type Error = T::Error;
 
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<Self::Error>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         input.parse_entirely(|input| {
             let mut result = vec![];
             loop {
@@ -289,8 +283,10 @@ pub enum Text {
     TextIndent(QuantityOrPercentage),
     #[property]
     TextAlign(TextAlign),
+    #[property]
+    Hyphens(Hyphens),
     #[ua_property]
-    LineBreak(LineBreak)
+    LineBreak(LineBreak),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -330,7 +326,6 @@ pub enum Math {
     #[ua_property]
     MathStyle(MathStyle),
 }
-
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
 pub enum Display {
@@ -392,9 +387,7 @@ where
 {
     type Error = T::Error;
 
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<T::Error>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<T::Error>> {
         // TODO: Error if zero elements.
         Vec::<T>::from_css_property_value(input).map(|elements| List {
             elements: Cow::Owned(elements),
@@ -459,9 +452,7 @@ pub struct CommaSeparated<T> {
 impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for CommaSeparated<T> {
     type Error = T::Error;
 
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<T::Error>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<T::Error>> {
         input
             .parse_comma_separated(|input| T::from_css_property_value(input))
             .map(|elements| CommaSeparated { elements })
@@ -609,6 +600,19 @@ impl Default for WhiteSpace {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum Hyphens {
+    None,
+    Manual,
+    Auto,
+}
+
+impl Default for Hyphens {
+    fn default() -> Self {
+        Self::Manual
+    }
+}
+
 /// The lines of `text-decoration-line`. Styles and colors of the lines are not supported and
 /// ignored.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
@@ -683,8 +687,19 @@ impl ListStyleType {
         }
         fn roman(mut n: usize) -> String {
             const NUMERALS: [(usize, &str); 13] = [
-                (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
-                (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+                (1000, "M"),
+                (900, "CM"),
+                (500, "D"),
+                (400, "CD"),
+                (100, "C"),
+                (90, "XC"),
+                (50, "L"),
+                (40, "XL"),
+                (10, "X"),
+                (9, "IX"),
+                (5, "V"),
+                (4, "IV"),
+                (1, "I"),
             ];
             let mut out = String::new();
             for &(value, numeral) in &NUMERALS {
@@ -740,9 +755,7 @@ impl Default for BorderStyle {
 impl<'i> PropertyValue<'i> for Color {
     type Error = StyleParseError;
 
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<Self::Error>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         Color::parse(input).map_err(|error| match error.kind {
             cssparser::ParseErrorKind::Basic(kind) => ParseError::from_basic_kind(kind),
             cssparser::ParseErrorKind::Custom(()) => ParseError::unexpected_token(),
@@ -753,9 +766,7 @@ impl<'i> PropertyValue<'i> for Color {
 impl<'i> PropertyValue<'i> for f32 {
     type Error = StyleParseError;
 
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<Self::Error>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         let token = input.next()?;
         match token {
             Token::Number { value, .. } => Ok(*value),
@@ -770,9 +781,7 @@ impl<'i> PropertyValue<'i> for f32 {
 impl<'i> PropertyValue<'i> for usize {
     type Error = StyleParseError;
 
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<Self::Error>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         let token = input.next()?;
         match token {
             Token::Number {
@@ -790,9 +799,7 @@ impl<'i> PropertyValue<'i> for usize {
 impl<'i> PropertyValue<'i> for bool {
     type Error = StyleParseError;
 
-    fn from_css_property_value(
-        input: &mut Parser<'i>,
-    ) -> Result<Self, ParseError<Self::Error>> {
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         let val = input.expect_ident_or_string()?;
         if val.eq_ignore_ascii_case("true") {
             Ok(true)
@@ -915,7 +922,6 @@ impl Default for PageBreak {
     }
 }
 
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum MathFamily {
     Normal,
@@ -987,7 +993,6 @@ impl Default for MathOperatorForm {
     }
 }
 
-
 impl From<MathOperatorForm> for Option<math_render::mathmlparser::Form> {
     fn from(other: MathOperatorForm) -> Self {
         match other {
@@ -1002,7 +1007,7 @@ impl From<MathOperatorForm> for Option<math_render::mathmlparser::Form> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum MathStyle {
     Inline,
-    Display
+    Display,
 }
 
 impl Default for MathStyle {
@@ -1014,7 +1019,7 @@ impl Default for MathStyle {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum LineBreak {
     Normal,
-    Force
+    Force,
 }
 
 impl Default for LineBreak {

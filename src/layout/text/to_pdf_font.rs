@@ -1,17 +1,17 @@
 use super::font::{Font, FontData};
 
 use super::font::FontUnit;
+use lemon_pdf::DocumentContext;
 use lemon_pdf::font::Font as PdfFont;
 use lemon_pdf::font::{
+    FontType,
     descriptor::FontDescriptor,
     type0::{CIDFont, CIDFontType, CompositeFont, MetricsEntry},
-    FontType,
 };
 use lemon_pdf::object::{IndirectReference, Object};
 use lemon_pdf::stream::Stream;
-use lemon_pdf::DocumentContext;
 
-use font_parse::{write_font, OpentypeTableAccess, Tag};
+use font_parse::{OpentypeTableAccess, Tag};
 
 use std::io::{Result, Write};
 
@@ -39,41 +39,99 @@ impl Font {
         self.has_table(Tag(*b"glyf"))
     }
 
-    pub fn pdf_font_stream(&self) -> Result<Option<Stream>> {
+    /// Subsets the font to the glyphs that were used in the document and
+    /// returns the bytes of the resulting sfnt font file.
+    ///
+    /// Glyph ids are retained, because the content streams refer to glyphs by
+    /// their original id (`Identity-H` encoding). Variable fonts are pinned to
+    /// their default instance since PDF has no notion of variations and the
+    /// shaper never applies any.
+    fn subset_font_bytes(&self) -> std::result::Result<Vec<u8>, harfbuzz_rs::subset::SubsetError> {
+        use harfbuzz_rs::subset::{SubsetFlags, SubsetInput};
+
+        let face = self.hb_font.face();
+        let mut input = SubsetInput::new()?;
+        {
+            let mut glyphs = input.glyph_set_mut();
+            for glyph in self.glyph_advances.lock().keys() {
+                glyphs.insert(glyph.0);
+            }
+        }
+        input.set_flags(
+            SubsetFlags::RETAIN_GIDS | SubsetFlags::NO_LAYOUT_CLOSURE | SubsetFlags::NOTDEF_OUTLINE,
+        );
+        {
+            // Layout tables are not needed in a PDF.
+            let mut drop = input.drop_table_set_mut();
+            for tag in [b"GSUB", b"GPOS", b"GDEF", b"MATH"] {
+                drop.insert(harfbuzz_rs::Tag::from(tag));
+            }
+        }
+        if face.table_with_tag(b"fvar").is_some() {
+            input.pin_all_axes_to_default(&face)?;
+        }
+        let subset = face.subset(&input)?;
+        let bytes = subset.face_data().as_ref().to_vec();
+        Ok(bytes)
+    }
+
+    /// The font file to embed, and whether it is a subset.
+    ///
+    /// If subsetting fails the complete font is embedded instead.
+    fn embedded_font_bytes(&self) -> (Vec<u8>, bool) {
+        match self.subset_font_bytes() {
+            Ok(bytes) => (bytes, true),
+            Err(err) => {
+                log::warn!(
+                    "Could not subset font {}: {}. Embedding the complete font.",
+                    self.postscript_name,
+                    err
+                );
+                (self.hb_font.face().face_data().as_ref().to_vec(), false)
+            }
+        }
+    }
+
+    /// The six-letter tag that PDF requires in front of the name of a subset font
+    /// (`ABCDEF+Name`). It is derived from the font name and the used glyphs, so
+    /// different subsets of the same font get different names.
+    fn subset_tag(&self) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.postscript_name.hash(&mut hasher);
+        for glyph in self.glyph_advances.lock().keys() {
+            glyph.hash(&mut hasher);
+        }
+        let mut hash = hasher.finish();
+        (0..6)
+            .map(|_| {
+                let c = (b'A' + (hash % 26) as u8) as char;
+                hash /= 26;
+                c
+            })
+            .collect()
+    }
+
+    /// Builds the `FontFile2`/`FontFile3` stream from the font file bytes.
+    fn pdf_font_stream(&self, font_file: &[u8]) -> Result<Option<Stream>> {
         match &self.font_data {
             FontData::External(_) => {
-                let font_bytes = vec![];
-                let mut stream = Stream::with_bytes(font_bytes, None);
-
-                if self.has_table(Tag(*b"glyf")) {
-                    let tables = vec![
-                        Tag(*b"head"),
-                        Tag(*b"hhea"),
-                        Tag(*b"loca"),
-                        Tag(*b"maxp"),
-                        Tag(*b"cvt "),
-                        Tag(*b"prep"),
-                        Tag(*b"glyf"),
-                        Tag(*b"hmtx"),
-                        Tag(*b"fpgm"),
-                    ];
-                    write_font(self, Tag([0, 1, 0, 0]), &tables, &mut stream.bytes)?;
+                let mut stream = Stream::with_bytes(vec![], None);
+                if self.is_truetype() {
+                    // FontFile2: a complete TrueType sfnt.
+                    stream.bytes.write_all(font_file)?;
                 } else {
-                    let _tables = &[
-                        Tag(*b"head"),
-                        Tag(*b"CFF "),
-                        Tag(*b"hhea"),
-                        Tag(*b"hmtx"),
-                        Tag(*b"maxp"),
-                    ];
-                    // write_font(self, Tag([0, 1, 0, 0]), tables, &mut font_bytes)?;
-                    let cff_data = self
-                        .table_data(Tag(*b"CFF "))
-                        .expect("No CFF table found in font.");
+                    // FontFile3 / CIDFontType0C: the bare CFF table.
+                    let face = harfbuzz_rs::Face::from_bytes(font_file, 0);
+                    let cff_data = face.table_with_tag(b"CFF ").ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("font {} has neither glyf nor CFF table", self.postscript_name),
+                        )
+                    })?;
                     stream.bytes.write_all(&cff_data)?;
                     stream.add_key_value("Subtype".to_owned(), Box::new("CIDFontType0C"));
                 }
-
                 Ok(Some(stream))
             }
             _ => Ok(None),
@@ -86,6 +144,7 @@ impl Font {
 
     pub fn pdf_font_descriptor(
         &self,
+        name: String,
         font_data: Option<IndirectReference<Stream>>,
     ) -> FontDescriptor {
         match &self.font_data {
@@ -100,7 +159,7 @@ impl Font {
                 ];
 
                 let mut font_descriptor = FontDescriptor {
-                    font_name: self.postscript_name().clone(),
+                    font_name: name.clone(),
                     font_family: font.family_name().as_bytes().to_owned(),
                     font_b_box: bbox,
                     cap_height: self.to_font_unit(font.metrics().cap_height),
@@ -123,11 +182,20 @@ impl Font {
     }
 
     pub fn embed_into_pdf(&self, pdf_context: &mut DocumentContext) -> Result<PdfFont> {
+        let (font_file, subsetted) = match &self.font_data {
+            FontData::External(_) => self.embedded_font_bytes(),
+            _ => (vec![], false),
+        };
+        let name = if subsetted {
+            format!("{}+{}", self.subset_tag(), self.postscript_name())
+        } else {
+            self.postscript_name()
+        };
         let font_data = self
-            .pdf_font_stream()?
+            .pdf_font_stream(&font_file)?
             .map(|stream| pdf_context.write_object(stream))
             .transpose()?;
-        let fd = pdf_context.write_object(self.pdf_font_descriptor(font_data))?;
+        let fd = pdf_context.write_object(self.pdf_font_descriptor(name.clone(), font_data))?;
 
         let mut metrics_h = vec![];
         let mut unfinished_entry: Option<MetricsEntry> = None;
@@ -202,7 +270,7 @@ impl Font {
             } else {
                 CIDFontType::CIDFontType0
             },
-            base_font: self.postscript_name(),
+            base_font: name.clone(),
             font_descriptor: fd,
             dw: None,
             w: Some(Object::Indirect(metrics_h)),
@@ -228,7 +296,7 @@ begincmap
 <0000> <FFFF>
 endcodespacerange
 ",
-            self.postscript_name()
+            name
         )
         .into_bytes();
 
@@ -255,9 +323,9 @@ end"
         let to_unicode_stream = pdf_context.write_object(to_unicode_stream)?;
 
         let base_name = if self.is_truetype() {
-            self.postscript_name()
+            name.clone()
         } else {
-            format!("{}-Identity-H", &self.postscript_name())
+            format!("{}-Identity-H", &name)
         };
 
         let font = CompositeFont {

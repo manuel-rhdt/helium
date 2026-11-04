@@ -10,9 +10,7 @@ use cssparser::{
 use html5ever::{LocalName, Namespace};
 use log::{error, warn};
 use precomputed_hash::PrecomputedHash;
-use selectors::context::{
-    MatchingForInvalidation, NeedsSelectorFlags, QuirksMode, SelectorCaches,
-};
+use selectors::context::{MatchingForInvalidation, NeedsSelectorFlags, QuirksMode, SelectorCaches};
 use selectors::matching;
 use selectors::parser::{
     NonTSPseudoClass, ParseRelative, SelectorImpl, SelectorList, SelectorParseErrorKind,
@@ -345,12 +343,16 @@ fn parse_page_body(input: &mut Parser) -> PageBody {
     body
 }
 
-fn parse_content<'i>(input: &mut Parser<'i>) -> Result<Vec<ContentItem>, ParseError<StyleParseError>> {
+fn parse_content<'i>(
+    input: &mut Parser<'i>,
+) -> Result<Vec<ContentItem>, ParseError<StyleParseError>> {
     let mut items = vec![];
     while !input.is_exhausted() {
         let token = input.next()?.clone();
         match token {
-            cssparser::Token::QuotedString(string) => items.push(ContentItem::String(string.to_string())),
+            cssparser::Token::QuotedString(string) => {
+                items.push(ContentItem::String(string.to_string()))
+            }
             cssparser::Token::Ident(ref ident)
                 if ident.eq_ignore_ascii_case("none") || ident.eq_ignore_ascii_case("normal") => {}
             cssparser::Token::Function(ref name) if name.eq_ignore_ascii_case("counter") => {

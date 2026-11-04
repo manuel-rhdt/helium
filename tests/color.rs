@@ -17,7 +17,11 @@ fn dump(name: &str, html: &str) -> Value {
         .arg(dir.join("wpt-pdfs").join(format!("color__{}.pdf", name)))
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
@@ -35,7 +39,10 @@ fn text_colors(dump: &Value) -> Vec<Value> {
 
 #[test]
 fn text_color_is_applied_and_inherited() {
-    let dump = dump("inherit", r#"<p style="color: #ff0000">red <span>still red</span></p>"#);
+    let dump = dump(
+        "inherit",
+        r#"<p style="color: #ff0000">red <span>still red</span></p>"#,
+    );
     let colors = text_colors(&dump);
     assert!(!colors.is_empty());
     assert!(colors.iter().all(|c| *c == colors[0]), "{:?}", colors);
@@ -44,14 +51,20 @@ fn text_color_is_applied_and_inherited() {
 
 #[test]
 fn nested_element_overrides_color() {
-    let dump = dump("override", r#"<p style="color: #ff0000">a <span style="color: #0000ff">b</span> c</p>"#);
+    let dump = dump(
+        "override",
+        r#"<p style="color: #ff0000">a <span style="color: #0000ff">b</span> c</p>"#,
+    );
     // red, blue, red again
     assert_eq!(text_colors(&dump).len(), 3, "{:?}", text_colors(&dump));
 }
 
 #[test]
 fn border_defaults_to_current_color() {
-    let dump = dump("border", r#"<div style="color: #00ff00; border: 2px solid; width: 10px; height: 10px"></div>"#);
+    let dump = dump(
+        "border",
+        r#"<div style="color: #00ff00; border: 2px solid; width: 10px; height: 10px"></div>"#,
+    );
     let rects = dump["paint"]["rects"].as_array().unwrap();
     assert_eq!(rects.len(), 4);
     for rect in rects {

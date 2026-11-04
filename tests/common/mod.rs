@@ -13,7 +13,10 @@ pub fn collect_tests(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.unwrap().path();
         if path.is_dir() {
             collect_tests(&path, out);
-        } else if matches!(path.extension().and_then(|e| e.to_str()), Some("html" | "xht" | "xhtml")) {
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("html" | "xht" | "xhtml")
+        ) {
             out.push(path);
         }
     }
@@ -21,7 +24,10 @@ pub fn collect_tests(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// The test's path relative to `tests/wpt`, with `/` as separator.
 pub fn test_name(test: &Path) -> String {
-    test.strip_prefix(wpt_root()).unwrap().to_string_lossy().replace('\\', "/")
+    test.strip_prefix(wpt_root())
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// Paths listed in an expectations file (blank lines and `#` comments are ignored).
@@ -50,4 +56,31 @@ pub fn pdf_path(input: &Path) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("wpt-pdfs");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(format!("{}.pdf", test_name(input).replace('/', "__")))
+}
+
+/// Appends the decompressed contents of all object streams to the PDF bytes, so that tests
+/// can search for dictionaries (pages, annotations, ...) with plain text matching.
+pub fn expand_object_streams(pdf: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut result = pdf.to_vec();
+    let marker = b"/Type /ObjStm";
+    let mut pos = 0;
+    while let Some(found) = pdf[pos..].windows(marker.len()).position(|w| w == marker) {
+        let at = pos + found;
+        pos = at + marker.len();
+        let Some(stream_start) = pdf[at..].windows(8).position(|w| w == b"\nstream\n") else {
+            continue;
+        };
+        let start = at + stream_start + 8;
+        let Some(end) = pdf[start..].windows(10).position(|w| w == b"\nendstream") else {
+            continue;
+        };
+        let mut inflated = Vec::new();
+        flate2::read::ZlibDecoder::new(&pdf[start..start + end])
+            .read_to_end(&mut inflated)
+            .expect("object stream is not valid zlib data");
+        result.push(b'\n');
+        result.extend_from_slice(&inflated);
+    }
+    result
 }

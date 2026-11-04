@@ -313,9 +313,9 @@ mod test {
 
     #[test]
     fn test_apply_margin_top_and_bottom() {
-        let html = html(vec![div(vec![])
-            .margin_top(Px(10.0))
-            .margin_bottom(Px(20.0))]);
+        let html = html(vec![
+            div(vec![]).margin_top(Px(10.0)).margin_bottom(Px(20.0)),
+        ]);
         assert_eq!(
             html["div"].style.position.margin_top,
             GenericSize::from(PixelLength(10.0))

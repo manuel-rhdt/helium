@@ -14,6 +14,49 @@ pub struct LayoutEntity(pub Entity);
 #[derive(Debug, Copy, Clone, From, Default)]
 pub struct RootNode(pub Option<Entity>);
 
+/// Maps a layout entity (by id) to the href of the hyperlink that contains it, if any.
+///
+/// The map is built once after DOM traversal: every node with a layout entity that lies inside
+/// an `<a href="...">` element is assigned the href of that element. It is used while creating
+/// the line boxes to find the clickable area of every hyperlink.
+#[derive(Debug, Clone, Default)]
+pub struct EntityHrefs(pub std::collections::HashMap<u32, String>);
+
+impl EntityHrefs {
+    pub fn href_of(&self, entity: Entity) -> Option<&str> {
+        self.0.get(&entity.id()).map(String::as_str)
+    }
+}
+
+/// The destination of an internal (cross-reference) link: a page and a point on that page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GoToDestination {
+    /// The zero-based index of the destination page.
+    pub page: usize,
+    /// The horizontal position of the destination, in the page's coordinate system.
+    pub x: PixelLength,
+    /// The vertical position of the destination, in the page's coordinate system (top-left origin).
+    pub y: PixelLength,
+}
+
+/// The clickable region of a hyperlink on a page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hyperlink {
+    /// The page the link is on.
+    pub page: usize,
+    /// The rectangle of the link in the page's coordinate system (top-left origin).
+    pub rect: crate::display_list::Rect,
+    /// The URI the link points to. For cross-references within the document this is the fragment
+    /// (without the leading `#`), and the resolved target is in [`Hyperlink::destination`].
+    pub href: String,
+    /// Where the link jumps to inside the document, if it is a cross-reference (`<a href="#...">`).
+    pub destination: Option<GoToDestination>,
+}
+
+/// All hyperlinks found in the document, collected while the line boxes are created.
+#[derive(Debug, Clone, Default)]
+pub struct Hyperlinks(pub Vec<Hyperlink>);
+
 #[derive(Debug)]
 pub struct ContainingBlock {
     pub entity: Entity,
@@ -148,6 +191,8 @@ pub struct TextRun {
     pub baseline: PixelLength,
     pub color: crate::style::properties::computed::RGBA,
     pub decoration: crate::style::properties::specified::TextDecoration,
+    pub hyphens: crate::style::properties::specified::Hyphens,
+    pub manual_hyphen_points: Vec<usize>,
 }
 
 impl Component for TextRun {
@@ -251,15 +296,24 @@ pub struct Glyphs(pub Vec<GlyphIndex>);
 
 impl lemon_pdf::PdfFormat for Glyphs {
     fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
-        use lemon_pdf::object::WriteEscaped;
         use std::io::Write;
 
         if !self.0.is_empty() {
-            write!(f, "<")?;
+            // A literal string is about half the size of a hex string. Only the
+            // bytes that are special inside a literal string need an escape.
+            let mut bytes = Vec::with_capacity(self.0.len() * 2 + 2);
+            bytes.push(b'(');
             for GlyphIndex(glyph) in &self.0 {
-                f.write_hex_escaped(&(*glyph as u16).to_be_bytes())?;
+                for byte in (*glyph as u16).to_be_bytes() {
+                    match byte {
+                        b'(' | b')' | b'\\' => bytes.extend_from_slice(&[b'\\', byte]),
+                        b'\r' => bytes.extend_from_slice(b"\\r"),
+                        _ => bytes.push(byte),
+                    }
+                }
             }
-            write!(f, ">")?;
+            bytes.push(b')');
+            f.write_all(&bytes)?;
         }
         Ok(())
     }
@@ -375,7 +429,9 @@ impl BlockLevelElement {
     pub fn entity(self) -> Entity {
         use BlockLevelElement::*;
         match self {
-            ContainerStart(entity) | Absolute(entity) | Leaf(entity) | ContainerEnd(entity) => entity,
+            ContainerStart(entity) | Absolute(entity) | Leaf(entity) | ContainerEnd(entity) => {
+                entity
+            }
         }
     }
 }

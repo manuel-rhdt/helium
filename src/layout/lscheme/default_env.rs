@@ -1,4 +1,3 @@
-
 use super::*;
 
 pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
@@ -38,7 +37,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     fn divide<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         let first_arg = args
             .get(0)
-            .ok_or(RuntimeError::Message("called / without arguments".to_string()))?
+            .ok_or(RuntimeError::Message(
+                "called / without arguments".to_string(),
+            ))?
             .clone();
         (&args[1..]).iter().try_fold(first_arg, |a, b| {
             let a = expect_number(&a)?;
@@ -50,7 +51,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn num_eq<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() < 2 {
-            return Err(RuntimeError::Message("= requires at least 2 arguments".to_string()));
+            return Err(RuntimeError::Message(
+                "= requires at least 2 arguments".to_string(),
+            ));
         }
         let first = expect_number(&args[0])?;
         let mut ok = true;
@@ -63,12 +66,16 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn num_lt<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() < 2 {
-            return Err(RuntimeError::Message("< requires at least 2 arguments".to_string()));
+            return Err(RuntimeError::Message(
+                "< requires at least 2 arguments".to_string(),
+            ));
         }
         let mut prev = expect_number(&args[0])?;
         for v in &args[1..] {
             let n = expect_number(v)?;
-            if !(prev < n) { return Ok(Value::Bool(false)); }
+            if !(prev < n) {
+                return Ok(Value::Bool(false));
+            }
             prev = n;
         }
         Ok(Value::Bool(true))
@@ -77,12 +84,16 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn num_gt<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() < 2 {
-            return Err(RuntimeError::Message("> requires at least 2 arguments".to_string()));
+            return Err(RuntimeError::Message(
+                "> requires at least 2 arguments".to_string(),
+            ));
         }
         let mut prev = expect_number(&args[0])?;
         for v in &args[1..] {
             let n = expect_number(v)?;
-            if !(prev > n) { return Ok(Value::Bool(false)); }
+            if !(prev > n) {
+                return Ok(Value::Bool(false));
+            }
             prev = n;
         }
         Ok(Value::Bool(true))
@@ -91,12 +102,16 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn num_lte<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() < 2 {
-            return Err(RuntimeError::Message("<= requires at least 2 arguments".to_string()));
+            return Err(RuntimeError::Message(
+                "<= requires at least 2 arguments".to_string(),
+            ));
         }
         let mut prev = expect_number(&args[0])?;
         for v in &args[1..] {
             let n = expect_number(v)?;
-            if !(prev <= n) { return Ok(Value::Bool(false)); }
+            if !(prev <= n) {
+                return Ok(Value::Bool(false));
+            }
             prev = n;
         }
         Ok(Value::Bool(true))
@@ -105,12 +120,16 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn num_gte<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() < 2 {
-            return Err(RuntimeError::Message(">= requires at least 2 arguments".to_string()));
+            return Err(RuntimeError::Message(
+                ">= requires at least 2 arguments".to_string(),
+            ));
         }
         let mut prev = expect_number(&args[0])?;
         for v in &args[1..] {
             let n = expect_number(v)?;
-            if !(prev >= n) { return Ok(Value::Bool(false)); }
+            if !(prev >= n) {
+                return Ok(Value::Bool(false));
+            }
             prev = n;
         }
         Ok(Value::Bool(true))
@@ -119,7 +138,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn not<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("not requires exactly one argument".to_string()));
+            return Err(RuntimeError::Message(
+                "not requires exactly one argument".to_string(),
+            ));
         }
         Ok(Value::Bool(!args[0].is_truthy()))
     }
@@ -127,7 +148,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn equal<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 2 {
-            return Err(RuntimeError::Message("equal? requires exactly 2 arguments".to_string()));
+            return Err(RuntimeError::Message(
+                "equal? requires exactly 2 arguments".to_string(),
+            ));
         }
         Ok(Value::Bool(args[0] == args[1]))
     }
@@ -148,7 +171,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn cons<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 2 {
-            return Err(RuntimeError::Message("cons requires exactly 2 arguments".to_string()));
+            return Err(RuntimeError::Message(
+                "cons requires exactly 2 arguments".to_string(),
+            ));
         }
         match &args[1] {
             Value::List(tail) => {
@@ -157,30 +182,42 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
                 Ok(Value::List(new_list))
             }
             Value::Null => Ok(Value::list(vec![args[0].clone()])),
-            _ => Err(RuntimeError::Message("cons: second argument must be a list".to_string())),
+            _ => Err(RuntimeError::Message(
+                "cons: second argument must be a list".to_string(),
+            )),
         }
     }
     new_map.insert("cons".to_string(), Value::NativeFunc(cons));
 
     fn car<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("car requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "car requires exactly 1 argument".to_string(),
+            ));
         }
         match &args[0] {
             Value::List(list) if !list.is_empty() => Ok(list[0].clone()),
-            _ => Err(RuntimeError::Message(format!("car: expected non-empty list, got {:?}", args[0]))),
+            _ => Err(RuntimeError::Message(format!(
+                "car: expected non-empty list, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("car".to_string(), Value::NativeFunc(car));
 
     fn cdr<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("cdr requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "cdr requires exactly 1 argument".to_string(),
+            ));
         }
         match &args[0] {
             Value::List(list) if !list.is_empty() => Ok(Value::List(list.skip(1))),
             Value::List(_) => Err(RuntimeError::Message("cdr: empty list".to_string())),
-            _ => Err(RuntimeError::Message(format!("cdr: expected list, got {:?}", args[0]))),
+            _ => Err(RuntimeError::Message(format!(
+                "cdr: expected list, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("cdr".to_string(), Value::NativeFunc(cdr));
@@ -192,7 +229,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn is_null<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("null? requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "null? requires exactly 1 argument".to_string(),
+            ));
         }
         let result = match &args[0] {
             Value::Null => true,
@@ -205,15 +244,21 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn is_pair<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("pair? requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "pair? requires exactly 1 argument".to_string(),
+            ));
         }
-        Ok(Value::Bool(matches!(&args[0], Value::List(v) if !v.is_empty())))
+        Ok(Value::Bool(
+            matches!(&args[0], Value::List(v) if !v.is_empty()),
+        ))
     }
     new_map.insert("pair?".to_string(), Value::NativeFunc(is_pair));
 
     fn is_number<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("number? requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "number? requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Bool(args[0].is_number()))
     }
@@ -221,7 +266,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn is_string_pred<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("string? requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "string? requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Bool(args[0].is_string()))
     }
@@ -229,7 +276,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn is_symbol<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("symbol? requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "symbol? requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Bool(args[0].is_symbol()))
     }
@@ -237,7 +286,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn is_entity<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("entity? requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "entity? requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Bool(args[0].is_entity()))
     }
@@ -245,7 +296,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn is_boolean<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("boolean? requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "boolean? requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Bool(matches!(args[0], Value::Bool(_))))
     }
@@ -253,7 +306,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn display<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("display requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "display requires exactly 1 argument".to_string(),
+            ));
         }
         match &args[0] {
             Value::String(s) => print!("{}", s),
@@ -271,7 +326,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn abs<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("abs requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "abs requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Number(expect_number(&args[0])?.abs()))
     }
@@ -279,7 +336,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn floor_fn<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("floor requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "floor requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Number(expect_number(&args[0])?.floor()))
     }
@@ -287,7 +346,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn ceiling_fn<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("ceiling requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "ceiling requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Number(expect_number(&args[0])?.ceil()))
     }
@@ -295,7 +356,9 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn sqrt_fn<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("sqrt requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "sqrt requires exactly 1 argument".to_string(),
+            ));
         }
         Ok(Value::Number(expect_number(&args[0])?.sqrt()))
     }
@@ -307,7 +370,12 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
             match arg {
                 Value::List(items) => result.append(items.clone()),
                 Value::Null => {}
-                _ => return Err(RuntimeError::Message(format!("append: expected list, got {:?}", arg))),
+                _ => {
+                    return Err(RuntimeError::Message(format!(
+                        "append: expected list, got {:?}",
+                        arg
+                    )));
+                }
             }
         }
         Ok(Value::List(result))
@@ -316,12 +384,12 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn reverse<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("reverse requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "reverse requires exactly 1 argument".to_string(),
+            ));
         }
         match &args[0] {
-            Value::List(list) => {
-                Ok(Value::list(list.iter().rev().cloned().collect::<Vec<_>>()))
-            }
+            Value::List(list) => Ok(Value::list(list.iter().rev().cloned().collect::<Vec<_>>())),
             _ => Err(RuntimeError::Message("reverse: expected list".to_string())),
         }
     }
@@ -329,125 +397,211 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     fn number_to_string<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("number->string requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "number->string requires exactly 1 argument".to_string(),
+            ));
         }
         let n = expect_number(&args[0])?;
-        Ok(Value::String(if n == n.floor() { format!("{}", n as i64) } else { format!("{}", n) }))
+        Ok(Value::String(if n == n.floor() {
+            format!("{}", n as i64)
+        } else {
+            format!("{}", n)
+        }))
     }
-    new_map.insert("number->string".to_string(), Value::NativeFunc(number_to_string));
+    new_map.insert(
+        "number->string".to_string(),
+        Value::NativeFunc(number_to_string),
+    );
 
     fn string_to_number<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("string->number requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "string->number requires exactly 1 argument".to_string(),
+            ));
         }
         match &args[0] {
             Value::String(s) => match s.parse::<f64>() {
                 Ok(n) => Ok(Value::Number(n)),
                 Err(_) => Ok(Value::Bool(false)),
             },
-            _ => Err(RuntimeError::Message("string->number: expected string".to_string())),
+            _ => Err(RuntimeError::Message(
+                "string->number: expected string".to_string(),
+            )),
         }
     }
-    new_map.insert("string->number".to_string(), Value::NativeFunc(string_to_number));
+    new_map.insert(
+        "string->number".to_string(),
+        Value::NativeFunc(string_to_number),
+    );
 
     fn string_append<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         let mut result = String::new();
         for arg in args {
             match arg {
                 Value::String(s) => result.push_str(s),
-                _ => return Err(RuntimeError::Message(format!("string-append: expected string, got {:?}", arg))),
+                _ => {
+                    return Err(RuntimeError::Message(format!(
+                        "string-append: expected string, got {:?}",
+                        arg
+                    )));
+                }
             }
         }
         Ok(Value::String(result))
     }
-    new_map.insert("string-append".to_string(), Value::NativeFunc(string_append));
+    new_map.insert(
+        "string-append".to_string(),
+        Value::NativeFunc(string_append),
+    );
 
     fn symbol_to_string<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("symbol->string requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "symbol->string requires exactly 1 argument".to_string(),
+            ));
         }
         match &args[0] {
             Value::Symbol(s) => Ok(Value::String(s.as_str().to_string())),
-            _ => Err(RuntimeError::Message("symbol->string: expected symbol".to_string())),
+            _ => Err(RuntimeError::Message(
+                "symbol->string: expected symbol".to_string(),
+            )),
         }
     }
-    new_map.insert("symbol->string".to_string(), Value::NativeFunc(symbol_to_string));
+    new_map.insert(
+        "symbol->string".to_string(),
+        Value::NativeFunc(symbol_to_string),
+    );
 
     fn string_to_symbol<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::Message("string->symbol requires exactly 1 argument".to_string()));
+            return Err(RuntimeError::Message(
+                "string->symbol requires exactly 1 argument".to_string(),
+            ));
         }
         match &args[0] {
             Value::String(s) => Ok(Value::Symbol(Symbol::intern(s))),
-            _ => Err(RuntimeError::Message("string->symbol: expected string".to_string())),
+            _ => Err(RuntimeError::Message(
+                "string->symbol: expected string".to_string(),
+            )),
         }
     }
-    new_map.insert("string->symbol".to_string(), Value::NativeFunc(string_to_symbol));
+    new_map.insert(
+        "string->symbol".to_string(),
+        Value::NativeFunc(string_to_symbol),
+    );
 
     fn cadr<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("cadr requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "cadr requires 1 argument".to_string(),
+            ));
+        }
         match &args[0] {
             Value::List(v) if v.len() >= 2 => Ok(v[1].clone()),
-            _ => Err(RuntimeError::Message(format!("cadr: expected list with >=2 elements, got {:?}", args[0]))),
+            _ => Err(RuntimeError::Message(format!(
+                "cadr: expected list with >=2 elements, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("cadr".to_string(), Value::NativeFunc(cadr));
 
     fn caddr<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("caddr requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "caddr requires 1 argument".to_string(),
+            ));
+        }
         match &args[0] {
             Value::List(v) if v.len() >= 3 => Ok(v[2].clone()),
-            _ => Err(RuntimeError::Message(format!("caddr: expected list with >=3 elements, got {:?}", args[0]))),
+            _ => Err(RuntimeError::Message(format!(
+                "caddr: expected list with >=3 elements, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("caddr".to_string(), Value::NativeFunc(caddr));
 
     fn cadddr<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("cadddr requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "cadddr requires 1 argument".to_string(),
+            ));
+        }
         match &args[0] {
             Value::List(v) if v.len() >= 4 => Ok(v[3].clone()),
-            _ => Err(RuntimeError::Message(format!("cadddr: expected list with >=4 elements, got {:?}", args[0]))),
+            _ => Err(RuntimeError::Message(format!(
+                "cadddr: expected list with >=4 elements, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("cadddr".to_string(), Value::NativeFunc(cadddr));
 
     fn cddr<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("cddr requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "cddr requires 1 argument".to_string(),
+            ));
+        }
         match &args[0] {
             Value::List(v) if v.len() >= 2 => Ok(Value::List(v.skip(2))),
             Value::List(_) => Err(RuntimeError::Message("cddr: list too short".to_string())),
-            _ => Err(RuntimeError::Message(format!("cddr: expected list, got {:?}", args[0]))),
+            _ => Err(RuntimeError::Message(format!(
+                "cddr: expected list, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("cddr".to_string(), Value::NativeFunc(cddr));
 
     fn caar<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("caar requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "caar requires 1 argument".to_string(),
+            ));
+        }
         match &args[0] {
             Value::List(v) if !v.is_empty() => match &v[0] {
                 Value::List(inner) if !inner.is_empty() => Ok(inner[0].clone()),
-                _ => Err(RuntimeError::Message("caar: car is not a non-empty list".to_string())),
+                _ => Err(RuntimeError::Message(
+                    "caar: car is not a non-empty list".to_string(),
+                )),
             },
-            _ => Err(RuntimeError::Message(format!("caar: expected non-empty list, got {:?}", args[0]))),
+            _ => Err(RuntimeError::Message(format!(
+                "caar: expected non-empty list, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("caar".to_string(), Value::NativeFunc(caar));
 
     fn cdar<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("cdar requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "cdar requires 1 argument".to_string(),
+            ));
+        }
         match &args[0] {
             Value::List(v) if !v.is_empty() => match &v[0] {
                 Value::List(inner) if !inner.is_empty() => Ok(Value::List(inner.skip(1))),
                 Value::List(_) => Err(RuntimeError::Message("cdar: car is empty list".to_string())),
                 _ => Err(RuntimeError::Message("cdar: car is not a list".to_string())),
             },
-            _ => Err(RuntimeError::Message(format!("cdar: expected non-empty list, got {:?}", args[0]))),
+            _ => Err(RuntimeError::Message(format!(
+                "cdar: expected non-empty list, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("cdar".to_string(), Value::NativeFunc(cdar));
 
     fn eq_pred<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 2 { return Err(RuntimeError::Message("eq? requires 2 arguments".to_string())); }
+        if args.len() != 2 {
+            return Err(RuntimeError::Message(
+                "eq? requires 2 arguments".to_string(),
+            ));
+        }
         let result = match (&args[0], &args[1]) {
             (Value::Symbol(a), Value::Symbol(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
@@ -462,47 +616,88 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
     new_map.insert("eq?".to_string(), Value::NativeFunc(eq_pred));
 
     fn min_fn<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.is_empty() { return Err(RuntimeError::Message("min requires at least 1 argument".to_string())); }
+        if args.is_empty() {
+            return Err(RuntimeError::Message(
+                "min requires at least 1 argument".to_string(),
+            ));
+        }
         let mut m = expect_number(&args[0])?;
-        for v in &args[1..] { let n = expect_number(v)?; if n < m { m = n; } }
+        for v in &args[1..] {
+            let n = expect_number(v)?;
+            if n < m {
+                m = n;
+            }
+        }
         Ok(Value::Number(m))
     }
     new_map.insert("min".to_string(), Value::NativeFunc(min_fn));
 
     fn max_fn<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.is_empty() { return Err(RuntimeError::Message("max requires at least 1 argument".to_string())); }
+        if args.is_empty() {
+            return Err(RuntimeError::Message(
+                "max requires at least 1 argument".to_string(),
+            ));
+        }
         let mut m = expect_number(&args[0])?;
-        for v in &args[1..] { let n = expect_number(v)?; if n > m { m = n; } }
+        for v in &args[1..] {
+            let n = expect_number(v)?;
+            if n > m {
+                m = n;
+            }
+        }
         Ok(Value::Number(m))
     }
     new_map.insert("max".to_string(), Value::NativeFunc(max_fn));
 
     fn zero_pred<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("zero? requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "zero? requires 1 argument".to_string(),
+            ));
+        }
         Ok(Value::Bool(expect_number(&args[0])? == 0.0))
     }
     new_map.insert("zero?".to_string(), Value::NativeFunc(zero_pred));
 
     fn positive_pred<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("positive? requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "positive? requires 1 argument".to_string(),
+            ));
+        }
         Ok(Value::Bool(expect_number(&args[0])? > 0.0))
     }
     new_map.insert("positive?".to_string(), Value::NativeFunc(positive_pred));
 
     fn negative_pred<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 1 { return Err(RuntimeError::Message("negative? requires 1 argument".to_string())); }
+        if args.len() != 1 {
+            return Err(RuntimeError::Message(
+                "negative? requires 1 argument".to_string(),
+            ));
+        }
         Ok(Value::Bool(expect_number(&args[0])? < 0.0))
     }
     new_map.insert("negative?".to_string(), Value::NativeFunc(negative_pred));
 
     fn list_ref<'a>(args: &[Value<'a>]) -> Result<Value<'a>, RuntimeError> {
-        if args.len() != 2 { return Err(RuntimeError::Message("list-ref requires 2 arguments".to_string())); }
+        if args.len() != 2 {
+            return Err(RuntimeError::Message(
+                "list-ref requires 2 arguments".to_string(),
+            ));
+        }
         let idx = expect_number(&args[1])? as usize;
         match &args[0] {
-            Value::List(v) => v.get(idx).cloned().ok_or_else(|| RuntimeError::Message(
-                format!("list-ref: index {} out of bounds (length {})", idx, v.len())
-            )),
-            _ => Err(RuntimeError::Message(format!("list-ref: expected list, got {:?}", args[0]))),
+            Value::List(v) => v.get(idx).cloned().ok_or_else(|| {
+                RuntimeError::Message(format!(
+                    "list-ref: index {} out of bounds (length {})",
+                    idx,
+                    v.len()
+                ))
+            }),
+            _ => Err(RuntimeError::Message(format!(
+                "list-ref: expected list, got {:?}",
+                args[0]
+            ))),
         }
     }
     new_map.insert("list-ref".to_string(), Value::NativeFunc(list_ref));
@@ -550,4 +745,3 @@ pub fn default_environment<'a>() -> Result<EnvRef<'a>, RuntimeError> {
 
     Ok(env)
 }
-

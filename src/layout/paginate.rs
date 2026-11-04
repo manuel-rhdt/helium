@@ -189,7 +189,10 @@ impl<'world> System<'world> for Paginator {
         let page_top = self.margin.top;
         let page_bottom = self.margin.top + self.content_height();
         for (entity, first_page, last_page) in to_split {
-            let (pos, deco) = match (positions.get(entity).copied(), decorations.get(entity).copied()) {
+            let (pos, deco) = match (
+                positions.get(entity).copied(),
+                decorations.get(entity).copied(),
+            ) {
                 (Some(pos), Some(deco)) => (pos, deco),
                 _ => continue,
             };
@@ -208,8 +211,16 @@ impl<'world> System<'world> for Paginator {
             for page in first_page..=last_page {
                 let is_first = page == first_page;
                 let is_last = page == last_page;
-                let top = if is_first { top_edge + page_offsets[page] } else { page_top };
-                let bottom = if is_last { bottom_edge + page_offsets[page] } else { page_bottom };
+                let top = if is_first {
+                    top_edge + page_offsets[page]
+                } else {
+                    page_top
+                };
+                let bottom = if is_last {
+                    bottom_edge + page_offsets[page]
+                } else {
+                    page_bottom
+                };
                 let mut fragment_deco = deco;
                 if !is_first {
                     fragment_deco.padding.top = PixelLength(0.0);
@@ -220,7 +231,8 @@ impl<'world> System<'world> for Paginator {
                     fragment_deco.border.bottom = PixelLength(0.0);
                 }
                 let content_top = top + fragment_deco.border.top + fragment_deco.padding.top;
-                let content_bottom = bottom - fragment_deco.border.bottom - fragment_deco.padding.bottom;
+                let content_bottom =
+                    bottom - fragment_deco.border.bottom - fragment_deco.padding.bottom;
                 let height = if content_bottom > content_top {
                     content_bottom - content_top
                 } else {
@@ -228,7 +240,15 @@ impl<'world> System<'world> for Paginator {
                 };
                 entities
                     .build_entity()
-                    .with(Position { y: content_top, height, page, ..pos }, &mut positions)
+                    .with(
+                        Position {
+                            y: content_top,
+                            height,
+                            page,
+                            ..pos
+                        },
+                        &mut positions,
+                    )
                     .with(fragment_deco, &mut decorations)
                     .with(DecorationFragment, &mut fragments)
                     .build();
@@ -237,7 +257,11 @@ impl<'world> System<'world> for Paginator {
 
         // Absolutely positioned boxes are not part of the text list. They are placed on the page
         // of their containing block, which for the initial containing block is the first page.
-        for group in absolute_groups.groups.iter().filter(|group| group.owner.is_none()) {
+        for group in absolute_groups
+            .groups
+            .iter()
+            .filter(|group| group.owner.is_none())
+        {
             let page = group
                 .containing_block
                 .and_then(|cb| positions.get(cb))

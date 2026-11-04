@@ -18,7 +18,11 @@ fn dump(name: &str, html: &str) -> Value {
         .arg(dir.join("wpt-pdfs").join(format!("absolute__{}.pdf", name)))
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
@@ -26,7 +30,10 @@ fn find<'a>(node: &'a Value, id: &str) -> Option<&'a Value> {
     if node["id"] == id {
         return Some(node);
     }
-    node["children"].as_array()?.iter().find_map(|child| find(child, id))
+    node["children"]
+        .as_array()?
+        .iter()
+        .find_map(|child| find(child, id))
 }
 
 fn border_box(dump: &Value, id: &str) -> (i64, f64, f64, f64, f64) {
@@ -53,22 +60,38 @@ fn box_with_static_position_stays_on_the_page_of_its_flow() {
             )
         })
         .collect();
-    let dump = dump("abs_static_pagination", &format!("<style>body {{ margin: 0 }}</style>{}", blocks));
+    let dump = dump(
+        "abs_static_pagination",
+        &format!("<style>body {{ margin: 0 }}</style>{}", blocks),
+    );
 
-    let pages: Vec<i64> = (0..6).map(|i| border_box(&dump, &format!("block{}", i)).0).collect();
-    assert!(pages[0] == 0 && pages[5] > 0, "the blocks should end up on different pages: {:?}", pages);
+    let pages: Vec<i64> = (0..6)
+        .map(|i| border_box(&dump, &format!("block{}", i)).0)
+        .collect();
+    assert!(
+        pages[0] == 0 && pages[5] > 0,
+        "the blocks should end up on different pages: {:?}",
+        pages
+    );
 
     // every box is where its static position is: at the top left corner of its block
     for i in 0..6 {
         let block = border_box(&dump, &format!("block{}", i));
         let abs = border_box(&dump, &format!("abs{}", i));
-        assert_eq!((abs.0, abs.1, abs.2), (block.0, block.1, block.2), "box {}", i);
+        assert_eq!(
+            (abs.0, abs.1, abs.2),
+            (block.0, block.1, block.2),
+            "box {}",
+            i
+        );
     }
 }
 
 #[test]
 fn box_with_explicit_offsets_is_placed_on_the_first_page() {
-    let blocks: String = (0..6).map(|_| r#"<div style="height: 300px"></div>"#).collect();
+    let blocks: String = (0..6)
+        .map(|_| r#"<div style="height: 300px"></div>"#)
+        .collect();
     let dump = dump(
         "abs_explicit_first_page",
         &format!(

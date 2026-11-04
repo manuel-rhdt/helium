@@ -1,6 +1,6 @@
 pub use super::{
-    builtin::{BuiltInFont, FontUnit},
     HarfbuzzFont,
+    builtin::{BuiltInFont, FontUnit},
 };
 
 use crate::style::properties::computed::{
