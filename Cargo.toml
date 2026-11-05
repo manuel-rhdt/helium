@@ -31,6 +31,11 @@ smallvec = "1.16.3"
 hyphenation = { version = "0.8.4", features = ["embed_en-us"] }
 taffy = { version = "=0.15.1", default-features = false, features = ["std", "block_layout", "flexbox", "grid", "float_layout", "content_size", "calc", "detailed_layout_info"] }
 
+# Finding an installed font for characters that the fonts of `font-family` lack
+# (already a dependency of font-kit on these platforms).
+[target.'cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios")))'.dependencies]
+yeslogic-fontconfig-sys = "6"
+
 [dev-dependencies]
 assert_cmd = "1"
 predicates = "1"

@@ -225,8 +225,8 @@ pub fn write_pdf(
                                     )?;
                                 }
                                 TextOperator::Glyphs(glyphs) => {
-                                    if let Some(builtin) = current_font_name
-                                        .and_then(|name| simple_font_map.get(name))
+                                    if let Some(builtin) =
+                                        current_font_name.and_then(|name| simple_font_map.get(name))
                                     {
                                         page_context
                                             .push_operand(&simple_glyphs(glyphs, *builtin))?;
@@ -236,8 +236,8 @@ pub fn write_pdf(
                                     page_context.apply_operator("Tj")?;
                                 }
                                 TextOperator::KernedGlyphs(glyphs) => {
-                                    if let Some(builtin) = current_font_name
-                                        .and_then(|name| simple_font_map.get(name))
+                                    if let Some(builtin) =
+                                        current_font_name.and_then(|name| simple_font_map.get(name))
                                     {
                                         let glyphs: Vec<_> = glyphs
                                             .iter()

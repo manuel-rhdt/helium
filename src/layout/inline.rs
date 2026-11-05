@@ -350,8 +350,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             for (position, _) in
                                 shape(&text_run.text[segment_start..newline_index], font)
                             {
-                                advance +=
-                                    font.scale_to_px(position.x_advance, text_run.font_size);
+                                advance += font.scale_to_px(position.x_advance, text_run.font_size);
                             }
                             let break_index = newline_index + 1;
                             break_points.push(BreakPoint {
@@ -453,8 +452,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         // Clusters are monotone, so the width in front of a cluster boundary is
                         // found by a binary search.
                         let width_before = |char_index: usize| {
-                            let glyphs_before = prefix_widths
-                                .partition_point(|&(cluster, _)| cluster < char_index);
+                            let glyphs_before =
+                                prefix_widths.partition_point(|&(cluster, _)| cluster < char_index);
                             prefix_widths
                                 .get(glyphs_before)
                                 .map_or(run_width, |&(_, width)| width)
@@ -468,11 +467,9 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             // whole run does not split. Shaping the whole prefix of the run
                             // instead made this quadratic in the length of the run.
                             let prefix = &text_run.text[..char_index];
-                            let word_start = prefix
-                                .rfind(char::is_whitespace)
-                                .map_or(0, |index| {
-                                    index + prefix[index..].chars().next().map_or(1, char::len_utf8)
-                                });
+                            let word_start = prefix.rfind(char::is_whitespace).map_or(0, |index| {
+                                index + prefix[index..].chars().next().map_or(1, char::len_utf8)
+                            });
                             let prefix_width = width_before(word_start)
                                 + shape(&prefix[word_start..], font)
                                     .iter()
@@ -497,9 +494,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     }
                 } else if let Some(intrinsic_size) = intrinsic_sizes.get(entity) {
                     advance += intrinsic_size.width().unwrap_or_default();
-                } else if computed_values.get(entity).map_or(false, |style| {
-                    style.box_.display.is_atomic_inline()
-                }) {
+                } else if computed_values
+                    .get(entity)
+                    .map_or(false, |style| style.box_.display.is_atomic_inline())
+                {
                     // the width is only known once the box has been laid out
                     atom_offsets.push((entity, advance));
                 }
@@ -1068,9 +1066,9 @@ impl<'a> System<'a> for LineBoxCreator {
                         text_cursor = advance + width;
 
                         // The contents of an `inline-block` box are placed by `PlaceInlineBlocks`.
-                        let is_inline_block = computed_values.get(entity).map_or(false, |style| {
-                            style.box_.display.is_atomic_inline()
-                        });
+                        let is_inline_block = computed_values
+                            .get(entity)
+                            .map_or(false, |style| style.box_.display.is_atomic_inline());
                         if !is_inline_block {
                             positions
                                 .insert(
@@ -1181,31 +1179,64 @@ pub(super) fn shape_piece(
 ) -> Px {
     let shaped = shape(characters, font);
 
+    // Glyphs of characters that `font` has no glyph for come from its fallback fonts. The font
+    // is switched for them and switched back to `font` at the end of the piece.
+    let fallbacks = font.fallbacks();
+    let font_at = |index: u16| -> &Font {
+        match index {
+            0 => font,
+            n => &fallbacks[n as usize - 1],
+        }
+    };
+    let mut current_font = 0u16;
+
     let mut kerned_glyphs = vec![];
     let mut glyphs = Vec::with_capacity(shaped.len());
 
     // TODO: We currently rely on the first glyph having cluster value 0
     let mut previous_cluster = 0xFFFF;
-    let mut cluster_starting_glyph = 0xFFFF;
+    let mut cluster_starting_glyph = (0u16, GlyphIndex(0xFFFF));
 
-    let mut to_unicode_map = BTreeMap::new();
+    // the ToUnicode entries of every font that is used
+    let mut to_unicode_maps: BTreeMap<u16, BTreeMap<GlyphIndex, String>> = BTreeMap::new();
 
     let mut advance = Px(0.0);
     for (pos, glyph_info) in shaped {
-        advance += font.scale_to_px(pos.x_advance, font_size);
+        if glyph_info.font != current_font {
+            if !glyphs.is_empty() {
+                kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut glyphs))));
+            }
+            if !kerned_glyphs.is_empty() {
+                ops.push(TextOperator::KernedGlyphs(std::mem::take(
+                    &mut kerned_glyphs,
+                )));
+            }
+            current_font = glyph_info.font;
+            ops.push(TextOperator::SetFont(
+                font_at(current_font).postscript_name(),
+                font_size,
+            ));
+        }
+        let glyph_font = font_at(current_font);
 
+        advance += glyph_font.scale_to_px(pos.x_advance, font_size);
+
+        let glyph = GlyphIndex(glyph_info.codepoint);
         if glyph_info.cluster != previous_cluster {
             // a new cluster began
             if previous_cluster < glyph_info.cluster {
                 let text = &characters[previous_cluster as usize..glyph_info.cluster as usize];
-                to_unicode_map.insert(GlyphIndex(cluster_starting_glyph), text.to_owned());
+                to_unicode_maps
+                    .entry(cluster_starting_glyph.0)
+                    .or_default()
+                    .insert(cluster_starting_glyph.1, text.to_owned());
             }
-            cluster_starting_glyph = glyph_info.codepoint;
+            cluster_starting_glyph = (current_font, glyph);
             previous_cluster = glyph_info.cluster;
         }
 
-        glyphs.push(GlyphIndex(glyph_info.codepoint));
-        let mut kern = font.advance(GlyphIndex(glyph_info.codepoint)) - pos.x_advance;
+        glyphs.push(glyph);
+        let mut kern = glyph_font.advance(glyph) - pos.x_advance;
 
         // adjust kerning of space glyphs to allow text justification
         if characters[glyph_info.cluster as usize..].starts_with(char::is_whitespace) {
@@ -1228,11 +1259,19 @@ pub(super) fn shape_piece(
     if !kerned_glyphs.is_empty() {
         ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
     }
+    if current_font != 0 {
+        ops.push(TextOperator::SetFont(font.postscript_name(), font_size));
+    }
 
     if let Some(text) = characters.get(previous_cluster as usize..) {
-        to_unicode_map.insert(GlyphIndex(cluster_starting_glyph), text.to_owned());
+        to_unicode_maps
+            .entry(cluster_starting_glyph.0)
+            .or_default()
+            .insert(cluster_starting_glyph.1, text.to_owned());
     }
-    font.to_unicode.lock().append(&mut to_unicode_map);
+    for (font_index, mut map) in to_unicode_maps {
+        font_at(font_index).to_unicode.lock().append(&mut map);
+    }
 
     advance
 }

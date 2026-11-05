@@ -4,9 +4,9 @@ use super::font::FontUnit;
 use lemon_pdf::DocumentContext;
 use lemon_pdf::font::Font as PdfFont;
 use lemon_pdf::font::{
-    encoding::{EncodingEntry, PredefinedEncoding},
     FontType,
     descriptor::FontDescriptor,
+    encoding::{EncodingEntry, PredefinedEncoding},
     type0::{CIDFont, CIDFontType, CompositeFont, MetricsEntry},
 };
 use lemon_pdf::object::{IndirectReference, Object};

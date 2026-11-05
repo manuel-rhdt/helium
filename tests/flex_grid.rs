@@ -14,7 +14,10 @@ fn run(name: &str, html: &str, args: &[&str]) -> Output {
         .args(["--layout-engine", "taffy"])
         .args(args)
         .arg(&input)
-        .arg(dir.join("wpt-pdfs").join(format!("flex_grid__{}.pdf", name)))
+        .arg(
+            dir.join("wpt-pdfs")
+                .join(format!("flex_grid__{}.pdf", name)),
+        )
         .output()
         .unwrap()
 }
@@ -51,8 +54,7 @@ fn element<'a>(node: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 fn page_of(dump: &Value, id: &str) -> u64 {
-    element(&dump["document"], id)
-        .unwrap_or_else(|| panic!("no element #{}", id))["page"]
+    element(&dump["document"], id).unwrap_or_else(|| panic!("no element #{}", id))["page"]
         .as_u64()
         .unwrap()
 }
@@ -192,7 +194,12 @@ fn flex_container_is_not_broken_across_pages() {
     );
     assert_eq!(page_of(&dump, "filler"), 0);
     for id in ["row", "a", "b", "c", "d"] {
-        assert_eq!(page_of(&dump, id), 1, "#{} should be on the second page", id);
+        assert_eq!(
+            page_of(&dump, id),
+            1,
+            "#{} should be on the second page",
+            id
+        );
     }
 }
 

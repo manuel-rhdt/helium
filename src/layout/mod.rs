@@ -32,7 +32,7 @@ use std::time::Instant;
 
 use log::info;
 
-pub type FontMap = std::collections::HashMap<String, text::Font>;
+pub type FontMap = std::collections::HashMap<String, std::sync::Arc<text::Font>>;
 
 /// The engine that lays out the boxes of the document.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
@@ -300,7 +300,11 @@ pub fn layout(
         .run(&mut layout_context)
         .map_err(lscheme::RuntimeError::Message)?,
     }
-    info!("TIMED: block layout ({:?}) {:?}", engine, time_before.elapsed());
+    info!(
+        "TIMED: block layout ({:?}) {:?}",
+        engine,
+        time_before.elapsed()
+    );
 
     let mut paginator = paginate::Paginator {
         page_height,

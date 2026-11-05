@@ -112,6 +112,13 @@ fn main() -> Result<(), Error> {
         layout::layout(dom.clone(), device, opt.crop, opt.layout_engine, &input_dir)?;
     info!("TIMED: layout {:?}", before_layout.elapsed());
 
+    if let Some(report) =
+        specs::WorldExt::read_resource::<layout::text::fallback::MissingGlyphs>(&layout_context)
+            .report()
+    {
+        eprintln!("{}", report);
+    }
+
     // repl(&mut layout_context);
 
     if let Some(path) = &opt.dump_layout {

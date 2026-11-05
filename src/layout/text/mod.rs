@@ -1,4 +1,5 @@
 pub mod builtin;
+pub mod fallback;
 pub mod font;
 mod shape;
 mod to_pdf_font;
