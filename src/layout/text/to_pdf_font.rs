@@ -103,9 +103,14 @@ impl Font {
                     // FontFile3 / CIDFontType0C: the bare CFF table.
                     let face = harfbuzz_rs::Face::from_bytes(font_file, 0);
                     let cff_data = face.table_with_tag(b"CFF ").ok_or_else(|| {
+                        let reason = if face.table_with_tag(b"CFF2").is_some() {
+                            "uses CFF2 outlines, which PDF cannot embed"
+                        } else {
+                            "has neither a glyf nor a CFF table"
+                        };
                         std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
-                            format!("font {} has neither glyf nor CFF table", self.postscript_name),
+                            format!("font {} {}", self.postscript_name, reason),
                         )
                     })?;
                     stream.bytes.write_all(&cff_data)?;
@@ -280,17 +285,20 @@ endcodespacerange
         .into_bytes();
 
         let to_unicode = self.to_unicode.lock();
-        let to_unicode_len = to_unicode.len();
 
-        writeln!(to_unicode_stream, "{} beginbfchar", to_unicode_len)?;
-        for (glyph, uni) in to_unicode.iter() {
-            write!(to_unicode_stream, "<{:04X}>\t<", glyph.0 as u16)?;
-            for chr in uni.encode_utf16() {
-                write!(to_unicode_stream, "{:04X}", chr)?;
+        // A single beginbfchar section may hold at most 100 entries.
+        let entries: Vec<_> = to_unicode.iter().collect();
+        for chunk in entries.chunks(100) {
+            writeln!(to_unicode_stream, "{} beginbfchar", chunk.len())?;
+            for (glyph, uni) in chunk {
+                write!(to_unicode_stream, "<{:04X}>\t<", glyph.0 as u16)?;
+                for chr in uni.encode_utf16() {
+                    write!(to_unicode_stream, "{:04X}", chr)?;
+                }
+                writeln!(to_unicode_stream, ">")?;
             }
-            writeln!(to_unicode_stream, ">")?;
+            writeln!(to_unicode_stream, "endbfchar")?;
         }
-        writeln!(to_unicode_stream, "endbfchar")?;
         writeln!(
             to_unicode_stream,
             r"endcmap
