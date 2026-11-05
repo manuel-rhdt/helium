@@ -1,63 +1,15 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
-use crate::layout::components::{Glyphs, KernedGlyphs, TextOperator};
-use crate::layout::text::font::{BuiltInFont, FontData, FontUnit};
+use crate::layout::components::TextOperator;
 use crate::style::properties::computed::PixelLength;
 use std::path::PathBuf;
 
-use lemon_pdf::font::encoding::PredefinedEncoding;
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::{DocumentContext, Page, Pt, Version};
-use lemon_pdf_derive::PdfFormat;
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufWriter, Error, Write};
-
-#[derive(Debug, Clone)]
-struct SimpleGlyphs(Vec<u8>);
-
-impl lemon_pdf::PdfFormat for SimpleGlyphs {
-    fn write(&self, formatter: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
-        if self.0.is_empty() {
-            return Ok(());
-        }
-
-        let mut bytes = Vec::with_capacity(self.0.len() + 2);
-        bytes.push(b'(');
-        for &byte in &self.0 {
-            match byte {
-                b'(' | b')' | b'\\' => bytes.extend_from_slice(&[b'\\', byte]),
-                b'\r' => bytes.extend_from_slice(b"\\r"),
-                _ => bytes.push(byte),
-            }
-        }
-        bytes.push(b')');
-        formatter.write_all(&bytes)
-    }
-}
-
-#[derive(Debug, PdfFormat)]
-enum SimpleKernedGlyphs {
-    Glyphs(SimpleGlyphs),
-    Kern(FontUnit),
-}
-
-fn simple_glyphs(glyphs: &Glyphs, font: BuiltInFont) -> SimpleGlyphs {
-    let metrics = font.metrics();
-    SimpleGlyphs(
-        glyphs
-            .0
-            .iter()
-            .map(|glyph| {
-                let name = metrics.char_metrics[glyph.0 as usize].name;
-                PredefinedEncoding::WinAnsiEncoding
-                    .encode(name)
-                    .expect("built-in font glyph is not available in WinAnsiEncoding")
-            })
-            .collect(),
-    )
-}
+use std::io::{BufWriter, Error};
 
 impl From<PixelLength> for Pt {
     fn from(px: PixelLength) -> Pt {
@@ -75,13 +27,9 @@ pub fn write_pdf(
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
     let mut font_map = HashMap::new();
-    let mut simple_font_map = HashMap::new();
     for (font_name, font) in &print_pages.font_map {
         if !font.glyph_advances.lock().is_empty() {
             log::info!("Embedding font {} into PDF file.", font_name);
-            if let FontData::BuiltIn(builtin) = &font.font_data {
-                simple_font_map.insert(font_name.clone(), *builtin);
-            }
             let font = font.embed_into_pdf(&mut context)?;
             let font = context.write_object(font)?;
             font_map.insert(font_name.clone(), font);
@@ -191,11 +139,7 @@ pub fn write_pdf(
                         let key = page_context.add_font(font_ref);
                         page_context.set_font(&key, font_size.into())?;
                         page_context.set_position(x.into(), y.into())?;
-                        if let Some(builtin) = simple_font_map.get(font_name) {
-                            page_context.push_operand(&simple_glyphs(glyphs, *builtin))?;
-                        } else {
-                            page_context.push_operand(glyphs)?;
-                        }
+                        page_context.push_operand(glyphs)?;
                         page_context.apply_operator("Tj")?;
                         page_context.end_text()?;
                     }
@@ -206,11 +150,9 @@ pub fn write_pdf(
                         page_context.begin_text()?;
                         page_context.set_position(x.into(), y.into())?;
 
-                        let mut current_font_name = None;
                         for op in &par.ops {
                             match op {
                                 TextOperator::SetFont(font_name, size) => {
-                                    current_font_name = Some(font_name.as_str());
                                     let font_ref = font_map[font_name];
                                     let key = page_context.add_font(font_ref);
                                     page_context.set_font(&key, (*size).into())?;
@@ -225,37 +167,11 @@ pub fn write_pdf(
                                     )?;
                                 }
                                 TextOperator::Glyphs(glyphs) => {
-                                    if let Some(builtin) =
-                                        current_font_name.and_then(|name| simple_font_map.get(name))
-                                    {
-                                        page_context
-                                            .push_operand(&simple_glyphs(glyphs, *builtin))?;
-                                    } else {
-                                        page_context.push_operand(glyphs)?;
-                                    }
+                                    page_context.push_operand(glyphs)?;
                                     page_context.apply_operator("Tj")?;
                                 }
                                 TextOperator::KernedGlyphs(glyphs) => {
-                                    if let Some(builtin) =
-                                        current_font_name.and_then(|name| simple_font_map.get(name))
-                                    {
-                                        let glyphs: Vec<_> = glyphs
-                                            .iter()
-                                            .map(|glyph| match glyph {
-                                                KernedGlyphs::Glyphs(glyphs) => {
-                                                    SimpleKernedGlyphs::Glyphs(simple_glyphs(
-                                                        glyphs, *builtin,
-                                                    ))
-                                                }
-                                                KernedGlyphs::Kern(value) => {
-                                                    SimpleKernedGlyphs::Kern(*value)
-                                                }
-                                            })
-                                            .collect();
-                                        page_context.push_operand(glyphs)?;
-                                    } else {
-                                        page_context.push_operand(glyphs)?;
-                                    }
+                                    page_context.push_operand(glyphs)?;
                                     page_context.apply_operator("TJ")?;
                                 }
                                 &TextOperator::NewLine { x_offset, leading } => {
@@ -349,39 +265,3 @@ pub fn write_pdf(
 
     Ok(())
 }
-
-// fn add_font(
-//     context: &mut PageContext<impl std::io::Write>,
-//     font: &HFont,
-// ) -> Result<(String, Font), std::io::Error> {
-//     let mut pdf_font = match font {
-//         HFont::BuiltIn(font) => font.font(&mut context.pdf_context)?,
-//     };
-//     pdf_font.encoding = Some(EncodingEntry::Predefined(
-//         PredefinedEncoding::WinAnsiEncoding,
-//     ));
-
-//     pdf_font.widths = WIN_ANSI_ENCODING
-//         .iter()
-//         .filter(|entry| !entry.is_empty())
-//         .map(|&entry| font);
-
-//     let font_ref = context
-//         .pdf_context
-//         .write_object(Font::Simple(pdf_font.clone()))?;
-
-//     Ok((context.add_font(font_ref), Font::Simple(pdf_font)))
-// }
-
-// fn encode_glyphs_simple(glyphs: &[GlyphIndex], font: &Font) -> Vec<u8> {
-//     let Font::Simple(font) = font;
-//     let encoding = font.encoding.as_ref().unwrap();
-//     let metrics = BuiltInFont::Helvetica.metrics();
-//     glyphs
-//         .iter()
-//         .flat_map(|&glyph| {
-//             let char_name = metrics.char_metrics[glyph.0 as usize].name;
-//             encoding.encode(char_name)
-//         })
-//         .collect()
-// }

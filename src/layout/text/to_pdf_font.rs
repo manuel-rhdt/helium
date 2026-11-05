@@ -1,4 +1,4 @@
-use super::font::{Font, FontData};
+use super::font::Font;
 
 use super::font::FontUnit;
 use lemon_pdf::DocumentContext;
@@ -6,7 +6,6 @@ use lemon_pdf::font::Font as PdfFont;
 use lemon_pdf::font::{
     FontType,
     descriptor::FontDescriptor,
-    encoding::{EncodingEntry, PredefinedEncoding},
     type0::{CIDFont, CIDFontType, CompositeFont, MetricsEntry},
 };
 use lemon_pdf::object::{IndirectReference, Object};
@@ -93,34 +92,29 @@ impl Font {
     }
 
     /// Builds the `FontFile2`/`FontFile3` stream from the font file bytes.
-    fn pdf_font_stream(&self, font_file: &[u8]) -> Result<Option<Stream>> {
-        match &self.font_data {
-            FontData::External(_) => {
-                let mut stream = Stream::with_bytes(vec![], None);
-                if self.is_truetype() {
-                    // FontFile2: a complete TrueType sfnt.
-                    stream.bytes.write_all(font_file)?;
+    fn pdf_font_stream(&self, font_file: &[u8]) -> Result<Stream> {
+        let mut stream = Stream::with_bytes(vec![], None);
+        if self.is_truetype() {
+            // FontFile2: a complete TrueType sfnt.
+            stream.bytes.write_all(font_file)?;
+        } else {
+            // FontFile3 / CIDFontType0C: the bare CFF table.
+            let face = harfbuzz_rs::Face::from_bytes(font_file, 0);
+            let cff_data = face.table_with_tag(b"CFF ").ok_or_else(|| {
+                let reason = if face.table_with_tag(b"CFF2").is_some() {
+                    "uses CFF2 outlines, which PDF cannot embed"
                 } else {
-                    // FontFile3 / CIDFontType0C: the bare CFF table.
-                    let face = harfbuzz_rs::Face::from_bytes(font_file, 0);
-                    let cff_data = face.table_with_tag(b"CFF ").ok_or_else(|| {
-                        let reason = if face.table_with_tag(b"CFF2").is_some() {
-                            "uses CFF2 outlines, which PDF cannot embed"
-                        } else {
-                            "has neither a glyf nor a CFF table"
-                        };
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("font {} {}", self.postscript_name, reason),
-                        )
-                    })?;
-                    stream.bytes.write_all(&cff_data)?;
-                    stream.add_key_value("Subtype".to_owned(), Box::new("CIDFontType0C"));
-                }
-                Ok(Some(stream))
-            }
-            _ => Ok(None),
+                    "has neither a glyf nor a CFF table"
+                };
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("font {} {}", self.postscript_name, reason),
+                )
+            })?;
+            stream.bytes.write_all(&cff_data)?;
+            stream.add_key_value("Subtype".to_owned(), Box::new("CIDFontType0C"));
         }
+        Ok(stream)
     }
 
     pub fn to_font_unit(&self, val: f32) -> FontUnit {
@@ -130,65 +124,49 @@ impl Font {
     pub fn pdf_font_descriptor(
         &self,
         name: String,
-        font_data: Option<IndirectReference<Stream>>,
-    ) -> FontDescriptor {
-        match &self.font_data {
-            FontData::External(font) => {
-                let font = font.load().unwrap();
-                let bbox = font.metrics().bounding_box;
-                let bbox = [
-                    self.to_font_unit(bbox.min_x()),
-                    self.to_font_unit(bbox.min_y()),
-                    self.to_font_unit(bbox.max_x()),
-                    self.to_font_unit(bbox.max_y()),
-                ];
+        font_data: IndirectReference<Stream>,
+    ) -> Result<FontDescriptor> {
+        let font = self
+            .handle
+            .load()
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let bbox = font.metrics().bounding_box;
+        let bbox = [
+            self.to_font_unit(bbox.min_x()),
+            self.to_font_unit(bbox.min_y()),
+            self.to_font_unit(bbox.max_x()),
+            self.to_font_unit(bbox.max_y()),
+        ];
 
-                let mut font_descriptor = FontDescriptor {
-                    font_name: name.clone(),
-                    font_family: font.family_name().as_bytes().to_owned(),
-                    font_b_box: bbox,
-                    cap_height: self.to_font_unit(font.metrics().cap_height),
-                    x_height: self.to_font_unit(font.metrics().x_height),
-                    ascent: self.to_font_unit(font.metrics().ascent),
-                    descent: self.to_font_unit(font.metrics().descent),
-                    ..Default::default()
-                };
+        let mut font_descriptor = FontDescriptor {
+            font_name: name.clone(),
+            font_family: font.family_name().as_bytes().to_owned(),
+            font_b_box: bbox,
+            cap_height: self.to_font_unit(font.metrics().cap_height),
+            x_height: self.to_font_unit(font.metrics().x_height),
+            ascent: self.to_font_unit(font.metrics().ascent),
+            descent: self.to_font_unit(font.metrics().descent),
+            ..Default::default()
+        };
 
-                if self.is_truetype() {
-                    font_descriptor.font_file2 = font_data;
-                } else {
-                    font_descriptor.font_file3 = font_data;
-                }
-
-                font_descriptor
-            }
-            _ => todo!(),
+        if self.is_truetype() {
+            font_descriptor.font_file2 = Some(font_data);
+        } else {
+            font_descriptor.font_file3 = Some(font_data);
         }
+
+        Ok(font_descriptor)
     }
 
     pub fn embed_into_pdf(&self, pdf_context: &mut DocumentContext) -> Result<PdfFont> {
-        if let FontData::BuiltIn(font) = &self.font_data {
-            let mut font = font.font(pdf_context)?;
-            font.encoding = Some(EncodingEntry::Predefined(
-                PredefinedEncoding::WinAnsiEncoding,
-            ));
-            return Ok(PdfFont::Simple(font));
-        }
-
-        let (font_file, subsetted) = match &self.font_data {
-            FontData::External(_) => self.embedded_font_bytes(),
-            FontData::BuiltIn(_) => unreachable!(),
-        };
+        let (font_file, subsetted) = self.embedded_font_bytes();
         let name = if subsetted {
             format!("{}+{}", self.subset_tag(), self.postscript_name())
         } else {
             self.postscript_name()
         };
-        let font_data = self
-            .pdf_font_stream(&font_file)?
-            .map(|stream| pdf_context.write_object(stream))
-            .transpose()?;
-        let fd = pdf_context.write_object(self.pdf_font_descriptor(name.clone(), font_data))?;
+        let font_data = pdf_context.write_object(self.pdf_font_stream(&font_file)?)?;
+        let fd = pdf_context.write_object(self.pdf_font_descriptor(name.clone(), font_data)?)?;
 
         let mut metrics_h = vec![];
         let mut unfinished_entry: Option<MetricsEntry> = None;

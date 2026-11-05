@@ -143,54 +143,26 @@ fn shape_single(
     cluster_offset: u32,
     font_index: u16,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
-    match &font.font_data {
-        super::font::FontData::BuiltIn(builtin) => text
-            .char_indices()
-            .map(|(byte_index, character)| {
-                // Characters without a glyph were reported during box construction; render them
-                // as a question mark rather than failing.
-                let index = super::font::builtin_glyph(*builtin, character)
-                    .or_else(|| super::font::builtin_glyph(*builtin, '?'))
-                    .expect("built-in fonts contain a question mark");
-                let advance = font.advance(index);
-                (
-                    GlyphPosition {
-                        x_advance: advance,
-                        ..Default::default()
-                    },
-                    GlyphInfo {
-                        codepoint: index.0,
-                        cluster: cluster_offset + byte_index as u32,
-                        font: font_index,
-                    },
-                )
-            })
-            .collect(),
-        super::font::FontData::External(_) => {
-            let hb_font = &font.hb_font;
+    let buffer = UnicodeBuffer::new()
+        .add_str(text)
+        .set_cluster_level(ClusterLevel::MonotoneCharacters);
 
-            let buffer = UnicodeBuffer::new()
-                .add_str(text)
-                .set_cluster_level(ClusterLevel::MonotoneCharacters);
+    let result = hb_shape(&font.hb_font, buffer, &[]);
 
-            let result = hb_shape(&hb_font, buffer, &[]);
+    let scale = |val| FontUnit(val as f64 * (1000f64 / font.upem as f64));
 
-            let scale = |val| FontUnit(val as f64 * (1000f64 / font.upem as f64));
-
-            result
-                .get_glyph_positions()
-                .iter()
-                .map(|gp| GlyphPosition {
-                    x_advance: scale(gp.x_advance),
-                    x_offset: scale(gp.x_offset),
-                    y_offset: scale(gp.y_offset),
-                })
-                .zip(result.get_glyph_infos().iter().map(|&gi| GlyphInfo {
-                    cluster: gi.cluster + cluster_offset,
-                    font: font_index,
-                    ..gi.into()
-                }))
-                .collect()
-        }
-    }
+    result
+        .get_glyph_positions()
+        .iter()
+        .map(|gp| GlyphPosition {
+            x_advance: scale(gp.x_advance),
+            x_offset: scale(gp.x_offset),
+            y_offset: scale(gp.y_offset),
+        })
+        .zip(result.get_glyph_infos().iter().map(|&gi| GlyphInfo {
+            cluster: gi.cluster + cluster_offset,
+            font: font_index,
+            ..gi.into()
+        }))
+        .collect()
 }
