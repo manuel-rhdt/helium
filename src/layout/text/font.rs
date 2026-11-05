@@ -2,7 +2,7 @@ pub use super::HarfbuzzFont;
 pub use lemon_pdf::font::FontUnit;
 
 use crate::style::properties::computed::{
-    ComputedValues, FontFamily, FontStyle, FontWeight, PixelLength,
+    ComputedValues, FontFamily, FontStyle, FontWeight, Language, PixelLength,
 };
 
 use font_kit;
@@ -33,12 +33,14 @@ pub struct Font {
     pub(crate) hb_font: HarfbuzzFont,
     pub(crate) postscript_name: String,
     pub(crate) handle: Handle,
-    /// Fonts that provide the characters this font has no glyph for, in order of preference.
+    /// Fonts that provide the characters this font has no glyph for, in order of preference, for
+    /// text in each language: the preferred fallback fonts depend on the language (e.g. the
+    /// Chinese or the Japanese forms of Han characters).
     ///
     /// They are filled in during box construction (see `fallback::FontResolver`), when the text
     /// that is rendered with this font is known, and used by `shape`. Every font in here is also
     /// an entry of the `FontMap`, so that it is embedded into the PDF.
-    pub(crate) fallbacks: RwLock<Vec<Arc<Font>>>,
+    pub(crate) fallbacks: RwLock<BTreeMap<Language, Vec<Arc<Font>>>>,
 }
 
 impl Clone for Font {
@@ -104,17 +106,23 @@ impl Font {
         self.hb_font.get_nominal_glyph(ch).is_some()
     }
 
-    /// A snapshot of the fallback fonts of this font.
-    pub fn fallbacks(&self) -> Vec<Arc<Font>> {
-        self.fallbacks.read().clone()
+    /// A snapshot of the fallback fonts of this font for text in `lang`.
+    pub fn fallbacks(&self, lang: &Language) -> Vec<Arc<Font>> {
+        self.fallbacks
+            .read()
+            .get(lang)
+            .cloned()
+            .unwrap_or_default()
     }
 
-    /// Appends `fallback` to the fallback fonts unless it is this font or already one of them.
-    pub(crate) fn add_fallback(&self, fallback: Arc<Font>) {
+    /// Appends `fallback` to the fallback fonts for `lang` unless it is this font or already one
+    /// of them.
+    pub(crate) fn add_fallback(&self, lang: &Language, fallback: Arc<Font>) {
         if fallback.postscript_name == self.postscript_name {
             return;
         }
         let mut fallbacks = self.fallbacks.write();
+        let fallbacks = fallbacks.entry(lang.clone()).or_default();
         if !fallbacks
             .iter()
             .any(|font| font.postscript_name == fallback.postscript_name)
