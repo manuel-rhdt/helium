@@ -78,6 +78,8 @@ pub enum DisplayItem {
 #[derive(Debug, Clone)]
 struct DisplayElement {
     z_index: ZIndex,
+    // Retained for debugging which entity produced an item.
+    #[allow(dead_code)]
     entity: Entity,
     item: DisplayItem,
 }

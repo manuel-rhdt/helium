@@ -78,10 +78,6 @@ impl Component for BlockFragment {
     type Storage = DenseVecStorage<Self>;
 }
 
-/// An error that signals that layout cannot continue unless a new page is started.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-struct PageFullError;
-
 #[derive(Debug, Clone, Default)]
 pub struct ContainerStack {
     stack: Vec<ContainerData>,
@@ -514,9 +510,7 @@ impl Page {
 
 /// If an entity has this component, it is made up of two or more block layout fragment.
 #[derive(Debug, Default, Clone)]
-pub struct Fragments {
-    fragments: Vec<Entity>,
-}
+pub struct Fragments;
 
 impl Component for Fragments {
     type Storage = BTreeStorage<Self>;

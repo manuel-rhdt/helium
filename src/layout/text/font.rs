@@ -235,6 +235,8 @@ pub fn match_font_builtin(style: &ComputedValues) -> Option<Font> {
         })
 }
 
+// Glyph-metrics backend for the text layout iterator; no constructor is wired up yet.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(super) struct FontInstance<'font, Font: 'font> {
     pub font: Font,

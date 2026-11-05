@@ -11,32 +11,11 @@ use lemon_pdf::font::{
 use lemon_pdf::object::{IndirectReference, Object};
 use lemon_pdf::stream::Stream;
 
-use font_parse::{OpentypeTableAccess, Tag};
-
 use std::io::{Result, Write};
-
-pub struct FontTableData(harfbuzz_rs::Shared<harfbuzz_rs::Blob<'static>>);
-
-impl std::ops::Deref for FontTableData {
-    type Target = [u8];
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-impl OpentypeTableAccess<'static> for Font {
-    type TableData = FontTableData;
-    fn table_data(&self, tag: Tag) -> Option<Self::TableData> {
-        self.hb_font
-            .face()
-            .table_with_tag(&tag.0)
-            .map(FontTableData)
-    }
-}
 
 impl Font {
     pub fn is_truetype(&self) -> bool {
-        self.has_table(Tag(*b"glyf"))
+        self.hb_font.face().table_with_tag(b"glyf").is_some()
     }
 
     /// Subsets the font to the glyphs that were used in the document and
