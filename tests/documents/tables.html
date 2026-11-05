@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tables</title>
+<style>
+  body { font-family: serif; font-size: 11pt; line-height: 1.4; }
+  h1 { font-size: 20pt; }
+  h2 { font-size: 13pt; margin-bottom: 4pt; }
+  table { border-collapse: collapse; margin-bottom: 14pt; }
+  caption { font-style: italic; margin-bottom: 4pt; text-align: left; }
+  th, td { border: 1px solid #444; padding: 3pt 6pt; }
+  th { background: #e6e6e6; font-weight: bold; text-align: left; }
+  td.num, th.num { text-align: right; }
+  .grid { border: 1px solid #444; width: 100%; }
+  .grid td { width: 25%; }
+  .spacing { border-collapse: separate; border-spacing: 6pt; }
+  .spacing td { border: 1px solid #888; background: #f5f9ff; }
+  .striped tbody tr:nth-child(even) td { background: #f2f2f2; }
+  .middle td { height: 40pt; }
+  .top td { vertical-align: top; }
+  .bottom td { vertical-align: bottom; }
+  .muted { color: #666; }
+  tfoot td { font-weight: bold; border-top: 2px solid #444; }
+</style>
+</head>
+<body>
+<h1>Tables</h1>
+
+<h2>Basic table with header, body and footer</h2>
+<table>
+  <caption>Quarterly sales by region</caption>
+  <thead>
+    <tr><th>Region</th><th class="num">Q1</th><th class="num">Q2</th><th class="num">Q3</th><th class="num">Q4</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>North</td><td class="num">1,204</td><td class="num">1,377</td><td class="num">1,290</td><td class="num">1,512</td></tr>
+    <tr><td>South</td><td class="num">980</td><td class="num">1,015</td><td class="num">1,108</td><td class="num">1,061</td></tr>
+    <tr><td>East</td><td class="num">756</td><td class="num">802</td><td class="num">847</td><td class="num">915</td></tr>
+    <tr><td>West</td><td class="num">1,432</td><td class="num">1,398</td><td class="num">1,575</td><td class="num">1,649</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td>Total</td><td class="num">4,372</td><td class="num">4,592</td><td class="num">4,820</td><td class="num">5,137</td></tr>
+  </tfoot>
+</table>
+
+<h2>Striped rows</h2>
+<table class="striped">
+  <thead>
+    <tr><th>Language</th><th>Typing</th><th>First released</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Rust</td><td>Static, strong</td><td>2015</td></tr>
+    <tr><td>Python</td><td>Dynamic, strong</td><td>1991</td></tr>
+    <tr><td>Scheme</td><td>Dynamic, strong</td><td>1975</td></tr>
+    <tr><td>C</td><td>Static, weak</td><td>1972</td></tr>
+    <tr><td>Haskell</td><td>Static, strong</td><td>1990</td></tr>
+  </tbody>
+</table>
+
+<h2>Column and row spans</h2>
+<table>
+  <caption>Timetable with spanning cells</caption>
+  <thead>
+    <tr><th rowspan="2">Time</th><th colspan="2">Monday</th><th colspan="2">Tuesday</th></tr>
+    <tr><th>Room A</th><th>Room B</th><th>Room A</th><th>Room B</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>09:00</td><td>Algebra</td><td>Chemistry</td><td rowspan="2" colspan="2">Lab session (all day)</td></tr>
+    <tr><td>10:00</td><td colspan="2">Seminar: linear maps and their matrices</td></tr>
+    <tr><td>11:00</td><td>Geometry</td><td>Free</td><td>Physics</td><td>Free</td></tr>
+  </tbody>
+</table>
+
+<h2>Text alignment and vertical alignment</h2>
+<table class="top">
+  <tr><th>Top aligned</th><td>This cell has several lines of text so that the difference in vertical alignment is visible when it is placed next to a shorter cell.</td><td>Short</td></tr>
+  <tr><th>Second row</th><td>One line</td><td>Short</td></tr>
+</table>
+<table class="bottom">
+  <tr><th>Bottom aligned</th><td>This cell has several lines of text so that the difference in vertical alignment is visible when it is placed next to a shorter cell.</td><td>Short</td></tr>
+  <tr><th>Second row</th><td>One line</td><td>Short</td></tr>
+</table>
+<table class="middle">
+  <tr><th>Middle aligned</th><td style="vertical-align: middle">Centred</td><td style="text-align: center">Centred text</td></tr>
+</table>
+
+<h2>Borderless grid with fixed widths</h2>
+<table class="grid">
+  <tr><td>A1</td><td>B1</td><td>C1</td><td>D1</td></tr>
+  <tr><td>A2</td><td>B2</td><td>C2</td><td>D2</td></tr>
+  <tr><td>A3</td><td>B3</td><td>C3</td><td>D3</td></tr>
+</table>
+
+<h2>Separated borders with spacing</h2>
+<table class="spacing">
+  <tr><td>One</td><td>Two</td><td>Three</td></tr>
+  <tr><td>Four</td><td>Five</td><td>Six</td></tr>
+</table>
+
+<h2>Cells containing block content</h2>
+<table>
+  <thead>
+    <tr><th>Item</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Ordered list</td>
+      <td>
+        <ol>
+          <li>Preheat the oven.</li>
+          <li>Mix the batter.</li>
+        </ol>
+      </td>
+    </tr>
+    <tr>
+      <td>Paragraphs</td>
+      <td>
+        <p>The first paragraph explains the purpose of the item in a few sentences.</p>
+        <p class="muted">The second paragraph is set in grey and sits inside the same cell.</p>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Long content that wraps</h2>
+<table>
+  <thead>
+    <tr><th style="width: 30%">Term</th><th style="width: 70%">Definition</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Lorem ipsum</td><td>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</td></tr>
+    <tr><td>Duis aute irure</td><td>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</td></tr>
+  </tbody>
+</table>
+</body>
+</html>
