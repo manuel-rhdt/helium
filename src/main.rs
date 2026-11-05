@@ -17,7 +17,7 @@ use structopt::StructOpt;
 use derive_more::From;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub mod default_cell_ext;
@@ -78,7 +78,13 @@ fn main() -> Result<(), Error> {
 
     let opt = Options::from_args();
 
-    let file = fs::read(opt.input)?;
+    let input_dir = opt
+        .input
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let file = fs::read(&opt.input)?;
     let html = String::from_utf8_lossy(&file);
 
     let before_render_tree = Instant::now();
@@ -102,7 +108,8 @@ fn main() -> Result<(), Error> {
         }
     };
     let before_layout = Instant::now();
-    let mut layout_context = layout::layout(dom.clone(), device, opt.crop, opt.layout_engine)?;
+    let mut layout_context =
+        layout::layout(dom.clone(), device, opt.crop, opt.layout_engine, &input_dir)?;
     info!("TIMED: layout {:?}", before_layout.elapsed());
 
     // repl(&mut layout_context);

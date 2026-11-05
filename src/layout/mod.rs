@@ -27,6 +27,7 @@ use construct::FlowConstructor;
 use components::{EdgeValues, TextList};
 use relative_positioning::RelativePositioningSystem;
 use specs::{RunNow, World, WorldExt};
+use std::path::Path;
 use std::time::Instant;
 
 use log::info;
@@ -187,12 +188,13 @@ pub fn layout(
     device: Device,
     crop: bool,
     engine: LayoutEngine,
+    stylesheet_base_dir: &Path,
 ) -> Result<LayoutContext, lscheme::RuntimeError> {
     // here we set the layout passes
     let world = World::new();
 
     let mut time_before = Instant::now();
-    let mut flow_constructor = FlowConstructor::new(world);
+    let mut flow_constructor = FlowConstructor::new(world, stylesheet_base_dir.to_path_buf());
     dom.traverse(&mut flow_constructor);
     info!("TIMED: construct {:?}", time_before.elapsed());
 

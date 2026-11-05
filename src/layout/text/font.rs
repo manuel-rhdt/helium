@@ -166,17 +166,17 @@ impl<'a> From<&'a ComputedValues> for Properties {
     }
 }
 
-pub fn match_font(style: &ComputedValues) -> Option<Font> {
+pub fn match_font(style: &ComputedValues) -> Font {
     let families = style
         .font
         .font_family
         .iter()
         .map(|fam| FamilyName::from(fam.clone()))
         .collect::<Vec<_>>();
-    let font = SystemSource::new()
-        .select_best_match(&families, &style.into())
-        .ok()?;
-    Some(Font::external(font))
+    match SystemSource::new().select_best_match(&families, &style.into()) {
+        Ok(font) => Font::external(font),
+        Err(_) => Font::built_in(BuiltInFont::Helvetica),
+    }
 }
 
 pub fn match_font_builtin(style: &ComputedValues) -> Option<Font> {
@@ -233,6 +233,27 @@ pub fn match_font_builtin(style: &ComputedValues) -> Option<Font> {
             },
             FontFamily::Named(_) => None,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BuiltInFont, ComputedValues, FontData, match_font};
+    use crate::style::properties::specified::FontFamily;
+
+    #[test]
+    fn missing_system_font_falls_back_to_builtin_helvetica() {
+        let mut style = ComputedValues::default();
+        std::sync::Arc::make_mut(&mut style.font).font_family =
+            vec![FontFamily::Named("Helium Missing Font".to_owned())];
+
+        let font = match_font(&style);
+
+        assert_eq!(font.postscript_name(), "Helvetica");
+        assert!(matches!(
+            &font.font_data,
+            FontData::BuiltIn(BuiltInFont::Helvetica)
+        ));
+    }
 }
 
 // Glyph-metrics backend for the text layout iterator; no constructor is wired up yet.

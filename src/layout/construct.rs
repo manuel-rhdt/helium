@@ -19,18 +19,21 @@ use specs::{Builder, Entities, Entity, SystemData, World, WorldExt, WriteStorage
 
 use components::TextRun;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
 pub struct FlowConstructor {
     pub(crate) styles: Styles,
+    stylesheet_base_dir: PathBuf,
     entity_constructor: EntityConstructor,
 }
 
 impl FlowConstructor {
-    pub fn new(world: World) -> Self {
+    pub fn new(world: World, stylesheet_base_dir: PathBuf) -> Self {
         FlowConstructor {
             styles: Default::default(),
+            stylesheet_base_dir,
             entity_constructor: EntityConstructor::new(world),
         }
     }
@@ -120,7 +123,8 @@ impl FlowConstructor {
                             .borrow()
                             .get(&QualName::new(None, ns!(), local_name!("href")))
                         {
-                            self.styles.add_stylesheet(value.as_ref())
+                            self.styles
+                                .add_stylesheet(value.as_ref(), &self.stylesheet_base_dir)
                         }
                     }
                 }
@@ -144,12 +148,19 @@ impl Traversal<DomRef> for FlowConstructor {
                     .as_ref()
                     .is_some_and(|style| style.box_.display.is_flex_or_grid());
                 let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
-                for matched_rule in self
+                // The cascade applies rules in ascending specificity order; the stable sort keeps
+                // the source order of rules with equal specificity, so later rules still win.
+                let mut matched_rules: Vec<_> = self
                     .styles
                     .rules_iter()
-                    .filter(|rule| rule.matches(element_ref))
-                {
-                    let properties = &matched_rule.properties;
+                    .filter_map(|rule| {
+                        rule.matching_specificity(element_ref)
+                            .map(|specificity| (specificity, rule))
+                    })
+                    .collect();
+                matched_rules.sort_by_key(|&(specificity, _)| specificity);
+                for (_, rule) in &matched_rules {
+                    let properties = &rule.properties;
                     for declaration in properties.declarations() {
                         style_builder.add_declaration(declaration);
                     }
@@ -331,8 +342,7 @@ impl EntityConstructor {
             .font_match_cache
             .entry(font_selector)
             .or_insert_with(|| {
-                let font = crate::layout::text::font::match_font(&style)
-                    .expect("Could not find any matching fonts.");
+                let font = crate::layout::text::font::match_font(&style);
                 let font_name = font.postscript_name();
                 font_map.insert(font_name.clone(), font);
                 font_name
@@ -421,26 +431,32 @@ impl EntityConstructor {
                 // TODO: implement proper whitespace algorithm
 
                 let mut text = string.borrow_mut();
-
-                match node.previous_sibling() {
-                    Some(node)
-                        if matches!(
-                            node.style().box_.display,
-                            Display::Inline | Display::InlineBlock | Display::InlineTable
-                        ) => {}
-                    _ => self.trim_next_inline_whitespace = true,
-                };
-
-                super::text::whitespace::transform_text(
-                    &mut text,
-                    self.trim_next_inline_whitespace,
-                );
-
-                if &*text != text.trim_end() {
-                    // this text node ends with whitespace
-                    self.trim_next_inline_whitespace = true
+                if style.text.white_space == crate::style::properties::specified::WhiteSpace::Pre {
+                    *text = text
+                        .replace("\r\n", "\n")
+                        .replace('\r', "\n")
+                        .replace('\t', "    ");
                 } else {
-                    self.trim_next_inline_whitespace = false
+                    match node.previous_sibling() {
+                        Some(node)
+                            if matches!(
+                                node.style().box_.display,
+                                Display::Inline | Display::InlineBlock | Display::InlineTable
+                            ) => {}
+                        _ => self.trim_next_inline_whitespace = true,
+                    };
+
+                    super::text::whitespace::transform_text(
+                        &mut text,
+                        self.trim_next_inline_whitespace,
+                    );
+
+                    if &*text != text.trim_end() {
+                        // this text node ends with whitespace
+                        self.trim_next_inline_whitespace = true
+                    } else {
+                        self.trim_next_inline_whitespace = false
+                    }
                 }
 
                 if text.is_empty() {
