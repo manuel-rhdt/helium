@@ -22,6 +22,8 @@ use specs::{
 
 mod default_env;
 pub mod ecs_binding;
+// Not called yet: the REPL is only reachable through the commented-out call in main.rs.
+#[allow(dead_code)]
 mod repl;
 pub mod scheme_layout;
 
@@ -52,6 +54,8 @@ impl std::error::Error for RuntimeError {}
 
 macro_rules! resources {
     ($name:ident<$lt:lifetime>($($component_name:ident: $component_type:ty),+)) => {
+        // Kept for the ECS bindings; only constructed by the (currently disabled) REPL.
+        #[allow(dead_code)]
         pub enum $name<$lt> {
             $($component_name($component_type)),+
         }
@@ -69,6 +73,7 @@ macro_rules! resources {
         }
 
         impl<'lt> $name<'lt> {
+            #[allow(dead_code)]
             pub fn get_value(&self) -> Result<Value<'lt>, RuntimeError> {
                 match self {
                     $(Self::$component_name(resource) => {
@@ -78,6 +83,7 @@ macro_rules! resources {
             }
         }
 
+        #[allow(dead_code)]
         pub fn insert_components<'world>(
             env: &EnvRef<'world>,
             world: &'world mut specs::World) {
@@ -102,6 +108,7 @@ macro_rules! resources {
     };
 }
 
+#[allow(dead_code)]
 trait GetValue<'world>
 where
     Self: Sized,
@@ -201,13 +208,14 @@ pub enum Value<'world> {
     Continuation(Rc<CallStack<'world>>),
 
     // Native types
+    #[allow(dead_code)]
     Ecs(Rc<Resource<'world>>),
 }
 
 type Upvalue<'world> = Rc<RefCell<Option<Value<'world>>>>;
 
 #[derive(Debug, Clone)]
-enum Expr<'world> {
+pub(crate) enum Expr<'world> {
     Literal(Value<'world>),
     Global(Symbol),
     Local(usize),
@@ -228,7 +236,7 @@ enum Expr<'world> {
 }
 
 #[derive(Debug, Clone)]
-enum BindingRef {
+pub(crate) enum BindingRef {
     Global(Symbol),
     Local(usize),
     Upvalue(usize),
@@ -241,7 +249,7 @@ enum CaptureSource {
 }
 
 #[derive(Debug, Clone)]
-struct FunctionProto<'world> {
+pub(crate) struct FunctionProto<'world> {
     parameter_slots: Vec<usize>,
     local_count: usize,
     captures: Vec<CaptureSource>,
@@ -848,6 +856,7 @@ impl<'world> Value<'world> {
 }
 
 impl Value<'_> {
+    #[cfg(test)]
     pub fn is_null(&self) -> bool {
         matches!(self, Self::Null)
     }
@@ -862,10 +871,6 @@ impl Value<'_> {
 
     pub fn is_symbol(&self) -> bool {
         matches!(self, Self::Symbol(_))
-    }
-
-    pub fn is_list(&self) -> bool {
-        matches!(self, Self::List(_))
     }
 
     pub fn is_entity(&self) -> bool {
@@ -1057,7 +1062,7 @@ pub enum Continuation<'world> {
 }
 
 #[derive(Debug, Clone)]
-struct EvalContext<'world> {
+pub(crate) struct EvalContext<'world> {
     globals: EnvRef<'world>,
     frame: Option<usize>,
     upvalues: Rc<[Upvalue<'world>]>,
@@ -2052,6 +2057,7 @@ fn eval_fn<'world>(
     }
 }
 
+#[cfg(test)]
 mod test {
     use super::*;
 
