@@ -255,7 +255,20 @@ fn parse_spec(attrs: &[syn::Attribute]) -> Option<String> {
     })
 }
 
-#[proc_macro_derive(PropertyValue)]
+/// Derives `PropertyValue` for an enum.
+///
+/// * Unit variants match a keyword (the kebab-cased variant name).
+/// * Single-field tuple variants match a bare value of the field's type.
+/// * Tuple variants annotated with `#[function]` match CSS function notation,
+///   `name(arg arg ...)`. The function name is the kebab-cased variant name
+///   unless overridden. Options (`#[function(comma, name = "foo")]`):
+///   - `comma`: arguments are comma separated instead of whitespace separated
+///   - `name = "..."`: override the function name
+///
+///   Each argument is parsed using its own `PropertyValue` impl. Trailing
+///   fields of type `Option<T>` are optional arguments. The whole argument
+///   list must be consumed.
+#[proc_macro_derive(PropertyValue, attributes(function))]
 pub fn property_value_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
@@ -277,10 +290,57 @@ fn impl_property_value_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream
         _ => panic!("#[PropertyValue] can only be applied to enums."),
     };
 
-    let sub_parsers = variants.into_iter().map(|Variant { ident, fields, .. }| {
+    let sub_parsers = variants.into_iter().map(|Variant { ident, fields, attrs, .. }| {
         let ident_kebab = to_kebab_case(&ident.to_string());
 
         match fields {
+            Fields::Unnamed(FieldsUnnamed { unnamed, .. }) if parse_function_attr(attrs).is_some() => {
+                let FunctionAttr { name: fn_name, comma } = parse_function_attr(attrs).unwrap();
+                let fn_name = fn_name.unwrap_or(ident_kebab);
+                let mut seen_optional = false;
+                let mut stmts = vec![];
+                let mut vars = vec![];
+                for (i, Field { ty, .. }) in unnamed.iter().enumerate() {
+                    let var = Ident::new(&format!("__arg{}", i), ident.span());
+                    match option_inner(ty) {
+                        Some(inner) => {
+                            seen_optional = true;
+                            if comma && i > 0 {
+                                stmts.push(quote! {
+                                    let #var = if input.try_parse(|i| i.expect_comma()).is_ok() {
+                                        Some(<#inner as PropertyValue>::from_css_property_value(input)?)
+                                    } else {
+                                        None
+                                    };
+                                });
+                            } else {
+                                stmts.push(quote! {
+                                    let #var = input.try_parse(<#inner as PropertyValue>::from_css_property_value).ok();
+                                });
+                            }
+                        }
+                        None => {
+                            assert!(!seen_optional, "Required function arguments must precede optional ones.");
+                            if comma && i > 0 {
+                                stmts.push(quote! { input.expect_comma()?; });
+                            }
+                            stmts.push(quote! {
+                                let #var = <#ty as PropertyValue>::from_css_property_value(input)?;
+                            });
+                        }
+                    }
+                    vars.push(var);
+                }
+                quote! {
+                    (|| -> Result<#name, cssparser::ParseError<StyleParseError>> {
+                        input.expect_function_matching(#fn_name)?;
+                        input.parse_nested_block(|input| -> Result<#name, cssparser::ParseError<StyleParseError>> {
+                            #(#stmts)*
+                            Ok(#name::#ident(#(#vars),*))
+                        })
+                    })()
+                }
+            }
             Fields::Unnamed(FieldsUnnamed { unnamed, .. }) => {
                 assert_eq!(
                     unnamed.len(),
@@ -316,6 +376,55 @@ fn impl_property_value_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStream
     };
 
     gen
+}
+
+struct FunctionAttr {
+    name: Option<String>,
+    comma: bool,
+}
+
+fn parse_function_attr(attrs: &[syn::Attribute]) -> Option<FunctionAttr> {
+    let attr = attrs.iter().find(|attr| attr.path.is_ident("function"))?;
+    let mut result = FunctionAttr {
+        name: None,
+        comma: false,
+    };
+    match attr.parse_meta().expect("Could not parse #[function] attribute") {
+        syn::Meta::Path(_) => {}
+        syn::Meta::List(syn::MetaList { nested, .. }) => {
+            for item in nested {
+                match item {
+                    syn::NestedMeta::Meta(syn::Meta::Path(path)) if path.is_ident("comma") => {
+                        result.comma = true
+                    }
+                    syn::NestedMeta::Meta(syn::Meta::NameValue(nv)) if nv.path.is_ident("name") => {
+                        match nv.lit {
+                            syn::Lit::Str(lit) => result.name = Some(lit.value()),
+                            _ => panic!("#[function(name = ...)] expects a string literal"),
+                        }
+                    }
+                    _ => panic!("unknown option in #[function(...)]; expected `comma` or `name = \"...\"`"),
+                }
+            }
+        }
+        _ => panic!("invalid #[function] attribute"),
+    }
+    Some(result)
+}
+
+/// If `ty` is `Option<T>`, returns `T`.
+fn option_inner(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(syn::TypePath { qself: None, path }) = ty {
+        let seg = path.segments.last()?;
+        if seg.ident == "Option" {
+            if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                    return Some(inner);
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

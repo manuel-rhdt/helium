@@ -57,8 +57,15 @@ impl<'world> System<'world> for Paginator {
         }];
 
         let mut force_next_page_break = false;
+        // > 0 inside of boxes that are not broken across pages
+        let mut unbreakable_depth = 0usize;
         for (index, &elem) in text_list.list.iter().enumerate().skip(1) {
             let style = computed_values.get(elem.entity());
+            // Flex and grid containers and tables are kept on one page.
+            // TODO: allow breaks between the lines of flex containers and the rows of grids and
+            // tables
+            let is_monolithic = style
+                .is_some_and(|s| s.box_.display.is_flex_or_grid() || s.box_.display.is_table());
             let page_break_before = style.map(|s| s.page.page_break_before).unwrap_or_default();
             let page_break_after = style.map(|s| s.page.page_break_after).unwrap_or_default();
 
@@ -68,12 +75,33 @@ impl<'world> System<'world> for Paginator {
 
             match (previous_elem, elem) {
                 (BlockLevelElement::ContainerEnd(_), BlockLevelElement::ContainerStart(_))
-                | (BlockLevelElement::Leaf(_), BlockLevelElement::Leaf(_)) => {
+                | (BlockLevelElement::Leaf(_), BlockLevelElement::Leaf(_))
+                    if unbreakable_depth == 0 =>
+                {
+                    let forced = force_next_page_break || page_break_before == PageBreak::Always;
+                    // After a forced break the margins after the break are kept, so the next
+                    // page starts where the content in front of the break ends. After an
+                    // unforced break they are truncated.
+                    // https://www.w3.org/TR/css-break-3/#break-margins
+                    let advance_after = if forced {
+                        let previous = previous_elem.entity();
+                        let bottom = positions.get(previous).map(|p| p.y + p.height);
+                        let extra = match previous_elem {
+                            BlockLevelElement::ContainerEnd(_) => decorations
+                                .get(previous)
+                                .map(|d| d.padding.bottom + d.border.bottom)
+                                .unwrap_or_default(),
+                            _ => PixelLength(0.0),
+                        };
+                        bottom.map_or(pos.y, |bottom| PixelLength((bottom + extra).0.min(pos.y.0)))
+                    } else {
+                        pos.y
+                    };
                     break_points.push(PageBreakOpportunity {
                         before_index: index,
-                        forced: force_next_page_break || page_break_before == PageBreak::Always,
+                        forced,
                         advance_before: pos.y,
-                        advance_after: pos.y,
+                        advance_after,
                     });
                     force_next_page_break = false;
                 }
@@ -81,11 +109,19 @@ impl<'world> System<'world> for Paginator {
             }
 
             match elem {
-                BlockLevelElement::ContainerStart(_) => force_next_page_break = false,
+                BlockLevelElement::ContainerStart(_) => {
+                    force_next_page_break = false;
+                    if is_monolithic {
+                        unbreakable_depth += 1;
+                    }
+                }
                 // never part of the text list
                 BlockLevelElement::Absolute(_) => {}
                 BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) => {
-                    if page_break_after == PageBreak::Always {
+                    if is_monolithic && matches!(elem, BlockLevelElement::ContainerEnd(_)) {
+                        unbreakable_depth = unbreakable_depth.saturating_sub(1);
+                    }
+                    if page_break_after == PageBreak::Always && unbreakable_depth == 0 {
                         force_next_page_break = true;
                     }
                 }
