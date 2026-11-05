@@ -303,9 +303,113 @@ h6 {
   font-weight: bold;
 }
 
+/* Tables */
+
+table {
+  display: table;
+  border-spacing: 2px;
+}
+
+caption {
+  display: table-caption;
+  text-align: center;
+}
+
+colgroup {
+  display: table-column-group;
+}
+
+col {
+  display: table-column;
+}
+
+thead {
+  display: table-header-group;
+}
+
+tbody {
+  display: table-row-group;
+}
+
+tfoot {
+  display: table-footer-group;
+}
+
+tr {
+  display: table-row;
+}
+
+td,
+th {
+  display: table-cell;
+  padding: 1px;
+}
+
+th {
+  font-weight: bold;
+  text-align: center;
+}
+
 math {
   font-family: "STIX Two Math", "Latin Modern Math";
   -helium-math-variant: normal;
+  math-depth: 0;
+}
+
+/* Font size follows the script level (see `font-size: math`). */
+math, math * {
+  font-size: math;
+}
+
+/* Script level changes, after MathML Core's user agent stylesheet. */
+mfrac > * {
+  math-depth: auto-add;
+  -helium-math-style: inline;
+}
+msub > :not(:first-child),
+msup > :not(:first-child),
+msubsup > :not(:first-child),
+mmultiscripts > :not(:first-child) {
+  math-depth: add(1);
+  -helium-math-style: inline;
+}
+mroot > :not(:first-child) {
+  math-depth: add(2);
+  -helium-math-style: inline;
+}
+munder > :nth-child(2),
+mover > :nth-child(2),
+munderover > :nth-child(2),
+munderover > :nth-child(3) {
+  math-depth: add(1);
+  -helium-math-style: inline;
+}
+/* Accents are not scripts. */
+mover[accent="true"] > :nth-child(2),
+munderover[accent="true"] > :nth-child(3),
+munder[accentunder="true"] > :nth-child(2),
+munderover[accentunder="true"] > :nth-child(2) {
+  math-depth: add(0);
+}
+
+/* Cramped ("compact") style: denominators, subscripts, radicands and accented bases. */
+mfrac > :nth-child(2),
+msub > :nth-child(2),
+msubsup > :nth-child(2),
+msqrt > *,
+mroot > :first-child,
+mover[accent="true"] > :first-child,
+munderover[accent="true"] > :first-child {
+  math-shift: compact;
+}
+/* <mmultiscripts>: base, then (subscript, superscript) pairs before and after <mprescripts/>. */
+mmultiscripts > :nth-child(even):not(mprescripts, mprescripts ~ *),
+mmultiscripts > mprescripts ~ :nth-child(odd) {
+  math-shift: compact;
+}
+
+mtable {
+  -helium-math-style: inline;
 }
 
 math[display="inline"] {

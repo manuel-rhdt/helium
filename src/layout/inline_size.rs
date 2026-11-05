@@ -13,16 +13,9 @@ pub struct InlineSizeResources<'a> {
     pub decorations: WriteStorage<'a, Decoration>,
 }
 
-pub fn calculate_padding_and_border(
-    container_size: Px,
-    ComputedValues {
-        position,
-        background,
-        font,
-        ..
-    }: &ComputedValues,
-) -> Decoration {
-    let mut deco = Decoration::default();
+pub fn calculate_padding_and_border(container_size: Px, style: &ComputedValues) -> Decoration {
+    let position = &style.position;
+    let mut deco = decoration_colors(style);
 
     deco.border.top = position.border_top_width;
     deco.border.bottom = position.border_bottom_width;
@@ -38,18 +31,31 @@ pub fn calculate_padding_and_border(
     deco.margin.top = position.margin_top.absolute(Px(0.0), container_size);
     deco.margin.bottom = position.margin_bottom.absolute(Px(0.0), container_size);
 
+    deco
+}
+
+/// A [`Decoration`] with only the background and border colors of `style` set. All lengths are
+/// zero.
+pub fn decoration_colors(
+    ComputedValues {
+        position,
+        background,
+        font,
+        ..
+    }: &ComputedValues,
+) -> Decoration {
     use crate::style::properties::computed::{Color, color_to_rgba};
     let get_color = |color: Color| match color {
         Color::CurrentColor => color_to_rgba(font.color),
         color => color_to_rgba(color),
     };
 
+    let mut deco = Decoration::default();
     deco.background_color = get_color(background.background_color);
     deco.border_color.top = get_color(position.border_top_color);
     deco.border_color.bottom = get_color(position.border_bottom_color);
     deco.border_color.left = get_color(position.border_left_color);
     deco.border_color.right = get_color(position.border_right_color);
-
     deco
 }
 

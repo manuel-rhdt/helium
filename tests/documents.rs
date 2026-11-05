@@ -33,6 +33,7 @@ fn example_documents_render_to_pdf() {
 
         let result = Command::cargo_bin(env!("CARGO_PKG_NAME"))
             .unwrap()
+            .args(["--layout-engine", "taffy"])
             .arg(input)
             .arg(&output)
             .output()

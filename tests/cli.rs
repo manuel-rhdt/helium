@@ -131,9 +131,11 @@ fn dumps_layout_as_json() -> Result<(), Box<dyn std::error::Error>> {
         .success()
         .stdout(predicate::str::contains(r#""id": "a""#))
         // border box includes the padding, the margin is reported separately
+        // (the Taffy layout reports the specified margins, not the used `margin-right` of an
+        // over-constrained block)
         .stdout(predicate::str::contains(r#""width": 110, "height": 30}"#))
         .stdout(predicate::str::contains(
-            r#""margin": {"top": 3, "right": 0, "bottom": 3, "left": 3}"#,
+            r#""margin": {"top": 3, "right": 3, "bottom": 3, "left": 3}"#,
         ));
 
     Ok(())

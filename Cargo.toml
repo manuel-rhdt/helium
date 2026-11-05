@@ -30,6 +30,7 @@ precomputed-hash = "0.1"
 imbl = "7"
 smallvec = "1.16.3"
 hyphenation = { version = "0.8.4", features = ["embed_en-us"] }
+taffy = { version = "=0.15.1", default-features = false, features = ["std", "block_layout", "flexbox", "grid", "float_layout", "content_size", "calc", "detailed_layout_info"] }
 
 [dev-dependencies]
 assert_cmd = "1"

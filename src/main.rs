@@ -52,6 +52,13 @@ struct Options {
     /// document against the computed layout and exit with an error if any expectation fails.
     #[structopt(long = "check-layout")]
     check_layout: bool,
+    /// The engine that lays out the boxes: `taffy` or `scheme`
+    #[structopt(
+        long = "layout-engine",
+        env = "HELIUM_LAYOUT_ENGINE",
+        default_value = "taffy"
+    )]
+    layout_engine: layout::LayoutEngine,
     /// The input HTML file to process
     #[structopt(parse(from_os_str))]
     input: PathBuf,
@@ -95,7 +102,7 @@ fn main() -> Result<(), Error> {
         }
     };
     let before_layout = Instant::now();
-    let mut layout_context = layout::layout(dom.clone(), device, opt.crop)?;
+    let mut layout_context = layout::layout(dom.clone(), device, opt.crop, opt.layout_engine)?;
     info!("TIMED: layout {:?}", before_layout.elapsed());
 
     // repl(&mut layout_context);

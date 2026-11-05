@@ -1,5 +1,6 @@
 use derive_more::From;
 use specs::{Component, DenseVecStorage, Entity, NullStorage, World};
+use std::collections::HashMap;
 
 use super::text::font::GlyphIndex;
 use crate::style::properties::computed::{ComputedValues, PixelLength};
@@ -167,6 +168,28 @@ impl Component for ComputedValues {
 // impl Component for Text {
 //     type Storage = DenseVecStorage<Self>;
 // }
+
+/// The number of columns and rows a table cell spans (the `colspan` and `rowspan` attributes).
+/// Cells without the component span one column and one row.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TableCellSpan {
+    pub columns: u16,
+    /// 0 spans the rest of the row group.
+    pub rows: u16,
+}
+
+impl Default for TableCellSpan {
+    fn default() -> Self {
+        TableCellSpan {
+            columns: 1,
+            rows: 1,
+        }
+    }
+}
+
+impl Component for TableCellSpan {
+    type Storage = DenseVecStorage<Self>;
+}
 
 /// The marker of a list item, drawn outside of the item's first line.
 #[derive(Debug, Clone)]
@@ -441,22 +464,32 @@ pub struct TextList {
     pub list: Vec<BlockLevelElement>,
 }
 
+/// A node of a MathML formula (an element inside, or including, `<math>`).
+///
+/// The math layout system reads these as a [`math_render::host::MathTree`].
 #[derive(Debug, Clone)]
-pub struct MathExpression {
-    pub expression: math_render::MathExpression,
+pub struct MathNode {
+    pub kind: math_render::host::NodeKind,
+    /// The rendered child elements.
+    pub children: Vec<Entity>,
+    /// The text of a token element (`mi`, `mn`, `mo`, `mtext`, `ms`) after text transforms.
+    pub text: Option<String>,
+    /// The attributes of the element, by local name.
+    pub attributes: HashMap<String, String>,
+    /// The font of this node (a key of `FontMap`).
     pub font_name: String,
 }
 
-impl Component for MathExpression {
+impl Component for MathNode {
     type Storage = DenseVecStorage<Self>;
 }
 
+/// The laid out formula, stored on the `<math>` element.
 #[derive(Debug)]
 pub struct MathBox {
-    pub math_box: math_render::math_box::MathBox,
-    pub font_name: String,
-    pub font_size: PixelLength,
-    pub font_scale: PixelLength,
+    /// Every node of the formula (including the root) in tree order, with the offset of its
+    /// border box from the border box of the `<math>` element.
+    pub nodes: Vec<(Entity, PixelLength, PixelLength, math_render::host::NodeLayout)>,
 }
 
 impl Component for MathBox {

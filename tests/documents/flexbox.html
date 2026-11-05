@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Flexbox</title>
+    <style>
+        /* Needs the Taffy layout engine: --layout-engine taffy */
+        body { line-height: 1.4; font-size: 11pt; }
+        h1 { color: #1d3a5f; border-bottom: 4px solid #e0a030; padding-bottom: 6px; }
+        h2 { margin-top: 26px; margin-bottom: 8px; font-size: 13pt; }
+        .box { background-color: #dde8f5; border: 2px solid #3b6ea5; padding: 8px; }
+        .a { background-color: #f9d6d5; border: 2px solid #c0392b; padding: 8px; }
+        .b { background-color: #d5f5e3; border: 2px solid #1e8449; padding: 8px; }
+        .c { background-color: #fcf3cf; border: 2px solid #b7950b; padding: 8px; }
+
+        .row { display: flex; background-color: #f4f4f4; border: 1px solid #888888; padding: 6px; }
+        .row .box, .row .a, .row .b, .row .c { width: 100px; }
+        .grow .a { flex-grow: 1; }
+        .grow .b { flex-grow: 2; }
+        .grow .c { flex-grow: 3; }
+        .gap { gap: 12px; }
+        .between { justify-content: space-between; }
+        .around { justify-content: space-around; }
+        .center { justify-content: center; }
+        .end { justify-content: flex-end; }
+        .tall { height: 90px; }
+        .items-center { align-items: center; }
+        .items-end { align-items: flex-end; }
+        .items-stretch { align-items: stretch; }
+        .wrap { flex-wrap: wrap; }
+        .wrap > div { width: 28%; margin: 4px; }
+        .column { display: flex; flex-direction: column; width: 50%; gap: 6px;
+                  background-color: #f4f4f4; border: 1px solid #888888; padding: 6px; }
+        .column > div { width: auto; }
+        .reverse { flex-direction: row-reverse; }
+
+        .nav { display: flex; background-color: #1d3a5f; padding: 0; }
+        .nav div { color: #ffffff; padding: 10px 16px; }
+        .nav .spacer { flex-grow: 1; }
+        .cards { display: flex; gap: 10px; }
+        .card { flex: 1; background-color: #f6f1e4; border: 2px solid #c9b88a; padding: 10px; }
+        .card h3 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <h1>Flexbox</h1>
+
+    <h2>flex-grow: 1 : 2 : 3</h2>
+    <div class="row grow">
+        <div class="a">One</div>
+        <div class="b">Two</div>
+        <div class="c">Three</div>
+    </div>
+
+    <h2>justify-content: space-between / space-around / center / flex-end</h2>
+    <div class="row between"><div class="a">A</div><div class="b">B</div><div class="c">C</div></div>
+    <div class="row around" style="margin-top: 6px"><div class="a">A</div><div class="b">B</div><div class="c">C</div></div>
+    <div class="row center" style="margin-top: 6px"><div class="a">A</div><div class="b">B</div><div class="c">C</div></div>
+    <div class="row end" style="margin-top: 6px"><div class="a">A</div><div class="b">B</div><div class="c">C</div></div>
+
+    <h2>gap and row-reverse</h2>
+    <div class="row gap reverse">
+        <div class="a">First</div><div class="b">Second</div><div class="c">Third</div>
+    </div>
+
+    <h2>align-items: center / flex-end / stretch</h2>
+    <div class="row tall items-center"><div class="a">A</div><div class="b">B</div><div class="c">C</div></div>
+    <div class="row tall items-end" style="margin-top: 6px"><div class="a">A</div><div class="b">B</div><div class="c">C</div></div>
+    <div class="row tall items-stretch" style="margin-top: 6px"><div class="a">A</div><div class="b">B</div><div class="c">C</div></div>
+
+    <h2>flex-wrap</h2>
+    <div class="row wrap">
+        <div class="a">1</div><div class="b">2</div><div class="c">3</div>
+        <div class="a">4</div><div class="b">5</div><div class="c">6</div>
+        <div class="a">7</div>
+    </div>
+
+    <h2>flex-direction: column</h2>
+    <div class="column">
+        <div class="a">Top</div><div class="b">Middle</div><div class="c">Bottom</div>
+    </div>
+
+    <h2>Navigation bar</h2>
+    <div class="nav">
+        <div>Home</div><div>Docs</div><div>Blog</div>
+        <div class="spacer"></div>
+        <div>Login</div>
+    </div>
+
+    <h2>Equal-height cards with text</h2>
+    <div class="cards">
+        <div class="card">
+            <h3>Lorem</h3>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+        </div>
+        <div class="card">
+            <h3>Ipsum</h3>
+            Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.
+        </div>
+        <div class="card">
+            <h3>Dolor</h3>
+            Duis aute irure dolor in reprehenderit.
+        </div>
+    </div>
+</body>
+</html>

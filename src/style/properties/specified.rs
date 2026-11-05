@@ -271,6 +271,73 @@ pub enum Box {
     Display(Display),
     #[property]
     Position(PositionSpec),
+
+    // Flexbox: https://www.w3.org/TR/css-flexbox-1/
+    #[property]
+    FlexDirection(FlexDirection),
+    #[property]
+    FlexWrap(FlexWrap),
+    #[property]
+    FlexGrow(f32),
+    #[property]
+    FlexShrink(f32),
+    #[property]
+    FlexBasis(AutoOrQuantityOrPercentage),
+    #[property]
+    #[shorthand("flex-grow", method = "grow")]
+    #[shorthand("flex-shrink", method = "shrink")]
+    #[shorthand("flex-basis", method = "basis")]
+    Flex(FlexShorthand),
+
+    // Box alignment: https://www.w3.org/TR/css-align-3/
+    #[property]
+    JustifyContent(ContentAlignment),
+    #[property]
+    AlignContent(ContentAlignment),
+    #[property]
+    JustifyItems(ItemAlignment),
+    #[property]
+    AlignItems(ItemAlignment),
+    #[property]
+    JustifySelf(SelfAlignment),
+    #[property]
+    AlignSelf(SelfAlignment),
+    #[property]
+    RowGap(Gap),
+    #[property]
+    ColumnGap(Gap),
+    #[property]
+    #[shorthand("row-gap", method = "clone")]
+    #[shorthand("column-gap", method = "clone")]
+    Gap(Gap),
+
+    // Grid: https://www.w3.org/TR/css-grid-1/
+    #[property]
+    GridTemplateColumns(TrackList),
+    #[property]
+    GridTemplateRows(TrackList),
+    #[property]
+    GridAutoColumns(TrackList),
+    #[property]
+    GridAutoRows(TrackList),
+    #[property]
+    GridAutoFlow(GridAutoFlow),
+    #[property]
+    GridColumnStart(GridPlacement),
+    #[property]
+    GridColumnEnd(GridPlacement),
+    #[property]
+    GridRowStart(GridPlacement),
+    #[property]
+    GridRowEnd(GridPlacement),
+    #[property]
+    #[shorthand("grid-column-start", method = "start")]
+    #[shorthand("grid-column-end", method = "end")]
+    GridColumn(GridLines),
+    #[property]
+    #[shorthand("grid-row-start", method = "start")]
+    #[shorthand("grid-row-end", method = "end")]
+    GridRow(GridLines),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -287,6 +354,10 @@ pub enum Text {
     Hyphens(Hyphens),
     #[ua_property]
     LineBreak(LineBreak),
+    /// Inherited like `hyphens`, so it lives in the same style struct.
+    /// https://www.w3.org/TR/CSS22/tables.html#separated-borders
+    #[property]
+    BorderSpacing(BorderSpacing),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -325,6 +396,10 @@ pub enum Math {
     OperatorIsStretchy(AutoBool),
     #[ua_property]
     MathStyle(MathStyle),
+    #[property]
+    MathDepth(MathDepth),
+    #[property]
+    MathShift(MathShift),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
@@ -333,12 +408,350 @@ pub enum Display {
     Block,
     Inline,
     InlineBlock,
+    Flex,
+    Grid,
+    // https://www.w3.org/TR/CSS22/tables.html#table-display
+    Table,
+    InlineTable,
+    TableRowGroup,
+    TableHeaderGroup,
+    TableFooterGroup,
+    TableRow,
+    TableCell,
+    TableCaption,
+    TableColumnGroup,
+    TableColumn,
 }
 
 impl Default for Display {
     fn default() -> Self {
         Display::Inline
     }
+}
+
+impl Display {
+    /// Whether the box is block-level, i.e. it takes part in a block formatting context as a
+    /// block (`block`, `flex`, `grid` and `table`).
+    ///
+    /// The internal table boxes (rows, cells, ...) count as block-level here as well: the box
+    /// tree keeps them as block boxes, and the table layout picks them out of the children of
+    /// the table.
+    pub fn is_block_level(self) -> bool {
+        matches!(
+            self,
+            Display::Block
+                | Display::Flex
+                | Display::Grid
+                | Display::Table
+                | Display::TableRowGroup
+                | Display::TableHeaderGroup
+                | Display::TableFooterGroup
+                | Display::TableRow
+                | Display::TableCell
+                | Display::TableCaption
+        )
+    }
+
+    /// Whether the box is an atomic inline-level box (`inline-block` and `inline-table`), whose
+    /// contents are laid out on their own and which is placed on a line as a whole.
+    pub fn is_atomic_inline(self) -> bool {
+        matches!(self, Display::InlineBlock | Display::InlineTable)
+    }
+
+    /// Whether the box is a table (`table` or `inline-table`).
+    pub fn is_table(self) -> bool {
+        matches!(self, Display::Table | Display::InlineTable)
+    }
+
+    /// Whether the box is a row group (`table-row-group`, `table-header-group` or
+    /// `table-footer-group`).
+    pub fn is_table_row_group(self) -> bool {
+        matches!(
+            self,
+            Display::TableRowGroup | Display::TableHeaderGroup | Display::TableFooterGroup
+        )
+    }
+
+    /// Whether the box is a column or column group, which does not generate a box.
+    /// TODO: use the widths of columns for the table layout
+    pub fn is_table_column(self) -> bool {
+        matches!(self, Display::TableColumn | Display::TableColumnGroup)
+    }
+
+    /// Whether the box is a flex or grid container, whose children are flex or grid items.
+    pub fn is_flex_or_grid(self) -> bool {
+        matches!(self, Display::Flex | Display::Grid)
+    }
+}
+
+/// https://www.w3.org/TR/css-flexbox-1/#flex-direction-property
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum FlexDirection {
+    #[default]
+    Row,
+    RowReverse,
+    Column,
+    ColumnReverse,
+}
+
+/// https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum FlexWrap {
+    #[default]
+    Nowrap,
+    Wrap,
+    WrapReverse,
+}
+
+/// The values of `justify-content` and `align-content`.
+/// https://www.w3.org/TR/css-align-3/#propdef-justify-content
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum ContentAlignment {
+    #[default]
+    Normal,
+    Start,
+    End,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Stretch,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
+/// The values of `align-items` and `justify-items`.
+/// https://www.w3.org/TR/css-align-3/#propdef-align-items
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum ItemAlignment {
+    #[default]
+    Normal,
+    Stretch,
+    Start,
+    End,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Baseline,
+}
+
+/// The values of `align-self` and `justify-self`.
+/// https://www.w3.org/TR/css-align-3/#propdef-align-self
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum SelfAlignment {
+    #[default]
+    Auto,
+    Normal,
+    Stretch,
+    Start,
+    End,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Baseline,
+}
+
+/// The value of the `flex` shorthand: `none | auto | <grow> <shrink>? <basis>? | <basis>`
+/// https://www.w3.org/TR/css-flexbox-1/#flex-property
+#[derive(Debug, Copy, Clone)]
+pub struct FlexShorthand {
+    pub grow: f32,
+    pub shrink: f32,
+    pub basis: AutoOrQuantityOrPercentage,
+}
+
+impl FlexShorthand {
+    pub fn grow(&self) -> f32 {
+        self.grow
+    }
+    pub fn shrink(&self) -> f32 {
+        self.shrink
+    }
+    pub fn basis(&self) -> AutoOrQuantityOrPercentage {
+        self.basis
+    }
+}
+
+impl<'i> PropertyValue<'i> for FlexShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(FlexShorthand {
+                grow: 0.0,
+                shrink: 0.0,
+                basis: AutoOrQuantityOrPercentage::Auto,
+            });
+        }
+        if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+            return Ok(FlexShorthand {
+                grow: 1.0,
+                shrink: 1.0,
+                basis: AutoOrQuantityOrPercentage::Auto,
+            });
+        }
+        let grow = input.try_parse(f32::from_css_property_value).ok();
+        let shrink = grow.and_then(|_| input.try_parse(f32::from_css_property_value).ok());
+        // a unitless zero is a number, which is taken as the flex grow factor above
+        let basis = input
+            .try_parse(AutoOrQuantityOrPercentage::from_css_property_value)
+            .ok();
+        if grow.is_none() && basis.is_none() {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(FlexShorthand {
+            grow: grow.unwrap_or(1.0),
+            shrink: shrink.unwrap_or(1.0),
+            // an omitted basis is 0
+            basis: basis.unwrap_or(AutoOrQuantityOrPercentage::Percentage(Percentage(0.0))),
+        })
+    }
+}
+
+/// The value of `border-spacing`: `<length> <length>?`. One length is the spacing in both
+/// directions, with two lengths the first is the horizontal spacing.
+#[derive(Debug, Copy, Clone)]
+pub struct BorderSpacing {
+    pub horizontal: Quantity,
+    pub vertical: Quantity,
+}
+
+impl<'i> PropertyValue<'i> for BorderSpacing {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let horizontal = input
+            .try_parse(Quantity::from_css_property_value)
+            .map_err(|_| input.new_error_for_next_token())?;
+        let vertical = input
+            .try_parse(Quantity::from_css_property_value)
+            .unwrap_or(horizontal);
+        Ok(BorderSpacing {
+            horizontal,
+            vertical,
+        })
+    }
+}
+
+/// The value of `gap`. Only the form with one value (for both directions) is supported.
+pub type Gap = QuantityOrPercentage;
+
+/// A track size of `grid-template-columns`, `grid-template-rows`, `grid-auto-columns` and
+/// `grid-auto-rows`.
+/// https://www.w3.org/TR/css-grid-1/#track-sizing
+#[derive(Debug, Copy, Clone)]
+pub enum TrackSize {
+    Auto,
+    MinContent,
+    MaxContent,
+    /// A flexible length (`<number>fr`)
+    Fraction(f32),
+    Length(QuantityOrPercentage),
+}
+
+impl<'i> PropertyValue<'i> for TrackSize {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if let Ok(length) = input.try_parse(QuantityOrPercentage::from_css_property_value) {
+            return Ok(TrackSize::Length(length));
+        }
+        let token = input.next()?.clone();
+        match &token {
+            Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("fr") => {
+                Ok(TrackSize::Fraction(*value))
+            }
+            Token::Ident(ident) if ident.eq_ignore_ascii_case("auto") => Ok(TrackSize::Auto),
+            Token::Ident(ident) if ident.eq_ignore_ascii_case("min-content") => {
+                Ok(TrackSize::MinContent)
+            }
+            Token::Ident(ident) if ident.eq_ignore_ascii_case("max-content") => {
+                Ok(TrackSize::MaxContent)
+            }
+            _ => Err(ParseError::unexpected_token()),
+        }
+    }
+}
+
+/// A list of track sizes. `none` is the empty list.
+#[derive(Debug, Clone, Default)]
+pub struct TrackList(pub Vec<TrackSize>);
+
+impl<'i> PropertyValue<'i> for TrackList {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(TrackList(vec![]));
+        }
+        Vec::<TrackSize>::from_css_property_value(input).map(TrackList)
+    }
+}
+
+/// Where a grid item starts or ends: `auto | <integer> | span <integer>`
+/// https://www.w3.org/TR/css-grid-1/#line-placement
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum GridPlacement {
+    #[default]
+    Auto,
+    Line(i16),
+    Span(u16),
+}
+
+impl<'i> PropertyValue<'i> for GridPlacement {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+            return Ok(GridPlacement::Auto);
+        }
+        if input.try_parse(|i| i.expect_ident_matching("span")).is_ok() {
+            let span = i32::from_css_property_value(input)?;
+            return Ok(GridPlacement::Span(span.clamp(1, u16::MAX as i32) as u16));
+        }
+        let line = i32::from_css_property_value(input)?;
+        Ok(GridPlacement::Line(
+            line.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+        ))
+    }
+}
+
+/// The value of the `grid-column` and `grid-row` shorthands: `<start> [ / <end> ]?`
+#[derive(Debug, Copy, Clone)]
+pub struct GridLines {
+    pub start: GridPlacement,
+    pub end: GridPlacement,
+}
+
+impl GridLines {
+    pub fn start(&self) -> GridPlacement {
+        self.start
+    }
+    pub fn end(&self) -> GridPlacement {
+        self.end
+    }
+}
+
+impl<'i> PropertyValue<'i> for GridLines {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let start = GridPlacement::from_css_property_value(input)?;
+        let end = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+            GridPlacement::from_css_property_value(input)?
+        } else {
+            GridPlacement::Auto
+        };
+        Ok(GridLines { start, end })
+    }
+}
+
+/// https://www.w3.org/TR/css-grid-1/#grid-auto-flow-property
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum GridAutoFlow {
+    #[default]
+    Row,
+    Column,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -574,6 +987,10 @@ pub enum FontSize {
     Percentage(Percentage),
     Smaller,
     Larger,
+    /// `font-size: math`. Scales the font size according to the change in
+    /// `math-depth`; resolved in `StyleBuilder::build` once the final depth is
+    /// known, so `from_specified` below only sees a placeholder.
+    Math,
 }
 
 impl ComputedValue<FontSize> for super::computed::PixelLength {
@@ -585,6 +1002,7 @@ impl ComputedValue<FontSize> for super::computed::PixelLength {
             FontSize::Percentage(percentage) => percentage.0 * style.font.font_size,
             FontSize::Smaller => 0.8 * style.font.font_size,
             FontSize::Larger => 1.2 * style.font.font_size,
+            FontSize::Math => style.font.font_size,
         }
     }
 }
@@ -796,6 +1214,24 @@ impl<'i> PropertyValue<'i> for usize {
     }
 }
 
+impl<'i> PropertyValue<'i> for i32 {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let token = input.next()?;
+        match token {
+            Token::Number {
+                int_value: Some(val),
+                ..
+            } => Ok(*val),
+            _ => {
+                let _token = token.clone();
+                Err(ParseError::unexpected_token())
+            }
+        }
+    }
+}
+
 impl<'i> PropertyValue<'i> for bool {
     type Error = StyleParseError;
 
@@ -993,14 +1429,46 @@ impl Default for MathOperatorForm {
     }
 }
 
-impl From<MathOperatorForm> for Option<math_render::mathmlparser::Form> {
+impl From<MathOperatorForm> for Option<math_render::host::Form> {
     fn from(other: MathOperatorForm) -> Self {
         match other {
             MathOperatorForm::Auto => None,
-            MathOperatorForm::Prefix => Some(math_render::mathmlparser::Form::Prefix),
-            MathOperatorForm::Infix => Some(math_render::mathmlparser::Form::Infix),
-            MathOperatorForm::Postfix => Some(math_render::mathmlparser::Form::Postfix),
+            MathOperatorForm::Prefix => Some(math_render::host::Form::Prefix),
+            MathOperatorForm::Infix => Some(math_render::host::Form::Infix),
+            MathOperatorForm::Postfix => Some(math_render::host::Form::Postfix),
         }
+    }
+}
+
+/// The `math-depth` property: `auto-add | add(<integer>) | <integer>`.
+///
+/// https://www.w3.org/TR/css-fonts-4/#math-depth-prop
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum MathDepth {
+    AutoAdd,
+    #[function]
+    Add(i32),
+    Absolute(i32),
+}
+
+impl Default for MathDepth {
+    fn default() -> MathDepth {
+        MathDepth::Absolute(0)
+    }
+}
+
+/// The `math-shift` property: `normal | compact`.
+///
+/// https://w3c.github.io/mathml-core/#the-math-shift
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
+pub enum MathShift {
+    Normal,
+    Compact,
+}
+
+impl Default for MathShift {
+    fn default() -> MathShift {
+        MathShift::Normal
     }
 }
 
@@ -1025,5 +1493,57 @@ pub enum LineBreak {
 impl Default for LineBreak {
     fn default() -> LineBreak {
         LineBreak::Normal
+    }
+}
+
+#[cfg(test)]
+mod function_syntax_tests {
+    use super::*;
+
+    #[derive(Debug, PartialEq, PropertyValue)]
+    enum Test {
+        Plain,
+        #[function(comma)]
+        Pair(i32, i32),
+        #[function(comma, name = "opt")]
+        Optional(i32, Option<i32>),
+        #[function]
+        Spaced(i32, i32),
+    }
+
+    fn parse<T: for<'i> PropertyValue<'i, Error = StyleParseError>>(css: &str) -> Option<T> {
+        let mut parser = Parser::new(css);
+        parser
+            .parse_entirely(|p| T::from_css_property_value(p))
+            .ok()
+    }
+
+    #[test]
+    fn math_depth() {
+        assert_eq!(parse("auto-add"), Some(MathDepth::AutoAdd));
+        assert_eq!(parse("AUTO-ADD"), Some(MathDepth::AutoAdd));
+        assert_eq!(parse("add(2)"), Some(MathDepth::Add(2)));
+        assert_eq!(parse("ADD(-1)"), Some(MathDepth::Add(-1)));
+        assert_eq!(parse("3"), Some(MathDepth::Absolute(3)));
+        assert_eq!(parse("-3"), Some(MathDepth::Absolute(-3)));
+        assert_eq!(parse::<MathDepth>("1.5"), None);
+        assert_eq!(parse::<MathDepth>("add(1.5)"), None);
+        assert_eq!(parse::<MathDepth>("add(1 2)"), None);
+        assert_eq!(parse::<MathDepth>("add()"), None);
+        assert_eq!(parse::<MathDepth>("add"), None);
+    }
+
+    #[test]
+    fn function_arguments() {
+        assert_eq!(parse("plain"), Some(Test::Plain));
+        assert_eq!(parse("pair(1, 2)"), Some(Test::Pair(1, 2)));
+        assert_eq!(parse::<Test>("pair(1 2)"), None);
+        assert_eq!(parse::<Test>("pair(1, 2, 3)"), None);
+        assert_eq!(parse::<Test>("pair(1)"), None);
+        assert_eq!(parse("opt(1)"), Some(Test::Optional(1, None)));
+        assert_eq!(parse("opt(1, 2)"), Some(Test::Optional(1, Some(2))));
+        assert_eq!(parse::<Test>("opt(1,)"), None);
+        assert_eq!(parse("spaced(1 2)"), Some(Test::Spaced(1, 2)));
+        assert_eq!(parse::<Test>("spaced(1, 2)"), None);
     }
 }

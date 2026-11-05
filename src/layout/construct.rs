@@ -1,5 +1,5 @@
 use super::components::{
-    self, BlockLevelElement, LayoutEntity, MathExpression, Position, RootNode,
+    self, BlockLevelElement, LayoutEntity, MathNode, Position, RootNode,
 };
 use super::inline::InlineFormattingContext;
 use super::margin_boxes::{self, MarginBoxes, ResolvedMarginBox};
@@ -15,7 +15,6 @@ use crate::traverse::Traversal;
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{Attribute, QualName, local_name, ns};
-use math_render::{Field, mathmlparser};
 use specs::{Builder, Entities, Entity, SystemData, World, WorldExt, WriteStorage};
 
 use components::TextRun;
@@ -141,6 +140,9 @@ impl Traversal<DomRef> for FlowConstructor {
                     .as_node()
                     .parent()
                     .and_then(|parent| NodeData::style(&parent));
+                let parent_is_flex_or_grid = parent_style
+                    .as_ref()
+                    .is_some_and(|style| style.box_.display.is_flex_or_grid());
                 let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
                 for matched_rule in self
                     .styles
@@ -163,7 +165,11 @@ impl Traversal<DomRef> for FlowConstructor {
                         style_builder.add_declaration(declaration);
                     }
                 }
-                element_ref.as_node().set_style(style_builder.build());
+                let mut style = style_builder.build();
+                if parent_is_flex_or_grid {
+                    style.blockify();
+                }
+                element_ref.as_node().set_style(style);
             }
             _ => {
                 let parent_style = node.parent().and_then(|parent| NodeData::style(&parent));
@@ -181,6 +187,26 @@ impl Traversal<DomRef> for FlowConstructor {
             _ => {}
         }
     }
+}
+
+/// The `colspan` and `rowspan` attributes of a table cell, if it has any.
+/// https://html.spec.whatwg.org/multipage/tables.html#attributes-common-to-td-and-th-elements
+fn table_cell_span(element_data: &ElementData) -> Option<components::TableCellSpan> {
+    let attributes = element_data.attributes.borrow();
+    let attribute = |name| {
+        attributes
+            .get(&QualName::new(None, ns!(), name))
+            .and_then(|attr| attr.value.trim().parse::<u32>().ok())
+    };
+    let columns = attribute(local_name!("colspan"));
+    let rows = attribute(local_name!("rowspan"));
+    if columns.is_none() && rows.is_none() {
+        return None;
+    }
+    Some(components::TableCellSpan {
+        columns: columns.unwrap_or(1).clamp(1, 1000) as u16,
+        rows: rows.unwrap_or(1).min(65534) as u16,
+    })
 }
 
 pub trait AssignLayoutEntity {
@@ -264,7 +290,8 @@ impl FontSelector {
 
 pub struct EntityConstructor {
     font_match_cache: HashMap<FontSelector, String>,
-    mathml_context: Option<mathmlparser::ParseContext>,
+    /// Whether the traversal is inside a `<math>` element.
+    in_math: bool,
     pub world: World,
     trim_next_inline_whitespace: bool,
 }
@@ -284,13 +311,14 @@ impl EntityConstructor {
         world.register::<components::TextRun>();
         world.register::<components::ListMarker>();
         world.register::<components::Decoration>();
-        world.register::<MathExpression>();
+        world.register::<MathNode>();
+        world.register::<components::TableCellSpan>();
         world.insert(FontMap::new());
         world.insert(RootNode(None));
         EntityConstructor {
             world,
             font_match_cache: Default::default(),
-            mathml_context: None,
+            in_math: false,
             trim_next_inline_whitespace: true,
         }
     }
@@ -317,14 +345,15 @@ impl EntityConstructor {
     pub fn build_entity<'a>(&mut self, mut node: impl AbstractNode<'a>) {
         let style = node.style();
 
-        if style.box_.display == Display::None {
+        // Columns do not generate boxes.
+        if style.box_.display == Display::None || style.box_.display.is_table_column() {
             return;
         }
 
         let entity = match node.html_data() {
             ParsedData::Element(element_data) => {
                 if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
-                    self.mathml_context = Some(mathmlparser::ParseContext::default());
+                    self.in_math = true;
                 }
                 if element_data.name == QualName::new(None, ns!(html), local_name!("br")) {
                     // treat <br> as whitespace
@@ -364,11 +393,20 @@ impl EntityConstructor {
                     }
                 });
 
-                if style.box_.display == Display::InlineBlock {
+                if style.box_.display.is_atomic_inline() {
                     // its contents are a block of their own
                     self.trim_next_inline_whitespace = true;
                 }
+                let span = (style.box_.display == Display::TableCell)
+                    .then(|| table_cell_span(element_data))
+                    .flatten();
                 let entity = self.build_default_entity(style);
+                if let Some(span) = span {
+                    self.world
+                        .write_storage::<components::TableCellSpan>()
+                        .insert(entity.0, span)
+                        .unwrap();
+                }
                 if let Some(marker) = marker {
                     let LayoutEntity(e) = entity;
                     self.world
@@ -388,7 +426,7 @@ impl EntityConstructor {
                     Some(node)
                         if matches!(
                             node.style().box_.display,
-                            Display::Inline | Display::InlineBlock
+                            Display::Inline | Display::InlineBlock | Display::InlineTable
                         ) => {}
                     _ => self.trim_next_inline_whitespace = true,
                 };
@@ -479,12 +517,12 @@ impl EntityConstructor {
             return;
         }
 
-        if self.mathml_context.is_some() {
-            self.build_math_expression(node);
+        if self.in_math {
+            self.build_math_node(node);
             return;
         }
 
-        if node.style().box_.display == Display::InlineBlock {
+        if node.style().box_.display.is_atomic_inline() {
             // an inline-block box is content, so the whitespace after it must be kept
             self.trim_next_inline_whitespace = false;
         }
@@ -509,7 +547,6 @@ impl EntityConstructor {
         style: &ComputedValues,
     ) -> Entity {
         // build anonymous block element
-        assert!(style.box_.display == Display::Block);
         entities
             .build_entity()
             .with(
@@ -523,7 +560,7 @@ impl EntityConstructor {
                 },
                 inline_formatting_contexts,
             )
-            .with(style.clone(), computed_values)
+            .with(style.anonymous_block(), computed_values)
             .build()
     }
 
@@ -570,13 +607,13 @@ impl EntityConstructor {
                 continue;
             }
 
-            if display == Display::InlineBlock {
+            if display.is_atomic_inline() {
                 // an atomic inline-level box: its contents stay in its own formatting context
                 inline_level_elements.push(elem);
                 continue;
             }
 
-            if display == Display::Block {
+            if display.is_block_level() {
                 if !inline_level_elements.is_empty() {
                     push_block(
                         block_level_elements,
@@ -732,7 +769,7 @@ impl EntityConstructor {
                 continue;
             }
 
-            if child_style.box_.display == Display::InlineBlock {
+            if child_style.box_.display.is_atomic_inline() {
                 inline_formatting_context.elements.push(child_entity);
                 continue;
             }
@@ -769,184 +806,88 @@ impl EntityConstructor {
     }
 
     // called on bottom-up traversal
-    fn build_math_expression<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+    fn build_math_node<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+        use math_render::host::{MathElement, NodeKind};
+        use math_render::unicode_math::StringExtMathml;
+
+        let ParsedData::Element(element_data) = node.html_data() else {
+            return;
+        };
         let LayoutEntity(entity) = node.layout_entity().unwrap();
         let style = node.style();
-        let font = self.match_font(&style);
-        let font_name = font.postscript_name();
+        let font_name = self.match_font(&style).postscript_name();
 
-        match node.html_data() {
-            ParsedData::Element(element_data) => {
-                let elem = mathmlparser::match_math_element((*element_data.name.local).as_bytes())
-                    .unwrap_or_default();
+        let kind = if element_data.name.ns == ns!(mathml) {
+            NodeKind::Math(MathElement::from_local_name(&element_data.name.local))
+        } else {
+            // e.g. HTML inside `<mtext>`
+            NodeKind::Foreign
+        };
+        let is_token = matches!(kind, NodeKind::Math(element) if element.is_token());
 
-                let is_default_variant_mi = elem.is("mi")
-                    && !element_data
-                        .attributes
-                        .borrow()
-                        .contains_key(&QualName::new(None, ns!(), local_name!("mathvariant")));
+        let attributes: HashMap<String, String> = element_data
+            .attributes
+            .borrow()
+            .iter()
+            .filter(|(name, _)| name.ns == ns!())
+            .map(|(name, attr)| (name.local.to_string(), attr.value.to_string()))
+            .collect();
 
-                let mut math_expressions = WriteStorage::<MathExpression>::fetch(&self.world);
-                let mut text_runs = WriteStorage::<TextRun>::fetch(&self.world);
-                let children = node.children().filter_map(|child| {
-                    if let Some(LayoutEntity(child_entity)) = child.layout_entity() {
-                        if let Some(text_run) = text_runs.get_mut(child_entity) {
-                            use math_render::mathmlparser::StringExtMathml;
-                            // By default, an `mi` is only italic if it consists of a single
-                            // character, longer identifiers (e.g. `sin`) are upright.
-                            let variant =
-                                if is_default_variant_mi && text_run.text.chars().count() != 1 {
-                                    MathFamily::Normal
-                                } else {
-                                    style.math.math_variant
-                                };
-                            let text = text_run
-                                .text
-                                .adapt_to_family(Some(variant.into()))
-                                .replace_anomalous_characters(elem);
-                            text_run.text = text;
-
-                            let field = Field::Unicode(text_run.text.clone());
-                            return Some(mathmlparser::Child::Field((
-                                field,
-                                child_entity.id() as _,
-                            )));
-                        }
-                        math_expressions.remove(child_entity).map(
-                            |MathExpression { expression, .. }| {
-                                mathmlparser::Child::Expression(expression)
-                            },
-                        )
-                    } else {
-                        None
-                    }
-                });
-
-                let (flags, overrides) = style.math.operator_flags_and_overrides();
-
-                let attributes = math_render::mathmlparser::Attributes {
-                    schema: Default::default(),
-                    token: math_render::mathmlparser::TokenAttributes {
-                        operator_attributes: math_render::mathmlparser::OperatorAttributes {
-                            form: style.math.form.into(),
-                            flags,
-                            user_overrides: overrides,
-                            ..Default::default()
-                        },
-                        horizontal_space: if elem.is("mspace") {
-                            element_data
-                                .attributes
-                                .borrow()
-                                .get(&QualName::new(None, ns!(), local_name!("width")))
-                                .and_then(|attr| {
-                                    parse_math_length(&attr.value, style.font.font_size.0)
-                                })
-                                .map(math_render::Length::em)
-                        } else {
-                            None
-                        },
-                        ..Default::default()
-                    },
-                };
-
-                let expression = mathmlparser::build_element(
-                    elem,
-                    attributes,
-                    children,
-                    self.mathml_context.as_mut().unwrap(),
-                    entity.id() as u64,
-                );
-
-                math_expressions
-                    .insert(
-                        node.layout_entity().unwrap().0,
-                        MathExpression {
-                            expression,
-                            font_name,
-                        },
-                    )
-                    .unwrap();
-
-                if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
-                    self.mathml_context = None;
-                }
+        let math_nodes = WriteStorage::<MathNode>::fetch(&self.world);
+        let text_runs = WriteStorage::<TextRun>::fetch(&self.world);
+        let mut children = Vec::new();
+        let mut raw_text = String::new();
+        for child in node.children() {
+            let Some(LayoutEntity(child_entity)) = child.layout_entity() else {
+                continue;
+            };
+            if let Some(text_run) = text_runs.get(child_entity) {
+                raw_text.push_str(&text_run.text);
+            } else if math_nodes.contains(child_entity) {
+                children.push(child_entity);
             }
-            _ => {}
+        }
+
+        let text = is_token.then(|| {
+            let is_mi = kind == NodeKind::Math(MathElement::Mi);
+            let is_mo = kind == NodeKind::Math(MathElement::Mo);
+            // By default, an `mi` is only italic if it consists of a single character, longer
+            // identifiers (e.g. `sin`) are upright.
+            let variant = if is_mi
+                && !attributes.contains_key("mathvariant")
+                && raw_text.chars().count() != 1
+            {
+                MathFamily::Normal
+            } else {
+                style.math.math_variant
+            };
+            let text = raw_text.adapt_to_family(Some(variant.into()));
+            text.replace_anomalous_characters(is_mo)
+        });
+        drop((math_nodes, text_runs));
+
+        self.world
+            .write_storage::<MathNode>()
+            .insert(
+                entity,
+                MathNode {
+                    kind,
+                    children,
+                    text,
+                    attributes,
+                    font_name,
+                },
+            )
+            .unwrap();
+
+        if element_data.name == QualName::new(None, ns!(mathml), local_name!("math")) {
+            self.in_math = false;
         }
     }
 }
 
-/// Parses a MathML length (such as the `width` of an `<mspace>`) and returns it in ems.
-///
-/// Supports the named spaces (`thinmathspace` etc.) and numbers with an `em`, `ex`, `px`, `pt`,
-/// `pc`, `in`, `cm`, `mm` or `%` unit. `font_size` is the current font size in pixels.
-fn parse_math_length(value: &str, font_size: f32) -> Option<f32> {
-    let value = value.trim();
-    let named = match value {
-        "veryverythinmathspace" => Some(1.0),
-        "verythinmathspace" => Some(2.0),
-        "thinmathspace" => Some(3.0),
-        "mediummathspace" => Some(4.0),
-        "thickmathspace" => Some(5.0),
-        "verythickmathspace" => Some(6.0),
-        "veryverythickmathspace" => Some(7.0),
-        "negativeveryverythinmathspace" => Some(-1.0),
-        "negativeverythinmathspace" => Some(-2.0),
-        "negativethinmathspace" => Some(-3.0),
-        "negativemediummathspace" => Some(-4.0),
-        "negativethickmathspace" => Some(-5.0),
-        "negativeverythickmathspace" => Some(-6.0),
-        "negativeveryverythickmathspace" => Some(-7.0),
-        _ => None,
-    };
-    if let Some(eighteenths) = named {
-        return Some(eighteenths / 18.0);
-    }
-
-    let split = value
-        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+')))
-        .unwrap_or(value.len());
-    let (number, unit) = value.split_at(split);
-    let number: f32 = number.parse().ok()?;
-    // CSS pixels per unit
-    let px = match unit.trim() {
-        "em" => return Some(number),
-        "ex" => return Some(number * 0.5),
-        "%" => return Some(number / 100.0),
-        "px" => 1.0,
-        "pt" => 96.0 / 72.0,
-        "pc" => 16.0,
-        "in" => 96.0,
-        "cm" => 96.0 / 2.54,
-        "mm" => 96.0 / 25.4,
-        // unitless numbers are only valid for 0
-        "" if number == 0.0 => return Some(0.0),
-        _ => return None,
-    };
-    Some(number * px / font_size)
-}
-
 #[cfg(test)]
 pub mod test {
-    use super::parse_math_length;
-
-    #[test]
-    fn test_parse_math_length() {
-        assert_eq!(parse_math_length("2em", 16.0), Some(2.0));
-        assert_eq!(parse_math_length(" 1.5em ", 16.0), Some(1.5));
-        assert_eq!(parse_math_length("16px", 16.0), Some(1.0));
-        assert_eq!(parse_math_length("12pt", 16.0), Some(1.0));
-        assert_eq!(parse_math_length("-8px", 16.0), Some(-0.5));
-        assert_eq!(parse_math_length("0", 16.0), Some(0.0));
-        assert_eq!(parse_math_length("thinmathspace", 16.0), Some(3.0 / 18.0));
-        assert_eq!(
-            parse_math_length("negativethinmathspace", 16.0),
-            Some(-3.0 / 18.0)
-        );
-        assert_eq!(parse_math_length("3", 16.0), None);
-        assert_eq!(parse_math_length("wide", 16.0), None);
-    }
-
     use super::*;
 
     use crate::simple_dom::{Quantity::Px, div, p, span, text};

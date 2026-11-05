@@ -5,8 +5,9 @@ use super::specified::{
     self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue, MathFamily, MathOperatorForm,
 };
 pub use super::specified::{
-    Display, FontFamily, FontStyle, FontWeight, MathStyle, PageBreak, Percentage, PositionSpec,
-    TextAlign,
+    ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle, FontWeight, GridAutoFlow,
+    GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, PageBreak, Percentage, PositionSpec,
+    SelfAlignment, TextAlign,
 };
 
 pub use cssparser_color::Color;
@@ -459,15 +460,61 @@ impl AsMut<Math> for ComputedValues {
 }
 
 impl ComputedValues {
+    /// The style of an anonymous block box in a box with this style: it has the font and text
+    /// properties of the box, but none of its box model, background or page break properties.
+    /// https://www.w3.org/TR/CSS22/visuren.html#anonymous-block-level
+    pub fn anonymous_block(&self) -> ComputedValues {
+        ComputedValues {
+            box_: Arc::new(Box {
+                display: Display::Block,
+                ..Default::default()
+            }),
+            position: Default::default(),
+            background: Default::default(),
+            page: Arc::new(Page {
+                widows: self.page.widows,
+                orphans: self.page.orphans,
+                ..Default::default()
+            }),
+            ..self.clone()
+        }
+    }
+
+    /// Blockifies the outer display type of the box: the children of flex and grid containers
+    /// are block-level.
+    /// https://www.w3.org/TR/css-display-3/#blockify
+    pub fn blockify(&mut self) {
+        match self.box_.display {
+            Display::Inline | Display::InlineBlock => {
+                Arc::make_mut(&mut self.box_).display = Display::Block
+            }
+            Display::InlineTable => Arc::make_mut(&mut self.box_).display = Display::Table,
+            _ => {}
+        }
+    }
+
     fn fixup(&mut self) {
         Arc::make_mut(&mut self.position).fixup();
         // https://www.w3.org/TR/CSS22/visuren.html#dis-pos-flo
         // An absolutely positioned box is always blockified.
-        if self.box_.position == PositionSpec::Absolute
-            && matches!(self.box_.display, Display::Inline | Display::InlineBlock)
-        {
-            Arc::make_mut(&mut self.box_).display = Display::Block;
+        if self.box_.position == PositionSpec::Absolute {
+            self.blockify();
         }
+    }
+}
+
+/// `script-percent-scale-down` / `script-script-percent-scale-down` defaults
+/// (CSS Fonts 4 §`math-depth`). These are the values used when the font's
+/// OpenType MATH table does not provide its own.
+const SCRIPT_PERCENT_SCALE_DOWN: f32 = 0.71;
+const SCRIPT_SCRIPT_PERCENT_SCALE_DOWN: f32 = 0.5;
+
+/// Cumulative font scale factor at a given `math-depth`.
+fn math_depth_scale(depth: i32) -> f32 {
+    match depth {
+        i32::MIN..=0 => 1.0,
+        1 => SCRIPT_PERCENT_SCALE_DOWN,
+        _ => SCRIPT_SCRIPT_PERCENT_SCALE_DOWN,
     }
 }
 
@@ -475,16 +522,23 @@ impl ComputedValues {
 pub struct StyleBuilder {
     new_values: ComputedValues,
     is_display_none: bool,
+    parent_math_depth: i32,
+    parent_math_style: MathStyle,
+    parent_font_size: PixelLength,
+    /// Set when the winning `font-size` declaration is `math`.
+    font_size_is_math: bool,
 }
 
 impl StyleBuilder {
     pub fn new(inherited_values: ComputedValues) -> Self {
         // Here we define which CSS property values are inherited
 
+        let parent_font_size = inherited_values.font.font_size;
         let inherited = ComputedValues {
             font: inherited_values.font,
             text: Arc::new(Text {
                 hyphens: inherited_values.text.hyphens,
+                border_spacing: inherited_values.text.border_spacing,
                 ..Default::default()
             }),
             // widows and orphans are inherited, the page break properties are not
@@ -495,36 +549,163 @@ impl StyleBuilder {
             }),
             math: Arc::new(Math {
                 math_style: inherited_values.math.math_style,
+                math_shift: inherited_values.math.math_shift,
+                // `math-depth` is inherited. It stays unresolved until `build()`
+                // so that `auto-add`/`add()` are relative to the parent's depth.
+                math_depth: MathDepth::Absolute(inherited_values.math.depth()),
                 ..Default::default()
             }),
             ..Default::default()
         };
         StyleBuilder {
+            parent_math_depth: inherited_values.math.depth(),
+            parent_math_style: inherited_values.math.math_style,
+            parent_font_size,
+            font_size_is_math: false,
             new_values: inherited,
             is_display_none: inherited_values.box_.display == Display::None,
         }
     }
 
-    pub fn add_declaration(&mut self, decl: &dyn ApplyToComputedValues) {
+    /// Resolves `math-depth` relative to the parent element.
+    ///
+    /// `auto-add` adds 1 if the *inherited* `math-style` is `compact` (inline),
+    /// and 0 otherwise.
+    fn resolve_math_depth(&mut self) {
+        let resolved = match self.new_values.math.math_depth {
+            MathDepth::AutoAdd => {
+                self.parent_math_depth
+                    + i32::from(self.parent_math_style == MathStyle::Inline)
+            }
+            MathDepth::Add(n) => self.parent_math_depth.saturating_add(n),
+            MathDepth::Absolute(n) => n,
+        };
+        AsMut::<Math>::as_mut(&mut self.new_values).math_depth = MathDepth::Absolute(resolved);
+    }
+
+    pub fn add_declaration(&mut self, decl: &specified::PropertyDeclaration<'_>) {
+        if let specified::PropertyDeclaration::Font(specified::Font::FontSize(size)) = decl {
+            // The last `font-size` declaration wins.
+            self.font_size_is_math = matches!(size, specified::FontSize::Math);
+        }
         decl.apply_to(&mut self.new_values)
     }
 
+    /// `font-size: math`: scale the parent's font size by the change in
+    /// script level between the parent and this element.
+    fn resolve_font_size_math(&mut self) {
+        if !self.font_size_is_math {
+            return;
+        }
+        let depth = self.new_values.math.depth();
+        let ratio = math_depth_scale(depth) / math_depth_scale(self.parent_math_depth);
+        Arc::make_mut(&mut self.new_values.font).font_size = ratio * self.parent_font_size;
+    }
+
     pub fn build(mut self) -> ComputedValues {
+        self.resolve_math_depth();
+        self.resolve_font_size_math();
         self.new_values.fixup();
         if self.is_display_none {
-            *self.new_values.as_mut() = Box {
-                display: Display::None,
-                ..*self.new_values.box_.as_ref()
-            };
+            AsMut::<Box>::as_mut(&mut self.new_values).display = Display::None;
         }
         self.new_values
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Box {
     pub display: specified::Display,
     pub position: PositionSpec,
+
+    pub flex_direction: FlexDirection,
+    pub flex_wrap: FlexWrap,
+    pub flex_grow: f32,
+    pub flex_shrink: f32,
+    pub flex_basis: GenericSize,
+
+    pub justify_content: ContentAlignment,
+    pub align_content: ContentAlignment,
+    pub justify_items: ItemAlignment,
+    pub align_items: ItemAlignment,
+    pub justify_self: SelfAlignment,
+    pub align_self: SelfAlignment,
+    pub row_gap: LengthPercentage,
+    pub column_gap: LengthPercentage,
+
+    pub grid_template_columns: TrackList,
+    pub grid_template_rows: TrackList,
+    pub grid_auto_columns: TrackList,
+    pub grid_auto_rows: TrackList,
+    pub grid_auto_flow: GridAutoFlow,
+    pub grid_column_start: GridPlacement,
+    pub grid_column_end: GridPlacement,
+    pub grid_row_start: GridPlacement,
+    pub grid_row_end: GridPlacement,
+}
+
+impl Default for Box {
+    fn default() -> Self {
+        Box {
+            display: Default::default(),
+            position: Default::default(),
+            flex_direction: Default::default(),
+            flex_wrap: Default::default(),
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: GenericSize::Auto,
+            justify_content: Default::default(),
+            align_content: Default::default(),
+            justify_items: Default::default(),
+            align_items: Default::default(),
+            justify_self: Default::default(),
+            align_self: Default::default(),
+            row_gap: LengthPercentage::PixelLength(PixelLength(0.0)),
+            column_gap: LengthPercentage::PixelLength(PixelLength(0.0)),
+            grid_template_columns: Default::default(),
+            grid_template_rows: Default::default(),
+            grid_auto_columns: Default::default(),
+            grid_auto_rows: Default::default(),
+            grid_auto_flow: Default::default(),
+            grid_column_start: Default::default(),
+            grid_column_end: Default::default(),
+            grid_row_start: Default::default(),
+            grid_row_end: Default::default(),
+        }
+    }
+}
+
+/// A computed track size of a grid.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum TrackSize {
+    Auto,
+    MinContent,
+    MaxContent,
+    Fraction(f32),
+    Length(LengthPercentage),
+}
+
+/// A computed list of track sizes of a grid.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TrackList(pub Vec<TrackSize>);
+
+impl super::ComputedValue<specified::TrackList> for TrackList {
+    fn from_specified(spec: &specified::TrackList, style: &ComputedValues) -> Self {
+        TrackList(
+            spec.0
+                .iter()
+                .map(|size| match size {
+                    specified::TrackSize::Auto => TrackSize::Auto,
+                    specified::TrackSize::MinContent => TrackSize::MinContent,
+                    specified::TrackSize::MaxContent => TrackSize::MaxContent,
+                    specified::TrackSize::Fraction(fr) => TrackSize::Fraction(*fr),
+                    specified::TrackSize::Length(length) => {
+                        TrackSize::Length(LengthPercentage::from_specified(length, style))
+                    }
+                })
+                .collect(),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -561,6 +742,26 @@ pub struct Text {
     pub text_align: specified::TextAlign,
     pub hyphens: specified::Hyphens,
     pub line_break: specified::LineBreak,
+    pub border_spacing: BorderSpacing,
+}
+
+/// The computed value of `border-spacing`.
+#[derive(Debug, Default, Copy, Clone, PartialEq)]
+pub struct BorderSpacing {
+    pub horizontal: PixelLength,
+    pub vertical: PixelLength,
+}
+
+impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
+    fn from_specified(spec: &specified::BorderSpacing, style: &ComputedValues) -> Self {
+        let length = |q: specified::Quantity| {
+            PixelLength::from_val_unit(q.value, q.unit, style.font.font_size)
+        };
+        BorderSpacing {
+            horizontal: length(spec.horizontal),
+            vertical: length(spec.vertical),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -601,36 +802,19 @@ pub struct Math {
     pub form: MathOperatorForm,
     pub operator_is_stretchy: AutoBool,
     pub math_style: MathStyle,
+    /// Always `MathDepth::Absolute` once the style has been built.
+    pub math_depth: MathDepth,
+    pub math_shift: MathShift,
 }
 
 impl Math {
-    pub fn operator_flags_and_overrides(
-        &self,
-    ) -> (
-        math_render::mathmlparser::Flags,
-        math_render::mathmlparser::Flags,
-    ) {
-        let mut flags = math_render::mathmlparser::Flags::default();
-        let mut overrides = math_render::mathmlparser::Flags::default();
-
-        let mut set_flag = |property, flag| match property {
-            AutoBool::True => {
-                flags.insert(flag);
-                overrides.insert(flag);
-            }
-            AutoBool::False => {
-                flags.remove(flag);
-                overrides.insert(flag);
-            }
-            AutoBool::Auto => overrides.remove(flag),
-        };
-
-        set_flag(
-            self.operator_is_stretchy,
-            math_render::mathmlparser::Flags::STRETCHY,
-        );
-
-        (flags, overrides)
+    /// The resolved `math-depth`.
+    pub fn depth(&self) -> i32 {
+        match self.math_depth {
+            MathDepth::Absolute(n) => n,
+            // Only observable while a style is still being built.
+            MathDepth::AutoAdd | MathDepth::Add(_) => 0,
+        }
     }
 }
 
@@ -657,5 +841,82 @@ impl ComputedValue<specified::LineHeight> for LineHeight {
                 LineHeight::LengthPercentage(LengthPercentage::Percentage(Percentage(*num)))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod math_depth_tests {
+    use super::*;
+    use crate::style::parse::PropertyDeclarationBlock;
+
+    fn child(parent: &ComputedValues, css: &str) -> ComputedValues {
+        let mut builder = StyleBuilder::new(parent.clone());
+        for decl in PropertyDeclarationBlock::parse_inline(css).declarations() {
+            builder.add_declaration(decl);
+        }
+        builder.build()
+    }
+
+    fn root(css: &str) -> ComputedValues {
+        child(&ComputedValues::default(), css)
+    }
+
+    #[test]
+    fn depth_is_inherited_and_relative() {
+        let a = root("math-depth: 2");
+        assert_eq!(a.math.depth(), 2);
+        let b = child(&a, "");
+        assert_eq!(b.math.depth(), 2);
+        assert_eq!(child(&b, "math-depth: add(1)").math.depth(), 3);
+        assert_eq!(child(&b, "math-depth: add(-1)").math.depth(), 1);
+        assert_eq!(child(&b, "math-depth: 0").math.depth(), 0);
+    }
+
+    #[test]
+    fn repeated_declarations_do_not_accumulate() {
+        let p = root("math-depth: 1");
+        assert_eq!(child(&p, "math-depth: add(1); math-depth: add(1)").math.depth(), 2);
+    }
+
+    #[test]
+    fn auto_add_uses_inherited_math_style() {
+        // inherited math-style is `display` (normal): no change
+        let display = root("-helium-math-style: display");
+        assert_eq!(child(&display, "math-depth: auto-add").math.depth(), 0);
+        // inherited math-style is `inline` (compact): +1
+        let compact = root("-helium-math-style: inline");
+        assert_eq!(child(&compact, "math-depth: auto-add").math.depth(), 1);
+        // the element's own math-style must not influence its own auto-add,
+        // regardless of declaration order
+        assert_eq!(
+            child(&display, "-helium-math-style: inline; math-depth: auto-add").math.depth(),
+            0
+        );
+        assert_eq!(
+            child(&compact, "math-depth: auto-add; -helium-math-style: display").math.depth(),
+            1
+        );
+    }
+
+    #[test]
+    fn font_size_math_scales_with_depth() {
+        let base = root("font-size: 100px");
+        let size = |s: &ComputedValues| s.font.font_size.0;
+        let d1 = child(&base, "math-depth: add(1); font-size: math");
+        assert!((size(&d1) - 71.0).abs() < 1e-3);
+        // 1 -> 2 goes from 0.71 to 0.5 of the base
+        let d2 = child(&d1, "math-depth: add(1); font-size: math");
+        assert!((size(&d2) - 71.0 * 0.5 / 0.71).abs() < 1e-3);
+        // same depth: unchanged; declaration order does not matter
+        let same = child(&d2, "font-size: math");
+        assert!((size(&same) - size(&d2)).abs() < 1e-3);
+        let reordered = child(&base, "font-size: math; math-depth: add(1)");
+        assert!((size(&reordered) - 71.0).abs() < 1e-3);
+        // going back up restores the size
+        let back = child(&d1, "math-depth: 0; font-size: math");
+        assert!((size(&back) - 100.0).abs() < 1e-3);
+        // an explicit font-size after `math` wins
+        let explicit = child(&base, "font-size: math; font-size: 10px; math-depth: 2");
+        assert!((size(&explicit) - 10.0).abs() < 1e-3);
     }
 }

@@ -26,6 +26,15 @@ pub struct Line {
     pub entity: Entity,
 }
 
+/// A line computed by [`InlineFormattingContext::compute_lines`], which has no entity yet.
+#[derive(Debug, Copy, Clone)]
+pub struct MeasuredLine {
+    pub height: Px,
+    pub baseline: Px,
+    pub from_break: usize,
+    pub to_break: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct InlineFormattingContext {
     pub text_align: crate::style::properties::specified::TextAlign,
@@ -40,7 +49,8 @@ pub struct InlineFormattingContext {
     pub atom_offsets: Vec<(Entity, Px)>,
 }
 impl InlineFormattingContext {
-    /// Breaks the paragraph into lines using adjustment-ratio badness and breakpoint demerits.
+    /// Breaks the paragraph into lines using adjustment-ratio badness and breakpoint demerits,
+    /// creates one entity per line and stores the lines in the context.
     pub fn break_lines(
         &mut self,
         line_width: Px,
@@ -49,10 +59,32 @@ impl InlineFormattingContext {
         text_runs: &ReadStorage<components::TextRun>,
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
     ) -> Result<(), String> {
+        let lines = self.compute_lines(line_width, indent, text_runs, intrinsic_sizes)?;
+        self.lines = lines
+            .into_iter()
+            .map(|line| Line {
+                from_break: line.from_break,
+                to_break: line.to_break,
+                height: line.height,
+                baseline: line.baseline,
+                entity: entities.create(),
+            })
+            .collect();
+        Ok(())
+    }
+
+    /// Breaks the paragraph into lines without storing them or creating entities for them, so
+    /// that it can be used to measure the paragraph for a given line width.
+    pub fn compute_lines(
+        &self,
+        line_width: Px,
+        indent: Px,
+        text_runs: &ReadStorage<components::TextRun>,
+        intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+    ) -> Result<Vec<MeasuredLine>, String> {
         let breakpoints = &self.break_points;
         if breakpoints.is_empty() {
-            self.lines.clear();
-            return Ok(());
+            return Ok(vec![]);
         }
         if breakpoints.len() < 2 {
             return Err(format!(
@@ -106,17 +138,38 @@ impl InlineFormattingContext {
                         window[0], window[1]
                     ));
                 }
-                Ok(Line {
+                Ok(MeasuredLine {
                     from_break: window[0],
                     to_break: window[1],
                     height,
                     baseline,
-                    entity: entities.create(),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        self.lines = lines;
-        Ok(())
+        Ok(lines)
+    }
+
+    /// The min-content and max-content width of the paragraph: the widest piece that cannot be
+    /// broken, and the widest line that only breaks where a break is forced. The first line is
+    /// indented by `indent`.
+    pub fn intrinsic_widths(&self, indent: Px) -> (Px, Px) {
+        let breaks = &self.break_points;
+        if breaks.len() < 2 {
+            return (Px(0.0), Px(0.0));
+        }
+        let mut min = Px(0.0);
+        let mut max = Px(0.0);
+        let mut line_start = 0;
+        for i in 1..breaks.len() {
+            let piece_indent = if i == 1 { indent } else { Px(0.0) };
+            min = min.max(self.content_width(i - 1, i) + piece_indent);
+            if breaks[i].forced || i == breaks.len() - 1 {
+                let line_indent = if line_start == 0 { indent } else { Px(0.0) };
+                max = max.max(self.content_width(line_start, i) + line_indent);
+                line_start = i;
+            }
+        }
+        (min, max)
     }
 
     /// The width of the content between two break points.
@@ -355,17 +408,45 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 font.scale_to_px(position.x_advance, text_run.font_size)
                             })
                             .fold(Px(0.0), |sum, width| sum + width);
+                        // The width of the text in front of a glyph, from the shaping of the
+                        // whole run above: `(cluster, width of all glyphs before it)`.
+                        let mut prefix_widths = Vec::with_capacity(shaped.len());
+                        let mut width = Px(0.0);
+                        for (position, glyph_info) in &shaped {
+                            prefix_widths.push((glyph_info.cluster as usize, width));
+                            width += font.scale_to_px(position.x_advance, text_run.font_size);
+                        }
+                        let run_width = width;
+                        // Clusters are monotone, so the width in front of a cluster boundary is
+                        // found by a binary search.
+                        let width_before = |char_index: usize| {
+                            let glyphs_before = prefix_widths
+                                .partition_point(|&(cluster, _)| cluster < char_index);
+                            prefix_widths
+                                .get(glyphs_before)
+                                .map_or(run_width, |&(_, width)| width)
+                        };
                         for char_index in hyphenation {
                             if !text_run.text.is_char_boundary(char_index) || char_index == 0 {
                                 continue;
                             }
+                            // Only the part of the word in front of the break is shaped again:
+                            // a break can be inside of a ligature, which the shaping of the
+                            // whole run does not split. Shaping the whole prefix of the run
+                            // instead made this quadratic in the length of the run.
                             let prefix = &text_run.text[..char_index];
-                            let prefix_width = shape(prefix, font)
-                                .iter()
-                                .map(|(position, _)| {
-                                    font.scale_to_px(position.x_advance, text_run.font_size)
-                                })
-                                .fold(Px(0.0), |sum, width| sum + width);
+                            let word_start = prefix
+                                .rfind(char::is_whitespace)
+                                .map_or(0, |index| {
+                                    index + prefix[index..].chars().next().map_or(1, char::len_utf8)
+                                });
+                            let prefix_width = width_before(word_start)
+                                + shape(&prefix[word_start..], font)
+                                    .iter()
+                                    .map(|(position, _)| {
+                                        font.scale_to_px(position.x_advance, text_run.font_size)
+                                    })
+                                    .fold(Px(0.0), |sum, width| sum + width);
                             break_points.push(BreakPoint {
                                 entity,
                                 char_index,
@@ -384,7 +465,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 } else if let Some(intrinsic_size) = intrinsic_sizes.get(entity) {
                     advance += intrinsic_size.width().unwrap_or_default();
                 } else if computed_values.get(entity).map_or(false, |style| {
-                    style.box_.display == crate::style::properties::specified::Display::InlineBlock
+                    style.box_.display.is_atomic_inline()
                 }) {
                     // the width is only known once the box has been laid out
                     atom_offsets.push((entity, advance));
@@ -955,8 +1036,7 @@ impl<'a> System<'a> for LineBoxCreator {
 
                         // The contents of an `inline-block` box are placed by `PlaceInlineBlocks`.
                         let is_inline_block = computed_values.get(entity).map_or(false, |style| {
-                            style.box_.display
-                                == crate::style::properties::specified::Display::InlineBlock
+                            style.box_.display.is_atomic_inline()
                         });
                         if !is_inline_block {
                             positions
