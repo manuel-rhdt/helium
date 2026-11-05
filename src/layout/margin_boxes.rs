@@ -22,6 +22,7 @@ pub struct ResolvedMarginBox {
     pub font_name: String,
     pub font_size: Px,
     pub color: RGBA,
+    pub lang: crate::style::properties::computed::Language,
     pub text_align: TextAlign,
 }
 
@@ -152,7 +153,16 @@ impl<'a> System<'a> for MarginBoxPaint {
                     TextOperator::SetColor(margin_box.color),
                 ];
                 let width =
-                    shape_piece(&text, font, margin_box.font_size, Px(0.0), false, &mut ops);
+                    shape_piece(
+                    &text,
+                    font,
+                    &margin_box.lang,
+                    margin_box.font_size,
+                    Px(0.0),
+                    &[],
+                    false,
+                    &mut ops,
+                );
 
                 let x = match margin_box.text_align.resolve(false) {
                     TextAlign::Center => area_left + (area_width - width) / 2.0,

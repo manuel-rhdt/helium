@@ -15,8 +15,9 @@
 //! relative to the row they are in, so the rest of the layout sees an ordinary box tree.
 //!
 //! Not supported yet: `vertical-align` in cells (their contents are at the top), columns
-//! (`<col>`), `table-layout: fixed`, `border-collapse` and `caption-side`. Grid tracks share
-//! extra width equally instead of in proportion to their contents.
+//! (`<col>`), `table-layout: fixed` and `caption-side`. Grid tracks share extra width equally
+//! instead of in proportion to their contents. `border-collapse: collapse` is resolved in
+//! [`super::collapse`].
 //!
 //! https://www.w3.org/TR/CSS22/tables.html
 
@@ -293,6 +294,25 @@ impl HeliumTree<'_, '_> {
         }
         structure.rows = row_index;
         structure.columns = slots.0.iter().map(Vec::len).max().unwrap_or(0);
+        if self.has_collapsed_borders(table) {
+            let parts: Vec<super::collapse::Part> = structure
+                .parts
+                .iter()
+                .map(|part| super::collapse::Part {
+                    node: part.node,
+                    is_row: self.display(part.node) == Display::TableRow,
+                    start: part.start,
+                    end: part.end,
+                })
+                .collect();
+            self.collapse_borders(
+                table,
+                &placements,
+                &parts,
+                structure.rows,
+                structure.columns,
+            );
+        }
         structure.captions = captions.len();
         let has_cells = structure.rows > 0 && structure.columns > 0;
         structure.leading_row_track = has_cells && captions.is_empty();
@@ -471,6 +491,7 @@ impl HeliumTree<'_, '_> {
         }
         let output = compute_grid_layout(self, id, inputs);
         if inputs.run_mode == RunMode::PerformLayout {
+            self.mirror_children(id, output.size.width, inputs.parent_size.width);
             self.place_table_parts(id);
         }
         output

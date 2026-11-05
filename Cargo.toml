@@ -31,6 +31,7 @@ smallvec = "1.16.3"
 hyphenation = { version = "0.8.4", features = ["embed_en-us"] }
 unicode-bidi = "0.3"
 taffy = { version = "=0.15.1", default-features = false, features = ["std", "block_layout", "flexbox", "grid", "float_layout", "content_size", "calc", "detailed_layout_info"] }
+unicode-linebreak = "0.1"
 
 # Finding an installed font for characters that the fonts of `font-family` lack
 # (already a dependency of font-kit on these platforms).

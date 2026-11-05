@@ -180,6 +180,28 @@ fn push_rects(entity: specs::Entity, world: &World, rects: &mut Vec<String>) {
         };
         // the background is painted below the borders
         push(deco.background_color, x, y, width, height);
+        if let Some(edges) = deco.collapsed {
+            // the borders of a table with collapsing borders are centered on the edges of the
+            // border box (see `DisplayDecoration`)
+            let lines = [
+                (edges.top, true, y),
+                (edges.bottom, true, y + height),
+                (edges.left, false, x),
+                (edges.right, false, x + width),
+            ];
+            for (edge, horizontal, at) in lines {
+                if !edge.paint {
+                    continue;
+                }
+                let (w, start, end) = (edge.width.0, edge.extend_start.0, edge.extend_end.0);
+                if horizontal {
+                    push(edge.color, x - start, at - w / 2.0, width + start + end, w);
+                } else {
+                    push(edge.color, at - w / 2.0, y - start, w, height + start + end);
+                }
+            }
+            return;
+        }
         let bc = deco.border_color;
         push(bc.top, x, y, width, bor.top.0);
         push(bc.bottom, x, y + height - bor.bottom.0, width, bor.bottom.0);
@@ -268,6 +290,9 @@ fn op_json(op: &TextOperator) -> String {
                 "{{\"op\": \"word_spacing\", \"value\": {}}}",
                 number(spacing.0)
             )
+        }
+        TextOperator::SetRise(rise) => {
+            format!("{{\"op\": \"rise\", \"value\": {}}}", number(rise.0))
         }
         TextOperator::SetTransform(m) => format!(
             "{{\"op\": \"transform\", \"matrix\": [{}, {}, {}, {}, {}, {}]}}",

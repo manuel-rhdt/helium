@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Multiscript specimen</title>
+<!-- Typesetting specimen: Arabic (Naskh, with harakat and bidi numbers), Persian, Urdu (Nastaliq,
+     needs GPOS cursive attachment), Hebrew with niqqud, polytonic Greek, Devanagari, Chinese (line
+     breaking and justification without spaces) and Latin with embedded Arabic. The fonts are Noto
+     fonts; missing ones fall back to other installed fonts. -->
+<style>
+@page { size: A4; margin: 22mm 24mm 26mm 24mm;
+  @bottom-center { content: counter(page); font-family: "Noto Serif"; font-size: 9pt; color: #555; } }
+body { font-family: "Noto Naskh Arabic", "Noto Serif"; font-size: 13pt; line-height: 1.75; color: #1a1a1a; }
+h1 { font-family: "Noto Naskh Arabic"; font-size: 30pt; font-weight: bold; text-align: center; line-height: 1.4; margin: 0 0 4pt 0; color: #6b1d1d; }
+.subtitle { text-align: center; font-family: "Noto Serif"; font-style: italic; font-size: 11pt; color: #555; margin: 0 0 18pt 0; }
+h2 { font-family: "Noto Naskh Arabic"; font-size: 16pt; font-weight: bold; margin: 18pt 0 4pt 0; color: #6b1d1d; line-height: 1.5; border-bottom: 0.5pt solid #b9a07a; padding-bottom: 2pt; }
+p { margin: 0; text-align: justify; }
+p + p { text-indent: 1.5em; }
+.verse { display: grid; grid-template-columns: 1fr 1fr; column-gap: 2.5em; margin: 6pt 0; }
+.verse div { text-align: center; font-size: 14pt; }
+.ltr { direction: ltr; font-family: "Noto Serif"; text-align: justify; font-size: 11pt; line-height: 1.5; }
+.ltr i { font-style: italic; }
+.urdu { font-family: "Noto Nastaliq Urdu"; font-size: 13pt; line-height: 2.3; text-align: center; }
+.fa { font-family: "Noto Naskh Arabic"; text-align: center; font-size: 14pt; }
+.he { font-family: "Noto Serif Hebrew"; font-size: 14pt; line-height: 1.7; text-align: justify; }
+.el { direction: ltr; font-family: "Noto Serif"; font-size: 12pt; text-align: center; line-height: 1.6; }
+.sa { direction: ltr; font-family: "Noto Serif Devanagari"; font-size: 13pt; text-align: center; line-height: 1.8; }
+.zh { direction: ltr; font-family: "Noto Serif CJK TC"; font-size: 12pt; text-align: justify; line-height: 1.8; }
+.label { font-family: "Noto Serif"; font-size: 8.5pt; color: #8a7350; text-align: left; direction: ltr; margin-top: 10pt; text-indent: 0; }
+.label + p { text-indent: 0; }
+.lat { font-family: "Noto Serif"; font-size: 0.85em; }
+table { border-collapse: collapse; margin: 6pt auto; }
+td, th { border-bottom: 0.4pt solid #ccc; padding: 2pt 10pt; font-size: 11.5pt; }
+th { font-weight: bold; }
+.num { font-family: "Noto Serif"; }
+</style>
+</head>
+<body>
+
+<h1>فَنُّ الخَطِّ وَالطِّبَاعَة</h1>
+<p class="subtitle" dir="ltr" lang="en">A specimen of multilingual typesetting — Arabic, Persian, Urdu, Hebrew, Greek, Sanskrit &amp; Chinese</p>
+
+<h2>مُقَدِّمَة</h2>
+<p>الكِتَابَةُ العَرَبِيَّةُ فَنٌّ قَبْلَ أَنْ تَكُونَ وَسِيلَةً، فَحُرُوفُهَا تَتَّصِلُ وَتَنْفَصِلُ وَتَتَغَيَّرُ صُوَرُهَا بِحَسَبِ مَوْقِعِهَا مِنَ الكَلِمَةِ. وَقَدْ عَرَفَ الخَطَّاطُونَ عَبْرَ القُرُونِ أَقْلَامًا كَثِيرَةً، مِنْهَا النَّسْخُ وَالثُّلُثُ وَالرُّقْعَةُ وَالدِّيوَانِيُّ وَالنَّسْتَعْلِيقُ. وَلَمَّا ظَهَرَتِ الطِّبَاعَةُ صَارَ عَلَى صَانِعِي الحُرُوفِ أَنْ يَحْفَظُوا جَمَالَ الخَطِّ فِي قَوَالِبَ مَعْدِنِيَّةٍ، ثُمَّ فِي خُطُوطٍ رَقْمِيَّةٍ تُرَاعِي التَّشْكِيلَ وَالرَّبْطَ وَالمَدَّ.</p>
+<p>وفي الطباعة الحديثة يجب أن يتعامل المُنَضِّد مع نصوص ثنائية الاتجاه: فقد تَرِد في الجملة العربية كلمةٌ لاتينية مثل <span class="lat" dir="ltr">Unicode</span> أو <span class="lat" dir="ltr">OpenType</span>، أو رقمٌ مثل ١٤٤٥ هـ (٢٠٢٤ م)، أو مقدارٌ مثل ٣٫١٤ و12.5%، دون أن يضطرب ترتيب الكلمات. ويُستحسن أن تكون الفقرة مضبوطةً من الجانبين، وأن تتساوى المسافات بين الكلمات قدر الإمكان، فالعين تنفر من الأنهار البيضاء التي تجري في وسط الصفحة.</p>
+
+<h2>مِنَ الشِّعْرِ — المُتَنَبِّي</h2>
+<div class="verse"><div>الخَيْلُ وَاللَّيْلُ وَالبَيْدَاءُ تَعْرِفُنِي</div><div>وَالسَّيْفُ وَالرُّمْحُ وَالقِرْطَاسُ وَالقَلَمُ</div></div>
+<div class="verse"><div>أَنَا الَّذِي نَظَرَ الأَعْمَى إِلَى أَدَبِي</div><div>وَأَسْمَعَتْ كَلِمَاتِي مَنْ بِهِ صَمَمُ</div></div>
+
+<h2>جَدْوَل</h2>
+<table>
+<tr><th>اللغة</th><th>الخط</th><th>الاتجاه</th><th>عدد الحروف</th></tr>
+<tr><td>العربية</td><td>النسخ</td><td>من اليمين</td><td>٢٨</td></tr>
+<tr><td>الفارسية</td><td>النستعليق</td><td>من اليمين</td><td>٣٢</td></tr>
+<tr><td>العبرية</td><td>المربّع</td><td>من اليمين</td><td>٢٢</td></tr>
+<tr><td>اليونانية</td><td>—</td><td>من اليسار</td><td>٢٤</td></tr>
+</table>
+
+<p class="label">Persian — Ḥāfeẓ</p>
+<p class="fa" lang="fa">اگر آن ترکِ شیرازی به دست آرد دلِ ما را<br>به خالِ هندویش بخشم سمرقند و بخارا را</p>
+
+<p class="label">Urdu (Nastaʿlīq) — Ghālib</p>
+<p class="urdu" dir="rtl" lang="ur">ہزاروں خواہشیں ایسی کہ ہر خواہش پہ دم نکلے<br>بہت نکلے مرے ارمان لیکن پھر بھی کم نکلے</p>
+
+<p class="label">Hebrew — Genesis 1:1–3</p>
+<p class="he" lang="he" dir="rtl">בְּרֵאשִׁית בָּרָא אֱלֹהִים אֵת הַשָּׁמַיִם וְאֵת הָאָרֶץ׃ וְהָאָרֶץ הָיְתָה תֹהוּ וָבֹהוּ וְחֹשֶׁךְ עַל־פְּנֵי תְהוֹם וְרוּחַ אֱלֹהִים מְרַחֶפֶת עַל־פְּנֵי הַמָּיִם׃ וַיֹּאמֶר אֱלֹהִים יְהִי אוֹר וַיְהִי־אוֹר׃</p>
+
+<p class="label">Greek (polytonic) — Iliad 1.1–2</p>
+<p class="el" lang="grc">Μῆνιν ἄειδε θεὰ Πηληϊάδεω Ἀχιλῆος<br>οὐλομένην, ἣ μυρί’ Ἀχαιοῖς ἄλγε’ ἔθηκε</p>
+
+<p class="label">Sanskrit — Bhagavad Gītā 2.47</p>
+<p class="sa" lang="sa">कर्मण्येवाधिकारस्ते मा फलेषु कदाचन ।<br>मा कर्मफलहेतुर्भूर्मा ते सङ्गोऽस्त्वकर्मणि ॥</p>
+
+<p class="label">Chinese — Dàodé Jīng 1</p>
+<p class="zh" lang="zh-Hant">道可道，非常道。名可名，非常名。無名天地之始；有名萬物之母。故常無欲，以觀其妙；常有欲，以觀其徼。此兩者，同出而異名，同謂之玄。玄之又玄，衆妙之門。</p>
+
+<p class="label">English, with embedded Arabic</p>
+<p class="ltr" lang="en">Arabic script is cursive: each letter takes an <i>isolated</i>, <i>initial</i>, <i>medial</i> or <i>final</i> form. The word كتاب (<i>kitāb</i>, “book”) is built from the root ك ت ب, which also yields مكتبة (<i>maktaba</i>, “library”) and كاتب (<i>kātib</i>, “writer”). A good typesetter keeps such embedded words intact, in the right order, and on the shared baseline — and handles numerals like 1,234.56 and dates such as 5 November 2026 without fuss. Justification should spread spaces evenly, never letter‑space Latin, and avoid stretching gaps beyond reason.</p>
+
+</body>
+</html>

@@ -88,6 +88,7 @@ impl FlowConstructor {
                     font_name,
                     font_size: style.font.font_size,
                     color: color_to_rgba(style.font.color),
+                    lang: style.font.lang.clone(),
                     text_align: text_align.unwrap_or(match kind {
                         MarginBoxKind::TopCenter | MarginBoxKind::BottomCenter => TextAlign::Center,
                         MarginBoxKind::TopRight | MarginBoxKind::BottomRight => TextAlign::Right,
@@ -194,6 +195,18 @@ impl Traversal<DomRef> for FlowConstructor {
                 let mut style = style_builder.build();
                 if parent_is_flex_or_grid {
                     style.blockify();
+                }
+                // the language of the element, inherited from the parent unless it has its own
+                // (`xml:lang` wins over `lang`)
+                let lang = {
+                    let attributes = element_ref.attributes.borrow();
+                    attributes
+                        .get(&QualName::new(None, ns!(xml), local_name!("lang")))
+                        .or_else(|| attributes.get(&QualName::new(None, ns!(), local_name!("lang"))))
+                        .map(|attr| crate::style::properties::computed::Language::from_tag(&attr.value))
+                };
+                if let Some(lang) = lang {
+                    std::sync::Arc::make_mut(&mut style.font).lang = lang;
                 }
                 element_ref.as_node().set_style(style);
             }
@@ -423,6 +436,7 @@ impl EntityConstructor {
                         font_name,
                         font_size: style.font.font_size,
                         color: crate::style::properties::computed::color_to_rgba(style.font.color),
+                        lang: style.font.lang.clone(),
                     }
                 });
 
@@ -532,6 +546,7 @@ impl EntityConstructor {
         let color = crate::style::properties::computed::color_to_rgba(style.font.color);
         let decoration = style.font.text_decoration;
         let hyphens = style.text.hyphens;
+        let lang = style.font.lang.clone();
         let entity = self
             .world
             .create_entity()
@@ -546,6 +561,7 @@ impl EntityConstructor {
                 decoration,
                 hyphens,
                 manual_hyphen_points,
+                lang,
             })
             .build();
         LayoutEntity(entity)

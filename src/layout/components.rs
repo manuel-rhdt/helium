@@ -198,6 +198,7 @@ pub struct ListMarker {
     pub font_name: String,
     pub font_size: PixelLength,
     pub color: crate::style::properties::computed::RGBA,
+    pub lang: crate::style::properties::computed::Language,
 }
 
 impl Component for ListMarker {
@@ -216,6 +217,8 @@ pub struct TextRun {
     pub decoration: crate::style::properties::specified::TextDecoration,
     pub hyphens: crate::style::properties::specified::Hyphens,
     pub manual_hyphen_points: Vec<usize>,
+    /// The language of the text, for shaping, fallback fonts and hyphenation.
+    pub lang: crate::style::properties::computed::Language,
 }
 
 impl Component for TextRun {
@@ -277,6 +280,26 @@ pub struct Decoration {
     pub border_color: EdgeValues<crate::style::properties::computed::RGBA>,
     pub margin: EdgeValues<PixelLength>,
     pub background_color: crate::style::properties::computed::RGBA,
+    /// The borders of a cell of a table with `border-collapse: collapse`, which are painted
+    /// instead of `border` (see [`CollapsedEdge`]). The table itself and its rows have them too,
+    /// with nothing to paint, because the cells paint all borders.
+    pub collapsed: Option<EdgeValues<CollapsedEdge>>,
+}
+
+/// A border between two cells (or a cell and the edge of the table) in the collapsing border
+/// model. Its `width` is centered on the edge of the border box of the cell, so that half of it
+/// is in the neighbouring cell. Each border is painted by one of the cells next to it only.
+/// https://www.w3.org/TR/CSS22/tables.html#collapsing-borders
+#[derive(Debug, Default, Copy, Clone, PartialEq)]
+pub struct CollapsedEdge {
+    pub width: PixelLength,
+    pub color: crate::style::properties::computed::RGBA,
+    /// Whether this box paints the border.
+    pub paint: bool,
+    /// How far the line extends beyond the corners of the border box at its start (top or
+    /// left) and end, to cover the joints with the borders across it.
+    pub extend_start: PixelLength,
+    pub extend_end: PixelLength,
 }
 
 impl Default for Decoration {
@@ -288,6 +311,7 @@ impl Default for Decoration {
             margin: Default::default(),
             border_color: EdgeValues::all(RGBA::transparent()),
             background_color: RGBA::transparent(),
+            collapsed: None,
         }
     }
 }
@@ -411,6 +435,9 @@ pub enum TextOperator {
     Glyphs(Glyphs),
     KernedGlyphs(Vec<KernedGlyphs>),
     SetWordSpacing(PixelLength),
+    /// Raises the following glyphs above the baseline (PDF text rise, `Ts`). Shaping uses it
+    /// for glyphs that the font positions vertically, like marks and cursive attachments.
+    SetRise(PixelLength),
     SetTransform(TransformMatrix),
     NewLine {
         x_offset: PixelLength,

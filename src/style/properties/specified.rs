@@ -364,6 +364,10 @@ pub enum Text {
     /// https://www.w3.org/TR/CSS22/tables.html#separated-borders
     #[property]
     BorderSpacing(BorderSpacing),
+    /// Inherited like `border-spacing`.
+    /// https://www.w3.org/TR/CSS22/tables.html#borders
+    #[property]
+    BorderCollapse(BorderCollapse),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -1023,6 +1027,14 @@ impl Default for WhiteSpace {
     fn default() -> Self {
         WhiteSpace::Normal
     }
+}
+
+/// https://www.w3.org/TR/CSS22/tables.html#propdef-border-collapse
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum BorderCollapse {
+    #[default]
+    Separate,
+    Collapse,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]

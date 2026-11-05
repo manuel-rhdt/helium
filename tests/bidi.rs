@@ -165,3 +165,91 @@ fn inline_blocks_are_reordered_with_the_text() {
         "box at {rect_x}, text starts at {text_x}"
     );
 }
+
+/// The border box of the element with the `id`, as `(x, width)`.
+fn box_of(dump: &Value, id: &str) -> (f64, f64) {
+    fn find<'a>(node: &'a Value, id: &str) -> Option<&'a Value> {
+        if node["id"] == id {
+            return Some(node);
+        }
+        node["children"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find_map(|child| find(child, id))
+    }
+    let node = find(&dump["document"], id).unwrap_or_else(|| panic!("no element #{id}"));
+    let border_box = &node["border_box"];
+    (
+        border_box["x"].as_f64().unwrap(),
+        border_box["width"].as_f64().unwrap(),
+    )
+}
+
+fn right(dump: &Value, id: &str) -> f64 {
+    let (x, width) = box_of(dump, id);
+    x + width
+}
+
+#[test]
+fn grid_columns_go_from_right_to_left() {
+    let dump = dump(
+        "rtl_grid",
+        r#"<div id="g" dir="rtl" style="display: grid; grid-template-columns: 1fr 2fr; padding-right: 30px">
+             <div id="a">a</div><div id="b">b</div></div>"#,
+    );
+    let (a, a_width) = box_of(&dump, "a");
+    let (b, b_width) = box_of(&dump, "b");
+    assert!(a > b, "the first column is at the right: a {a}, b {b}");
+    assert!((b_width - 2.0 * a_width).abs() < 0.5);
+    // the padding stays at the right
+    assert!((right(&dump, "g") - 30.0 - right(&dump, "a")).abs() < 0.5);
+}
+
+#[test]
+fn flex_items_go_from_right_to_left_and_keep_their_physical_margins() {
+    let dump = dump(
+        "rtl_flex",
+        r#"<div id="f" dir="rtl" style="display: flex">
+             <div id="a" style="width: 50px">a</div>
+             <div id="b" style="width: 50px; margin-left: 40px">b</div>
+             <div id="c" style="width: 50px">c</div></div>"#,
+    );
+    assert!((right(&dump, "f") - right(&dump, "a")).abs() < 0.5);
+    let (a, _) = box_of(&dump, "a");
+    let (b, _) = box_of(&dump, "b");
+    let (_, c_width) = box_of(&dump, "c");
+    assert!((a - right(&dump, "b")).abs() < 0.5, "b is next to a");
+    // the margin is on the left of b, between b and c
+    assert!((b - 40.0 - right(&dump, "c")).abs() < 0.5);
+    assert!((c_width - 50.0).abs() < 0.5);
+}
+
+#[test]
+fn table_columns_go_from_right_to_left() {
+    let dump = dump(
+        "rtl_table",
+        r#"<table dir="rtl"><tr><td id="a">first</td><td id="b">second</td></tr></table>"#,
+    );
+    let (a, _) = box_of(&dump, "a");
+    let (b, _) = box_of(&dump, "b");
+    assert!(a > b, "the first column is at the right: a {a}, b {b}");
+}
+
+#[test]
+fn narrow_blocks_are_at_the_right_of_right_to_left_containers() {
+    let dump = dump(
+        "rtl_block",
+        r#"<div id="c" dir="rtl">
+             <div id="narrow" style="width: 100px"></div>
+             <div id="margin" style="margin-left: 50px; margin-right: 20px"></div>
+             <table id="t"><tr><td>a</td></tr></table></div>"#,
+    );
+    assert!((right(&dump, "c") - right(&dump, "narrow")).abs() < 0.5);
+    assert!((right(&dump, "c") - right(&dump, "t")).abs() < 0.5);
+    // margins stay physical
+    let (container, _) = box_of(&dump, "c");
+    let (margin, _) = box_of(&dump, "margin");
+    assert!((margin - container - 50.0).abs() < 0.5);
+    assert!((right(&dump, "c") - 20.0 - right(&dump, "margin")).abs() < 0.5);
+}

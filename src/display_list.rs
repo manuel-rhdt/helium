@@ -206,6 +206,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 border,
                 background_color,
                 border_color,
+                collapsed,
                 ..
             } = deco;
 
@@ -226,15 +227,44 @@ impl<'a> System<'a> for DisplayDecoration {
                 self.display_list.append(DisplayItem::Pop, entity, z);
             }
 
-            let hbt = border.top / 2.0;
-            let hbb = border.bottom / 2.0;
-            let hbl = border.left / 2.0;
-            let hbr = border.right / 2.0;
-
             let xmin = x - padding.left - border.left;
             let xmax = x + width + padding.right + border.right;
             let ymin = y - padding.top - border.top;
             let ymax = y + height + padding.bottom + border.bottom;
+
+            if let Some(edges) = collapsed {
+                // the borders are centered on the edges of the border box
+                let lines = [
+                    (edges.top, (xmin, ymin), (xmax, ymin)),
+                    (edges.bottom, (xmin, ymax), (xmax, ymax)),
+                    (edges.left, (xmin, ymin), (xmin, ymax)),
+                    (edges.right, (xmax, ymin), (xmax, ymax)),
+                ];
+                for (edge, (x1, y1), (x2, y2)) in lines {
+                    if !edge.paint || edge.width <= Px(0.0) {
+                        continue;
+                    }
+                    let (start, end) = if y1 == y2 {
+                        (
+                            Point::new(x1 - edge.extend_start, y1),
+                            Point::new(x2 + edge.extend_end, y2),
+                        )
+                    } else {
+                        (
+                            Point::new(x1, y1 - edge.extend_start),
+                            Point::new(x2, y2 + edge.extend_end),
+                        )
+                    };
+                    self.display_list
+                        .stroked_line(start, end, edge.width, edge.color, entity, z);
+                }
+                continue;
+            }
+
+            let hbt = border.top / 2.0;
+            let hbb = border.bottom / 2.0;
+            let hbl = border.left / 2.0;
+            let hbr = border.right / 2.0;
 
             if border.top > Px(0.0) {
                 let pt1 = Point::new(xmin, ymin + hbt);

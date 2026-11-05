@@ -62,6 +62,13 @@ pub(super) struct Node {
     pub table: Option<Box<TableStructure>>,
     /// The tracks of a grid container after layout.
     pub grid_tracks: Option<GridTracks>,
+    /// Whether the in-flow children are laid out from right to left: the node is a block, flex or
+    /// grid container or a table with `direction: rtl`. Taffy only lays out left to right, so the
+    /// layout is mirrored afterwards (see [`HeliumTree::mirror_children`]).
+    pub mirror_rtl: bool,
+    /// The borders of a cell, row, row group or table of a table with collapsing borders (see
+    /// [`super::collapse`]).
+    pub collapsed: Option<crate::layout::components::EdgeValues<crate::layout::components::CollapsedEdge>>,
     pub cache: Cache,
     pub layout: Layout,
 }
@@ -105,6 +112,8 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             hoisted: vec![],
             table: None,
             grid_tracks: None,
+            mirror_rtl: false,
+            collapsed: None,
             cache: Cache::new(),
             layout: Layout::new(),
         });
@@ -156,6 +165,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
                         if is_table {
                             self.build_table(id);
                         }
+                        self.prepare_right_to_left(id);
                     }
                 }
                 BlockLevelElement::Leaf(entity) => {
@@ -180,6 +190,68 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             }
         }
         root
+    }
+
+    /// Prepares a right-to-left box with block-level children (a block, flex or grid container,
+    /// or a table) for being mirrored after layout: margins are physical, so the left and right
+    /// margins of its in-flow children are swapped, to end up on the correct side again when the
+    /// layout is mirrored.
+    ///
+    /// For a block container, the mirroring puts a block narrower than the container at its
+    /// right edge, as CSS 2 resolves over-constrained margins in right-to-left containers.
+    /// (Floats would have to be mirrored back, but they are not supported.)
+    fn prepare_right_to_left(&mut self, id: NodeId) {
+        let node = self.node(id);
+        let rtl = self.computed_values.get(node.entity).is_some_and(|style| {
+            style.text.direction == crate::style::properties::specified::Direction::Rtl
+        });
+        let has_block_children = matches!(node.content, Content::Blocks | Content::Table);
+        if !rtl || !has_block_children {
+            return;
+        }
+        self.node_mut(id).mirror_rtl = true;
+        for child in self.node(id).children.clone() {
+            let style = &mut self.node_mut(child).style;
+            if style.position != taffy::Position::Absolute {
+                std::mem::swap(&mut style.margin.left, &mut style.margin.right);
+            }
+        }
+    }
+
+    /// Mirrors the in-flow children of a right-to-left container (see `Node::mirror_rtl`) in its
+    /// content box, so that the first column or flex item is at the right. `width` is the width
+    /// of the border box of the container and `parent_width` the width that percentages of its
+    /// padding refer to.
+    ///
+    /// This is called right after the container is laid out, before its parent stores its
+    /// layout, so the border and padding are resolved from the style.
+    pub(super) fn mirror_children(&mut self, id: NodeId, width: f32, parent_width: Option<f32>) {
+        if !self.node(id).mirror_rtl {
+            return;
+        }
+        let style = &self.node(id).style;
+        let resolve = |lp: taffy::style::LengthPercentage| {
+            let raw = lp.into_raw();
+            if raw.tag() == taffy::CompactLength::LENGTH_TAG {
+                raw.value()
+            } else if raw.tag() == taffy::CompactLength::PERCENT_TAG {
+                raw.value() * parent_width.unwrap_or(0.0)
+            } else {
+                0.0
+            }
+        };
+        let content_left = resolve(style.border.left) + resolve(style.padding.left);
+        let content_right = width - resolve(style.border.right) - resolve(style.padding.right);
+        for child in self.node(id).children.clone() {
+            let node = self.node_mut(child);
+            if node.style.position == taffy::Position::Absolute
+                || node.style.display == taffy::Display::None
+            {
+                continue;
+            }
+            let x = node.layout.location.x;
+            node.layout.location.x = content_left + content_right - x - node.layout.size.width;
+        }
     }
 
     /// Turns a node into a box with inline content or a replaced box. The out-of-flow boxes of
@@ -537,11 +609,17 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
         }
         compute_cached_layout(self, id, inputs, |tree, id, inputs| {
             let mut output = match tree.node(id).content {
-                Content::Blocks => match tree.node(id).style.display {
-                    taffy::Display::Flex => compute_flexbox_layout(tree, id, inputs),
-                    taffy::Display::Grid => compute_grid_layout(tree, id, inputs),
-                    _ => compute_block_layout(tree, id, inputs, None),
-                },
+                Content::Blocks => {
+                    let output = match tree.node(id).style.display {
+                        taffy::Display::Flex => compute_flexbox_layout(tree, id, inputs),
+                        taffy::Display::Grid => compute_grid_layout(tree, id, inputs),
+                        _ => compute_block_layout(tree, id, inputs, None),
+                    };
+                    if inputs.run_mode == RunMode::PerformLayout {
+                        tree.mirror_children(id, output.size.width, inputs.parent_size.width);
+                    }
+                    output
+                }
                 Content::Inline => tree.compute_inline_layout(id, inputs),
                 Content::Replaced => tree.compute_replaced_layout(id, inputs),
                 Content::Table => tree.compute_table_layout(id, inputs),

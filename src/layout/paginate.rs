@@ -261,10 +261,20 @@ impl<'world> System<'world> for Paginator {
                 if !is_first {
                     fragment_deco.padding.top = PixelLength(0.0);
                     fragment_deco.border.top = PixelLength(0.0);
+                    if let Some(edges) = &mut fragment_deco.collapsed {
+                        edges.top.paint = false;
+                        edges.left.extend_start = PixelLength(0.0);
+                        edges.right.extend_start = PixelLength(0.0);
+                    }
                 }
                 if !is_last {
                     fragment_deco.padding.bottom = PixelLength(0.0);
                     fragment_deco.border.bottom = PixelLength(0.0);
+                    if let Some(edges) = &mut fragment_deco.collapsed {
+                        edges.bottom.paint = false;
+                        edges.left.extend_end = PixelLength(0.0);
+                        edges.right.extend_end = PixelLength(0.0);
+                    }
                 }
                 let content_top = top + fragment_deco.border.top + fragment_deco.padding.top;
                 let content_bottom =
