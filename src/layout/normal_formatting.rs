@@ -396,13 +396,16 @@ impl<'data> System<'data> for InlineFormatter {
                     - breakpoints[line.from_break].advance_after;
 
                 let (x, width) = if line_num == 0 {
-                    (self.line_start + indent, self.line_width - indent)
+                    (
+                        self.line_start + ifm.indent_offset(indent),
+                        self.line_width - indent,
+                    )
                 } else {
                     (self.line_start, self.line_width)
                 };
 
-                let (x, width) = match ifm.text_align {
-                    TextAlign::Left => (x, content_width),
+                let (x, width) = match ifm.resolved_text_align() {
+                    TextAlign::Left | TextAlign::Start | TextAlign::End => (x, content_width),
                     TextAlign::Justify => (x, width),
                     TextAlign::Center => (x + (width - content_width) / 2.0, content_width),
                     TextAlign::Right => (x + width - content_width, content_width),

@@ -269,6 +269,9 @@ pub enum Font {
 pub enum Box {
     #[property]
     Display(Display),
+    /// https://www.w3.org/TR/css-writing-modes-3/#unicode-bidi
+    #[property]
+    UnicodeBidi(UnicodeBidi),
     #[property]
     Position(PositionSpec),
 
@@ -352,6 +355,9 @@ pub enum Text {
     TextAlign(TextAlign),
     #[property]
     Hyphens(Hyphens),
+    /// https://www.w3.org/TR/css-writing-modes-3/#direction
+    #[property]
+    Direction(Direction),
     #[ua_property]
     LineBreak(LineBreak),
     /// Inherited like `hyphens`, so it lives in the same style struct.
@@ -1151,11 +1157,67 @@ pub enum TextAlign {
     Justify,
     Center,
     Right,
+    /// `left` in left-to-right and `right` in right-to-left paragraphs.
+    Start,
+    /// `right` in left-to-right and `left` in right-to-left paragraphs.
+    End,
 }
 
 impl Default for TextAlign {
     fn default() -> Self {
-        TextAlign::Left
+        TextAlign::Start
+    }
+}
+
+impl TextAlign {
+    /// Replaces `start` and `end` by `left` or `right` for a paragraph of the given direction.
+    pub fn resolve(self, rtl: bool) -> TextAlign {
+        match (self, rtl) {
+            (TextAlign::Start, false) | (TextAlign::End, true) => TextAlign::Left,
+            (TextAlign::Start, true) | (TextAlign::End, false) => TextAlign::Right,
+            (align, _) => align,
+        }
+    }
+}
+
+/// The inline base direction of an element.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum Direction {
+    #[default]
+    Ltr,
+    Rtl,
+}
+
+/// How an element takes part in the Unicode bidirectional algorithm.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum UnicodeBidi {
+    #[default]
+    Normal,
+    Embed,
+    Isolate,
+    BidiOverride,
+    IsolateOverride,
+    Plaintext,
+}
+
+impl UnicodeBidi {
+    /// The bidi control characters that are inserted at the start and the end of an inline
+    /// element with this value and the given direction
+    /// (https://www.w3.org/TR/css-writing-modes-3/#bidi-control-codes-injection-table).
+    pub fn control_characters(self, direction: Direction) -> Option<(&'static str, &'static str)> {
+        let rtl = direction == Direction::Rtl;
+        Some(match self {
+            UnicodeBidi::Normal => return None,
+            UnicodeBidi::Embed if rtl => ("\u{202B}", "\u{202C}"),
+            UnicodeBidi::Embed => ("\u{202A}", "\u{202C}"),
+            UnicodeBidi::Isolate if rtl => ("\u{2067}", "\u{2069}"),
+            UnicodeBidi::Isolate => ("\u{2066}", "\u{2069}"),
+            UnicodeBidi::BidiOverride if rtl => ("\u{202E}", "\u{202C}"),
+            UnicodeBidi::BidiOverride => ("\u{202D}", "\u{202C}"),
+            UnicodeBidi::IsolateOverride if rtl => ("\u{2067}\u{202E}", "\u{202C}\u{2069}"),
+            UnicodeBidi::IsolateOverride => ("\u{2066}\u{202D}", "\u{202C}\u{2069}"),
+            UnicodeBidi::Plaintext => ("\u{2068}", "\u{2069}"),
+        })
     }
 }
 

@@ -4,9 +4,10 @@ use super::{
     text::{Font, font::GlyphIndex},
 };
 use crate::style::properties::computed::{ComputedValues, PixelLength as Px, RGBA, TextAlign};
+use crate::style::properties::specified::{Direction, UnicodeBidi};
 
 use crate::display_list::Rect;
-use crate::layout::text::shape;
+use crate::layout::text::{is_invisible_formatting, shape, shape_directed, shape_with_levels};
 
 use components::{Glyphs, GraphicsOp, IntrinsicSize, KernedGlyphs, Position};
 use hyphenation::{Hyphenator, Language, Load, Standard};
@@ -47,8 +48,227 @@ pub struct InlineFormattingContext {
     /// The `inline-block` boxes in `elements` and the advance at which they start. Before the
     /// boxes are measured they have no width.
     pub atom_offsets: Vec<(Entity, Px)>,
+    /// The `direction` of the block: the base direction of the paragraph.
+    pub direction: Direction,
+    /// Whether the base direction is found from the text (`unicode-bidi: plaintext`) instead of
+    /// `direction`.
+    pub plaintext: bool,
+    /// Whether the (first) paragraph is right-to-left, set by `FindPossibleLineBreaks`.
+    pub base_rtl: bool,
+    /// The runs of the paragraph with the same bidi embedding level in logical order, set by
+    /// `FindPossibleLineBreaks`. Empty if all of the text is left-to-right.
+    pub bidi_runs: Vec<BidiRun>,
 }
+
+/// A part of the content of a paragraph with the same bidi embedding level, inside of one
+/// element of an inline formatting context.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct BidiRun {
+    /// The index of the element in `InlineFormattingContext::elements`.
+    pub element: usize,
+    /// The range of bytes in the text of the element (`0..0` for other elements).
+    pub start: usize,
+    pub end: usize,
+    /// The embedding level; odd levels are right-to-left.
+    pub level: u8,
+    /// The advance (like the advances of the break points) at the start and end of the run.
+    pub advance_start: Px,
+    pub advance_end: Px,
+}
+
+/// A part of a line with one bidi embedding level: a range of the text of a text run or another
+/// element (with an empty range).
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct LinePiece {
+    /// The index of the element in `InlineFormattingContext::elements`.
+    pub element: usize,
+    pub start: usize,
+    pub end: usize,
+    pub level: u8,
+}
+
+impl LinePiece {
+    pub fn is_rtl(&self) -> bool {
+        self.level % 2 == 1
+    }
+}
+
+impl BidiRun {
+    pub fn is_rtl(&self) -> bool {
+        self.level % 2 == 1
+    }
+}
+
 impl InlineFormattingContext {
+    pub fn new(elements: Vec<Entity>, absolutes: Vec<Entity>, style: &ComputedValues) -> Self {
+        InlineFormattingContext {
+            text_align: style.text.text_align,
+            elements,
+            absolutes,
+            break_points: vec![],
+            lines: vec![],
+            atom_offsets: vec![],
+            direction: style.text.direction,
+            plaintext: style.box_.unicode_bidi == UnicodeBidi::Plaintext,
+            base_rtl: style.text.direction == Direction::Rtl,
+            bidi_runs: vec![],
+        }
+    }
+
+    /// The extra space after every space on a justified line (all but the last line of a
+    /// paragraph with `text-align: justify`), given the width of the line box.
+    pub fn word_spacing(&self, line_num: usize, line_width: Px) -> Px {
+        let line = &self.lines[line_num];
+        let num_spaces = self.space_count(line.from_break, line.to_break);
+        let is_last_line = line_num == self.lines.len() - 1;
+        if !is_last_line && self.text_align == TextAlign::Justify && num_spaces > 0 {
+            (line_width - self.content_width(line.from_break, line.to_break)) / num_spaces as f32
+        } else {
+            Px(0.0)
+        }
+    }
+
+    /// Where the content of a line starts in its line box. The line box of a justified line
+    /// is as wide as the paragraph; a line that is not stretched (the last one) starts at the
+    /// right in a right-to-left paragraph.
+    pub fn line_start_offset(&self, line_num: usize, line_width: Px, word_spacing: Px) -> Px {
+        let line = &self.lines[line_num];
+        if self.base_rtl && self.text_align == TextAlign::Justify && word_spacing == Px(0.0) {
+            (line_width - self.content_width(line.from_break, line.to_break)).max(Px(0.0))
+        } else {
+            Px(0.0)
+        }
+    }
+
+    /// The pieces of a line in logical order: the parts of its elements, split where the bidi
+    /// embedding level changes. The whitespace at the end of the line is not part of them.
+    pub fn line_pieces(
+        &self,
+        line: &Line,
+        text_runs: &impl GenericReadStorage<Component = components::TextRun>,
+    ) -> Vec<LinePiece> {
+        let from_break = self.break_points[line.from_break];
+        let to_break = self.break_points[line.to_break];
+        let position = |entity| self.elements.iter().position(|&e| e == entity);
+        let (Some(first), Some(last)) = (position(from_break.entity), position(to_break.entity))
+        else {
+            return vec![];
+        };
+        let mut pieces = Vec::new();
+        for element in first..=last {
+            let entity = self.elements[element];
+            let runs_start = self.bidi_runs.partition_point(|run| run.element < element);
+            let runs = self.bidi_runs[runs_start..]
+                .iter()
+                .take_while(|run| run.element == element);
+            match text_runs.get(entity) {
+                Some(text_run) => {
+                    let start = if element == first {
+                        from_break.char_index
+                    } else {
+                        0
+                    };
+                    let mut end = if element == last {
+                        to_break.char_index
+                    } else {
+                        text_run.text.len()
+                    };
+                    if element == last && to_break.space && start < end {
+                        end = start + text_run.text[start..end].trim_end().len();
+                    }
+                    if start >= end {
+                        continue;
+                    }
+                    if self.bidi_runs.is_empty() {
+                        pieces.push(LinePiece {
+                            element,
+                            start,
+                            end,
+                            level: 0,
+                        });
+                        continue;
+                    }
+                    for run in runs {
+                        let (start, end) = (run.start.max(start), run.end.min(end));
+                        if start < end {
+                            pieces.push(LinePiece {
+                                element,
+                                start,
+                                end,
+                                level: run.level,
+                            });
+                        }
+                    }
+                }
+                None => {
+                    let level = runs.map(|run| run.level).next().unwrap_or(0);
+                    pieces.push(LinePiece {
+                        element,
+                        start: 0,
+                        end: 0,
+                        level,
+                    });
+                }
+            }
+        }
+        pieces
+    }
+
+    /// The x offsets from the left edge of the line box of the `inline-block` boxes on a line of
+    /// a paragraph with bidi runs, computed from the advances of the runs.
+    fn visual_atom_offsets(&self, line_num: usize, line_width: Px) -> Vec<(Entity, Px)> {
+        let line = &self.lines[line_num];
+        let from = self.break_points[line.from_break];
+        let to = self.break_points[line.to_break];
+        let word_spacing = self.word_spacing(line_num, line_width);
+        let spaces = &self.break_points[line.from_break + 1..line.to_break];
+
+        // the parts of the runs on the line in logical order as (run, width)
+        let mut parts: Vec<(&BidiRun, Px)> = self
+            .bidi_runs
+            .iter()
+            .filter_map(|run| {
+                let start = run.advance_start.max(from.advance_after);
+                let end = run.advance_end.min(to.advance_before);
+                if end <= start {
+                    return None;
+                }
+                let num_spaces = spaces
+                    .iter()
+                    .filter(|bp| bp.space && bp.advance_before >= start && bp.advance_before < end)
+                    .count();
+                Some((run, end - start + word_spacing * num_spaces as f32))
+            })
+            .collect();
+        if let Some(last) = parts.last_mut() {
+            last.1 += to.hyphen_width;
+        }
+
+        let mut x = self.line_start_offset(line_num, line_width, word_spacing);
+        let mut offsets = Vec::new();
+        let levels: Vec<u8> = parts.iter().map(|(run, _)| run.level).collect();
+        for index in super::bidi::visual_order(&levels) {
+            let (run, width) = parts[index];
+            if run.start == run.end {
+                offsets.push((self.elements[run.element], x));
+            }
+            x += width;
+        }
+        offsets
+    }
+
+    /// `text-align` with `start` and `end` resolved for the direction of the paragraph.
+    pub fn resolved_text_align(&self) -> TextAlign {
+        self.text_align.resolve(self.base_rtl)
+    }
+
+    /// The `text-indent` of the first line moves it away from the start edge: the left edge in
+    /// left-to-right and the right edge in right-to-left paragraphs. Returns the offset of the
+    /// first line box from the left edge.
+    pub fn indent_offset(&self, indent: Px) -> Px {
+        if self.base_rtl { Px(0.0) } else { indent }
+    }
+
     /// Breaks the paragraph into lines using adjustment-ratio badness and breakpoint demerits,
     /// creates one entity per line and stores the lines in the context.
     pub fn break_lines(
@@ -263,6 +483,19 @@ impl InlineFormattingContext {
             bp.advance_before += shift;
             bp.advance_after += shift;
         }
+        // The runs are shifted by the boxes in front of them; the run of a box itself gets its
+        // width.
+        let width_of_atoms = |include: &dyn Fn(usize) -> bool| {
+            atoms
+                .iter()
+                .filter(|&&(atom, _)| include(atom))
+                .fold(Px(0.0), |sum, &(_, width)| sum + width)
+        };
+        for run in &mut self.bidi_runs {
+            let element = run.element;
+            run.advance_start += width_of_atoms(&|atom| atom < element);
+            run.advance_end += width_of_atoms(&|atom| atom <= element);
+        }
         let mut shift = Px(0.0);
         for (entity, offset) in &mut self.atom_offsets {
             *offset += shift;
@@ -313,6 +546,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             elements,
             break_points,
             atom_offsets,
+            direction,
+            plaintext,
+            base_rtl,
+            bidi_runs,
             ..
         } in (&mut inline_formatting_contexts).join()
         {
@@ -320,6 +557,18 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             if elements.is_empty() {
                 continue;
             }
+
+            let levels = super::bidi::resolve_levels(
+                elements,
+                &text_runs,
+                (!*plaintext).then_some(*direction == Direction::Rtl),
+            );
+            *base_rtl = levels.base_rtl;
+            let element_runs = levels.element_runs;
+            // the runs of an element, or none if the paragraph is left-to-right
+            let runs_of = |index: usize| -> &[(usize, usize, u8)] {
+                element_runs.as_ref().map_or(&[], |runs| &runs[index])
+            };
 
             // insert first breakpoint at beginning
             break_points.push(BreakPoint {
@@ -338,19 +587,30 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
 
             let mut advance = Px(0.0);
 
-            for (_index, &entity) in elements.iter().enumerate() {
+            for (index, &entity) in elements.iter().enumerate() {
+                let element_start = advance;
                 if let Some(text_run) = text_runs.get_mut(entity) {
                     let font = &font_map[&text_run.font_name];
+                    let levels = runs_of(index);
+                    // the glyphs of the run as `(cluster, width)`, for the advances of the bidi
+                    // runs
+                    let mut glyph_widths: Vec<(usize, Px)> = Vec::new();
                     if computed_values.get(entity).is_some_and(|style| {
                         style.text.white_space
                             == crate::style::properties::specified::WhiteSpace::Pre
                     }) {
                         let mut segment_start = 0;
                         for (newline_index, _) in text_run.text.match_indices('\n') {
-                            for (position, _) in
-                                shape(&text_run.text[segment_start..newline_index], font)
-                            {
-                                advance += font.scale_to_px(position.x_advance, text_run.font_size);
+                            for (position, info) in shape_with_levels(
+                                &text_run.text[segment_start..newline_index],
+                                segment_start,
+                                levels,
+                                font,
+                            ) {
+                                let width =
+                                    font.scale_to_px(position.x_advance, text_run.font_size);
+                                glyph_widths.push((segment_start + info.cluster as usize, width));
+                                advance += width;
                             }
                             let break_index = newline_index + 1;
                             break_points.push(BreakPoint {
@@ -368,12 +628,31 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             });
                             segment_start = break_index;
                         }
-                        for (position, _) in shape(&text_run.text[segment_start..], font) {
-                            advance += font.scale_to_px(position.x_advance, text_run.font_size);
+                        for (position, info) in shape_with_levels(
+                            &text_run.text[segment_start..],
+                            segment_start,
+                            levels,
+                            font,
+                        ) {
+                            let width = font.scale_to_px(position.x_advance, text_run.font_size);
+                            glyph_widths.push((segment_start + info.cluster as usize, width));
+                            advance += width;
                         }
+                        push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start);
                         continue;
                     }
-                    let shaped = shape(&text_run.text, font);
+                    let shaped = shape_with_levels(&text_run.text, 0, levels, font);
+                    if !levels.is_empty() {
+                        glyph_widths = shaped
+                            .iter()
+                            .map(|(position, info)| {
+                                (
+                                    info.cluster as usize,
+                                    font.scale_to_px(position.x_advance, text_run.font_size),
+                                )
+                            })
+                            .collect();
+                    }
                     let run_start_advance = advance;
                     for (pos, glyph_info) in &shaped {
                         let cur_char = &text_run.text[glyph_info.cluster as usize..];
@@ -492,14 +771,22 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             });
                         }
                     }
+                    push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start);
                 } else if let Some(intrinsic_size) = intrinsic_sizes.get(entity) {
                     advance += intrinsic_size.width().unwrap_or_default();
+                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
+                    if let Some(run) = bidi_runs.last_mut().filter(|run| run.element == index) {
+                        run.advance_end = advance;
+                    }
                 } else if computed_values
                     .get(entity)
                     .map_or(false, |style| style.box_.display.is_atomic_inline())
                 {
                     // the width is only known once the box has been laid out
                     atom_offsets.push((entity, advance));
+                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
+                } else {
+                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
                 }
                 if let Some(style) = computed_values.get(entity) {
                     if style.text.line_break
@@ -554,6 +841,38 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 (element_order(break_point.entity), break_point.char_index)
             });
         }
+    }
+}
+
+/// Appends the bidi runs of the element at `index` (with the level runs `levels` of its text) to
+/// `bidi_runs`. `glyph_widths` are the glyphs of the text in logical order as `(cluster, width)`
+/// and `element_start` is the advance at the start of the element.
+fn push_bidi_runs(
+    bidi_runs: &mut Vec<BidiRun>,
+    index: usize,
+    levels: &[(usize, usize, u8)],
+    glyph_widths: &[(usize, Px)],
+    element_start: Px,
+) {
+    let mut advance = element_start;
+    let mut glyphs = glyph_widths.iter().peekable();
+    for &(start, end, level) in levels {
+        let advance_start = advance;
+        while let Some(&&(cluster, width)) = glyphs.peek() {
+            if cluster >= end {
+                break;
+            }
+            advance += width;
+            glyphs.next();
+        }
+        bidi_runs.push(BidiRun {
+            element: index,
+            start,
+            end,
+            level,
+            advance_start,
+            advance_end: advance,
+        });
     }
 }
 
@@ -697,7 +1016,14 @@ impl<'a> System<'a> for ListMarkerCreator {
                 TextOperator::SetFont(marker.font_name.clone(), marker.font_size),
                 TextOperator::SetColor(marker.color),
             ];
-            let width = shape_piece(&marker.text, font, marker.font_size, Px(0.0), &mut ops);
+            let width = shape_piece(
+                &marker.text,
+                font,
+                marker.font_size,
+                Px(0.0),
+                false,
+                &mut ops,
+            );
             let gap = marker.font_size * 0.4;
             entities
                 .build_entity()
@@ -755,18 +1081,25 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                 let from = ifc.break_points[line.from_break];
                 let to = ifc.break_points[line.to_break];
 
+                if !ifc.bidi_runs.is_empty() {
+                    // the boxes are reordered with the text
+                    for (atom, offset) in ifc.visual_atom_offsets(line_num, line_pos.width) {
+                        let Some(&IntrinsicSize::SizeWithBaseline { baseline, .. }) =
+                            intrinsic_sizes.get(atom)
+                        else {
+                            continue;
+                        };
+                        if !ifc.atom_offsets.iter().any(|&(entity, _)| entity == atom) {
+                            continue;
+                        }
+                        let y = line_pos.y + line.baseline - baseline;
+                        placements.insert(atom, (line_pos.x + offset, y, line_pos.page));
+                    }
+                    continue;
+                }
+
                 // the same word spacing as the line box creator uses
-                let is_last_line = line_num == ifc.lines.len() - 1;
-                let num_spaces = ifc.space_count(line.from_break, line.to_break);
-                let word_spacing = if !is_last_line
-                    && ifc.text_align == crate::style::properties::specified::TextAlign::Justify
-                    && num_spaces > 0
-                {
-                    (line_pos.width - ifc.content_width(line.from_break, line.to_break))
-                        / num_spaces as f32
-                } else {
-                    Px(0.0)
-                };
+                let word_spacing = ifc.word_spacing(line_num, line_pos.width);
 
                 for &(atom, offset) in &ifc.atom_offsets {
                     let (width, baseline) = match intrinsic_sizes.get(atom) {
@@ -868,22 +1201,17 @@ impl<'a> System<'a> for LineBoxCreator {
             font_map,
         ): Self::SystemData,
     ) {
-        for InlineFormattingContext {
-            break_points,
-            lines,
-            elements,
-            text_align,
-            ..
-        } in inline_formatting_contexts.join()
-        {
-            let mut elements_iter = elements.iter();
-
-            let mut entity = if let Some(&e) = elements_iter.next() {
-                e
-            } else {
+        for ifc in inline_formatting_contexts.join() {
+            let InlineFormattingContext {
+                break_points,
+                lines,
+                elements,
+                ..
+            } = ifc;
+            if elements.is_empty() {
                 // an empty block has nothing to draw, but other contexts still do
                 continue;
-            };
+            }
 
             let mut ops: Vec<TextOperator> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
@@ -893,13 +1221,12 @@ impl<'a> System<'a> for LineBoxCreator {
             // position of the first baseline of the paragraph
             let mut paragraph_start = (Px(0.0), Px(0.0));
 
-            // The x-intervals on the current line of every hyperlink that has text on it.
-            // `link_intervals: href -> (start, end)`; adjacent intervals of the same link are
-            // merged as the text runs of a link are visited in order.
-            let mut link_intervals: HashMap<&str, (Px, Px)> = HashMap::new();
+            // The x-intervals on the current line of the hyperlinks that have text on it, as
+            // `(href, start, end)`. Adjacent intervals of the same link are merged as the pieces
+            // of the line are visited from left to right.
+            let mut link_intervals: Vec<(&str, Px, Px)> = Vec::new();
 
             for (line_num, line) in lines.iter().enumerate() {
-                let from = line.from_break;
                 let to = line.to_break;
 
                 let line_pos = *positions
@@ -911,24 +1238,7 @@ impl<'a> System<'a> for LineBoxCreator {
                 }
 
                 // if we want to justify the text we have to add word-spacing
-                let is_last_line = line_num == lines.len() - 1;
-                let num_spaces = break_points[from + 1..to]
-                    .iter()
-                    .filter(|break_point| break_point.space)
-                    .count();
-                let word_spacing: Px =
-                    if !is_last_line && *text_align == TextAlign::Justify && num_spaces > 0 {
-                        // the ideal and maximal width of the line
-                        let desired_width = line_pos.width;
-                        // the actual width of the unstretched characters in the line
-                        let line_width = break_points[to].advance_before
-                            - break_points[from].advance_after
-                            + break_points[to].hyphen_width;
-                        (desired_width - line_width) / num_spaces as f32
-                    } else {
-                        // no adjustment needed since this line should not be justified
-                        Px(0.0)
-                    };
+                let word_spacing = ifc.word_spacing(line_num, line_pos.width);
 
                 // Check if a page break happened between this line and the previous. If a page
                 // break happend we have to add the existing (partial) paragraph to the previous
@@ -965,94 +1275,98 @@ impl<'a> System<'a> for LineBoxCreator {
                     });
                 }
 
-                let from_break = break_points[from];
                 let to_break = break_points[to];
+                let pieces = ifc.line_pieces(line, &text_runs);
+                let last_piece = pieces.len().checked_sub(1);
 
-                let mut advance = Px(0.0);
+                // the x position on the line and the x position of the text line matrix
+                let mut advance = ifc.line_start_offset(line_num, line_pos.width, word_spacing);
                 let mut text_cursor = Px(0.0);
-                loop {
+                if advance != Px(0.0) {
+                    ops.push(TextOperator::NewLine {
+                        x_offset: advance,
+                        leading: Px(0.0),
+                    });
+                    text_cursor = advance;
+                }
+
+                for piece_index in super::bidi::visual_order(
+                    &pieces.iter().map(|piece| piece.level).collect::<Vec<_>>(),
+                ) {
+                    let piece = pieces[piece_index];
+                    let entity = elements[piece.element];
                     // The x position of the current piece on the line, before its width is
                     // added to `advance`.
                     let piece_start = advance;
                     let piece_width = if let Some(run) = text_runs.get(entity) {
-                        if !run.text.is_empty() {
-                            if previous_font != Some((run.font_name.clone(), run.font_size)) {
-                                ops.push(TextOperator::SetFont(
-                                    run.font_name.clone(),
-                                    run.font_size,
-                                ));
-                                previous_font = Some((run.font_name.clone(), run.font_size));
-                            }
-
-                            if previous_color != Some(run.color) {
-                                ops.push(TextOperator::SetColor(run.color));
-                                previous_color = Some(run.color);
-                            }
-
-                            // get the string slice of the current text fragment
-                            let start = if entity == from_break.entity {
-                                from_break.char_index
-                            } else {
-                                0
-                            };
-                            let end = if entity == to_break.entity {
-                                to_break.char_index
-                            } else {
-                                run.text.len()
-                            };
-
-                            let characters = &run.text[start..end];
-                            let font = &font_map[&run.font_name];
-
-                            let mut piece_width = shape_piece(
-                                characters,
-                                font,
-                                run.font_size,
-                                word_spacing,
-                                &mut ops,
-                            );
-                            if to_break.hyphen && entity == to_break.entity {
-                                piece_width +=
-                                    shape_piece("-", font, run.font_size, Px(0.0), &mut ops);
-                            }
-                            if !run.decoration.is_none() && piece_width > Px(0.0) {
-                                let page_pos = components::Position {
-                                    y: line_pos.y,
-                                    height: Px(0.0),
-                                    ..line_pos
-                                };
-                                let x = line_pos.x + advance;
-                                let baseline = line_pos.y + line.baseline;
-                                for ((offset, thickness), enabled) in
-                                    decoration_lines(run.font_size, run.decoration)
-                                {
-                                    if !enabled {
-                                        continue;
-                                    }
-                                    let y = baseline + offset;
-                                    entities
-                                        .build_entity()
-                                        .with(page_pos, &mut positions)
-                                        .with(
-                                            components::VectorGraphics {
-                                                ops: vec![GraphicsOp::Line {
-                                                    from_x: x,
-                                                    from_y: y,
-                                                    to_x: x + piece_width,
-                                                    to_y: y,
-                                                    thickness,
-                                                }],
-                                                color: Some(run.color),
-                                            },
-                                            &mut graphics,
-                                        )
-                                        .build();
-                                }
-                            }
-                            piece_width
-                        } else {
-                            Px(0.0)
+                        if previous_font != Some((run.font_name.clone(), run.font_size)) {
+                            ops.push(TextOperator::SetFont(run.font_name.clone(), run.font_size));
+                            previous_font = Some((run.font_name.clone(), run.font_size));
                         }
+
+                        if previous_color != Some(run.color) {
+                            ops.push(TextOperator::SetColor(run.color));
+                            previous_color = Some(run.color);
+                        }
+
+                        let characters = &run.text[piece.start..piece.end];
+                        let font = &font_map[&run.font_name];
+                        let rtl = piece.is_rtl();
+
+                        // the hyphen of a hyphenated word goes at its end
+                        let hyphen = to_break.hyphen && Some(piece_index) == last_piece;
+                        let mut piece_width = Px(0.0);
+                        if hyphen && rtl {
+                            piece_width +=
+                                shape_piece("-", font, run.font_size, Px(0.0), true, &mut ops);
+                        }
+                        piece_width += shape_piece(
+                            characters,
+                            font,
+                            run.font_size,
+                            word_spacing,
+                            rtl,
+                            &mut ops,
+                        );
+                        if hyphen && !rtl {
+                            piece_width +=
+                                shape_piece("-", font, run.font_size, Px(0.0), false, &mut ops);
+                        }
+                        if !run.decoration.is_none() && piece_width > Px(0.0) {
+                            let page_pos = components::Position {
+                                y: line_pos.y,
+                                height: Px(0.0),
+                                ..line_pos
+                            };
+                            let x = line_pos.x + advance;
+                            let baseline = line_pos.y + line.baseline;
+                            for ((offset, thickness), enabled) in
+                                decoration_lines(run.font_size, run.decoration)
+                            {
+                                if !enabled {
+                                    continue;
+                                }
+                                let y = baseline + offset;
+                                entities
+                                    .build_entity()
+                                    .with(page_pos, &mut positions)
+                                    .with(
+                                        components::VectorGraphics {
+                                            ops: vec![GraphicsOp::Line {
+                                                from_x: x,
+                                                from_y: y,
+                                                to_x: x + piece_width,
+                                                to_y: y,
+                                                thickness,
+                                            }],
+                                            color: Some(run.color),
+                                        },
+                                        &mut graphics,
+                                    )
+                                    .build();
+                            }
+                        }
+                        piece_width
                     } else if let Some(&IntrinsicSize::SizeWithBaseline {
                         width,
                         height,
@@ -1093,19 +1407,14 @@ impl<'a> System<'a> for LineBoxCreator {
                     // Extend the interval of the hyperlink this piece belongs to, if any.
                     if piece_width > Px(0.0) {
                         if let Some(href) = entity_hrefs.href_of(entity) {
-                            let interval = link_intervals
-                                .entry(href)
-                                .or_insert_with(|| (piece_start, piece_start));
-                            interval.1 = advance;
-                        }
-                    }
-
-                    if entity == to_break.entity {
-                        break;
-                    } else {
-                        entity = match elements_iter.next() {
-                            Some(&ent) => ent,
-                            None => break,
+                            match link_intervals.last_mut() {
+                                Some(interval)
+                                    if interval.0 == href && interval.2 == piece_start =>
+                                {
+                                    interval.2 = advance;
+                                }
+                                _ => link_intervals.push((href, piece_start, advance)),
+                            }
                         }
                     }
                 }
@@ -1119,7 +1428,7 @@ impl<'a> System<'a> for LineBoxCreator {
                 }
 
                 // Convert the intervals of this line into clickable areas for the hyperlinks.
-                for (href, (start, end)) in link_intervals.drain() {
+                for (href, start, end) in link_intervals.drain(..) {
                     if end <= start {
                         continue;
                     }
@@ -1170,14 +1479,27 @@ fn decoration_lines(
     ]
 }
 
+/// Draws `characters` with `font` (and its fallback fonts) by appending the text operators to
+/// `ops` and returns the width of the text. `word_spacing` is added to every space. Right-to-left
+/// text (`rtl`) is shaped right-to-left and its glyphs are drawn in reverse logical order.
 pub(super) fn shape_piece(
     characters: &str,
     font: &Font,
     font_size: Px,
     word_spacing: Px,
+    rtl: bool,
     ops: &mut Vec<TextOperator>,
 ) -> Px {
-    let shaped = shape(characters, font);
+    let is_invisible = |info: &super::text::GlyphInfo| {
+        characters[info.cluster as usize..]
+            .chars()
+            .next()
+            .is_some_and(is_invisible_formatting)
+    };
+    let shaped: Vec<_> = shape_directed(characters, font, rtl)
+        .into_iter()
+        .filter(|(_, info)| !is_invisible(info))
+        .collect();
 
     // Glyphs of characters that `font` has no glyph for come from its fallback fonts. The font
     // is switched for them and switched back to `font` at the end of the piece.
@@ -1188,20 +1510,19 @@ pub(super) fn shape_piece(
             n => &fallbacks[n as usize - 1],
         }
     };
-    let mut current_font = 0u16;
 
+    record_to_unicode(characters, &shaped, &font_at);
+
+    let mut current_font = 0u16;
     let mut kerned_glyphs = vec![];
     let mut glyphs = Vec::with_capacity(shaped.len());
-
-    // TODO: We currently rely on the first glyph having cluster value 0
-    let mut previous_cluster = 0xFFFF;
-    let mut cluster_starting_glyph = (0u16, GlyphIndex(0xFFFF));
-
-    // the ToUnicode entries of every font that is used
-    let mut to_unicode_maps: BTreeMap<u16, BTreeMap<GlyphIndex, String>> = BTreeMap::new();
-
     let mut advance = Px(0.0);
-    for (pos, glyph_info) in shaped {
+    let visual_order: Box<dyn Iterator<Item = &(_, _)>> = if rtl {
+        Box::new(shaped.iter().rev())
+    } else {
+        Box::new(shaped.iter())
+    };
+    for (pos, glyph_info) in visual_order {
         if glyph_info.font != current_font {
             if !glyphs.is_empty() {
                 kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut glyphs))));
@@ -1222,19 +1543,6 @@ pub(super) fn shape_piece(
         advance += glyph_font.scale_to_px(pos.x_advance, font_size);
 
         let glyph = GlyphIndex(glyph_info.codepoint);
-        if glyph_info.cluster != previous_cluster {
-            // a new cluster began
-            if previous_cluster < glyph_info.cluster {
-                let text = &characters[previous_cluster as usize..glyph_info.cluster as usize];
-                to_unicode_maps
-                    .entry(cluster_starting_glyph.0)
-                    .or_default()
-                    .insert(cluster_starting_glyph.1, text.to_owned());
-            }
-            cluster_starting_glyph = (current_font, glyph);
-            previous_cluster = glyph_info.cluster;
-        }
-
         glyphs.push(glyph);
         let mut kern = glyph_font.advance(glyph) - pos.x_advance;
 
@@ -1263,15 +1571,44 @@ pub(super) fn shape_piece(
         ops.push(TextOperator::SetFont(font.postscript_name(), font_size));
     }
 
-    if let Some(text) = characters.get(previous_cluster as usize..) {
-        to_unicode_maps
-            .entry(cluster_starting_glyph.0)
-            .or_default()
-            .insert(cluster_starting_glyph.1, text.to_owned());
+    advance
+}
+
+/// Records which characters every glyph of `shaped` (in logical order) stands for in the
+/// `ToUnicode` map of its font, so that the text can be copied from the PDF. The first glyph of a
+/// cluster stands for all of its characters.
+fn record_to_unicode<'a>(
+    characters: &str,
+    shaped: &[(super::text::GlyphPosition, super::text::GlyphInfo)],
+    font_at: &impl Fn(u16) -> &'a Font,
+) {
+    let mut to_unicode_maps: BTreeMap<u16, BTreeMap<GlyphIndex, String>> = BTreeMap::new();
+    let mut cluster_start: Option<(usize, u16, GlyphIndex)> = None;
+    for (_, info) in shaped {
+        let cluster = info.cluster as usize;
+        match cluster_start {
+            Some((start, _, _)) if start == cluster => continue,
+            Some((start, font, glyph)) if start < cluster => {
+                // without the invisible characters that were dropped in front of this cluster
+                let text = characters[start..cluster].trim_end_matches(is_invisible_formatting);
+                to_unicode_maps
+                    .entry(font)
+                    .or_default()
+                    .insert(glyph, text.to_owned());
+            }
+            _ => {}
+        }
+        cluster_start = Some((cluster, info.font, GlyphIndex(info.codepoint)));
+    }
+    if let Some((start, font, glyph)) = cluster_start
+        && let Some(text) = characters.get(start..)
+    {
+        to_unicode_maps.entry(font).or_default().insert(
+            glyph,
+            text.trim_end_matches(is_invisible_formatting).to_owned(),
+        );
     }
     for (font_index, mut map) in to_unicode_maps {
         font_at(font_index).to_unicode.lock().append(&mut map);
     }
-
-    advance
 }

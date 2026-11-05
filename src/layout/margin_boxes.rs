@@ -151,12 +151,15 @@ impl<'a> System<'a> for MarginBoxPaint {
                     TextOperator::SetFont(margin_box.font_name.clone(), margin_box.font_size),
                     TextOperator::SetColor(margin_box.color),
                 ];
-                let width = shape_piece(&text, font, margin_box.font_size, Px(0.0), &mut ops);
+                let width =
+                    shape_piece(&text, font, margin_box.font_size, Px(0.0), false, &mut ops);
 
-                let x = match margin_box.text_align {
+                let x = match margin_box.text_align.resolve(false) {
                     TextAlign::Center => area_left + (area_width - width) / 2.0,
                     TextAlign::Right => area_left + area_width - width,
-                    TextAlign::Left | TextAlign::Justify => area_left,
+                    TextAlign::Left | TextAlign::Justify | TextAlign::Start | TextAlign::End => {
+                        area_left
+                    }
                 };
 
                 let ascent = font.scale_to_px(font.ascent(), margin_box.font_size);

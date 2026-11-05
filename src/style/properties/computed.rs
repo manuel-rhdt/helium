@@ -104,6 +104,9 @@ impl PixelLength {
     pub fn max(self, other: PixelLength) -> PixelLength {
         PixelLength(self.0.max(other.0))
     }
+    pub fn min(self, other: PixelLength) -> PixelLength {
+        PixelLength(self.0.min(other.0))
+    }
     pub fn abs(self) -> PixelLength {
         PixelLength(self.0.abs())
     }
@@ -541,6 +544,7 @@ impl StyleBuilder {
                 text_indent: inherited_values.text.text_indent,
                 text_align: inherited_values.text.text_align,
                 hyphens: inherited_values.text.hyphens,
+                direction: inherited_values.text.direction,
                 border_spacing: inherited_values.text.border_spacing,
                 ..Default::default()
             }),
@@ -618,6 +622,7 @@ impl StyleBuilder {
 #[derive(Debug, Clone)]
 pub struct Box {
     pub display: specified::Display,
+    pub unicode_bidi: specified::UnicodeBidi,
     pub position: PositionSpec,
 
     pub flex_direction: FlexDirection,
@@ -650,6 +655,7 @@ impl Default for Box {
     fn default() -> Self {
         Box {
             display: Default::default(),
+            unicode_bidi: Default::default(),
             position: Default::default(),
             flex_direction: Default::default(),
             flex_wrap: Default::default(),
@@ -743,6 +749,7 @@ pub struct Text {
     pub text_indent: LengthPercentage,
     pub text_align: specified::TextAlign,
     pub hyphens: specified::Hyphens,
+    pub direction: specified::Direction,
     pub line_break: specified::LineBreak,
     pub border_spacing: BorderSpacing,
 }

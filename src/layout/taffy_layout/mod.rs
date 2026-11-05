@@ -338,7 +338,8 @@ impl<'a> Writer<'a, '_> {
             self.intrinsic_sizes,
         )
         .map_err(|e| format!("cannot break lines of {:?}: {}", entity, e))?;
-        let align = ifc.text_align;
+        let align = ifc.resolved_text_align();
+        let indent_offset = ifc.indent_offset(PixelLength(indent)).0;
         let lines: Vec<_> = ifc
             .lines
             .iter()
@@ -354,12 +355,12 @@ impl<'a> Writer<'a, '_> {
         let mut y = content_y;
         for (index, (line_entity, height, advance)) in lines.into_iter().enumerate() {
             let (x0, w0) = if index == 0 {
-                (content_x + indent, width - indent)
+                (content_x + indent_offset, width - indent)
             } else {
                 (content_x, width)
             };
             let (x, w) = match align {
-                TextAlign::Left => (x0, advance),
+                TextAlign::Left | TextAlign::Start | TextAlign::End => (x0, advance),
                 TextAlign::Right => (x0 + (w0 - advance), advance),
                 TextAlign::Center => (x0 + (w0 - advance) / 2.0, advance),
                 TextAlign::Justify => (x0, w0),

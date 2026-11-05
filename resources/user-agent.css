@@ -9,6 +9,28 @@
   height: 297mm;
 }
 
+/* Bidirectional text
+ * (https://html.spec.whatwg.org/multipage/rendering.html#bidi-rendering). `dir="auto"` uses
+ * `unicode-bidi: plaintext`, which takes the direction from the text. */
+[dir="ltr"] {
+  direction: ltr;
+}
+[dir="rtl"] {
+  direction: rtl;
+}
+[dir],
+bdi {
+  unicode-bidi: isolate;
+}
+[dir="auto"],
+bdi:not([dir]) {
+  unicode-bidi: plaintext;
+}
+bdo,
+bdo[dir] {
+  unicode-bidi: isolate-override;
+}
+
 [hidden],
 area,
 base,
