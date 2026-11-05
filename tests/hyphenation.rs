@@ -82,3 +82,26 @@ fn manual_mode_honors_soft_hyphens() {
     assert_eq!(count_newlines(&disabled), 0, "{disabled}");
     assert!(count_glyphs(&manual) > count_glyphs(&disabled));
 }
+
+#[test]
+fn the_language_chooses_the_dictionary() {
+    let english = dump("lang_en", 55, "auto", r#"<span lang="en">representation</span>"#);
+    let british = dump("lang_en_gb", 55, "auto", r#"<span lang="en-GB">representation</span>"#);
+    let none = dump("lang_none", 55, "none", "representation");
+    assert!(count_glyphs(&english) > count_glyphs(&none));
+    // British English falls back to the American dictionary, which is the one embedded
+    assert!(count_glyphs(&british) > count_glyphs(&none));
+}
+
+#[test]
+fn text_in_a_language_without_a_dictionary_is_not_hyphenated() {
+    // the language is inherited from the parent element
+    let german = dump(
+        "lang_de",
+        55,
+        "auto",
+        r#"<div lang="de"><span>representation</span></div>"#,
+    );
+    let none = dump("lang_de_none", 55, "none", "representation");
+    assert_eq!(count_glyphs(&german), count_glyphs(&none));
+}

@@ -4,6 +4,7 @@ use harfbuzz_rs::{
 };
 
 use super::{Font, font::FontUnit};
+use crate::style::properties::computed::Language;
 
 pub type HarfbuzzFont = Shared<HbFont<'static>>;
 
@@ -68,8 +69,8 @@ fn font_index_for(ch: char, font: &Font, fallbacks: &[std::sync::Arc<Font>]) -> 
 /// Shapes left-to-right `text` with `font`, using the fallback fonts of `font` for characters it
 /// has no glyph for. Glyph positions are in units of 1/1000 em, independent of the font they
 /// belong to.
-pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
-    shape_directed(text, font, false)
+pub fn shape(text: &str, font: &Font, lang: &Language) -> Vec<(GlyphPosition, GlyphInfo)> {
+    shape_directed(text, font, lang, false)
 }
 
 /// Shapes `text` of embedding levels `levels`: runs `(start, level)` of the text that `text`
@@ -80,6 +81,7 @@ pub fn shape_with_levels(
     offset: usize,
     levels: &[(usize, usize, u8)],
     font: &Font,
+    lang: &Language,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     let end = offset + text.len();
     let mut result = Vec::new();
@@ -92,7 +94,7 @@ pub fn shape_with_levels(
         if covered < start {
             // not part of any run: left-to-right
             result.extend(offset_clusters(
-                shape(&text[covered - offset..start - offset], font),
+                shape(&text[covered - offset..start - offset], font, lang),
                 covered - offset,
             ));
         }
@@ -100,6 +102,7 @@ pub fn shape_with_levels(
             shape_directed(
                 &text[start - offset..run_end - offset],
                 font,
+                lang,
                 level % 2 == 1,
             ),
             start - offset,
@@ -108,7 +111,7 @@ pub fn shape_with_levels(
     }
     if covered < end {
         result.extend(offset_clusters(
-            shape(&text[covered - offset..], font),
+            shape(&text[covered - offset..], font, lang),
             covered - offset,
         ));
     }
@@ -128,7 +131,12 @@ fn offset_clusters(
 /// Shapes `text` in the given direction. The glyphs are returned in logical order (for
 /// right-to-left text this is the reverse of the order in which they are drawn), so that the
 /// cluster values increase.
-pub fn shape_directed(text: &str, font: &Font, rtl: bool) -> Vec<(GlyphPosition, GlyphInfo)> {
+pub fn shape_directed(
+    text: &str,
+    font: &Font,
+    lang: &Language,
+    rtl: bool,
+) -> Vec<(GlyphPosition, GlyphInfo)> {
     let text = text.trim_end_matches(['\r', '\n']);
     // harfbuzz hands back a null glyph array for an empty buffer, which trips
     // the slice precondition check in harfbuzz_rs.
@@ -136,9 +144,9 @@ pub fn shape_directed(text: &str, font: &Font, rtl: bool) -> Vec<(GlyphPosition,
         return Vec::new();
     }
 
-    let fallbacks = font.fallbacks.read();
+    let fallbacks = font.fallbacks(lang);
     if fallbacks.is_empty() {
-        return shape_single(text, font, 0, 0, rtl);
+        return shape_single(text, font, lang, 0, 0, rtl);
     }
 
     // Split the text into runs of characters that are rendered with the same font and shape
@@ -164,6 +172,7 @@ pub fn shape_directed(text: &str, font: &Font, rtl: bool) -> Vec<(GlyphPosition,
                     &text[run_start..index],
                     run_start,
                     font,
+                    lang,
                     &fallbacks,
                     current,
                     rtl,
@@ -179,6 +188,7 @@ pub fn shape_directed(text: &str, font: &Font, rtl: bool) -> Vec<(GlyphPosition,
             &text[run_start..],
             run_start,
             font,
+            lang,
             &fallbacks,
             current,
             rtl,
@@ -198,6 +208,7 @@ fn shape_run(
     text: &str,
     offset: usize,
     font: &Font,
+    lang: &Language,
     fallbacks: &[std::sync::Arc<Font>],
     font_index: u16,
     rtl: bool,
@@ -205,6 +216,7 @@ fn shape_run(
     shape_single(
         text,
         font_at(font, fallbacks, font_index),
+        lang,
         offset as u32,
         font_index,
         rtl,
@@ -216,14 +228,17 @@ fn shape_run(
 fn shape_single(
     text: &str,
     font: &Font,
+    lang: &Language,
     cluster_offset: u32,
     font_index: u16,
     rtl: bool,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     // The direction is always set: `hb_shape` would otherwise guess it from the script, so that
     // e.g. Hebrew text in a left-to-right run would be shaped right-to-left. The script (for
-    // example for the joining of Arabic letters) and the language are guessed by `hb_shape`.
-    let buffer = UnicodeBuffer::new()
+    // example for the joining of Arabic letters) is guessed by `hb_shape`. The language selects
+    // language-specific glyphs (the `locl` feature, e.g. the Chinese or Japanese forms of Han
+    // characters). An unknown language is left to HarfBuzz's default.
+    let mut buffer = UnicodeBuffer::new()
         .add_str(text)
         .set_cluster_level(ClusterLevel::MonotoneCharacters)
         .set_direction(if rtl {
@@ -231,6 +246,9 @@ fn shape_single(
         } else {
             harfbuzz_rs::Direction::Ltr
         });
+    if let Some(language) = lang.tag().and_then(|tag| tag.parse().ok()) {
+        buffer = buffer.set_language(language);
+    }
 
     let result = hb_shape(&font.hb_font, buffer, &[]);
 
