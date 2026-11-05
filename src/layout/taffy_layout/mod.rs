@@ -9,6 +9,7 @@
 //! [`Position`] (content box in document coordinates), [`Decoration`], the [`TextList`] of the
 //! paginator and the [`AbsoluteGroups`].
 
+mod collapse;
 mod style;
 mod table;
 mod tree;
@@ -239,6 +240,7 @@ impl<'a> Writer<'a, '_> {
         decoration.margin = edges(layout.margin);
         decoration.border = edges(layout.border);
         decoration.padding = edges(layout.padding);
+        decoration.collapsed = node.collapsed;
         let _ = self.decorations.insert(entity, decoration);
 
         self.emit(BlockLevelElement::ContainerStart(entity));

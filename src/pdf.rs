@@ -153,9 +153,13 @@ pub fn write_pdf(
                         for op in &par.ops {
                             match op {
                                 TextOperator::SetFont(font_name, size) => {
-                                    let font_ref = font_map[font_name];
-                                    let key = page_context.add_font(font_ref);
-                                    page_context.set_font(&key, (*size).into())?;
+                                    // A font that draws no glyph anywhere is not embedded (e.g.
+                                    // the font of text that is drawn entirely with fallback
+                                    // fonts). Selecting it would change nothing.
+                                    if let Some(&font_ref) = font_map.get(font_name) {
+                                        let key = page_context.add_font(font_ref);
+                                        page_context.set_font(&key, (*size).into())?;
+                                    }
                                 }
                                 &TextOperator::SetColor(color) => {
                                     let floatize =
@@ -181,6 +185,10 @@ pub fn write_pdf(
                                 &TextOperator::SetWordSpacing(spacing) => {
                                     page_context.push_operand(Pt::from(spacing))?;
                                     page_context.apply_operator("Tw")?;
+                                }
+                                &TextOperator::SetRise(rise) => {
+                                    page_context.push_operand(Pt::from(rise))?;
+                                    page_context.apply_operator("Ts")?;
                                 }
                                 &TextOperator::SetTransform(matrix) => {
                                     let matrix: [f32; 6] = [

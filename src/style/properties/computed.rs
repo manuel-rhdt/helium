@@ -546,6 +546,7 @@ impl StyleBuilder {
                 hyphens: inherited_values.text.hyphens,
                 direction: inherited_values.text.direction,
                 border_spacing: inherited_values.text.border_spacing,
+                border_collapse: inherited_values.text.border_collapse,
                 ..Default::default()
             }),
             // widows and orphans are inherited, the page break properties are not
@@ -726,6 +727,57 @@ pub struct Font {
     pub color: Color,
     pub list_style_type: specified::ListStyleType,
     pub text_decoration: specified::TextDecoration,
+    /// The language of the element, from the `lang` attribute. It is not a CSS property but
+    /// inherited like one, so it lives in the inherited font struct.
+    pub lang: Language,
+}
+
+/// The language of the content of an element (a BCP 47 language tag like `zh-Hant-TW`), or
+/// unknown. It chooses glyph variants in shaping, fallback fonts and the hyphenation dictionary.
+/// https://html.spec.whatwg.org/multipage/dom.html#the-lang-and-xml:lang-attributes
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Language(Option<Arc<str>>);
+
+impl Language {
+    /// The language of a `lang` attribute value; the empty value means that it is unknown.
+    pub fn from_tag(tag: &str) -> Self {
+        let tag = tag.trim().replace('_', "-").to_ascii_lowercase();
+        Language((!tag.is_empty()).then(|| Arc::from(tag)))
+    }
+
+    /// The whole tag in lower case, if the language is known.
+    pub fn tag(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+
+    /// The primary language subtag (`zh` of `zh-Hant-TW`).
+    pub fn primary(&self) -> Option<&str> {
+        self.tag().and_then(|tag| tag.split('-').next())
+    }
+
+    /// The script subtag (`hant` of `zh-Hant-TW`): the 4-letter subtag after the language.
+    pub fn script(&self) -> Option<&str> {
+        self.subtags()
+            .find(|subtag| subtag.len() == 4 && subtag.chars().all(|c| c.is_ascii_alphabetic()))
+    }
+
+    /// The region subtag (`tw` of `zh-Hant-TW`): a 2-letter or 3-digit subtag after the
+    /// language.
+    pub fn region(&self) -> Option<&str> {
+        self.subtags().find(|subtag| {
+            (subtag.len() == 2 && subtag.chars().all(|c| c.is_ascii_alphabetic()))
+                || (subtag.len() == 3 && subtag.chars().all(|c| c.is_ascii_digit()))
+        })
+    }
+
+    /// The subtags after the primary language subtag, up to the first singleton (extensions
+    /// and private use).
+    fn subtags(&self) -> impl Iterator<Item = &str> {
+        self.tag()
+            .into_iter()
+            .flat_map(|tag| tag.split('-').skip(1))
+            .take_while(|subtag| subtag.len() > 1)
+    }
 }
 
 impl Default for Font {
@@ -739,6 +791,7 @@ impl Default for Font {
             color: opaque(0, 0, 0),
             list_style_type: Default::default(),
             text_decoration: Default::default(),
+            lang: Language::default(),
         }
     }
 }
@@ -752,6 +805,7 @@ pub struct Text {
     pub direction: specified::Direction,
     pub line_break: specified::LineBreak,
     pub border_spacing: BorderSpacing,
+    pub border_collapse: specified::BorderCollapse,
 }
 
 /// The computed value of `border-spacing`.
@@ -953,5 +1007,39 @@ mod math_depth_tests {
         // an explicit font-size after `math` wins
         let explicit = child(&base, "font-size: math; font-size: 10px; math-depth: 2");
         assert!((size(&explicit) - 10.0).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::Language;
+
+    #[test]
+    fn tags_are_split_into_their_subtags() {
+        let lang = Language::from_tag(" zh-Hant-TW ");
+        assert_eq!(lang.tag(), Some("zh-hant-tw"));
+        assert_eq!(lang.primary(), Some("zh"));
+        assert_eq!(lang.script(), Some("hant"));
+        assert_eq!(lang.region(), Some("tw"));
+
+        let lang = Language::from_tag("es-419");
+        assert_eq!(lang.script(), None);
+        assert_eq!(lang.region(), Some("419"));
+
+        let lang = Language::from_tag("en_GB");
+        assert_eq!(lang.region(), Some("gb"));
+
+        // subtags after an extension are not the script or region
+        let lang = Language::from_tag("de-x-test");
+        assert_eq!(lang.primary(), Some("de"));
+        assert_eq!(lang.script(), None);
+        assert_eq!(lang.region(), None);
+    }
+
+    #[test]
+    fn the_empty_tag_is_an_unknown_language() {
+        let lang = Language::from_tag("");
+        assert_eq!(lang, Language::default());
+        assert_eq!(lang.primary(), None);
     }
 }

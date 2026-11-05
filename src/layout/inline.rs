@@ -235,7 +235,11 @@ impl InlineFormattingContext {
                 }
                 let num_spaces = spaces
                     .iter()
-                    .filter(|bp| bp.space && bp.advance_before >= start && bp.advance_before < end)
+                    .filter(|bp| {
+                        (bp.space || bp.inter_letter)
+                            && bp.advance_before >= start
+                            && bp.advance_before < end
+                    })
                     .count();
                 Some((run, end - start + word_spacing * num_spaces as f32))
             })
@@ -401,8 +405,24 @@ impl InlineFormattingContext {
     fn space_count(&self, from_break: usize, to_break: usize) -> usize {
         self.break_points[from_break + 1..to_break]
             .iter()
-            .filter(|break_point| break_point.space)
+            .filter(|break_point| break_point.space || break_point.inter_letter)
             .count()
+    }
+
+    /// The `inter_letter` break points inside `piece` of a line, as byte offsets into the
+    /// text of the piece.
+    fn inter_letter_offsets(&self, line: &Line, piece: &LinePiece) -> Vec<usize> {
+        let entity = self.elements[piece.element];
+        self.break_points[line.from_break + 1..line.to_break]
+            .iter()
+            .filter(|point| {
+                point.inter_letter
+                    && point.entity == entity
+                    && piece.start < point.char_index
+                    && point.char_index < piece.end
+            })
+            .map(|point| point.char_index - piece.start)
+            .collect()
     }
 
     pub fn line_height(
@@ -518,6 +538,10 @@ pub struct BreakPoint {
     pub advance_after: Px,
     pub forced: bool,
     pub space: bool,
+    /// A break between two letters (without a space) where a justified line is stretched, like
+    /// between Chinese characters. The extra space goes in front of the character at
+    /// `char_index`.
+    pub inter_letter: bool,
     pub hyphen: bool,
     pub hyphen_width: Px,
     pub glue_stretch: Px,
@@ -539,8 +563,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
         &mut self,
         (mut inline_formatting_contexts, mut text_runs, intrinsic_sizes, computed_values, font_map): Self::SystemData,
     ) {
-        let dictionary = Standard::from_embedded(Language::EnglishUS)
-            .expect("embedded English hyphenation dictionary should load");
+        let mut dictionaries = HyphenationDictionaries::default();
 
         for InlineFormattingContext {
             elements,
@@ -578,6 +601,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 advance_after: Px(0.0),
                 forced: false,
                 space: false,
+                inter_letter: false,
                 hyphen: false,
                 hyphen_width: Px(0.0),
                 glue_stretch: Px(0.0),
@@ -606,6 +630,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 segment_start,
                                 levels,
                                 font,
+                                &text_run.lang,
                             ) {
                                 let width =
                                     font.scale_to_px(position.x_advance, text_run.font_size);
@@ -620,6 +645,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 advance_after: advance,
                                 forced: true,
                                 space: false,
+                                inter_letter: false,
                                 hyphen: false,
                                 hyphen_width: Px(0.0),
                                 glue_stretch: Px(0.0),
@@ -633,6 +659,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             segment_start,
                             levels,
                             font,
+                            &text_run.lang,
                         ) {
                             let width = font.scale_to_px(position.x_advance, text_run.font_size);
                             glyph_widths.push((segment_start + info.cluster as usize, width));
@@ -641,7 +668,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start);
                         continue;
                     }
-                    let shaped = shape_with_levels(&text_run.text, 0, levels, font);
+                    let shaped = shape_with_levels(&text_run.text, 0, levels, font, &text_run.lang);
                     if !levels.is_empty() {
                         glyph_widths = shaped
                             .iter()
@@ -654,7 +681,41 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             .collect();
                     }
                     let run_start_advance = advance;
+                    let mut other_breaks = break_opportunities_between_letters(&text_run.text);
                     for (pos, glyph_info) in &shaped {
+                        let cluster = glyph_info.cluster as usize;
+                        if other_breaks.peek() == Some(&cluster) {
+                            other_breaks.next();
+                            // Justification stretches the gaps next to CJK characters. Not at
+                            // a change of the bidi level, where the gap would be between two
+                            // pieces of the line (see `shape_piece`).
+                            let inter_letter = is_justified_between(&text_run.text, cluster)
+                                && !levels
+                                    .iter()
+                                    .any(|&(start, end, _)| start == cluster || end == cluster);
+                            break_points.push(BreakPoint {
+                                entity,
+                                char_index: cluster,
+                                advance_before: advance,
+                                advance_after: advance,
+                                forced: false,
+                                space: false,
+                                inter_letter,
+                                hyphen: false,
+                                hyphen_width: Px(0.0),
+                                glue_stretch: if inter_letter {
+                                    text_run.font_size / 8.0
+                                } else {
+                                    Px(0.0)
+                                },
+                                glue_shrink: Px(0.0),
+                                penalty: 0,
+                            });
+                        }
+                        // a break inside a cluster (e.g. a ligature) is not possible
+                        while other_breaks.peek().is_some_and(|&index| index <= cluster) {
+                            other_breaks.next();
+                        }
                         let cur_char = &text_run.text[glyph_info.cluster as usize..];
                         if cur_char.starts_with(|chr: char| chr.is_whitespace()) {
                             let advance_before = advance;
@@ -670,6 +731,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 advance_after,
                                 forced: false,
                                 space: true,
+                                inter_letter: false,
                                 hyphen: false,
                                 hyphen_width: Px(0.0),
                                 glue_stretch: Px(
@@ -700,20 +762,24 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             text_run.manual_hyphen_points.clone()
                         }
                         crate::style::properties::specified::Hyphens::Auto => {
-                            word_ranges(&text_run.text)
-                                .into_iter()
-                                .flat_map(|(word_start, word_end)| {
-                                    dictionary
-                                        .hyphenate(&text_run.text[word_start..word_end])
-                                        .breaks
-                                        .into_iter()
-                                        .map(move |offset| word_start + offset)
-                                })
-                                .collect()
+                            // without a dictionary for the language, words are not hyphenated
+                            match dictionaries.get(&text_run.lang) {
+                                Some(dictionary) => word_ranges(&text_run.text)
+                                    .into_iter()
+                                    .flat_map(|(word_start, word_end)| {
+                                        dictionary
+                                            .hyphenate(&text_run.text[word_start..word_end])
+                                            .breaks
+                                            .into_iter()
+                                            .map(move |offset| word_start + offset)
+                                    })
+                                    .collect(),
+                                None => Vec::new(),
+                            }
                         }
                     };
                     if !hyphenation.is_empty() {
-                        let hyphen_width = shape("-", font)
+                        let hyphen_width = shape("-", font, &text_run.lang)
                             .iter()
                             .map(|(position, _)| {
                                 font.scale_to_px(position.x_advance, text_run.font_size)
@@ -750,7 +816,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 index + prefix[index..].chars().next().map_or(1, char::len_utf8)
                             });
                             let prefix_width = width_before(word_start)
-                                + shape(&prefix[word_start..], font)
+                                + shape(&prefix[word_start..], font, &text_run.lang)
                                     .iter()
                                     .map(|(position, _)| {
                                         font.scale_to_px(position.x_advance, text_run.font_size)
@@ -763,6 +829,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 advance_after: run_start_advance + prefix_width,
                                 forced: false,
                                 space: false,
+                                inter_letter: false,
                                 hyphen: true,
                                 hyphen_width,
                                 glue_stretch: Px(0.0),
@@ -799,6 +866,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             advance_after: advance,
                             forced: true,
                             space: false,
+                            inter_letter: false,
                             hyphen: false,
                             hyphen_width: Px(0.0),
                             glue_stretch: Px(0.0),
@@ -824,6 +892,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 advance_after: advance,
                 forced: false,
                 space: false,
+                inter_letter: false,
                 hyphen: false,
                 hyphen_width: Px(0.0),
                 glue_stretch: Px(0.0),
@@ -874,6 +943,102 @@ fn push_bidi_runs(
             advance_end: advance,
         });
     }
+}
+
+/// The hyphenation dictionaries of the languages of a document, loaded when they are first
+/// needed. Only the dictionaries that are embedded into Helium (Cargo features `embed_*` of the
+/// `hyphenation` crate, currently US English) are available.
+#[derive(Default)]
+struct HyphenationDictionaries(HashMap<Language, Option<Standard>>);
+
+impl HyphenationDictionaries {
+    /// The dictionary for text in `lang`. Text of an unknown language is hyphenated as English,
+    /// text in a language without a dictionary not at all.
+    fn get(&mut self, lang: &crate::style::properties::computed::Language) -> Option<&Standard> {
+        let language = hyphenation_language(lang)?;
+        self.0
+            .entry(language)
+            .or_insert_with(|| {
+                Standard::from_embedded(language).ok().or_else(|| {
+                    // British English is hyphenated as American English without its dictionary
+                    (language == Language::EnglishGB)
+                        .then(|| Standard::from_embedded(Language::EnglishUS).ok())
+                        .flatten()
+                })
+            })
+            .as_ref()
+    }
+}
+
+/// The language of the hyphenation dictionaries for text in `lang`.
+fn hyphenation_language(lang: &crate::style::properties::computed::Language) -> Option<Language> {
+    let Some(primary) = lang.primary() else {
+        return Some(Language::EnglishUS);
+    };
+    let region = lang.region();
+    let language = match primary {
+        "en" => match region {
+            Some("gb" | "au" | "nz" | "ie" | "za" | "in") => Language::EnglishGB,
+            _ => Language::EnglishUS,
+        },
+        "de" | "gsw" => match region {
+            Some("ch" | "li") => Language::GermanSwiss,
+            _ => Language::German1996,
+        },
+        "el" => Language::GreekMono,
+        "sr" if lang.script() != Some("latn") => Language::SerbianCyrillic,
+        "mn" => Language::Mongolian,
+        "no" => Language::NorwegianBokmal,
+        _ => {
+            return lang
+                .tag()
+                .and_then(Language::try_from_code)
+                .or_else(|| Language::try_from_code(primary));
+        }
+    };
+    Some(language)
+}
+
+/// The byte indices in `text` where a line may break although there is no space in front, by the
+/// line breaking algorithm of Unicode (UAX #14): between the ideographs of Chinese and Japanese
+/// (but not in front of their closing punctuation), after hyphens and dashes, and so on.
+///
+/// Breaks after spaces are not included; they are break points of their own that stretch for
+/// justification. Neither are mandatory breaks, which are handled by the `white-space` processing.
+fn break_opportunities_between_letters(
+    text: &str,
+) -> std::iter::Peekable<impl Iterator<Item = usize> + '_> {
+    unicode_linebreak::linebreaks(text)
+        .filter(move |&(index, opportunity)| {
+            opportunity == unicode_linebreak::BreakOpportunity::Allowed
+                && index < text.len()
+                && !text[..index].ends_with(char::is_whitespace)
+        })
+        .map(|(index, _)| index)
+        .peekable()
+}
+
+/// Whether a justified line is stretched at the break opportunity at `index` of `text`: when
+/// the character before or after it is a Chinese, Japanese or Korean character (or full-width
+/// punctuation), which are set without spaces.
+fn is_justified_between(text: &str, index: usize) -> bool {
+    let before = text[..index].chars().next_back();
+    let after = text[index..].chars().next();
+    [before, after].into_iter().flatten().any(is_cjk)
+}
+
+fn is_cjk(ch: char) -> bool {
+    use unicode_linebreak::BreakClass::*;
+    matches!(
+        unicode_linebreak::break_property(ch as u32),
+        Ideographic
+            | ConditionalJapaneseStarter
+            | HangulLvSyllable
+            | HangulLvtSyllable
+            | HangulLJamo
+            | HangulVJamo
+            | HangulTJamo
+    ) || matches!(ch, '\u{3000}'..='\u{303F}' | '\u{FF00}'..='\u{FFEF}')
 }
 
 fn word_ranges(text: &str) -> Vec<(usize, usize)> {
@@ -1019,8 +1184,10 @@ impl<'a> System<'a> for ListMarkerCreator {
             let width = shape_piece(
                 &marker.text,
                 font,
+                &marker.lang,
                 marker.font_size,
                 Px(0.0),
+                &[],
                 false,
                 &mut ops,
             );
@@ -1114,8 +1281,13 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                     {
                         continue;
                     }
-                    let spaces = (line.from_break + 1..line.to_break)
-                        .filter(|&b| ifc.break_points[b].advance_before.0 < offset.0 - EPSILON)
+                    // the gaps that justification stretches in front of the box
+                    let spaces = ifc.break_points[line.from_break + 1..line.to_break]
+                        .iter()
+                        .filter(|point| {
+                            (point.space || point.inter_letter)
+                                && point.advance_before.0 < offset.0 - EPSILON
+                        })
                         .count();
                     let x =
                         line_pos.x + (offset - from.advance_after) + word_spacing * spaces as f32;
@@ -1318,19 +1490,39 @@ impl<'a> System<'a> for LineBoxCreator {
                         let mut piece_width = Px(0.0);
                         if hyphen && rtl {
                             piece_width +=
-                                shape_piece("-", font, run.font_size, Px(0.0), true, &mut ops);
+                                shape_piece(
+                                "-",
+                                font,
+                                &run.lang,
+                                run.font_size,
+                                Px(0.0),
+                                &[],
+                                true,
+                                &mut ops,
+                            );
                         }
                         piece_width += shape_piece(
                             characters,
                             font,
+                            &run.lang,
                             run.font_size,
                             word_spacing,
+                            &ifc.inter_letter_offsets(line, &piece),
                             rtl,
                             &mut ops,
                         );
                         if hyphen && !rtl {
                             piece_width +=
-                                shape_piece("-", font, run.font_size, Px(0.0), false, &mut ops);
+                                shape_piece(
+                                "-",
+                                font,
+                                &run.lang,
+                                run.font_size,
+                                Px(0.0),
+                                &[],
+                                false,
+                                &mut ops,
+                            );
                         }
                         if !run.decoration.is_none() && piece_width > Px(0.0) {
                             let page_pos = components::Position {
@@ -1480,13 +1672,17 @@ fn decoration_lines(
 }
 
 /// Draws `characters` with `font` (and its fallback fonts) by appending the text operators to
-/// `ops` and returns the width of the text. `word_spacing` is added to every space. Right-to-left
-/// text (`rtl`) is shaped right-to-left and its glyphs are drawn in reverse logical order.
+/// `ops` and returns the width of the text. `word_spacing` is added to every space and in front
+/// of the characters at the byte offsets `inter_letter` (see `BreakPoint::inter_letter`), which
+/// are inside of `characters`. Right-to-left text (`rtl`) is shaped right-to-left and its glyphs
+/// are drawn in reverse logical order.
 pub(super) fn shape_piece(
     characters: &str,
     font: &Font,
+    lang: &crate::style::properties::computed::Language,
     font_size: Px,
     word_spacing: Px,
+    inter_letter: &[usize],
     rtl: bool,
     ops: &mut Vec<TextOperator>,
 ) -> Px {
@@ -1496,14 +1692,14 @@ pub(super) fn shape_piece(
             .next()
             .is_some_and(is_invisible_formatting)
     };
-    let shaped: Vec<_> = shape_directed(characters, font, rtl)
+    let shaped: Vec<_> = shape_directed(characters, font, lang, rtl)
         .into_iter()
         .filter(|(_, info)| !is_invisible(info))
         .collect();
 
     // Glyphs of characters that `font` has no glyph for come from its fallback fonts. The font
     // is switched for them and switched back to `font` at the end of the piece.
-    let fallbacks = font.fallbacks();
+    let fallbacks = font.fallbacks(lang);
     let font_at = |index: u16| -> &Font {
         match index {
             0 => font,
@@ -1513,25 +1709,38 @@ pub(super) fn shape_piece(
 
     record_to_unicode(characters, &shaped, &font_at);
 
+    let mut out = GlyphRunWriter::default();
     let mut current_font = 0u16;
-    let mut kerned_glyphs = vec![];
-    let mut glyphs = Vec::with_capacity(shaped.len());
     let mut advance = Px(0.0);
+    // The offset (`x_offset`, `y_offset`) of the last glyph, which the pen is currently shifted by.
+    let mut shift_x = FontUnit(0.0);
+    let mut rise = FontUnit(0.0);
+    let word_spacing_units = FontUnit((word_spacing / font_size.0).0 as f64 * 1000.0);
+    let mut previous_cluster: Option<usize> = None;
     let visual_order: Box<dyn Iterator<Item = &(_, _)>> = if rtl {
         Box::new(shaped.iter().rev())
     } else {
         Box::new(shaped.iter())
     };
     for (pos, glyph_info) in visual_order {
+        // The gap in front of the character at an inter-letter break is between this glyph and
+        // the one before it (on the left), whichever the direction of the text.
+        let cluster = glyph_info.cluster as usize;
+        if let Some(previous) = previous_cluster.filter(|_| word_spacing != Px(0.0)) {
+            let (low, high) = (previous.min(cluster), previous.max(cluster));
+            let gaps = inter_letter
+                .iter()
+                .filter(|&&offset| low < offset && offset <= high)
+                .count();
+            for _ in 0..gaps {
+                advance += word_spacing;
+                out.kern(FontUnit(-word_spacing_units.0));
+            }
+        }
+        previous_cluster = Some(cluster);
+
         if glyph_info.font != current_font {
-            if !glyphs.is_empty() {
-                kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut glyphs))));
-            }
-            if !kerned_glyphs.is_empty() {
-                ops.push(TextOperator::KernedGlyphs(std::mem::take(
-                    &mut kerned_glyphs,
-                )));
-            }
+            out.flush(ops);
             current_font = glyph_info.font;
             ops.push(TextOperator::SetFont(
                 font_at(current_font).postscript_name(),
@@ -1542,36 +1751,84 @@ pub(super) fn shape_piece(
 
         advance += glyph_font.scale_to_px(pos.x_advance, font_size);
 
+        // The glyph is drawn at its pen position moved by its offset. In `TJ`, a positive kern
+        // moves the pen to the left, so shifting the pen from the previous glyph's offset to
+        // this one's is a kern of `shift_x - x_offset`.
+        out.kern(shift_x - pos.x_offset);
+        shift_x = pos.x_offset;
+        // fonts have rounding noise in their anchors; below 1/1000 em a rise is invisible
+        if (pos.y_offset - rise).0.abs() >= 1.0 {
+            out.flush(ops);
+            rise = pos.y_offset;
+            ops.push(TextOperator::SetRise(font_size * (rise.0 as f32 / 1000.0)));
+        }
+
         let glyph = GlyphIndex(glyph_info.codepoint);
-        glyphs.push(glyph);
-        let mut kern = glyph_font.advance(glyph) - pos.x_advance;
+        out.glyph(glyph);
+        out.kern(glyph_font.advance(glyph) - pos.x_advance);
 
         // adjust kerning of space glyphs to allow text justification
         if characters[glyph_info.cluster as usize..].starts_with(char::is_whitespace) {
             advance += word_spacing;
-            let word_spacing = FontUnit((word_spacing / font_size.0).0 as f64 * 1000.0);
-            kern.0 -= word_spacing.0;
-        }
-
-        // 0.1/1000 em is far below anything visible; the coarser values compress better
-        kern.0 = (kern.0 * 10.0).round() / 10.0;
-        if kern.0.abs() >= 0.1 {
-            kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs.clone())));
-            kerned_glyphs.push(KernedGlyphs::Kern(kern));
-            glyphs.clear();
+            out.kern(FontUnit(-word_spacing_units.0));
         }
     }
-    if !glyphs.is_empty() {
-        kerned_glyphs.push(KernedGlyphs::Glyphs(Glyphs(glyphs)));
-    }
-    if !kerned_glyphs.is_empty() {
-        ops.push(TextOperator::KernedGlyphs(kerned_glyphs));
+    // the text that follows continues from the unshifted pen position on the baseline
+    out.kern(shift_x);
+    out.flush(ops);
+    if rise.0 != 0.0 {
+        ops.push(TextOperator::SetRise(Px(0.0)));
     }
     if current_font != 0 {
         ops.push(TextOperator::SetFont(font.postscript_name(), font_size));
     }
 
     advance
+}
+
+/// Collects glyphs and the kerns between them into `TJ` operators.
+#[derive(Default)]
+struct GlyphRunWriter {
+    items: Vec<KernedGlyphs>,
+    glyphs: Vec<GlyphIndex>,
+    /// The kern that goes in front of the next glyph, summed up so that a glyph gets one kern.
+    pending_kern: FontUnit,
+}
+
+impl GlyphRunWriter {
+    fn kern(&mut self, kern: FontUnit) {
+        self.pending_kern.0 += kern.0;
+    }
+
+    fn glyph(&mut self, glyph: GlyphIndex) {
+        self.write_pending_kern();
+        self.glyphs.push(glyph);
+    }
+
+    fn write_pending_kern(&mut self) {
+        // 0.1/1000 em is far below anything visible; the coarser values compress better
+        let kern = (self.pending_kern.0 * 10.0).round() / 10.0;
+        if kern.abs() >= 0.1 {
+            if !self.glyphs.is_empty() {
+                self.items
+                    .push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut self.glyphs))));
+            }
+            self.items.push(KernedGlyphs::Kern(FontUnit(kern)));
+        }
+        self.pending_kern = FontUnit(0.0);
+    }
+
+    /// Appends the collected glyphs and kerns to `ops` as one `TJ` operator.
+    fn flush(&mut self, ops: &mut Vec<TextOperator>) {
+        self.write_pending_kern();
+        if !self.glyphs.is_empty() {
+            self.items
+                .push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut self.glyphs))));
+        }
+        if !self.items.is_empty() {
+            ops.push(TextOperator::KernedGlyphs(std::mem::take(&mut self.items)));
+        }
+    }
 }
 
 /// Records which characters every glyph of `shaped` (in logical order) stands for in the
@@ -1610,5 +1867,62 @@ fn record_to_unicode<'a>(
     }
     for (font_index, mut map) in to_unicode_maps {
         font_at(font_index).to_unicode.lock().append(&mut map);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::properties::computed::Language as Lang;
+
+    #[test]
+    fn languages_get_their_hyphenation_dictionaries() {
+        let language = |tag: &str| hyphenation_language(&Lang::from_tag(tag));
+        assert_eq!(hyphenation_language(&Lang::default()), Some(Language::EnglishUS));
+        assert_eq!(language("en"), Some(Language::EnglishUS));
+        assert_eq!(language("en-GB"), Some(Language::EnglishGB));
+        assert_eq!(language("de"), Some(Language::German1996));
+        assert_eq!(language("de-CH"), Some(Language::GermanSwiss));
+        assert_eq!(language("fr-CA"), Some(Language::French));
+        assert_eq!(language("sr-Latn"), None);
+        assert_eq!(language("ja"), None);
+    }
+
+    fn breaks(text: &str) -> Vec<usize> {
+        break_opportunities_between_letters(text).collect()
+    }
+
+    #[test]
+    fn ideographs_can_be_broken_between() {
+        // every character is 3 bytes long
+        assert_eq!(breaks("道可道"), vec![3, 6]);
+    }
+
+    #[test]
+    fn closing_punctuation_does_not_start_a_line() {
+        // no break in front of the comma or the full stop
+        assert_eq!(breaks("道，非。名"), vec![6, 12]);
+        // no break after the opening bracket
+        assert_eq!(breaks("「道」"), vec![]);
+    }
+
+    #[test]
+    fn breaks_after_spaces_are_not_included() {
+        assert!(breaks("a b c").is_empty());
+        assert!(breaks("道 道").is_empty());
+    }
+
+    #[test]
+    fn latin_words_break_after_hyphens_without_stretching() {
+        assert_eq!(breaks("well-known"), vec![5]);
+        assert!(!is_justified_between("well-known", 5));
+    }
+
+    #[test]
+    fn gaps_next_to_cjk_characters_are_stretched() {
+        assert!(is_justified_between("道可", 3));
+        assert!(is_justified_between("道a", 3));
+        assert!(is_justified_between("かな", 3));
+        assert!(is_justified_between("한국", 3));
     }
 }

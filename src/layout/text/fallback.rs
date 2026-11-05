@@ -7,12 +7,15 @@
 //! of the run's font (`Font::fallbacks`):
 //!
 //! 1. the other families listed in `font-family` (as CSS prescribes),
-//! 2. a fixed list of families with a broad character coverage (`FALLBACK_FAMILIES`),
-//! 3. the font built into Helium (DejaVu Sans, see `Font::bundled`),
-//! 4. on Linux, any installed font that covers the character, as found by fontconfig.
+//! 2. families designed for the script of the character (`script_families`), in their serif or
+//!    sans-serif design depending on the `font-family` (`is_serif`), like the default fonts per
+//!    script of browsers, and for serif text general serif families (`SERIF_FAMILIES`),
+//! 3. a fixed list of families with a broad character coverage (`FALLBACK_FAMILIES`),
+//! 4. the font built into Helium (DejaVu Sans, see `Font::bundled`),
+//! 5. on Linux, any installed font that covers the character, as found by fontconfig.
 //!
 //! Shaping (`shape`) then splits the text into runs per font, and painting switches to the
-//! fallback font for those runs. The fixed list and the bundled font come before the fontconfig
+//! fallback font for those runs. The fixed lists and the bundled font come before the fontconfig
 //! query so that the output does not depend on the order fontconfig happens to sort fonts in, as
 //! far as possible.
 //!
@@ -21,7 +24,9 @@
 
 use super::font::Font;
 use crate::layout::FontMap;
-use crate::style::properties::computed::{ComputedValues, FontFamily, FontStyle, FontWeight};
+use crate::style::properties::computed::{
+    ComputedValues, FontFamily, FontStyle, FontWeight, Language,
+};
 
 use font_kit::family_name::FamilyName;
 use font_kit::handle::Handle;
@@ -54,6 +59,282 @@ const FALLBACK_FAMILIES: &[&str] = &[
     "Cambria Math",
 ];
 
+/// General-purpose serif families that are tried for text in a serif font before the
+/// (mostly sans-serif) `FALLBACK_FAMILIES`, so that e.g. a dash missing from a font comes from a
+/// serif font as well.
+const SERIF_FAMILIES: &[&str] = &[
+    "Noto Serif",
+    "DejaVu Serif",
+    "Liberation Serif",
+    "Times New Roman",
+    "Times",
+];
+
+/// Families designed for the script of `ch`, in order of preference, for text in a serif font
+/// (`serif`) or not. They are tried before the broad-coverage `FALLBACK_FAMILIES`, whose glyphs
+/// for these scripts (if any) are rudimentary, like browsers use a default font per script.
+///
+/// The language of the text is not known, so Han characters get the Japanese fonts first, as
+/// fontconfig prefers them by default; Urdu text gets a Naskh font rather than a Nastaliq one.
+fn script_families(ch: char, serif: bool) -> &'static [&'static str] {
+    // (serif families, sans-serif families)
+    let (serif_families, sans_families): (&[&str], &[&str]) = match ch {
+        '\u{0600}'..='\u{06FF}'
+        | '\u{0750}'..='\u{077F}'
+        | '\u{0870}'..='\u{08FF}'
+        | '\u{FB50}'..='\u{FDFF}'
+        | '\u{FE70}'..='\u{FEFF}' => (
+            &[
+                "Noto Naskh Arabic",
+                "Amiri",
+                "Scheherazade New",
+                "Noto Sans Arabic",
+                "Geeza Pro",
+                "Traditional Arabic",
+                "Times New Roman",
+            ],
+            &[
+                "Noto Sans Arabic",
+                "Noto Naskh Arabic",
+                "Geeza Pro",
+                "Segoe UI",
+                "Arial",
+            ],
+        ),
+        '\u{0590}'..='\u{05FF}' | '\u{FB1D}'..='\u{FB4F}' => (
+            &[
+                "Noto Serif Hebrew",
+                "Frank Ruehl CLM",
+                "David CLM",
+                "Noto Sans Hebrew",
+                "Times New Roman",
+            ],
+            &["Noto Sans Hebrew", "Noto Serif Hebrew", "Arial Hebrew", "Arial"],
+        ),
+        '\u{0700}'..='\u{074F}' => (&["Noto Sans Syriac"], &["Noto Sans Syriac"]),
+        '\u{0780}'..='\u{07BF}' => (&["Noto Sans Thaana"], &["Noto Sans Thaana"]),
+        '\u{0900}'..='\u{097F}' | '\u{A8E0}'..='\u{A8FF}' => (
+            &[
+                "Noto Serif Devanagari",
+                "Noto Sans Devanagari",
+                "Kohinoor Devanagari",
+                "Mangal",
+            ],
+            &[
+                "Noto Sans Devanagari",
+                "Noto Serif Devanagari",
+                "Kohinoor Devanagari",
+                "Nirmala UI",
+            ],
+        ),
+        '\u{0980}'..='\u{09FF}' => (
+            &["Noto Serif Bengali", "Noto Sans Bengali"],
+            &["Noto Sans Bengali", "Noto Serif Bengali", "Nirmala UI"],
+        ),
+        '\u{0A00}'..='\u{0A7F}' => (
+            &["Noto Serif Gurmukhi", "Noto Sans Gurmukhi"],
+            &["Noto Sans Gurmukhi", "Noto Serif Gurmukhi", "Nirmala UI"],
+        ),
+        '\u{0A80}'..='\u{0AFF}' => (
+            &["Noto Serif Gujarati", "Noto Sans Gujarati"],
+            &["Noto Sans Gujarati", "Noto Serif Gujarati", "Nirmala UI"],
+        ),
+        '\u{0B80}'..='\u{0BFF}' => (
+            &["Noto Serif Tamil", "Noto Sans Tamil"],
+            &["Noto Sans Tamil", "Noto Serif Tamil", "Nirmala UI"],
+        ),
+        '\u{0C00}'..='\u{0C7F}' => (
+            &["Noto Serif Telugu", "Noto Sans Telugu"],
+            &["Noto Sans Telugu", "Noto Serif Telugu", "Nirmala UI"],
+        ),
+        '\u{0C80}'..='\u{0CFF}' => (
+            &["Noto Serif Kannada", "Noto Sans Kannada"],
+            &["Noto Sans Kannada", "Noto Serif Kannada", "Nirmala UI"],
+        ),
+        '\u{0D00}'..='\u{0D7F}' => (
+            &["Noto Serif Malayalam", "Noto Sans Malayalam"],
+            &["Noto Sans Malayalam", "Noto Serif Malayalam", "Nirmala UI"],
+        ),
+        '\u{0D80}'..='\u{0DFF}' => (
+            &["Noto Serif Sinhala", "Noto Sans Sinhala"],
+            &["Noto Sans Sinhala", "Noto Serif Sinhala"],
+        ),
+        '\u{0E00}'..='\u{0E7F}' => (
+            &["Noto Serif Thai", "Noto Sans Thai", "Thonburi", "Tahoma"],
+            &["Noto Sans Thai", "Noto Serif Thai", "Thonburi", "Tahoma"],
+        ),
+        '\u{0E80}'..='\u{0EFF}' => (
+            &["Noto Serif Lao", "Noto Sans Lao"],
+            &["Noto Sans Lao", "Noto Serif Lao"],
+        ),
+        '\u{0F00}'..='\u{0FFF}' => (&["Noto Serif Tibetan"], &["Noto Serif Tibetan"]),
+        '\u{1000}'..='\u{109F}' => (
+            &["Noto Serif Myanmar", "Noto Sans Myanmar"],
+            &["Noto Sans Myanmar", "Noto Serif Myanmar"],
+        ),
+        '\u{1780}'..='\u{17FF}' => (
+            &["Noto Serif Khmer", "Noto Sans Khmer"],
+            &["Noto Sans Khmer", "Noto Serif Khmer"],
+        ),
+        '\u{0530}'..='\u{058F}' => (
+            &["Noto Serif Armenian", "Noto Sans Armenian"],
+            &["Noto Sans Armenian", "Noto Serif Armenian"],
+        ),
+        '\u{10A0}'..='\u{10FF}' => (
+            &["Noto Serif Georgian", "Noto Sans Georgian"],
+            &["Noto Sans Georgian", "Noto Serif Georgian"],
+        ),
+        '\u{1200}'..='\u{139F}' => (
+            &["Noto Serif Ethiopic", "Noto Sans Ethiopic"],
+            &["Noto Sans Ethiopic", "Noto Serif Ethiopic"],
+        ),
+        // kana
+        '\u{3040}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' => (
+            &[
+                "Noto Serif CJK JP",
+                "Source Han Serif JP",
+                "Hiragino Mincho ProN",
+                "Yu Mincho",
+                "MS Mincho",
+            ],
+            &[
+                "Noto Sans CJK JP",
+                "Source Han Sans JP",
+                "Hiragino Sans",
+                "Yu Gothic",
+                "Meiryo",
+            ],
+        ),
+        // Hangul
+        '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}' => (
+            &["Noto Serif CJK KR", "Source Han Serif K", "AppleMyungjo", "Batang"],
+            &["Noto Sans CJK KR", "Source Han Sans K", "Apple SD Gothic Neo", "Malgun Gothic"],
+        ),
+        // Han and CJK punctuation
+        '\u{2E80}'..='\u{2FDF}'
+        | '\u{3000}'..='\u{303F}'
+        | '\u{3400}'..='\u{4DBF}'
+        | '\u{4E00}'..='\u{9FFF}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{FF00}'..='\u{FFEF}'
+        | '\u{20000}'..='\u{3FFFF}' => (
+            &[
+                "Noto Serif CJK JP",
+                "Noto Serif CJK SC",
+                "Noto Serif CJK TC",
+                "Source Han Serif",
+                "Songti SC",
+                "SimSun",
+            ],
+            &[
+                "Noto Sans CJK JP",
+                "Noto Sans CJK SC",
+                "Noto Sans CJK TC",
+                "Source Han Sans",
+                "PingFang SC",
+                "Microsoft YaHei",
+            ],
+        ),
+        _ => (&[], &[]),
+    };
+    if serif {
+        serif_families
+    } else {
+        sans_families
+    }
+}
+
+/// Families for the script of `ch` that are preferred for text in a particular language `lang`
+/// (in a serif font or not), before the general ones of `script_families`: the Chinese,
+/// Japanese and Korean forms of Han characters and punctuation, Nastaliq for Urdu.
+fn language_families(ch: char, serif: bool, lang: &Language) -> &'static [&'static str] {
+    let Some(primary) = lang.primary() else {
+        return &[];
+    };
+    let is_han_or_cjk_punctuation = matches!(ch,
+        '\u{2E80}'..='\u{2FDF}' | '\u{3000}'..='\u{303F}' | '\u{3400}'..='\u{4DBF}'
+        | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' | '\u{FF00}'..='\u{FFEF}'
+        | '\u{20000}'..='\u{3FFFF}');
+    let is_arabic = matches!(ch,
+        '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{0870}'..='\u{08FF}'
+        | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}');
+    let (serif_families, sans_families): (&[&str], &[&str]) = if is_han_or_cjk_punctuation {
+        match primary {
+            "ja" => (
+                &["Noto Serif CJK JP", "Source Han Serif JP", "Hiragino Mincho ProN", "Yu Mincho"],
+                &["Noto Sans CJK JP", "Source Han Sans JP", "Hiragino Sans", "Yu Gothic"],
+            ),
+            "ko" => (
+                &["Noto Serif CJK KR", "Source Han Serif K", "AppleMyungjo", "Batang"],
+                &["Noto Sans CJK KR", "Source Han Sans K", "Apple SD Gothic Neo", "Malgun Gothic"],
+            ),
+            "zh" | "yue" | "cmn" => {
+                let region = lang.region();
+                if region == Some("hk") || region == Some("mo") || primary == "yue" {
+                    (
+                        &["Noto Serif CJK HK", "Noto Serif CJK TC", "Source Han Serif TC"],
+                        &["Noto Sans CJK HK", "Noto Sans CJK TC", "Source Han Sans HC"],
+                    )
+                } else if lang.script() == Some("hant") || region == Some("tw") {
+                    (
+                        &["Noto Serif CJK TC", "Source Han Serif TC", "Songti TC", "PMingLiU"],
+                        &["Noto Sans CJK TC", "Source Han Sans TC", "PingFang TC", "Microsoft JhengHei"],
+                    )
+                } else {
+                    (
+                        &["Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun"],
+                        &["Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei"],
+                    )
+                }
+            }
+            _ => (&[], &[]),
+        }
+    } else if is_arabic {
+        match primary {
+            "ur" => (
+                &["Noto Nastaliq Urdu", "Jameel Noori Nastaleeq", "Urdu Typesetting"],
+                &["Noto Nastaliq Urdu", "Noto Sans Arabic"],
+            ),
+            "fa" => (&["Noto Naskh Arabic"], &["Vazirmatn", "Noto Sans Arabic"]),
+            _ => (&[], &[]),
+        }
+    } else {
+        (&[], &[])
+    };
+    if serif {
+        serif_families
+    } else {
+        sans_families
+    }
+}
+
+/// Whether the text of a `font-family` is set in a serif typeface, judged by the generic family
+/// or the name of the first family that says so: fallback fonts for it are then chosen from
+/// serif families.
+fn is_serif(families: &[FontFamily]) -> bool {
+    const SERIF_NAMES: &[&str] = &[
+        "serif", "times", "roman", "georgia", "garamond", "palatino", "baskerville", "cambria",
+        "caslon", "bodoni", "didot", "century", "charter", "constantia", "libertin", "minion",
+        "book antiqua", "naskh", "mincho", "song", "ming", "frank ruehl", "david",
+    ];
+    for family in families {
+        match family {
+            FontFamily::Serif => return true,
+            FontFamily::SansSerif | FontFamily::Monospace => return false,
+            FontFamily::Named(name) => {
+                let name = name.to_lowercase();
+                if name.contains("sans") || name.contains("mono") || name.contains("gothic") {
+                    return false;
+                }
+                if SERIF_NAMES.iter().any(|serif| name.contains(serif)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Finds fallback fonts. One resolver is used for the whole document so that every font is
 /// loaded at most once.
 pub struct FontResolver {
@@ -61,7 +342,7 @@ pub struct FontResolver {
     /// The installed font (if any) for a family, weight and style.
     family_cache: HashMap<(String, FontWeight, FontStyle), Option<Arc<Font>>>,
     /// The font that fontconfig found for a character, weight and style.
-    char_cache: HashMap<(char, FontWeight, FontStyle), Option<Arc<Font>>>,
+    char_cache: HashMap<(char, FontWeight, FontStyle, Language), Option<Arc<Font>>>,
     missing: MissingGlyphs,
 }
 
@@ -113,7 +394,7 @@ impl FontResolver {
         for (byte_index, ch) in text.char_indices() {
             if needs_no_font(ch)
                 || font.covers(ch)
-                || font.fallbacks.read().iter().any(|f| f.covers(ch))
+                || font.fallbacks(&style.font.lang).iter().any(|f| f.covers(ch))
             {
                 continue;
             }
@@ -125,7 +406,7 @@ impl FontResolver {
                         describe_char(ch),
                         fallback.postscript_name()
                     );
-                    font.add_fallback(fallback);
+                    font.add_fallback(&style.font.lang, fallback);
                 }
                 None => self.missing.record(ch, font, style, text, byte_index),
             }
@@ -146,14 +427,18 @@ impl FontResolver {
         let weight = style.font.font_weight.clone();
         let font_style = style.font.font_style.clone();
 
+        let serif = is_serif(&style.font.font_family);
         let families = style
             .font
             .font_family
             .iter()
             .map(|family| FamilyName::from(family.clone()))
             .chain(
-                FALLBACK_FAMILIES
+                language_families(ch, serif, &style.font.lang)
                     .iter()
+                    .chain(script_families(ch, serif))
+                    .chain(if serif { SERIF_FAMILIES } else { &[] })
+                    .chain(FALLBACK_FAMILIES)
                     .map(|name| FamilyName::Title(name.to_string())),
             )
             .chain([FamilyName::SansSerif, FamilyName::Serif]);
@@ -170,10 +455,11 @@ impl FontResolver {
             return Some(bundled);
         }
 
+        let lang = style.font.lang.clone();
         self.char_cache
-            .entry((ch, weight.clone(), font_style.clone()))
+            .entry((ch, weight.clone(), font_style.clone(), lang.clone()))
             .or_insert_with(|| {
-                system::font_file_for_char(ch, &weight, &font_style)
+                system::font_file_for_char(ch, &weight, &font_style, &lang)
                     .and_then(|(path, index)| Font::load(Handle::from_path(path, index)))
                     .map(|font| register_font(font_map, font))
             })
@@ -340,9 +626,9 @@ fn format_font_family(families: &[FontFamily]) -> String {
 mod system {
     //! Finding a font for a character with fontconfig, like browsers do on Linux.
 
-    use crate::style::properties::computed::{FontStyle, FontWeight};
+    use crate::style::properties::computed::{FontStyle, FontWeight, Language};
     use fontconfig_sys::constants::{
-        FC_CHARSET, FC_FILE, FC_INDEX, FC_SLANT, FC_SLANT_ITALIC, FC_SLANT_OBLIQUE, FC_SLANT_ROMAN,
+        FC_CHARSET, FC_FILE, FC_INDEX, FC_LANG, FC_SLANT, FC_SLANT_ITALIC, FC_SLANT_OBLIQUE, FC_SLANT_ROMAN,
         FC_WEIGHT, FC_WEIGHT_BOLD, FC_WEIGHT_REGULAR,
     };
     use fontconfig_sys::*;
@@ -356,7 +642,10 @@ mod system {
         ch: char,
         weight: &FontWeight,
         style: &FontStyle,
+        lang: &Language,
     ) -> Option<(PathBuf, u32)> {
+        // the language makes fontconfig prefer fonts for it (e.g. among the CJK fonts)
+        let lang = lang.tag().and_then(|tag| std::ffi::CString::new(tag).ok());
         let weight = match weight {
             FontWeight::Normal => FC_WEIGHT_REGULAR,
             FontWeight::Bold => FC_WEIGHT_BOLD,
@@ -378,6 +667,12 @@ mod system {
             FcPatternAddCharSet(pattern, FC_CHARSET.as_ptr(), charset);
             FcPatternAddInteger(pattern, FC_WEIGHT.as_ptr(), weight);
             FcPatternAddInteger(pattern, FC_SLANT.as_ptr(), slant);
+            if let Some(lang) = &lang {
+                let langset = FcLangSetCreate();
+                FcLangSetAdd(langset, lang.as_ptr() as *const FcChar8);
+                FcPatternAddLangSet(pattern, FC_LANG.as_ptr(), langset);
+                FcLangSetDestroy(langset);
+            }
             FcConfigSubstitute(ptr::null_mut(), pattern, FcMatchPattern);
             FcDefaultSubstitute(pattern);
 
@@ -420,7 +715,7 @@ mod system {
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "ios"))]
 mod system {
-    use crate::style::properties::computed::{FontStyle, FontWeight};
+    use crate::style::properties::computed::{FontStyle, FontWeight, Language};
     use std::path::PathBuf;
 
     /// Not implemented on this platform; only `FALLBACK_FAMILIES` are tried.
@@ -428,6 +723,7 @@ mod system {
         _ch: char,
         _weight: &FontWeight,
         _style: &FontStyle,
+        _lang: &Language,
     ) -> Option<(PathBuf, u32)> {
         None
     }
@@ -436,6 +732,59 @@ mod system {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn named(name: &str) -> FontFamily {
+        FontFamily::Named(name.to_string())
+    }
+
+    #[test]
+    fn han_characters_get_the_fonts_of_their_language() {
+        let lang = Language::from_tag;
+        assert_eq!(language_families('直', true, &lang("ja"))[0], "Noto Serif CJK JP");
+        assert_eq!(language_families('直', true, &lang("zh"))[0], "Noto Serif CJK SC");
+        assert_eq!(language_families('直', false, &lang("zh-Hans-CN"))[0], "Noto Sans CJK SC");
+        assert_eq!(language_families('直', true, &lang("zh-Hant"))[0], "Noto Serif CJK TC");
+        assert_eq!(language_families('直', true, &lang("zh-TW"))[0], "Noto Serif CJK TC");
+        assert_eq!(language_families('直', true, &lang("zh-HK"))[0], "Noto Serif CJK HK");
+        assert_eq!(language_families('直', false, &lang("ko"))[0], "Noto Sans CJK KR");
+        // CJK punctuation follows the language as well
+        assert_eq!(language_families('。', true, &lang("zh"))[0], "Noto Serif CJK SC");
+        // an unknown language or another script leaves the choice to `script_families`
+        assert!(language_families('直', true, &Language::default()).is_empty());
+        assert!(language_families('a', true, &lang("ja")).is_empty());
+    }
+
+    #[test]
+    fn urdu_gets_nastaliq() {
+        let urdu = Language::from_tag("ur");
+        assert_eq!(language_families('ک', true, &urdu)[0], "Noto Nastaliq Urdu");
+        assert!(language_families('ک', true, &Language::from_tag("ar")).is_empty());
+    }
+
+    #[test]
+    fn serif_text_is_recognized_by_the_family_names() {
+        assert!(is_serif(&[named("Noto Serif")]));
+        assert!(is_serif(&[named("EB Garamond"), FontFamily::SansSerif]));
+        assert!(is_serif(&[named("Unknown Font"), FontFamily::Serif]));
+        assert!(is_serif(&[named("Noto Naskh Arabic")]));
+        assert!(!is_serif(&[named("Noto Sans")]));
+        assert!(!is_serif(&[named("DejaVu Sans Mono"), FontFamily::Serif]));
+        assert!(!is_serif(&[FontFamily::SansSerif]));
+        assert!(!is_serif(&[]));
+    }
+
+    #[test]
+    fn scripts_get_fonts_designed_for_them_in_the_matching_style() {
+        assert_eq!(script_families('ك', true)[0], "Noto Naskh Arabic");
+        assert_eq!(script_families('ك', false)[0], "Noto Sans Arabic");
+        assert_eq!(script_families('\u{FEFB}', true)[0], "Noto Naskh Arabic");
+        assert_eq!(script_families('א', true)[0], "Noto Serif Hebrew");
+        assert_eq!(script_families('क', false)[0], "Noto Sans Devanagari");
+        assert_eq!(script_families('か', true)[0], "Noto Serif CJK JP");
+        assert_eq!(script_families('한', false)[0], "Noto Sans CJK KR");
+        // Latin is covered by the general lists
+        assert!(script_families('a', true).is_empty());
+    }
 
     #[test]
     fn context_is_cut_around_the_character() {
@@ -486,9 +835,9 @@ mod tests {
         assert!(missing.0.contains_key(&'\u{0378}'));
         // Depends on the installed fonts: either a fallback was found, or the character was
         // reported as missing.
-        let covered = font.fallbacks().iter().any(|f| f.covers('漢'));
+        let covered = font.fallbacks(&style.font.lang).iter().any(|f| f.covers('漢'));
         assert_ne!(covered, missing.0.contains_key(&'漢'));
-        for fallback in font.fallbacks() {
+        for fallback in font.fallbacks(&style.font.lang) {
             assert!(font_map.contains_key(&fallback.postscript_name()));
         }
     }
