@@ -10,10 +10,10 @@ use taffy::style_helpers::{
     percent, span,
 };
 
+use taffy::geometry::{Rect, Size};
 use taffy::style::{
     BoxSizing, Dimension, LengthPercentage as TLengthPercentage, LengthPercentageAuto, Position,
 };
-use taffy::geometry::{Rect, Size};
 
 fn length_percentage(value: LengthPercentage) -> TLengthPercentage {
     match value {

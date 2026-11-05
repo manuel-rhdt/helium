@@ -1,6 +1,4 @@
-use super::components::{
-    self, BlockLevelElement, LayoutEntity, MathNode, Position, RootNode,
-};
+use super::components::{self, BlockLevelElement, LayoutEntity, MathNode, Position, RootNode};
 use super::inline::InlineFormattingContext;
 use super::margin_boxes::{self, MarginBoxes, ResolvedMarginBox};
 use super::normal_formatting::BlockFormattingContext;
@@ -17,9 +15,11 @@ use crate::tree::{DomRef, NodeData, TreeLinked};
 use html5ever::{Attribute, QualName, local_name, ns};
 use specs::{Builder, Entities, Entity, SystemData, World, WorldExt, WriteStorage};
 
+use super::text::fallback::{FontResolver, register_font};
 use components::TextRun;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
@@ -70,7 +70,18 @@ impl FlowConstructor {
                     _ => continue,
                 };
                 let style = style_builder.build();
-                let font_name = self.entity_constructor.match_font(&style).postscript_name();
+                let font = self.entity_constructor.match_font(&style);
+                // page numbers are drawn later, but only consist of digits
+                let static_text: String = content
+                    .iter()
+                    .filter_map(|item| match item {
+                        crate::style::parse::ContentItem::String(string) => Some(string.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                self.entity_constructor
+                    .ensure_coverage(&style, &font, &static_text);
+                let font_name = font.postscript_name();
                 resolved.push(ResolvedMarginBox {
                     kind,
                     content,
@@ -94,7 +105,11 @@ impl FlowConstructor {
         }
     }
 
-    pub fn layout_context(self) -> super::components::LayoutContext {
+    /// The world with the constructed boxes. It contains the characters that could not be
+    /// rendered with any font as the `MissingGlyphs` resource.
+    pub fn layout_context(mut self) -> super::components::LayoutContext {
+        let missing = self.entity_constructor.font_resolver.take_missing_glyphs();
+        self.entity_constructor.world.insert(missing);
         self.entity_constructor.world
     }
 
@@ -301,6 +316,7 @@ impl FontSelector {
 
 pub struct EntityConstructor {
     font_match_cache: HashMap<FontSelector, String>,
+    font_resolver: FontResolver,
     /// Whether the traversal is inside a `<math>` element.
     in_math: bool,
     pub world: World,
@@ -329,13 +345,13 @@ impl EntityConstructor {
         EntityConstructor {
             world,
             font_match_cache: Default::default(),
+            font_resolver: Default::default(),
             in_math: false,
             trim_next_inline_whitespace: true,
         }
     }
 
-    fn match_font(&mut self, style: &ComputedValues) -> Font {
-        // TODO: handle error
+    fn match_font(&mut self, style: &ComputedValues) -> Arc<Font> {
         let font_selector = FontSelector::from_style(&style);
         let mut font_map = self.world.write_resource::<FontMap>();
         let font_name = self
@@ -343,11 +359,16 @@ impl EntityConstructor {
             .entry(font_selector)
             .or_insert_with(|| {
                 let font = crate::layout::text::font::match_font(&style);
-                let font_name = font.postscript_name();
-                font_map.insert(font_name.clone(), font);
-                font_name
+                register_font(&mut font_map, font).postscript_name()
             });
         font_map[font_name].clone()
+    }
+
+    /// Adds fallback fonts to `font` for the characters of `text` it has no glyph for.
+    fn ensure_coverage(&mut self, style: &ComputedValues, font: &Font, text: &str) {
+        let mut font_map = self.world.write_resource::<FontMap>();
+        self.font_resolver
+            .ensure_coverage(style, font, text, &mut font_map);
     }
 
     // Called on top-down traversal. Takes a node and its style to create a corresponding
@@ -394,7 +415,9 @@ impl EntityConstructor {
                     .marker_text(ordinal)
                     .filter(|_| is_list_item);
                 let marker = marker_text.map(|text| {
-                    let font_name = self.match_font(&style).postscript_name();
+                    let font = self.match_font(&style);
+                    self.ensure_coverage(&style, &font, &text);
+                    let font_name = font.postscript_name();
                     components::ListMarker {
                         text,
                         font_name,
@@ -493,6 +516,9 @@ impl EntityConstructor {
                 visible_text.push(character);
             }
         }
+        self.ensure_coverage(&style, &font, &visible_text);
+        // a hyphen is inserted when a word is hyphenated
+        self.ensure_coverage(&style, &font, "-");
 
         let font_size = style.font.font_size;
         let font_height = font.scale_to_px(font.font_height(), font_size);

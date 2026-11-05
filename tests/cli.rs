@@ -177,14 +177,14 @@ fn loads_full_quarto_html_from_document() -> Result<(), Box<dyn std::error::Erro
     );
     let output = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("quarto_stylesheet.pdf");
     let html = std::fs::read_to_string(input)?;
-    assert!(html.contains("<math "), "Quarto output should contain MathML");
+    assert!(
+        html.contains("<math "),
+        "Quarto output should contain MathML"
+    );
     assert!(html.contains("<pre class=\"sourceCode python"));
 
     let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
-    cmd.arg("--dump-layout")
-        .arg("-")
-        .arg(input)
-        .arg(&output);
+    cmd.arg("--dump-layout").arg("-").arg(input).arg(&output);
     let result = cmd.output()?;
     assert!(
         result.status.success(),
@@ -193,12 +193,12 @@ fn loads_full_quarto_html_from_document() -> Result<(), Box<dyn std::error::Erro
     );
     let layout: serde_json::Value = serde_json::from_slice(&result.stdout)?;
     let layout_dump = String::from_utf8_lossy(&result.stdout);
-    assert!(layout_dump.contains(
-        "\"margin\": {\"top\": 0, \"right\": 0, \"bottom\": 12, \"left\": 0}"
-    ));
-    assert!(layout_dump.contains(
-        "This document was prepared for Regional Transit Reliability Review."
-    ));
+    assert!(
+        layout_dump.contains("\"margin\": {\"top\": 0, \"right\": 0, \"bottom\": 12, \"left\": 0}")
+    );
+    assert!(
+        layout_dump.contains("This document was prepared for Regional Transit Reliability Review.")
+    );
     assert!(layout_dump.contains("scheduled_trips"));
     assert!(layout_dump.contains("\"value\": [0, 92, 197, 255]"));
     assert!(layout_dump.contains("\"background\": [240, 243, 246, 255]"));

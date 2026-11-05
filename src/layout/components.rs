@@ -489,7 +489,12 @@ impl Component for MathNode {
 pub struct MathBox {
     /// Every node of the formula (including the root) in tree order, with the offset of its
     /// border box from the border box of the `<math>` element.
-    pub nodes: Vec<(Entity, PixelLength, PixelLength, math_render::host::NodeLayout)>,
+    pub nodes: Vec<(
+        Entity,
+        PixelLength,
+        PixelLength,
+        math_render::host::NodeLayout,
+    )>,
 }
 
 impl Component for MathBox {

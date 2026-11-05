@@ -49,7 +49,9 @@ impl<'a, 'world> EcsMathTree<'a, 'world> {
         let mut fonts = HashMap::new();
         for node in nodes.join() {
             fonts.entry(node.font_name.clone()).or_insert_with(|| {
-                Rc::new(HarfbuzzShaper::new(font_map[&node.font_name].hb_font.clone()))
+                Rc::new(HarfbuzzShaper::new(
+                    font_map[&node.font_name].hb_font.clone(),
+                ))
             });
         }
         EcsMathTree {
@@ -187,9 +189,7 @@ impl<'world> System<'world> for MathFormat {
     ) {
         let roots: Vec<Entity> = (&entities, &math_nodes)
             .join()
-            .filter(|(_, node)| {
-                node.kind == NodeKind::Math(math_render::host::MathElement::Math)
-            })
+            .filter(|(_, node)| node.kind == NodeKind::Math(math_render::host::MathElement::Math))
             .map(|(entity, _)| entity)
             .collect();
         if roots.is_empty() {
@@ -299,9 +299,7 @@ impl LayoutMathGlyphs {
                         Px(*font_size),
                     ));
 
-                    let to_unicode_map = to_unicode_maps
-                        .entry(node.font_name.clone())
-                        .or_default();
+                    let to_unicode_map = to_unicode_maps.entry(node.font_name.clone()).or_default();
                     let text = node.text.as_deref();
                     let mut previous_cluster = u32::MAX;
                     let mut cluster_starting_glyph = 0;
@@ -320,8 +318,8 @@ impl LayoutMathGlyphs {
                             if glyph.cluster != previous_cluster {
                                 // a new cluster began
                                 if previous_cluster < glyph.cluster {
-                                    if let Some(cluster_text) = text
-                                        .get(previous_cluster as usize..glyph.cluster as usize)
+                                    if let Some(cluster_text) =
+                                        text.get(previous_cluster as usize..glyph.cluster as usize)
                                     {
                                         to_unicode_map.insert(
                                             GlyphIndex(cluster_starting_glyph),
@@ -336,8 +334,10 @@ impl LayoutMathGlyphs {
                     }
                     if let Some(text) = text {
                         if let Some(cluster_text) = text.get(previous_cluster as usize..) {
-                            to_unicode_map
-                                .insert(GlyphIndex(cluster_starting_glyph), cluster_text.to_owned());
+                            to_unicode_map.insert(
+                                GlyphIndex(cluster_starting_glyph),
+                                cluster_text.to_owned(),
+                            );
                         }
                     }
                 }

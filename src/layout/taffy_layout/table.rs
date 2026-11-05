@@ -20,15 +20,15 @@
 //!
 //! https://www.w3.org/TR/CSS22/tables.html
 
+use taffy::compute_grid_layout;
 use taffy::geometry::{Line, Point, Size};
 use taffy::style::{
-    AvailableSpace, Dimension, GridTemplateComponent, LengthPercentageAuto,
-    MaxTrackSizingFunction, MinTrackSizingFunction,
+    AvailableSpace, Dimension, GridTemplateComponent, LengthPercentageAuto, MaxTrackSizingFunction,
+    MinTrackSizingFunction,
 };
 use taffy::style_helpers::{auto, length, line, minmax, span};
-use taffy::tree::{LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode};
-use taffy::compute_grid_layout;
 use taffy::tree::Layout;
+use taffy::tree::{LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode};
 
 use crate::layout::absolute::shrink_to_fit;
 use crate::style::properties::computed::{GenericSize, LengthPercentage};
@@ -93,7 +93,11 @@ struct Slots(Vec<Vec<bool>>);
 
 impl Slots {
     fn is_taken(&self, row: usize, column: usize) -> bool {
-        self.0.get(row).and_then(|r| r.get(column)).copied().unwrap_or(false)
+        self.0
+            .get(row)
+            .and_then(|r| r.get(column))
+            .copied()
+            .unwrap_or(false)
     }
 
     fn take(&mut self, row: usize, column: usize) {
@@ -274,7 +278,8 @@ impl HeliumTree<'_, '_> {
             }
             if let Some(node) = group.node {
                 // the group goes in front of its rows
-                let first_row = structure.parts.len() - group.rows.iter().filter(|r| r.node.is_some()).count();
+                let first_row =
+                    structure.parts.len() - group.rows.iter().filter(|r| r.node.is_some()).count();
                 structure.parts.insert(
                     first_row,
                     TablePart {
@@ -306,7 +311,11 @@ impl HeliumTree<'_, '_> {
             let extras = self.inline_extras(cell);
             if columns == 1 {
                 let track = &mut column_tracks[column];
-                match self.computed_values.get(self.node(cell).entity).map(|s| s.position.width) {
+                match self
+                    .computed_values
+                    .get(self.node(cell).entity)
+                    .map(|s| s.position.width)
+                {
                     Some(GenericSize::LengthPercentage(LengthPercentage::PixelLength(px))) => {
                         track.length = Some(track.length.unwrap_or(0.0).max(px.0 + extras.width));
                     }
@@ -375,7 +384,10 @@ impl HeliumTree<'_, '_> {
             }
             rows.extend(row_tracks.iter().map(|&height| {
                 if height > 0.0 {
-                    minmax(MinTrackSizingFunction::length(height), MaxTrackSizingFunction::auto())
+                    minmax(
+                        MinTrackSizingFunction::length(height),
+                        MaxTrackSizingFunction::auto(),
+                    )
                 } else {
                     auto()
                 }

@@ -17,7 +17,6 @@ fn render(name: &str, html: &str) -> Vec<u8> {
     common::expand_object_streams(&std::fs::read(output).unwrap())
 }
 
-
 /// Finds `/BaseFont /ABCDEF+Name` entries and returns the six-letter tags.
 fn subset_tags(pdf: &[u8]) -> Vec<String> {
     let key = b"/BaseFont /";
@@ -58,4 +57,37 @@ fn bigger_text_gives_bigger_subset() {
     )
     .len();
     assert!(large > small);
+}
+
+/// Characters the font has no glyph for are taken from a fallback font. A built-in PDF font
+/// (used when no font of `font-family` is installed) only covers WinAnsi, so the arrow must
+/// come from another font, or, if no installed font has one, be reported by name.
+#[test]
+fn missing_glyphs_use_a_fallback_font_or_are_reported() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("font_embedding_fallback.html");
+    let output = dir.join("font_embedding_fallback.pdf");
+    std::fs::write(
+        &input,
+        r#"<p style="font-family: 'Helium Missing Font'">A &#x2192; B, &#x0378;</p>"#,
+    )
+    .unwrap();
+    let result = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+
+    // U+0378 is unassigned, so no font has it.
+    assert!(stderr.contains("U+0378"), "{stderr}");
+    assert!(stderr.contains("font: Helvetica"), "{stderr}");
+    assert!(stderr.contains("\"Helium Missing Font\""), "{stderr}");
+
+    let arrow_reported = stderr.contains("U+2192");
+    let pdf = common::expand_object_streams(&std::fs::read(output).unwrap());
+    let has_fallback_font = !subset_tags(&pdf).is_empty();
+    assert_ne!(arrow_reported, has_fallback_font, "{stderr}");
 }

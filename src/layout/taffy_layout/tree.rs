@@ -113,7 +113,11 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
 
     /// Builds the subtree of a box that is laid out on its own: the root, an absolutely
     /// positioned box or an `inline-block` box.
-    pub fn build_box(&mut self, entity: Entity, block_ctxs: &ReadStorage<BlockFormattingContext>) -> NodeId {
+    pub fn build_box(
+        &mut self,
+        entity: Entity,
+        block_ctxs: &ReadStorage<BlockFormattingContext>,
+    ) -> NodeId {
         if let Some(bfc) = block_ctxs.get(entity) {
             if let Some(id) = self.build_from_elements(&bfc.elements, block_ctxs) {
                 return id;
@@ -168,7 +172,9 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
                     let id = self.build_box(entity, block_ctxs);
                     match stack.last() {
                         Some(&parent) => self.node_mut(parent).children.push(id),
-                        None => log::error!("absolutely positioned box {:?} outside of any box", entity),
+                        None => {
+                            log::error!("absolutely positioned box {:?} outside of any box", entity)
+                        }
                     }
                 }
             }

@@ -211,9 +211,7 @@ impl QualifiedRule {
         );
         list.slice()
             .iter()
-            .filter(|selector| {
-                matching::matches_selector(selector, 0, None, elem, &mut context)
-            })
+            .filter(|selector| matching::matches_selector(selector, 0, None, elem, &mut context))
             .map(|selector| selector.specificity())
             .max()
     }

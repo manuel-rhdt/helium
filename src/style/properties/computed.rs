@@ -5,9 +5,9 @@ use super::specified::{
     self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue, MathFamily, MathOperatorForm,
 };
 pub use super::specified::{
-    ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle, FontWeight, GridAutoFlow,
-    GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, PageBreak, Percentage, PositionSpec,
-    SelfAlignment, TextAlign,
+    ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle, FontWeight,
+    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, PageBreak,
+    Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
 
 pub use cssparser_color::Color;
@@ -577,8 +577,7 @@ impl StyleBuilder {
     fn resolve_math_depth(&mut self) {
         let resolved = match self.new_values.math.math_depth {
             MathDepth::AutoAdd => {
-                self.parent_math_depth
-                    + i32::from(self.parent_math_style == MathStyle::Inline)
+                self.parent_math_depth + i32::from(self.parent_math_style == MathStyle::Inline)
             }
             MathDepth::Add(n) => self.parent_math_depth.saturating_add(n),
             MathDepth::Absolute(n) => n,
@@ -878,7 +877,12 @@ mod math_depth_tests {
     #[test]
     fn repeated_declarations_do_not_accumulate() {
         let p = root("math-depth: 1");
-        assert_eq!(child(&p, "math-depth: add(1); math-depth: add(1)").math.depth(), 2);
+        assert_eq!(
+            child(&p, "math-depth: add(1); math-depth: add(1)")
+                .math
+                .depth(),
+            2
+        );
     }
 
     #[test]
@@ -892,11 +896,18 @@ mod math_depth_tests {
         // the element's own math-style must not influence its own auto-add,
         // regardless of declaration order
         assert_eq!(
-            child(&display, "-helium-math-style: inline; math-depth: auto-add").math.depth(),
+            child(&display, "-helium-math-style: inline; math-depth: auto-add")
+                .math
+                .depth(),
             0
         );
         assert_eq!(
-            child(&compact, "math-depth: auto-add; -helium-math-style: display").math.depth(),
+            child(
+                &compact,
+                "math-depth: auto-add; -helium-math-style: display"
+            )
+            .math
+            .depth(),
             1
         );
     }

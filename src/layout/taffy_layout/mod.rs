@@ -52,7 +52,9 @@ impl TaffyBlockLayout {
         world.register::<TextRun>();
         world.register::<TableCellSpan>();
         world.entry::<TextList>().or_insert_with(Default::default);
-        world.entry::<AbsoluteGroups>().or_insert_with(Default::default);
+        world
+            .entry::<AbsoluteGroups>()
+            .or_insert_with(Default::default);
 
         let entities = world.entities();
         let computed_values = world.read_storage::<ComputedValues>();
@@ -194,7 +196,13 @@ impl<'a> Writer<'a, '_> {
     ///   origin  the top left corner of the border box of the box in document coordinates
     ///   z       the z index of the box
     ///   z_base  the z index offset of the absolutely positioned box the box is in
-    fn write_box(&mut self, id: NodeId, origin: Point<f32>, z: i64, z_base: i64) -> Result<(), String> {
+    fn write_box(
+        &mut self,
+        id: NodeId,
+        origin: Point<f32>,
+        z: i64,
+        z_base: i64,
+    ) -> Result<(), String> {
         let node = self.node(id);
         let entity = node.entity;
         let layout = node.layout;
@@ -208,7 +216,14 @@ impl<'a> Writer<'a, '_> {
         let content_height = layout.size.height
             - layout.border.vertical_axis_sum()
             - layout.padding.vertical_axis_sum();
-        self.set_position(entity, content_x, content_y, content_width, content_height, z);
+        self.set_position(
+            entity,
+            content_x,
+            content_y,
+            content_width,
+            content_height,
+            z,
+        );
 
         let mut decoration = self
             .computed_values
@@ -437,7 +452,10 @@ mod tests {
         let positions = world.read_storage::<Position>();
 
         let container: &Position = html["body"][0].get(&positions);
-        assert_eq!((container.x, container.y), (PixelLength(20.0), PixelLength(15.0)));
+        assert_eq!(
+            (container.x, container.y),
+            (PixelLength(20.0), PixelLength(15.0))
+        );
 
         let child1: &Position = html["body"][0][0].get(&positions);
         assert_eq!((child1.x, child1.y), (container.x, container.y));
@@ -457,7 +475,10 @@ mod tests {
         let world = layout(html, Px(100.0));
         let positions = world.read_storage::<Position>();
         assert_eq!(html["div"].get(&positions), &pos(20.0, 0.0, 80.0, 0.0, 2));
-        assert_eq!(html["div"]["div"].get(&positions), &pos(35.0, 0.0, 65.0, 0.0, 3));
+        assert_eq!(
+            html["div"]["div"].get(&positions),
+            &pos(35.0, 0.0, 65.0, 0.0, 3)
+        );
     }
 
     #[test]
@@ -494,7 +515,10 @@ mod tests {
 
     #[test]
     fn text_list_is_in_document_order() {
-        let html = &html(vec![div(vec![]).height(Px(10.0)), div(vec![]).height(Px(10.0))]);
+        let html = &html(vec![
+            div(vec![]).height(Px(10.0)),
+            div(vec![]).height(Px(10.0)),
+        ]);
         let world = layout(html, Px(100.0));
         let text_list = world.read_resource::<TextList>();
         let starts: Vec<Entity> = text_list
@@ -505,6 +529,9 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(starts, vec![html.entity(), html[0].entity(), html[1].entity()]);
+        assert_eq!(
+            starts,
+            vec![html.entity(), html[0].entity(), html[1].entity()]
+        );
     }
 }
