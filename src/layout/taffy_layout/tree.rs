@@ -5,7 +5,7 @@
 //! the measure functions access to the inline formatting contexts.
 
 use specs::{Entity, ReadStorage, WriteStorage};
-use taffy::geometry::{Line, Point, Rect, Size};
+use taffy::geometry::{Line, Point, Size};
 use taffy::style::{AvailableSpace, Position};
 use taffy::tree::{
     AxisStaticEdge, AxisStaticPosition, Baselines, Cache, Layout, LayoutInput, LayoutOutput,

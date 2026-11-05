@@ -28,7 +28,6 @@ pub mod scheme_layout;
 use crate::style::properties::computed::ComputedValues;
 
 pub use self::default_env::default_environment;
-pub use self::repl::repl;
 
 use super::components::RootNode;
 
