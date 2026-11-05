@@ -262,7 +262,7 @@ fn block_level_element_to_value<'w>(elem: BlockLevelElement) -> Value<'w> {
 fn text_align_to_value<'w>(align: crate::style::properties::specified::TextAlign) -> Value<'w> {
     use crate::style::properties::specified::TextAlign;
     let s = match align {
-        TextAlign::Left => "left",
+        TextAlign::Left | TextAlign::Start | TextAlign::End => "left",
         TextAlign::Right => "right",
         TextAlign::Center => "center",
         TextAlign::Justify => "justify",
@@ -503,9 +503,25 @@ pub fn setup_ecs_env<'world>(env: &EnvRef<'world>, world: &'world mut World) {
             let ent = find_entity(&entities, id);
             let inline_ref = inline_ctxs.borrow();
             match ent.and_then(|e| inline_ref.get(e)) {
-                Some(ifm) => Ok(text_align_to_value(ifm.text_align)),
+                Some(ifm) => Ok(text_align_to_value(ifm.resolved_text_align())),
                 None => Ok(Value::Bool(false)),
             }
+        });
+    }
+
+    // (entity-inline-rtl? entity-id) → bool: whether the paragraph is right-to-left, so that
+    // its first line is indented from the right
+    {
+        let inline_ctxs = Rc::clone(&inline_ctxs);
+        let entities = Rc::clone(&entities);
+        inject(env, "entity-inline-rtl?", move |args| {
+            let id = value_to_entity_ref(args.get(0).unwrap_or(&Value::Null))?;
+            let ent = find_entity(&entities, id);
+            let inline_ref = inline_ctxs.borrow();
+            Ok(Value::Bool(
+                ent.and_then(|e| inline_ref.get(e))
+                    .is_some_and(|ifm| ifm.base_rtl),
+            ))
         });
     }
 

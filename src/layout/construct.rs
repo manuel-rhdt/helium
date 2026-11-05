@@ -592,14 +592,7 @@ impl EntityConstructor {
         entities
             .build_entity()
             .with(
-                InlineFormattingContext {
-                    elements: elements.to_owned(),
-                    absolutes: vec![],
-                    break_points: vec![],
-                    lines: vec![],
-                    atom_offsets: vec![],
-                    text_align: style.text.text_align,
-                },
+                InlineFormattingContext::new(elements.to_owned(), vec![], style),
                 inline_formatting_contexts,
             )
             .with(style.anonymous_block(), computed_values)
@@ -744,14 +737,7 @@ impl EntityConstructor {
             inline_formatting_contexts
                 .insert(
                     entity,
-                    InlineFormattingContext {
-                        elements: inline_level_elements,
-                        absolutes,
-                        text_align: style.text.text_align,
-                        break_points: vec![],
-                        lines: vec![],
-                        atom_offsets: vec![],
-                    },
+                    InlineFormattingContext::new(inline_level_elements, absolutes, &style),
                 )
                 .unwrap();
             return;
@@ -791,14 +777,8 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_inline_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
-        let mut inline_formatting_context = InlineFormattingContext {
-            elements: vec![],
-            absolutes: vec![],
-            break_points: vec![],
-            lines: vec![],
-            atom_offsets: vec![],
-            text_align: node.style().text.text_align,
-        };
+        let mut inline_formatting_context =
+            InlineFormattingContext::new(vec![], vec![], &node.style());
         for child in node.children() {
             let child_entity = match child.layout_entity() {
                 Some(LayoutEntity(entity)) => entity,
@@ -838,6 +818,21 @@ impl EntityConstructor {
             inline_formatting_context
                 .elements
                 .push(self.build_text_entity(node.style(), "").0);
+        }
+
+        // `unicode-bidi` (e.g. from the `dir` attribute or `<bdo>`) is implemented by bidi
+        // control characters around the contents of the element, which are zero-width text runs
+        // of their own.
+        let style = node.style();
+        if let Some((open, close)) = style
+            .box_
+            .unicode_bidi
+            .control_characters(style.text.direction)
+        {
+            let open = self.build_text_entity(style.clone(), open).0;
+            let close = self.build_text_entity(style, close).0;
+            inline_formatting_context.elements.insert(0, open);
+            inline_formatting_context.elements.push(close);
         }
 
         let LayoutEntity(self_entity) = node.layout_entity().unwrap();

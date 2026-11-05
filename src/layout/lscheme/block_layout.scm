@@ -27,6 +27,7 @@
 ; Inline ECS bindings:
 ;   (entity-inline-text-align entity-id) -> symbol | #f
 ;   (entity-text-indent entity-id line-width) -> number
+;   (entity-inline-rtl? entity-id) -> bool
 ;   (layout-inline-lines entity-id line-width indent)
 ;       -> list of (from to height baseline line-entity-id content-width)
 ;       Knuth-Plass line breaking is done in Rust; creates the line entities.
@@ -296,6 +297,8 @@
              (lx     (pos-x pos))
              (lw     (pos-w pos))
              (indent (entity-text-indent entity-id lw))
+             ; the first line is indented from the right in right-to-left paragraphs
+             (indent-x (if (entity-inline-rtl? entity-id) 0 indent))
              (align  (entity-inline-text-align entity-id)))
         (define (layout-lines lines line-num)
           (when (pair? lines)
@@ -303,7 +306,7 @@
                    (height   (caddr line))
                    (line-ent (list-ref line 4))
                    (adv-w    (list-ref line 5))
-                   (x0       (if (= line-num 0) (+ lx indent) lx))
+                   (x0       (if (= line-num 0) (+ lx indent-x) lx))
                    (w0       (if (= line-num 0) (- lw indent) lw))
                    (xw       (apply-text-align align x0 w0 adv-w))
                    (x        (car  xw))
