@@ -8,13 +8,14 @@ use cssparser::{
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss,
 };
 use html5ever::{LocalName, Namespace};
-use log::{error, warn};
+use log::warn;
 use precomputed_hash::PrecomputedHash;
 use selectors::context::{MatchingForInvalidation, NeedsSelectorFlags, QuirksMode, SelectorCaches};
 use selectors::matching;
 use selectors::parser::{
     NonTSPseudoClass, ParseRelative, SelectorImpl, SelectorList, SelectorParseErrorKind,
 };
+use std::path::Path;
 
 use thiserror::Error;
 
@@ -63,9 +64,31 @@ impl Styles {
         }
     }
 
-    pub fn add_stylesheet(&mut self, href: &str) {
-        error!("add_stylesheet unimplemented");
-        warn!("Could not read stylesheet \"{}\"", href)
+    pub fn add_stylesheet(&mut self, href: &str, base_dir: &Path) {
+        if href.starts_with("//")
+            || href.starts_with("http://")
+            || href.starts_with("https://")
+            || href.starts_with("data:")
+        {
+            warn!("Skipping non-local stylesheet \"{}\"", href);
+            return;
+        }
+
+        let path = Path::new(href);
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            base_dir.join(path)
+        };
+
+        match std::fs::read_to_string(&path) {
+            Ok(css) => self.parse_css(&css),
+            Err(error) => warn!(
+                "Could not read stylesheet \"{}\": {}",
+                path.display(),
+                error
+            ),
+        }
     }
 
     pub fn rules_iter(&self) -> impl DoubleEndedIterator<Item = &QualifiedRule> {
@@ -167,6 +190,16 @@ impl QualifiedRule {
     }
 
     pub fn matches(&self, elem: &ElementRef) -> bool {
+        self.matching_specificity(elem).is_some()
+    }
+
+    /// The specificity of the most specific selector of this rule that matches `elem`, or `None`
+    /// if the rule does not match. Used to order the cascade: rules with higher specificity are
+    /// applied later and win over earlier declarations of the same property.
+    pub fn matching_specificity(&self, elem: &ElementRef) -> Option<u32> {
+        let GeneralizedSelector::Selectors(list) = &self.selectors else {
+            return None;
+        };
         let mut caches = SelectorCaches::default();
         let mut context = matching::MatchingContext::new(
             matching::MatchingMode::Normal,
@@ -176,11 +209,13 @@ impl QualifiedRule {
             NeedsSelectorFlags::No,
             MatchingForInvalidation::No,
         );
-        if let GeneralizedSelector::Selectors(list) = &self.selectors {
-            matching::matches_selector_list(list, elem, &mut context)
-        } else {
-            false
-        }
+        list.slice()
+            .iter()
+            .filter(|selector| {
+                matching::matches_selector(selector, 0, None, elem, &mut context)
+            })
+            .map(|selector| selector.specificity())
+            .max()
     }
 
     pub fn is_page_declaration(&self) -> bool {

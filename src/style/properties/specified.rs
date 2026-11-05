@@ -1007,9 +1007,10 @@ impl ComputedValue<FontSize> for super::computed::PixelLength {
     }
 }
 
-#[derive(Debug, Copy, Clone, PropertyValue)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
 pub enum WhiteSpace {
     Normal,
+    Pre,
 }
 
 impl Default for WhiteSpace {

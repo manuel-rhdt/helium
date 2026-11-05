@@ -341,6 +341,39 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             for (_index, &entity) in elements.iter().enumerate() {
                 if let Some(text_run) = text_runs.get_mut(entity) {
                     let font = &font_map[&text_run.font_name];
+                    if computed_values.get(entity).is_some_and(|style| {
+                        style.text.white_space
+                            == crate::style::properties::specified::WhiteSpace::Pre
+                    }) {
+                        let mut segment_start = 0;
+                        for (newline_index, _) in text_run.text.match_indices('\n') {
+                            for (position, _) in
+                                shape(&text_run.text[segment_start..newline_index], font)
+                            {
+                                advance +=
+                                    font.scale_to_px(position.x_advance, text_run.font_size);
+                            }
+                            let break_index = newline_index + 1;
+                            break_points.push(BreakPoint {
+                                entity,
+                                char_index: break_index,
+                                advance_before: advance,
+                                advance_after: advance,
+                                forced: true,
+                                space: false,
+                                hyphen: false,
+                                hyphen_width: Px(0.0),
+                                glue_stretch: Px(0.0),
+                                glue_shrink: Px(0.0),
+                                penalty: -10_000,
+                            });
+                            segment_start = break_index;
+                        }
+                        for (position, _) in shape(&text_run.text[segment_start..], font) {
+                            advance += font.scale_to_px(position.x_advance, text_run.font_size);
+                        }
+                        continue;
+                    }
                     let shaped = shape(&text_run.text, font);
                     let run_start_advance = advance;
                     for (pos, glyph_info) in &shaped {

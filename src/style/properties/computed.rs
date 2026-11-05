@@ -537,6 +537,9 @@ impl StyleBuilder {
         let inherited = ComputedValues {
             font: inherited_values.font,
             text: Arc::new(Text {
+                white_space: inherited_values.text.white_space,
+                text_indent: inherited_values.text.text_indent,
+                text_align: inherited_values.text.text_align,
                 hyphens: inherited_values.text.hyphens,
                 border_spacing: inherited_values.text.border_spacing,
                 ..Default::default()
@@ -896,6 +899,20 @@ mod math_depth_tests {
             child(&compact, "math-depth: auto-add; -helium-math-style: display").math.depth(),
             1
         );
+    }
+
+    #[test]
+    fn text_properties_are_inherited() {
+        let parent = root(
+            "white-space: pre; text-indent: 12px; text-align: center; hyphens: auto; border-spacing: 3px 4px",
+        );
+        let child = child(&parent, "");
+
+        assert_eq!(child.text.white_space, parent.text.white_space);
+        assert_eq!(child.text.text_indent, parent.text.text_indent);
+        assert_eq!(child.text.text_align, parent.text.text_align);
+        assert_eq!(child.text.hyphens, parent.text.hyphens);
+        assert_eq!(child.text.border_spacing, parent.text.border_spacing);
     }
 
     #[test]

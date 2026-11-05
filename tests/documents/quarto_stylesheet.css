@@ -1,0 +1,126 @@
+@page {
+  width: 8.5in;
+  height: 11in;
+  margin: 1in;
+
+  @bottom-center {
+    content: counter(page);
+    font-family: serif;
+    font-size: 10pt;
+    color: #444;
+  }
+}
+
+body {
+  font-family: serif;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+#TOC {
+  display: none;
+}
+
+#title-block-header {
+  margin-bottom: 24px;
+  margin-top: 52px;
+}
+
+/* Higher specificity than the generic `p` rule below, even though it appears earlier. */
+#title-block-header h1,
+#title-block-header p {
+  text-align: center;
+}
+
+h1.title {
+  font-size: 26px;
+  margin-bottom: 8px;
+}
+
+p.subtitle {
+  font-size: 16px;
+  font-weight: bold;
+  margin-bottom: 12px;
+}
+
+h2 {
+  font-size: 18px;
+  margin: 18px 0 8px;
+}
+
+h3 {
+  font-size: 15px;
+  margin: 14px 0 6px;
+}
+
+p {
+  margin: 0 0 12px;
+  text-align: justify;
+  hyphens: auto;
+}
+
+#quarto-css-probe {
+  margin: 0 0 12px;
+}
+
+table {
+  border-collapse: collapse;
+  border-top: 1px solid #444;
+  border-bottom: 1px solid #444;
+  margin: 14px 0;
+  width: 100%;
+}
+
+th,
+td {
+  padding: 3px 6px;
+}
+
+th {
+  font-weight: normal;
+}
+
+pre {
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.1;
+  margin: 8px 0 12px;
+}
+
+.sourceCode .kw,
+.sourceCode .cf,
+.sourceCode .im {
+  color: #d73a49;
+}
+
+.sourceCode .dv,
+.sourceCode .bn,
+.sourceCode .fl {
+  color: #005cc5;
+}
+
+.sourceCode .op {
+  color: #24292e;
+}
+
+.sourceCode .st,
+.sourceCode .vs,
+.sourceCode .ss {
+  color: #032f62;
+}
+
+.sourceCode .co,
+.sourceCode .do,
+.sourceCode .in {
+  color: #6a737d;
+}
+
+.sourceCode .fu {
+  color: #6f42c1;
+}
+
+div.sourceCode {
+  background-color: #f0f3f6;
+  padding: 4px 8px;
+}
+

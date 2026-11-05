@@ -141,6 +141,143 @@ fn dumps_layout_as_json() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[test]
+fn loads_relative_external_stylesheets() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let assets = dir.join("external_stylesheet_assets");
+    std::fs::create_dir_all(&assets)?;
+    std::fs::write(
+        assets.join("print.css"),
+        "#styled { width: 123px; height: 20px; }",
+    )?;
+
+    let input = dir.join("external_stylesheet.html");
+    std::fs::write(
+        &input,
+        "<html><head><link rel=\"stylesheet\" href=\"external_stylesheet_assets/print.css\"></head><body><div id=\"styled\"></div></body></html>",
+    )?;
+
+    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    cmd.arg("--dump-layout")
+        .arg("-")
+        .arg(&input)
+        .arg(dir.join("external_stylesheet.pdf"));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("\"width\": 123, \"height\": 20"));
+
+    Ok(())
+}
+
+#[test]
+fn loads_full_quarto_html_from_document() -> Result<(), Box<dyn std::error::Error>> {
+    let input = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/documents/quarto_stylesheet.html"
+    );
+    let output = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("quarto_stylesheet.pdf");
+    let html = std::fs::read_to_string(input)?;
+    assert!(html.contains("<math "), "Quarto output should contain MathML");
+    assert!(html.contains("<pre class=\"sourceCode python"));
+
+    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    cmd.arg("--dump-layout")
+        .arg("-")
+        .arg(input)
+        .arg(&output);
+    let result = cmd.output()?;
+    assert!(
+        result.status.success(),
+        "Helium failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let layout: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    let layout_dump = String::from_utf8_lossy(&result.stdout);
+    assert!(layout_dump.contains(
+        "\"margin\": {\"top\": 0, \"right\": 0, \"bottom\": 12, \"left\": 0}"
+    ));
+    assert!(layout_dump.contains(
+        "This document was prepared for Regional Transit Reliability Review."
+    ));
+    assert!(layout_dump.contains("scheduled_trips"));
+    assert!(layout_dump.contains("\"value\": [0, 92, 197, 255]"));
+    assert!(layout_dump.contains("\"background\": [240, 243, 246, 255]"));
+
+    fn find_node_by_id<'a>(node: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
+        if node.get("id").and_then(serde_json::Value::as_str) == Some(id) {
+            return Some(node);
+        }
+        node.get("children")?
+            .as_array()?
+            .iter()
+            .find_map(|child| find_node_by_id(child, id))
+    }
+
+    let line_y = ["cb1-1", "cb1-2", "cb1-3"].map(|id| {
+        find_node_by_id(&layout["document"], id)
+            .and_then(|node| node.get("border_box"))
+            .and_then(|box_| box_.get("y"))
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or_else(|| panic!("missing layout position for code line {id}"))
+    });
+    assert!(
+        line_y[0] < line_y[1] && line_y[1] < line_y[2],
+        "preformatted code lines should have distinct baselines: {line_y:?}"
+    );
+
+    let pdf = std::fs::read(output)?;
+    let pdf = common::expand_object_streams(&pdf);
+    assert!(
+        pdf_page_count(&pdf) >= 2,
+        "the Quarto report should span multiple pages"
+    );
+
+    Ok(())
+}
+
+/// A higher-specificity rule must win over a later, lower-specificity rule for the same
+/// property, regardless of source order. This used to be decided purely by source order.
+#[test]
+fn higher_specificity_beats_later_rule() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("specificity.html");
+    std::fs::write(
+        &input,
+        "<html><head><style>\
+         #header p { text-align: center } \
+         p { text-align: justify } \
+         </style></head>\
+         <body><div id=\"header\"><p>Centered</p></div><p>Justified</p></body></html>",
+    )
+    .unwrap();
+    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    cmd.arg("--dump-layout")
+        .arg("-")
+        .arg(&input)
+        .arg(dir.join("specificity.pdf"));
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let layout: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    // Text runs appear in DOM order, so the first run is the centered paragraph and the
+    // second is the justified one. Centered text starts right of the left margin,
+    // justified text starts at it.
+    let runs = layout["paint"]["text"].as_array().unwrap();
+    assert_eq!(runs.len(), 2, "{:?}", runs);
+    let centered = runs[0]["x"].as_f64().unwrap();
+    let left_margin = runs[1]["x"].as_f64().unwrap();
+    assert!(
+        centered > left_margin,
+        "the higher-specificity rule should center its text: centered at {centered}, \
+         left margin at {left_margin}"
+    );
+    Ok(())
+}
+
 /// Selectors that look at sibling elements (`:first-of-type`, `+`, `~`) used to loop forever
 /// because the sibling iterators included the element itself.
 #[test]

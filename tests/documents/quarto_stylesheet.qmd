@@ -1,0 +1,110 @@
+---
+title: "Regional Transit Reliability Review"
+subtitle: "Quarterly service performance, Q2 2026"
+author: "Operations Analytics"
+date: 2026-07-15
+lang: en
+format:
+  html:
+    theme: none
+    toc: false
+    syntax-highlighting: github
+    html-math-method: mathml
+    template: quarto-print.html
+    css: quarto_stylesheet.css
+    embed-resources: false
+    anchor-sections: false
+    code-copy: false
+    code-tools: false
+    tabsets: false
+    citations-hover: false
+    footnotes-hover: false
+    crossrefs-hover: false
+---
+
+<p id="quarto-css-probe">This review summarizes schedule reliability, passenger experience, and the operational changes planned for the next quarter.</p>
+
+This document was prepared for {{< meta title >}}.
+
+## Executive summary
+
+Across the regional network, 86.4% of scheduled trips arrived within five minutes of their published time. This is a 2.1 percentage-point improvement over the first quarter, although performance remains uneven by corridor and time of day. The network carried 4.8 million passenger trips during the quarter, with the strongest growth on the airport link and the north corridor.
+
+The improvement followed the introduction of additional recovery time on several high-variance routes and a revised operator dispatch procedure. Those changes reduced late departures from the central terminal, but did not fully address delays caused by road works and recurring congestion at two river crossings.
+
+The next quarter's work will focus on protecting transfer connections, publishing more useful disruption information, and collecting better stop-level data. These are operational priorities rather than a proposal to expand scheduled service.
+
+## Network performance
+
+The following indicators use scheduled trips as the denominator unless otherwise noted. A trip is counted as on time when it reaches its final timing point no more than five minutes after the published arrival.
+
+| Indicator | Q1 2026 | Q2 2026 | Change |
+|:--|--:|--:|--:|
+| Trips within five minutes | 84.3% | 86.4% | +2.1 pp |
+| Trips cancelled | 1.8% | 1.5% | -0.3 pp |
+| Average passenger wait during disruption | 14.2 min | 12.6 min | -1.6 min |
+| Passenger trips | 4.5 million | 4.8 million | +6.7% |
+
+The on-time rate is calculated from observed trips as follows:
+
+$$
+r = \frac{n_{\mathrm{on\ time}}}{n_{\mathrm{scheduled}}} \times 100
+$$
+
+For example, the Q2 network result is reproduced by this calculation:
+
+```python
+scheduled_trips = 1000
+on_time_trips = 864
+on_time_rate = 100 * on_time_trips / scheduled_trips
+```
+
+The network-wide on-time figure should not be read as a passenger-weighted measure. A short local trip and a busy cross-region trip each contribute one observation. Passenger-weighted reliability is being added to the reporting pipeline and is expected in the next quarterly review.
+
+## Corridor review
+
+### North corridor
+
+The north corridor improved by 3.8 percentage points after departure checks were moved to the outer terminal during the morning peak. This reduced the number of vehicles entering the busiest section already behind schedule. Passenger feedback also noted more consistent connections at North Junction.
+
+Two scheduled trips per weekday were cancelled because of operator availability. The cancellations were concentrated on early-morning departures, where alternative services are limited. The service team has adjusted the relief roster and will monitor the first departures of the day separately from the corridor-wide measure.
+
+### Central corridor
+
+The central corridor remained the least reliable part of the network. Road resurfacing near Market Street caused repeated diversions, and queues at the east bridge continued after construction crews left the site. Added recovery time reduced late arrivals at the end of the route but made several off-peak journeys longer than the timetable suggests they should be.
+
+For Q3, the planning group will compare observed travel times by weekday and time band before changing the schedule again. This avoids treating a temporary construction pattern as a permanent change in demand or running time.
+
+### Airport link
+
+Ridership on the airport link grew fastest, particularly on Friday evenings and Sunday afternoons. Reliability improved modestly after dispatch staff began holding a small reserve of vehicles near the terminal. The reserve was useful during isolated vehicle faults, but it was not large enough to cover simultaneous delays on both directions of travel.
+
+Passenger comments most often concerned uncertainty during service interruptions rather than the length of the delay itself. The communications team will test a single status page that reports the next expected update time as well as the current service condition.
+
+## Operational response
+
+The quarter's changes were limited to dispatch and schedule management. The service team:
+
+- added recovery time to four routes with consistently high travel-time variation;
+- moved the north-corridor departure check to the outer terminal;
+- introduced a shared incident log for dispatch and customer information staff; and
+- reviewed the relief roster for early-morning and weekend trips.
+
+The incident log improved coordination, but its entries are not yet consistent enough for reliable trend analysis. Starting in July, dispatchers will use a short set of standard categories for blocked roads, vehicle faults, staffing shortages, and passenger incidents.
+
+## Priorities for Q3
+
+1. Protect timed transfers at North Junction during the morning peak and record missed connections.
+2. Compare central-corridor running times across weekdays before making further timetable changes.
+3. Publish disruption updates with an explicit time for the next status review.
+4. Report cancellations and on-time performance by time band, not only as network-wide totals.
+
+Each action has an assigned owner in the operating plan. Progress will be reviewed monthly, with schedule changes held until the underlying travel-time observations have been checked.
+
+## Methodology and limitations
+
+Schedule adherence is calculated from vehicle-location records at designated timing points. Records with no valid arrival observation are excluded from the on-time denominator and reported separately as missing data. Cancelled trips are counted from the dispatch system; a trip marked as cancelled after its scheduled departure remains a cancellation even if a partial service was provided.
+
+Passenger counts are based on automatic counters and fare validations. Coverage differs by vehicle and route, so the total is suitable for quarter-to-quarter directional comparison but not for estimating precise passenger totals on every corridor. The wait-time measure comes from sampled disruption events and should not be compared directly with scheduled journey time.
+
+The figures in this document are intended to support service planning. They do not measure the full passenger experience, and they should be read alongside accessibility reports, customer feedback, and the monthly operating review.

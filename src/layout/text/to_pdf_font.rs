@@ -4,6 +4,7 @@ use super::font::FontUnit;
 use lemon_pdf::DocumentContext;
 use lemon_pdf::font::Font as PdfFont;
 use lemon_pdf::font::{
+    encoding::{EncodingEntry, PredefinedEncoding},
     FontType,
     descriptor::FontDescriptor,
     type0::{CIDFont, CIDFontType, CompositeFont, MetricsEntry},
@@ -166,9 +167,17 @@ impl Font {
     }
 
     pub fn embed_into_pdf(&self, pdf_context: &mut DocumentContext) -> Result<PdfFont> {
+        if let FontData::BuiltIn(font) = &self.font_data {
+            let mut font = font.font(pdf_context)?;
+            font.encoding = Some(EncodingEntry::Predefined(
+                PredefinedEncoding::WinAnsiEncoding,
+            ));
+            return Ok(PdfFont::Simple(font));
+        }
+
         let (font_file, subsetted) = match &self.font_data {
             FontData::External(_) => self.embedded_font_bytes(),
-            _ => (vec![], false),
+            FontData::BuiltIn(_) => unreachable!(),
         };
         let name = if subsetted {
             format!("{}+{}", self.subset_tag(), self.postscript_name())

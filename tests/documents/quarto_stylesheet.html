@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+<script src="quarto_stylesheet_files/libs/quarto-html/popper.min.js"></script>
+<script src="quarto_stylesheet_files/libs/quarto-html/tippy.umd.min.js"></script>
+<link href="quarto_stylesheet_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="quarto_stylesheet_files/libs/quarto-html/light-border.css" rel="stylesheet">
+<link href="quarto_stylesheet_files/libs/quarto-html/quarto-html-375f4915327e21de92ebd5ad7b04a7f5.min.css" rel="stylesheet" append-hash="true" data-mode="light">
+<link href="quarto_stylesheet_files/libs/quarto-html/quarto-syntax-highlighting-06f5743f0e5683afa6c2760e0cd825ed.css" rel="stylesheet" id="quarto-text-highlighting-styles"><meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <meta name="author" content="Operations Analytics">
+  <meta name="dcterms.date" content="2026-07-15">
+  <title>Regional Transit Reliability Review</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+      vertical-align: middle;
+    }
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+      }
+    pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+  </style>
+  <link rel="stylesheet" href="quarto_stylesheet.css">
+</head>
+<body>
+<header id="title-block-header">
+  <h1 class="title">Regional Transit Reliability Review</h1>
+  <p class="subtitle">Quarterly service performance, Q2 2026</p>
+  <p class="author">Operations Analytics</p>
+  <p class="date">2026-07-15</p>
+</header>
+<p id="quarto-css-probe">
+This review summarizes schedule reliability, passenger experience, and the operational changes planned for the next quarter.
+</p>
+<p>This document was prepared for Regional Transit Reliability Review.</p>
+<h2 id="executive-summary">Executive summary</h2>
+<p>Across the regional network, 86.4% of scheduled trips arrived within five minutes of their published time. This is a 2.1 percentage-point improvement over the first quarter, although performance remains uneven by corridor and time of day. The network carried 4.8 million passenger trips during the quarter, with the strongest growth on the airport link and the north corridor.</p>
+<p>The improvement followed the introduction of additional recovery time on several high-variance routes and a revised operator dispatch procedure. Those changes reduced late departures from the central terminal, but did not fully address delays caused by road works and recurring congestion at two river crossings.</p>
+<p>The next quarter’s work will focus on protecting transfer connections, publishing more useful disruption information, and collecting better stop-level data. These are operational priorities rather than a proposal to expand scheduled service.</p>
+<h2 id="network-performance">Network performance</h2>
+<p>The following indicators use scheduled trips as the denominator unless otherwise noted. A trip is counted as on time when it reaches its final timing point no more than five minutes after the published arrival.</p>
+<table class="caption-top">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;">Indicator</th>
+<th style="text-align: right;">Q1 2026</th>
+<th style="text-align: right;">Q2 2026</th>
+<th style="text-align: right;">Change</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">Trips within five minutes</td>
+<td style="text-align: right;">84.3%</td>
+<td style="text-align: right;">86.4%</td>
+<td style="text-align: right;">+2.1 pp</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Trips cancelled</td>
+<td style="text-align: right;">1.8%</td>
+<td style="text-align: right;">1.5%</td>
+<td style="text-align: right;">-0.3 pp</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Average passenger wait during disruption</td>
+<td style="text-align: right;">14.2 min</td>
+<td style="text-align: right;">12.6 min</td>
+<td style="text-align: right;">-1.6 min</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Passenger trips</td>
+<td style="text-align: right;">4.5 million</td>
+<td style="text-align: right;">4.8 million</td>
+<td style="text-align: right;">+6.7%</td>
+</tr>
+</tbody>
+</table>
+<p>The on-time rate is calculated from observed trips as follows:</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>r</mi><mo>=</mo><mfrac><msub><mi>n</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mspace width="0.222em"></mspace><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">e</mi></mrow></msub><msub><mi>n</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub></mfrac><mo>×</mo><mn>100</mn></mrow><annotation encoding="application/x-tex">
+r = \frac{n_{\mathrm{on\ time}}}{n_{\mathrm{scheduled}}} \times 100
+</annotation></semantics></math></p>
+<p>For example, the Q2 network result is reproduced by this calculation:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>scheduled_trips <span class="op">=</span> <span class="dv">1000</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>on_time_trips <span class="op">=</span> <span class="dv">864</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>on_time_rate <span class="op">=</span> <span class="dv">100</span> <span class="op">*</span> on_time_trips <span class="op">/</span> scheduled_trips</span></code></pre></div>
+<p>The network-wide on-time figure should not be read as a passenger-weighted measure. A short local trip and a busy cross-region trip each contribute one observation. Passenger-weighted reliability is being added to the reporting pipeline and is expected in the next quarterly review.</p>
+<h2 id="corridor-review">Corridor review</h2>
+<h3 id="north-corridor">North corridor</h3>
+<p>The north corridor improved by 3.8 percentage points after departure checks were moved to the outer terminal during the morning peak. This reduced the number of vehicles entering the busiest section already behind schedule. Passenger feedback also noted more consistent connections at North Junction.</p>
+<p>Two scheduled trips per weekday were cancelled because of operator availability. The cancellations were concentrated on early-morning departures, where alternative services are limited. The service team has adjusted the relief roster and will monitor the first departures of the day separately from the corridor-wide measure.</p>
+<h3 id="central-corridor">Central corridor</h3>
+<p>The central corridor remained the least reliable part of the network. Road resurfacing near Market Street caused repeated diversions, and queues at the east bridge continued after construction crews left the site. Added recovery time reduced late arrivals at the end of the route but made several off-peak journeys longer than the timetable suggests they should be.</p>
+<p>For Q3, the planning group will compare observed travel times by weekday and time band before changing the schedule again. This avoids treating a temporary construction pattern as a permanent change in demand or running time.</p>
+<h3 id="airport-link">Airport link</h3>
+<p>Ridership on the airport link grew fastest, particularly on Friday evenings and Sunday afternoons. Reliability improved modestly after dispatch staff began holding a small reserve of vehicles near the terminal. The reserve was useful during isolated vehicle faults, but it was not large enough to cover simultaneous delays on both directions of travel.</p>
+<p>Passenger comments most often concerned uncertainty during service interruptions rather than the length of the delay itself. The communications team will test a single status page that reports the next expected update time as well as the current service condition.</p>
+<h2 id="operational-response">Operational response</h2>
+<p>The quarter’s changes were limited to dispatch and schedule management. The service team:</p>
+<ul>
+<li>added recovery time to four routes with consistently high travel-time variation;</li>
+<li>moved the north-corridor departure check to the outer terminal;</li>
+<li>introduced a shared incident log for dispatch and customer information staff; and</li>
+<li>reviewed the relief roster for early-morning and weekend trips.</li>
+</ul>
+<p>The incident log improved coordination, but its entries are not yet consistent enough for reliable trend analysis. Starting in July, dispatchers will use a short set of standard categories for blocked roads, vehicle faults, staffing shortages, and passenger incidents.</p>
+<h2 id="priorities-for-q3">Priorities for Q3</h2>
+<ol type="1">
+<li>Protect timed transfers at North Junction during the morning peak and record missed connections.</li>
+<li>Compare central-corridor running times across weekdays before making further timetable changes.</li>
+<li>Publish disruption updates with an explicit time for the next status review.</li>
+<li>Report cancellations and on-time performance by time band, not only as network-wide totals.</li>
+</ol>
+<p>Each action has an assigned owner in the operating plan. Progress will be reviewed monthly, with schedule changes held until the underlying travel-time observations have been checked.</p>
+<h2 id="methodology-and-limitations">Methodology and limitations</h2>
+<p>Schedule adherence is calculated from vehicle-location records at designated timing points. Records with no valid arrival observation are excluded from the on-time denominator and reported separately as missing data. Cancelled trips are counted from the dispatch system; a trip marked as cancelled after its scheduled departure remains a cancellation even if a partial service was provided.</p>
+<p>Passenger counts are based on automatic counters and fare validations. Coverage differs by vehicle and route, so the total is suitable for quarter-to-quarter directional comparison but not for estimating precise passenger totals on every corridor. The wait-time measure comes from sampled disruption events and should not be compared directly with scheduled journey time.</p>
+<p>The figures in this document are intended to support service planning. They do not measure the full passenger experience, and they should be read alongside accessibility reports, customer feedback, and the monthly operating review.</p>
+
+</body></html>

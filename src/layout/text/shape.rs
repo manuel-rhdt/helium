@@ -33,6 +33,7 @@ pub struct GlyphPosition {
 }
 
 pub fn shape(text: &str, font: &Font) -> Vec<(GlyphPosition, GlyphInfo)> {
+    let text = text.trim_end_matches(['\r', '\n']);
     // harfbuzz hands back a null glyph array for an empty buffer, which trips
     // the slice precondition check in harfbuzz_rs.
     if text.is_empty() {
