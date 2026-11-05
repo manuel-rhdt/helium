@@ -1,7 +1,5 @@
-pub use super::{
-    HarfbuzzFont,
-    builtin::{BuiltInFont, FontUnit},
-};
+pub use super::HarfbuzzFont;
+pub use lemon_pdf::font::FontUnit;
 
 use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, PixelLength,
@@ -13,9 +11,9 @@ use font_kit::properties::Properties;
 use font_kit::{handle::Handle, source::SystemSource};
 
 use harfbuzz_rs::{Blob, Face as HbFace, Font as HbFont};
-use parking_lot::{Mutex, MutexGuard, RwLock};
+use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 fn scale_ext(upem: u32, metric: i32) -> FontUnit {
     let upem = upem as f64;
@@ -25,6 +23,8 @@ fn scale_ext(upem: u32, metric: i32) -> FontUnit {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct GlyphIndex(pub u32);
 
+/// A font file (a system font or one of the fonts built into Helium). Every font that is used
+/// is embedded into the PDF.
 #[derive(Debug)]
 pub struct Font {
     pub(crate) upem: u32,
@@ -32,7 +32,7 @@ pub struct Font {
     pub(crate) to_unicode: Mutex<BTreeMap<GlyphIndex, String>>,
     pub(crate) hb_font: HarfbuzzFont,
     pub(crate) postscript_name: String,
-    pub(crate) font_data: FontData,
+    pub(crate) handle: Handle,
     /// Fonts that provide the characters this font has no glyph for, in order of preference.
     ///
     /// They are filled in during box construction (see `fallback::FontResolver`), when the text
@@ -47,7 +47,7 @@ impl Clone for Font {
             upem: self.upem,
             glyph_advances: Mutex::new(self.glyph_advances.lock().clone()),
             to_unicode: Mutex::new(self.to_unicode.lock().clone()),
-            font_data: self.font_data.clone(),
+            handle: self.handle.clone(),
             hb_font: self.hb_font.clone(),
             postscript_name: self.postscript_name.clone(),
             fallbacks: RwLock::new(self.fallbacks.read().clone()),
@@ -55,24 +55,14 @@ impl Clone for Font {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum FontData {
-    BuiltIn(BuiltInFont),
-    External(font_kit::handle::Handle),
-}
+/// The fonts built into Helium. They are used when no installed font matches the style, so
+/// that there always is a font that can be embedded.
+const BUNDLED_REGULAR: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSans.ttf");
+const BUNDLED_BOLD: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSans-Bold.ttf");
 
 impl Font {
-    pub(crate) fn built_in(val: BuiltInFont) -> Self {
-        Font {
-            upem: 1000,
-            font_data: FontData::BuiltIn(val),
-            postscript_name: val.metrics().font_name.to_owned(),
-            ..Default::default()
-        }
-    }
-
-    /// Loads a system font, or returns `None` if the font file cannot be read.
-    pub(crate) fn external(handle: font_kit::handle::Handle) -> Option<Self> {
+    /// Loads a font, or returns `None` if the font file cannot be read.
+    pub(crate) fn load(handle: Handle) -> Option<Self> {
         let loaded = handle.load().ok()?;
 
         let upem = loaded.metrics().units_per_em;
@@ -89,22 +79,29 @@ impl Font {
         let hb_font = HbFont::new(face).into();
         Some(Font {
             upem,
-            font_data: FontData::External(handle),
+            glyph_advances: Default::default(),
+            to_unicode: Default::default(),
             hb_font,
             postscript_name: name,
-            ..Default::default()
+            handle,
+            fallbacks: Default::default(),
         })
     }
 
+    /// The font built into Helium (DejaVu Sans) in the given weight.
+    pub fn bundled(weight: &FontWeight) -> Self {
+        static REGULAR: OnceLock<Arc<Vec<u8>>> = OnceLock::new();
+        static BOLD: OnceLock<Arc<Vec<u8>>> = OnceLock::new();
+        let bytes = match weight {
+            FontWeight::Normal => REGULAR.get_or_init(|| Arc::new(BUNDLED_REGULAR.to_vec())),
+            FontWeight::Bold => BOLD.get_or_init(|| Arc::new(BUNDLED_BOLD.to_vec())),
+        };
+        Font::load(Handle::from_memory(bytes.clone(), 0)).expect("the bundled fonts are valid")
+    }
+
     /// Whether this font has a glyph for `ch`.
-    ///
-    /// Built-in fonts are written with `WinAnsiEncoding`, so they only cover the characters of
-    /// that encoding.
     pub fn covers(&self, ch: char) -> bool {
-        match &self.font_data {
-            FontData::BuiltIn(font) => builtin_glyph(*font, ch).is_some(),
-            FontData::External(_) => self.hb_font.get_nominal_glyph(ch).is_some(),
-        }
+        self.hb_font.get_nominal_glyph(ch).is_some()
     }
 
     /// A snapshot of the fallback fonts of this font.
@@ -131,29 +128,23 @@ impl Font {
     }
 
     pub fn ascent(&self) -> FontUnit {
-        match &self.font_data {
-            FontData::BuiltIn(font) => font.metrics().ascender,
-            FontData::External(_font) => scale_ext(
-                self.upem,
-                self.hb_font
-                    .get_font_h_extents()
-                    .map(|f| f.ascender)
-                    .unwrap_or_default(),
-            ),
-        }
+        scale_ext(
+            self.upem,
+            self.hb_font
+                .get_font_h_extents()
+                .map(|f| f.ascender)
+                .unwrap_or_default(),
+        )
     }
 
     pub fn descent(&self) -> FontUnit {
-        match &self.font_data {
-            FontData::BuiltIn(font) => font.metrics().descender,
-            FontData::External(_font) => scale_ext(
-                self.upem,
-                self.hb_font
-                    .get_font_h_extents()
-                    .map(|f| f.descender)
-                    .unwrap_or_default(),
-            ),
-        }
+        scale_ext(
+            self.upem,
+            self.hb_font
+                .get_font_h_extents()
+                .map(|f| f.descender)
+                .unwrap_or_default(),
+        )
     }
 
     pub fn advance(&self, glyph: GlyphIndex) -> FontUnit {
@@ -161,18 +152,7 @@ impl Font {
             .glyph_advances
             .lock()
             .entry(glyph)
-            .or_insert_with(|| match &self.font_data {
-                FontData::BuiltIn(font) => {
-                    font.metrics()
-                        .char_metrics
-                        .get(glyph.0 as usize)
-                        .unwrap()
-                        .advance_width
-                }
-                FontData::External(_) => {
-                    scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0))
-                }
-            })
+            .or_insert_with(|| scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0)))
     }
 
     pub fn scale_to_px(&self, val: FontUnit, font_size: PixelLength) -> PixelLength {
@@ -181,20 +161,6 @@ impl Font {
 
     pub fn font_height(&self) -> FontUnit {
         self.ascent() - self.descent()
-    }
-}
-
-impl Default for Font {
-    fn default() -> Self {
-        Font {
-            upem: 1000,
-            glyph_advances: Mutex::new(BTreeMap::new()),
-            to_unicode: Default::default(),
-            font_data: FontData::BuiltIn(BuiltInFont::Helvetica),
-            hb_font: HarfbuzzFont::default(),
-            postscript_name: format!("DEFAULT_FONT"),
-            fallbacks: Default::default(),
-        }
     }
 }
 
@@ -208,139 +174,50 @@ impl<'a> From<&'a ComputedValues> for Properties {
     }
 }
 
+/// The font for `style`: the first installed family of `font-family`, else the system's
+/// sans-serif font, else the font built into Helium.
 pub fn match_font(style: &ComputedValues) -> Font {
     let families = style
         .font
         .font_family
         .iter()
         .map(|fam| FamilyName::from(fam.clone()))
+        .chain([FamilyName::SansSerif])
         .collect::<Vec<_>>();
     SystemSource::new()
         .select_best_match(&families, &style.into())
         .ok()
-        .and_then(Font::external)
-        .unwrap_or_else(|| Font::built_in(BuiltInFont::Helvetica))
-}
-
-/// The glyph of `ch` in a built-in font, if the character can be written with
-/// `WinAnsiEncoding` (the encoding the built-in fonts are written with).
-pub(crate) fn builtin_glyph(font: BuiltInFont, ch: char) -> Option<GlyphIndex> {
-    use lemon_pdf::font::encoding::PredefinedEncoding;
-    let metrics = font.metrics();
-    let index = (metrics.unicode_mapping)(ch)?;
-    let name = metrics.char_metrics.get(index as usize)?.name;
-    PredefinedEncoding::WinAnsiEncoding.encode(name)?;
-    Some(GlyphIndex(index as u32))
-}
-
-pub fn match_font_builtin(style: &ComputedValues) -> Option<Font> {
-    style
-        .font
-        .font_family
-        .iter()
-        .next()
-        .and_then(|family| match family {
-            FontFamily::Serif => match (&style.font.font_style, &style.font.font_weight) {
-                (FontStyle::Normal, FontWeight::Normal) => {
-                    Some(Font::built_in(BuiltInFont::TimesRoman))
-                }
-                (FontStyle::Normal, FontWeight::Bold) => {
-                    Some(Font::built_in(BuiltInFont::TimesBold))
-                }
-                (FontStyle::Italic, FontWeight::Normal)
-                | (FontStyle::Oblique, FontWeight::Normal) => {
-                    Some(Font::built_in(BuiltInFont::TimesItalic))
-                }
-                (FontStyle::Italic, FontWeight::Bold) | (FontStyle::Oblique, FontWeight::Bold) => {
-                    Some(Font::built_in(BuiltInFont::TimesBoldItalic))
-                }
-            },
-            FontFamily::SansSerif => match (&style.font.font_style, &style.font.font_weight) {
-                (FontStyle::Normal, FontWeight::Normal) => {
-                    Some(Font::built_in(BuiltInFont::Helvetica))
-                }
-                (FontStyle::Normal, FontWeight::Bold) => {
-                    Some(Font::built_in(BuiltInFont::HelveticaBold))
-                }
-                (FontStyle::Italic, FontWeight::Normal)
-                | (FontStyle::Oblique, FontWeight::Normal) => {
-                    Some(Font::built_in(BuiltInFont::HelveticaOblique))
-                }
-                (FontStyle::Italic, FontWeight::Bold) | (FontStyle::Oblique, FontWeight::Bold) => {
-                    Some(Font::built_in(BuiltInFont::HelveticaBoldOblique))
-                }
-            },
-            FontFamily::Monospace => match (&style.font.font_style, &style.font.font_weight) {
-                (FontStyle::Normal, FontWeight::Normal) => {
-                    Some(Font::built_in(BuiltInFont::Courier))
-                }
-                (FontStyle::Normal, FontWeight::Bold) => {
-                    Some(Font::built_in(BuiltInFont::CourierBold))
-                }
-                (FontStyle::Italic, FontWeight::Normal)
-                | (FontStyle::Oblique, FontWeight::Normal) => {
-                    Some(Font::built_in(BuiltInFont::CourierOblique))
-                }
-                (FontStyle::Italic, FontWeight::Bold) | (FontStyle::Oblique, FontWeight::Bold) => {
-                    Some(Font::built_in(BuiltInFont::CourierBoldOblique))
-                }
-            },
-            FontFamily::Named(_) => None,
-        })
+        .and_then(Font::load)
+        .unwrap_or_else(|| Font::bundled(&style.font.font_weight))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BuiltInFont, ComputedValues, FontData, match_font};
+    use super::{ComputedValues, Font, FontWeight, match_font};
     use crate::style::properties::specified::FontFamily;
 
     #[test]
-    fn missing_system_font_falls_back_to_builtin_helvetica() {
+    fn missing_system_font_falls_back_to_an_embeddable_font() {
         let mut style = ComputedValues::default();
         std::sync::Arc::make_mut(&mut style.font).font_family =
             vec![FontFamily::Named("Helium Missing Font".to_owned())];
 
         let font = match_font(&style);
 
-        assert_eq!(font.postscript_name(), "Helvetica");
-        assert!(matches!(
-            &font.font_data,
-            FontData::BuiltIn(BuiltInFont::Helvetica)
-        ));
+        assert!(!font.postscript_name().is_empty());
+        assert!(font.covers('a'));
+    }
+
+    #[test]
+    fn bundled_fonts_load() {
+        let regular = Font::bundled(&FontWeight::Normal);
+        let bold = Font::bundled(&FontWeight::Bold);
+        assert_eq!(regular.postscript_name(), "DejaVuSans");
+        assert_eq!(bold.postscript_name(), "DejaVuSans-Bold");
+        assert!(regular.covers('→'));
+        assert!(regular.is_truetype());
     }
 }
-
-// Glyph-metrics backend for the text layout iterator; no constructor is wired up yet.
-#[allow(dead_code)]
-#[derive(Debug)]
-pub(super) struct FontInstance<'font, Font: 'font> {
-    pub font: Font,
-    pub glyph_map: MutexGuard<'font, BTreeMap<GlyphIndex, FontUnit>>,
-    pub size: PixelLength,
-}
-
-pub trait GlyphMetricsProvide {
-    fn char_to_glyph_index(&self, ch: char) -> GlyphIndex;
-    fn glyph_advance(&mut self, glyph: GlyphIndex) -> PixelLength;
-}
-
-impl<'font> GlyphMetricsProvide for FontInstance<'font, &'font font_kit::font::Font> {
-    fn char_to_glyph_index(&self, ch: char) -> GlyphIndex {
-        GlyphIndex(self.font.glyph_for_char(ch).unwrap_or_default())
-    }
-    fn glyph_advance(&mut self, glyph: GlyphIndex) -> PixelLength {
-        let font = self.font;
-        let unscaled_advance = *self.glyph_map.entry(glyph).or_insert_with(|| {
-            FontUnit(
-                font.advance(glyph.0).unwrap().x() as f64 * 1000f64
-                    / font.metrics().units_per_em as f64,
-            )
-        });
-        self.size * (unscaled_advance.0 / 1000f64) as f32
-    }
-}
-
-impl super::FontLike for Font {}
 
 impl From<FontFamily> for FamilyName {
     fn from(family: FontFamily) -> FamilyName {

@@ -8,11 +8,13 @@
 //!
 //! 1. the other families listed in `font-family` (as CSS prescribes),
 //! 2. a fixed list of families with a broad character coverage (`FALLBACK_FAMILIES`),
-//! 3. on Linux, any installed font that covers the character, as found by fontconfig.
+//! 3. the font built into Helium (DejaVu Sans, see `Font::bundled`),
+//! 4. on Linux, any installed font that covers the character, as found by fontconfig.
 //!
 //! Shaping (`shape`) then splits the text into runs per font, and painting switches to the
-//! fallback font for those runs. The fixed list comes before the fontconfig query so that the
-//! output does not depend on the order fontconfig happens to sort fonts in, as far as possible.
+//! fallback font for those runs. The fixed list and the bundled font come before the fontconfig
+//! query so that the output does not depend on the order fontconfig happens to sort fonts in, as
+//! far as possible.
 //!
 //! Characters that no font covers are collected in the `MissingGlyphs` resource and reported
 //! to the user (see `MissingGlyphs::report`).
@@ -163,11 +165,16 @@ impl FontResolver {
             }
         }
 
+        let bundled = register_font(font_map, Font::bundled(&weight));
+        if bundled.covers(ch) {
+            return Some(bundled);
+        }
+
         self.char_cache
             .entry((ch, weight.clone(), font_style.clone()))
             .or_insert_with(|| {
                 system::font_file_for_char(ch, &weight, &font_style)
-                    .and_then(|(path, index)| Font::external(Handle::from_path(path, index)))
+                    .and_then(|(path, index)| Font::load(Handle::from_path(path, index)))
                     .map(|font| register_font(font_map, font))
             })
             .clone()
@@ -192,7 +199,7 @@ impl FontResolver {
                 source
                     .select_best_match(&[family], &properties)
                     .ok()
-                    .and_then(Font::external)
+                    .and_then(Font::load)
                     .map(|font| register_font(font_map, font))
             })
             .clone()
@@ -222,7 +229,7 @@ pub struct MissingGlyph {
 }
 
 /// The characters of the document that could not be rendered with any font. They are drawn
-/// with the `.notdef` glyph of the font (usually an empty box), or as `?` with built-in fonts.
+/// with the `.notdef` glyph of the font (usually an empty box).
 #[derive(Debug, Clone, Default)]
 pub struct MissingGlyphs(pub BTreeMap<char, MissingGlyph>);
 
@@ -288,9 +295,9 @@ impl MissingGlyphs {
         }
         let _ = write!(
             report,
-            "  These characters are drawn as an empty box (or '?' with built-in PDF fonts). \
-             Install a font that covers them (e.g. Noto Sans Symbols 2, Noto Sans Math or \
-             DejaVu Sans) or add such a font to `font-family`."
+            "  These characters are drawn as an empty box. \
+             Install a font that covers them (e.g. Noto Sans Symbols 2, Noto Sans Math or a \
+             Noto Sans CJK font) or add such a font to `font-family`."
         );
         Some(report)
     }
@@ -428,7 +435,6 @@ mod system {
 
 #[cfg(test)]
 mod tests {
-    use super::super::font::BuiltInFont;
     use super::*;
 
     #[test]
@@ -450,7 +456,7 @@ mod tests {
             FontFamily::Named("Lato".to_owned()),
             FontFamily::Named("Noto Serif".to_owned()),
         ];
-        let font = Font::built_in(BuiltInFont::Helvetica);
+        let font = Font::bundled(&FontWeight::Normal);
         missing.record('→', &font, &style, "see → there", 4);
         missing.record('→', &font, &style, "see → there", 4);
         let report = missing.report().unwrap();
@@ -464,22 +470,24 @@ mod tests {
             report.contains("font-family: \"Lato\", \"Noto Serif\""),
             "{report}"
         );
-        assert!(report.contains("font: Helvetica"), "{report}");
+        assert!(report.contains("font: DejaVuSans"), "{report}");
     }
 
     #[test]
-    fn builtin_font_falls_back_for_characters_outside_win_ansi() {
+    fn missing_characters_get_a_fallback_font_or_are_reported() {
         let mut font_map = FontMap::new();
         let mut resolver = FontResolver::default();
         let style = ComputedValues::default();
-        let font = register_font(&mut font_map, Font::built_in(BuiltInFont::Helvetica));
-        assert!(!font.covers('→'));
-        resolver.ensure_coverage(&style, &font, "a → b", &mut font_map);
+        let font = register_font(&mut font_map, Font::bundled(&FontWeight::Normal));
+        // DejaVu Sans has no CJK and U+0378 is unassigned.
+        assert!(!font.covers('漢'));
+        resolver.ensure_coverage(&style, &font, "a 漢 b \u{0378}", &mut font_map);
+        let missing = resolver.take_missing_glyphs();
+        assert!(missing.0.contains_key(&'\u{0378}'));
         // Depends on the installed fonts: either a fallback was found, or the character was
         // reported as missing.
-        let covered = font.fallbacks().iter().any(|f| f.covers('→'));
-        let missing = resolver.take_missing_glyphs();
-        assert_ne!(covered, missing.0.contains_key(&'→'));
+        let covered = font.fallbacks().iter().any(|f| f.covers('漢'));
+        assert_ne!(covered, missing.0.contains_key(&'漢'));
         for fallback in font.fallbacks() {
             assert!(font_map.contains_key(&fallback.postscript_name()));
         }

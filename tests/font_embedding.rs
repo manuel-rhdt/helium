@@ -59,9 +59,25 @@ fn bigger_text_gives_bigger_subset() {
     assert!(large > small);
 }
 
-/// Characters the font has no glyph for are taken from a fallback font. A built-in PDF font
-/// (used when no font of `font-family` is installed) only covers WinAnsi, so the arrow must
-/// come from another font, or, if no installed font has one, be reported by name.
+/// Every font is embedded: when no font of `font-family` is installed, the system's sans-serif
+/// font (or the font built into Helium) is used instead of a non-embedded standard PDF font.
+#[test]
+fn fonts_are_always_embedded() {
+    let pdf = render(
+        "always_embedded",
+        r#"<p style="font-family: 'Helium Missing Font'">Hello</p>
+           <pre>mono</pre><p style="font-family: serif"><b>serif</b></p>"#,
+    );
+    let pdf = String::from_utf8_lossy(&pdf);
+    assert!(!pdf.contains("/Type1"), "standard font in PDF");
+    let fonts = pdf.matches("/FontDescriptor").count();
+    let files = pdf.matches("/FontFile2").count() + pdf.matches("/FontFile3").count();
+    assert!(fonts > 0);
+    assert_eq!(pdf.matches("/Type /FontDescriptor").count(), files);
+}
+
+/// Characters the font has no glyph for are taken from a fallback font, or, if no installed
+/// font has one, reported by name.
 #[test]
 fn missing_glyphs_use_a_fallback_font_or_are_reported() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -83,11 +99,7 @@ fn missing_glyphs_use_a_fallback_font_or_are_reported() {
 
     // U+0378 is unassigned, so no font has it.
     assert!(stderr.contains("U+0378"), "{stderr}");
-    assert!(stderr.contains("font: Helvetica"), "{stderr}");
     assert!(stderr.contains("\"Helium Missing Font\""), "{stderr}");
-
-    let arrow_reported = stderr.contains("U+2192");
-    let pdf = common::expand_object_streams(&std::fs::read(output).unwrap());
-    let has_fallback_font = !subset_tags(&pdf).is_empty();
-    assert_ne!(arrow_reported, has_fallback_font, "{stderr}");
+    // The bundled font has an arrow, so it is always found.
+    assert!(!stderr.contains("U+2192"), "{stderr}");
 }
