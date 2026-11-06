@@ -2,7 +2,7 @@ use super::components::{
     AbsoluteGroups, BlockLevelElement, Decoration, DecorationFragment, EdgeValues, Fragmented,
     Position, TextList,
 };
-use crate::style::properties::computed::{ComputedValues, PageBreak, PixelLength};
+use crate::style::properties::computed::{ComputedValues, Display, PageBreak, PixelLength};
 use specs::{Entities, Entity, Read, ReadStorage, System, WriteStorage};
 use std::collections::HashSet;
 
@@ -59,13 +59,20 @@ impl<'world> System<'world> for Paginator {
         let mut force_next_page_break = false;
         // > 0 inside of boxes that are not broken across pages
         let mut unbreakable_depth = 0usize;
+        // For every table that is open at the current element: the bottom border edge of the
+        // lowest cell seen so far. A table may only break between two rows if no cell spans
+        // across them (`rowspan`).
+        let mut open_tables: Vec<PixelLength> = vec![];
         for (index, &elem) in text_list.list.iter().enumerate().skip(1) {
             let style = computed_values.get(elem.entity());
-            // Flex and grid containers and tables are kept on one page.
-            // TODO: allow breaks between the lines of flex containers and the rows of grids and
-            // tables
-            let is_monolithic = style
-                .is_some_and(|s| s.box_.display.is_flex_or_grid() || s.box_.display.is_table());
+            let display = style.map(|s| s.box_.display);
+            // Flex and grid containers are kept on one page, and so are table rows (with their
+            // cells): a table breaks only between its rows.
+            // TODO: allow breaks between the lines of flex containers and the rows of grids
+            let is_monolithic = display.is_some_and(|d| {
+                d.is_flex_or_grid() || matches!(d, Display::TableRow | Display::TableCell)
+            });
+            let is_table = display.is_some_and(|d| d.is_table());
             let page_break_before = style.map(|s| s.page.page_break_before).unwrap_or_default();
             let page_break_after = style.map(|s| s.page.page_break_after).unwrap_or_default();
 
@@ -76,7 +83,10 @@ impl<'world> System<'world> for Paginator {
             match (previous_elem, elem) {
                 (BlockLevelElement::ContainerEnd(_), BlockLevelElement::ContainerStart(_))
                 | (BlockLevelElement::Leaf(_), BlockLevelElement::Leaf(_))
-                    if unbreakable_depth == 0 =>
+                    if unbreakable_depth == 0
+                        && open_tables
+                            .last()
+                            .is_none_or(|&cells_bottom| cells_bottom.0 <= pos.y.0 + 0.01) =>
                 {
                     let forced = force_next_page_break || page_break_before == PageBreak::Always;
                     // After a forced break the margins after the break are kept, so the next
@@ -114,12 +124,31 @@ impl<'world> System<'world> for Paginator {
                     if is_monolithic {
                         unbreakable_depth += 1;
                     }
+                    if is_table {
+                        open_tables.push(PixelLength(f32::NEG_INFINITY));
+                    }
                 }
                 // never part of the text list
                 BlockLevelElement::Absolute(_) => {}
-                BlockLevelElement::ContainerEnd(_) | BlockLevelElement::Leaf(_) => {
-                    if is_monolithic && matches!(elem, BlockLevelElement::ContainerEnd(_)) {
+                BlockLevelElement::ContainerEnd(entity) | BlockLevelElement::Leaf(entity) => {
+                    let is_end = matches!(elem, BlockLevelElement::ContainerEnd(_));
+                    if is_monolithic && is_end {
                         unbreakable_depth = unbreakable_depth.saturating_sub(1);
+                    }
+                    if is_end && is_table {
+                        open_tables.pop();
+                    }
+                    if is_end && display == Some(Display::TableCell) {
+                        if let Some(cells_bottom) = open_tables.last_mut() {
+                            let extra = decorations
+                                .get(entity)
+                                .map(|d| d.padding.bottom + d.border.bottom)
+                                .unwrap_or_default();
+                            let bottom = pos.y + pos.height + extra;
+                            if bottom.0 > cells_bottom.0 {
+                                *cells_bottom = bottom;
+                            }
+                        }
                     }
                     if page_break_after == PageBreak::Always && unbreakable_depth == 0 {
                         force_next_page_break = true;
@@ -148,7 +177,14 @@ impl<'world> System<'world> for Paginator {
                 let height = break_points[to].advance_after - break_points[from].advance_before;
 
                 if height > self.content_height() {
-                    std::f64::INFINITY
+                    if to == from + 1 {
+                        // There is no break opportunity in between: an unbreakable box that is
+                        // taller than a page gets a page of its own and overflows it, so that
+                        // the content after it is not lost.
+                        1e30
+                    } else {
+                        std::f64::INFINITY
+                    }
                 } else {
                     if break_points[to].forced {
                         return std::f64::NEG_INFINITY;
