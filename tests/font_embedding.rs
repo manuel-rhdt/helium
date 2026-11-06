@@ -1,14 +1,13 @@
 mod common;
 
 use assert_cmd::prelude::*;
-use std::process::Command;
 
 fn render(name: &str, html: &str) -> Vec<u8> {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("font_embedding_{}.html", name));
     let output = dir.join(format!("font_embedding_{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    common::helium()
         .unwrap()
         .arg(&input)
         .arg(&output)
@@ -88,7 +87,7 @@ fn missing_glyphs_use_a_fallback_font_or_are_reported() {
         r#"<p style="font-family: 'Helium Missing Font'">A &#x2192; B, &#x0378;</p>"#,
     )
     .unwrap();
-    let result = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let result = common::helium()
         .unwrap()
         .arg(&input)
         .arg(&output)

@@ -59,6 +59,11 @@ struct Options {
         default_value = "taffy"
     )]
     layout_engine: layout::LayoutEngine,
+    /// Use only the fonts built into Helium, not the fonts installed on the system, so that the
+    /// output does not depend on the machine. Also enabled by setting the environment variable
+    /// `HELIUM_NO_SYSTEM_FONTS` (to anything but `0`).
+    #[structopt(long = "no-system-fonts")]
+    no_system_fonts: bool,
     /// The input HTML file to process
     #[structopt(parse(from_os_str))]
     input: PathBuf,
@@ -77,6 +82,9 @@ fn main() -> Result<(), Error> {
     env_logger::init();
 
     let opt = Options::from_args();
+    let no_system_fonts = opt.no_system_fonts
+        || std::env::var_os("HELIUM_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0");
+    layout::text::font::set_use_system_fonts(!no_system_fonts);
 
     let input_dir = opt
         .input

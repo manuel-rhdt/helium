@@ -1,15 +1,15 @@
 //! Tests for the `color` property, expressed against the layout dump.
 
-use assert_cmd::prelude::*;
+mod common;
+
 use serde_json::Value;
-use std::process::Command;
 
 fn dump(name: &str, html: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let output = common::helium()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

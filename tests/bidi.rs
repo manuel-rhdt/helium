@@ -1,9 +1,9 @@
 //! Tests for bidirectional text, expressed against the layout dump. The fonts are chosen so that
 //! the built-in DejaVu Sans (which covers Hebrew) is used when no system font matches.
 
-use assert_cmd::prelude::*;
+mod common;
+
 use serde_json::Value;
-use std::process::Command;
 
 fn dump(name: &str, body: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -13,7 +13,7 @@ fn dump(name: &str, body: &str) -> Value {
         body
     );
     std::fs::write(&input, html).unwrap();
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let output = common::helium()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

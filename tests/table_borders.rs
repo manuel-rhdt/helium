@@ -1,9 +1,9 @@
 //! The collapsing border model of tables (`border-collapse: collapse`), tested against the
 //! layout dump: the boxes of the cells and the borders that are painted.
 
-use assert_cmd::prelude::*;
+mod common;
+
 use serde_json::Value;
-use std::process::Command;
 
 fn dump(name: &str, style: &str, body: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -13,7 +13,7 @@ fn dump(name: &str, style: &str, body: &str) -> Value {
         style, body
     );
     std::fs::write(&input, html).unwrap();
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let output = common::helium()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

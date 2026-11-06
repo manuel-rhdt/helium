@@ -2,9 +2,9 @@
 //! can be inspected by eye. To add an example, drop an `.html` file into `tests/documents`; it is
 //! picked up automatically. Besides rendering successfully, each PDF must be well-formed.
 
-use assert_cmd::prelude::*;
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn documents() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/documents");
@@ -31,7 +31,7 @@ fn example_documents_render_to_pdf() {
         // make sure a stale file from an earlier run cannot make the test pass
         let _ = std::fs::remove_file(&output);
 
-        let result = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        let result = common::helium()
             .unwrap()
             .args(["--layout-engine", "taffy"])
             .arg(input)

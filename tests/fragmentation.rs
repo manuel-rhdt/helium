@@ -1,8 +1,8 @@
 //! Boxes that are split across pages, expressed against the layout dump.
 
-use assert_cmd::prelude::*;
+mod common;
+
 use serde_json::Value;
-use std::process::Command;
 
 fn rects(name: &str, html: &str) -> Vec<Value> {
     dump(name, html)["paint"]["rects"].as_array().unwrap().clone()
@@ -13,7 +13,7 @@ fn dump(name: &str, html: &str) -> Value {
     let input = dir.join(format!("{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let output = common::helium()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

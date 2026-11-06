@@ -2,9 +2,9 @@
 //! fonts to attach marks and by cursive scripts like Nastaliq) end up in the painted text. They
 //! use the built-in DejaVu Sans, whose mark positioning (GPOS) covers Latin and Arabic marks.
 
-use assert_cmd::prelude::*;
+mod common;
+
 use serde_json::Value;
-use std::process::Command;
 
 /// The text operators of the painted paragraphs of a document with `body`.
 fn ops(name: &str, body: &str) -> Vec<Value> {
@@ -15,7 +15,7 @@ fn ops(name: &str, body: &str) -> Vec<Value> {
         body
     );
     std::fs::write(&input, html).unwrap();
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let output = common::helium()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")
