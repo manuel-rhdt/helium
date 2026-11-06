@@ -53,6 +53,7 @@ quickcheck = "1"
 quickcheck_macros = "1"
 serde_json = "1.0.154"
 flate2 = "1"
+ttf-parser = { version = "0.25.1", default-features = false, features = ["glyph-names", "std"] }
 
 [build-dependencies]
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
