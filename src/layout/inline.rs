@@ -630,7 +630,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 segment_start,
                                 levels,
                                 font,
-                                &text_run.lang,
+                                &text_run.fallback,
                             ) {
                                 let width =
                                     font.scale_to_px(position.x_advance, text_run.font_size);
@@ -659,7 +659,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             segment_start,
                             levels,
                             font,
-                            &text_run.lang,
+                            &text_run.fallback,
                         ) {
                             let width = font.scale_to_px(position.x_advance, text_run.font_size);
                             glyph_widths.push((segment_start + info.cluster as usize, width));
@@ -668,7 +668,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start);
                         continue;
                     }
-                    let shaped = shape_with_levels(&text_run.text, 0, levels, font, &text_run.lang);
+                    let shaped = shape_with_levels(&text_run.text, 0, levels, font, &text_run.fallback);
                     if !levels.is_empty() {
                         glyph_widths = shaped
                             .iter()
@@ -779,7 +779,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                     };
                     if !hyphenation.is_empty() {
-                        let hyphen_width = shape("-", font, &text_run.lang)
+                        let hyphen_width = shape("-", font, &text_run.fallback, None)
                             .iter()
                             .map(|(position, _)| {
                                 font.scale_to_px(position.x_advance, text_run.font_size)
@@ -816,7 +816,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 index + prefix[index..].chars().next().map_or(1, char::len_utf8)
                             });
                             let prefix_width = width_before(word_start)
-                                + shape(&prefix[word_start..], font, &text_run.lang)
+                                + shape(&prefix[word_start..], font, &text_run.fallback, Some(word_start))
                                     .iter()
                                     .map(|(position, _)| {
                                         font.scale_to_px(position.x_advance, text_run.font_size)
@@ -1184,7 +1184,8 @@ impl<'a> System<'a> for ListMarkerCreator {
             let width = shape_piece(
                 &marker.text,
                 font,
-                &marker.lang,
+                &marker.fallback,
+                Some(0),
                 marker.font_size,
                 Px(0.0),
                 &[],
@@ -1493,7 +1494,8 @@ impl<'a> System<'a> for LineBoxCreator {
                                 shape_piece(
                                 "-",
                                 font,
-                                &run.lang,
+                                &run.fallback,
+                                None,
                                 run.font_size,
                                 Px(0.0),
                                 &[],
@@ -1504,7 +1506,8 @@ impl<'a> System<'a> for LineBoxCreator {
                         piece_width += shape_piece(
                             characters,
                             font,
-                            &run.lang,
+                            &run.fallback,
+                            Some(piece.start),
                             run.font_size,
                             word_spacing,
                             &ifc.inter_letter_offsets(line, &piece),
@@ -1516,7 +1519,8 @@ impl<'a> System<'a> for LineBoxCreator {
                                 shape_piece(
                                 "-",
                                 font,
-                                &run.lang,
+                                &run.fallback,
+                                None,
                                 run.font_size,
                                 Px(0.0),
                                 &[],
@@ -1671,7 +1675,8 @@ fn decoration_lines(
     ]
 }
 
-/// Draws `characters` with `font` (and its fallback fonts) by appending the text operators to
+/// Draws `characters`, which start at the byte `at` of the text that `fonts` is for (if they are
+/// part of it), with `font` (and its fallback fonts) by appending the text operators to
 /// `ops` and returns the width of the text. `word_spacing` is added to every space and in front
 /// of the characters at the byte offsets `inter_letter` (see `BreakPoint::inter_letter`), which
 /// are inside of `characters`. Right-to-left text (`rtl`) is shaped right-to-left and its glyphs
@@ -1679,7 +1684,8 @@ fn decoration_lines(
 pub(super) fn shape_piece(
     characters: &str,
     font: &Font,
-    lang: &crate::style::properties::computed::Language,
+    fonts: &crate::layout::text::fallback::TextFonts,
+    at: Option<usize>,
     font_size: Px,
     word_spacing: Px,
     inter_letter: &[usize],
@@ -1692,14 +1698,14 @@ pub(super) fn shape_piece(
             .next()
             .is_some_and(is_invisible_formatting)
     };
-    let shaped: Vec<_> = shape_directed(characters, font, lang, rtl)
+    let shaped: Vec<_> = shape_directed(characters, font, fonts, at, rtl)
         .into_iter()
         .filter(|(_, info)| !is_invisible(info))
         .collect();
 
     // Glyphs of characters that `font` has no glyph for come from its fallback fonts. The font
     // is switched for them and switched back to `font` at the end of the piece.
-    let fallbacks = font.fallbacks(lang);
+    let fallbacks = font.fallbacks(&fonts.key);
     let font_at = |index: u16| -> &Font {
         match index {
             0 => font,

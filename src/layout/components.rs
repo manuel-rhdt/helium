@@ -198,7 +198,7 @@ pub struct ListMarker {
     pub font_name: String,
     pub font_size: PixelLength,
     pub color: crate::style::properties::computed::RGBA,
-    pub lang: crate::style::properties::computed::Language,
+    pub fallback: crate::layout::text::fallback::TextFonts,
 }
 
 impl Component for ListMarker {
@@ -219,6 +219,8 @@ pub struct TextRun {
     pub manual_hyphen_points: Vec<usize>,
     /// The language of the text, for shaping, fallback fonts and hyphenation.
     pub lang: crate::style::properties::computed::Language,
+    /// The font description that decides the fallback fonts of the text.
+    pub fallback: crate::layout::text::fallback::TextFonts,
 }
 
 impl Component for TextRun {
