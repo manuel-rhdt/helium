@@ -33,6 +33,10 @@ table { border-collapse: collapse; margin: 6pt auto; }
 td, th { border-bottom: 0.4pt solid #ccc; padding: 2pt 10pt; font-size: 11.5pt; }
 th { font-weight: bold; }
 .num { font-family: "Noto Serif"; }
+/* one paragraph per script; the font comes from the fallback for the script of the text */
+.w { direction: ltr; font-family: "Noto Serif"; font-size: 11.5pt; line-height: 1.8; text-align: justify; }
+.w[dir=rtl] { direction: rtl; }
+.w + .label { margin-top: 6pt; }
 </style>
 </head>
 <body>
@@ -77,6 +81,60 @@ th { font-weight: bold; }
 
 <p class="label">English, with embedded Arabic</p>
 <p class="ltr" lang="en">Arabic script is cursive: each letter takes an <i>isolated</i>, <i>initial</i>, <i>medial</i> or <i>final</i> form. The word كتاب (<i>kitāb</i>, “book”) is built from the root ك ت ب, which also yields مكتبة (<i>maktaba</i>, “library”) and كاتب (<i>kātib</i>, “writer”). A good typesetter keeps such embedded words intact, in the right order, and on the shared baseline — and handles numerals like 1,234.56 and dates such as 5 November 2026 without fuss. Justification should spread spaces evenly, never letter‑space Latin, and avoid stretching gaps beyond reason.</p>
+
+<h2 dir="ltr" lang="en" style="font-family:'Noto Serif'">More scripts (coverage test)</h2>
+<p class="label">Cyrillic — Russian (UDHR 1)</p>
+<p class="w" lang="ru" dir="ltr">Все люди рождаются свободными и равными в своём достоинстве и правах. Они наделены разумом и совестью и должны поступать в отношении друг друга в духе братства.</p>
+<p class="label">Latin — ligatures, diacritics, combining marks</p>
+<p class="w" lang="pl" dir="ltr">The official affluent office staff offered a final, fluffy waffle; Zażółć gęślą jaźń; Straße, Ærøskøbing, façade, naïve, Ångström; ǅ ǆ ĳ; é ö ñ (combining); ½ ¼ № ™ © § ¶ † ‡ • … ‘a’ “b” «c» „d“.</p>
+<p class="label">Armenian (UDHR 1)</p>
+<p class="w" lang="hy" dir="ltr">Բոլոր մարդիկ ծնվում են ազատ և հավասար իրենց արժանապատվությամբ և իրավունքներով։ Նրանք օժտված են բանականությամբ և խղճով և պետք է միմյանց նկատմամբ վարվեն եղբայրության ոգով։</p>
+<p class="label">Georgian (UDHR 1)</p>
+<p class="w" lang="ka" dir="ltr">ყველა ადამიანი იბადება თავისუფალი და თანასწორი თავისი ღირსებითა და უფლებებით. მათ მინიჭებული აქვთ გონება და სინდისი და უნდა ექცეოდნენ ერთმანეთს ძმობის სულისკვეთებით.</p>
+<p class="label">Syriac — Lord’s Prayer</p>
+<p class="w" lang="syr" dir="rtl">ܐܒܘܢ ܕܒܫܡܝܐ ܢܬܩܕܫ ܫܡܟ ܬܐܬܐ ܡܠܟܘܬܟ ܢܗܘܐ ܨܒܝܢܟ ܐܝܟܢܐ ܕܒܫܡܝܐ ܐܦ ܒܐܪܥܐ</p>
+<p class="label">Thaana — Maldivian</p>
+<p class="w" lang="dv" dir="rtl">ހުރިހާ އިންސާނުން މިނިވަންކަމާއި ޙައްޤުތަކުގައި އެއްވަރަށް އުފަންވެފައެވެ.</p>
+<p class="label">Bengali (UDHR 1)</p>
+<p class="w" lang="bn" dir="ltr">সমস্ত মানুষ স্বাধীনভাবে সমান মর্যাদা এবং অধিকার নিয়ে জন্মগ্রহণ করে। তাঁদের বিবেক এবং বুদ্ধি আছে; সুতরাং সকলেরই একে অপরের প্রতি ভ্রাতৃত্বসুলভ মনোভাব নিয়ে আচরণ করা উচিত।</p>
+<p class="label">Hindi — Devanagari conjuncts (UDHR 1)</p>
+<p class="w" lang="hi" dir="ltr">सभी मनुष्यों को गौरव और अधिकारों के मामले में जन्मजात स्वतन्त्रता और समानता प्राप्त है। उन्हें बुद्धि और अन्तरात्मा की देन प्राप्त है और परस्पर उन्हें भाईचारे के भाव से बर्ताव करना चाहिए।</p>
+<p class="label">Punjabi — Gurmukhi</p>
+<p class="w" lang="pa" dir="ltr">ਸਾਰੇ ਮਨੁੱਖ ਜਨਮ ਤੋਂ ਆਜ਼ਾਦ ਹਨ ਅਤੇ ਮਾਣ ਅਤੇ ਅਧਿਕਾਰਾਂ ਵਿੱਚ ਬਰਾਬਰ ਹਨ। ਉਹਨਾਂ ਨੂੰ ਬੁੱਧੀ ਅਤੇ ਜ਼ਮੀਰ ਦੀ ਦਾਤ ਮਿਲੀ ਹੈ ਅਤੇ ਉਹਨਾਂ ਨੂੰ ਭਾਈਚਾਰੇ ਦੀ ਭਾਵਨਾ ਨਾਲ ਇੱਕ ਦੂਜੇ ਨਾਲ ਵਿਹਾਰ ਕਰਨਾ ਚਾਹੀਦਾ ਹੈ।</p>
+<p class="label">Gujarati</p>
+<p class="w" lang="gu" dir="ltr">બધા માણસો જન્મથી સ્વતંત્ર અને ગૌરવ તથા અધિકારોની દૃષ્ટિએ સમાન છે. તેમને વિચારશક્તિ અને અંતઃકરણ મળેલાં છે અને તેમણે એકબીજા પ્રત્યે ભાઈચારાની ભાવનાથી વર્તવું જોઈએ.</p>
+<p class="label">Odia</p>
+<p class="w" lang="or" dir="ltr">ସମସ୍ତ ମନୁଷ୍ୟ ଜନ୍ମକାଳରୁ ସ୍ୱାଧୀନ ଏବଂ ମର୍ଯ୍ୟାଦା ଓ ଅଧିକାରରେ ସମାନ । ସେମାନଙ୍କ ଠାରେ ବୁଦ୍ଧି ଓ ବିବେକ ନିହିତ ଅଛି ଏବଂ ସେମାନେ ପରସ୍ପର ପ୍ରତି ଭ୍ରାତୃଭାବ ପୋଷଣ କରି ବ୍ୟବହାର କରିବା ଉଚିତ ।</p>
+<p class="label">Tamil</p>
+<p class="w" lang="ta" dir="ltr">மனிதப் பிறவியினர் சகலரும் சுதந்திரமாகவே பிறக்கின்றனர்; அவர்கள் மதிப்பிலும், உரிமைகளிலும் சமமானவர்கள். அவர்கள் பகுத்தறிவும் மனச்சாட்சியும் நிரம்பப் பெற்றவர்கள். அவர்கள் ஒருவருடன் ஒருவர் சகோதர உணர்வுடன் நடந்துகொள்ள வேண்டும்.</p>
+<p class="label">Telugu</p>
+<p class="w" lang="te" dir="ltr">ప్రతిపత్తిలోను, హక్కులలోను జన్మతః మానవులంతా సమానులే. వారికి వివేకము, అంతఃచేతన ఉన్నాయి. కాబట్టి వారు పరస్పరం సోదరభావంతో మెలగాలి.</p>
+<p class="label">Kannada</p>
+<p class="w" lang="kn" dir="ltr">ಎಲ್ಲಾ ಮಾನವರೂ ಸ್ವತಂತ್ರರಾಗಿಯೇ ಜನಿಸಿದ್ದಾರೆ. ಹಾಗೂ ಘನತೆ ಮತ್ತು ಹಕ್ಕುಗಳಲ್ಲಿ ಸಮಾನರಾಗಿದ್ದಾರೆ. ವಿವೇಕ ಮತ್ತು ಅಂತಃಕರಣಗಳನ್ನು ಪಡೆದಿರುವ ಅವರು ಪರಸ್ಪರ ಸಹೋದರ ಭಾವದಿಂದ ವರ್ತಿಸಬೇಕು.</p>
+<p class="label">Malayalam</p>
+<p class="w" lang="ml" dir="ltr">മനുഷ്യരെല്ലാവരും തുല്യാവകാശങ്ങളും അന്തസ്സും ഉള്ളവരായി സ്വതന്ത്രരായിട്ടാണ് ജനിക്കുന്നത്. അവര്‍ക്കു വിവേകബുദ്ധിയും മനസ്സാക്ഷിയുമുണ്ട്. അവര്‍ അന്യോന്യം സഹോദരഭാവത്തോടെ പെരുമാറണം.</p>
+<p class="label">Sinhala</p>
+<p class="w" lang="si" dir="ltr">සියලු මනුෂ්‍යයෝ නිදහසේ උපත ලබා ඇත. ගරුත්වයෙන් හා අයිතිවාසිකම්වලින් ඔවුහු සමාන වෙති. යුක්තිය හා හෘදය සාක්ෂිය ඇති ඔවුන් අනොන්‍ය වශයෙන් සහෝදරත්ව හැඟීමෙන් ක්‍රියා කළ යුතුය.</p>
+<p class="label">Thai (no spaces between words, stacked marks)</p>
+<p class="w" lang="th" dir="ltr">มนุษย์ทั้งหลายเกิดมามีอิสระและเสมอภาคกันในศักดิ์ศรีและสิทธิ ต่างมีเหตุผลและมโนธรรม และควรปฏิบัติต่อกันด้วยจิตวิญญาณแห่งภราดรภาพ</p>
+<p class="label">Lao</p>
+<p class="w" lang="lo" dir="ltr">ມະນຸດທຸກຄົນເກີດມາມີສິດເສລີພາບ ແລະ ເທົ່າທຽມກັນໃນດ້ານກຽດສັກສີ ແລະ ສິດທິ. ທຸກຄົນມີເຫດຜົນ ແລະ ມະໂນທຳ ແລະ ຄວນປະຕິບັດຕໍ່ກັນດ້ວຍຈິດໃຈແຫ່ງພາດຕະພາບ.</p>
+<p class="label">Tibetan</p>
+<p class="w" lang="bo" dir="ltr">སྐྱེ་བོ་མིའི་རིགས་རྒྱུད་ཡོངས་ལ་སྐྱེས་ཙམ་ཉིད་ནས་ཆེ་མཐོང་དང་ཐོབ་ཐང་ལ་དབང་བའི་རང་དབང་དང་འདྲ་མཉམ་ཡོད།</p>
+<p class="label">Burmese</p>
+<p class="w" lang="my" dir="ltr">လူသားအားလုံးတို့သည် တစ်ဦးချင်းလွတ်လပ်၍ ဂုဏ်သိက္ခာနှင့် အခွင့်အရေးတို့၌ တန်းတူညီမျှကြသည်။ ထိုသူတို့တွင် ဆင်ခြင်တုံတရားနှင့် ကိုယ်ကျင့်တရားရှိကြ၍ ညီအစ်ကိုမောင်နှမစိတ်ဓာတ်ဖြင့် အချင်းချင်း ဆက်ဆံသင့်သည်။</p>
+<p class="label">Khmer (subscript consonants)</p>
+<p class="w" lang="km" dir="ltr">មនុស្សទាំងអស់កើតមកមានសេរីភាព និងសមភាពក្នុងសេចក្តីថ្លៃថ្នូរ និងសិទ្ធិ។ មនុស្សគ្រប់រូបសុទ្ធតែមានវិចារណញ្ញាណ និងសតិសម្បជញ្ញៈ ហើយត្រូវប្រព្រឹត្តចំពោះគ្នាទៅវិញទៅមកក្នុងស្មារតីនៃភាតរភាព។</p>
+<p class="label">Amharic — Ethiopic</p>
+<p class="w" lang="am" dir="ltr">የሰው ልጅ ሁሉ ሲወለድ ነጻና በክብርና በመብትም እኩል ነው። የተፈጥሮ ማመዛዘንና ኅሊና ስላለው አንዱ ሌላውን በወንድማማችነት መንፈስ መመልከት ይገባዋል።</p>
+<p class="label">Japanese (kana and kanji)</p>
+<p class="w" lang="ja" dir="ltr">すべての人間は、生まれながらにして自由であり、かつ、尊厳と権利とについて平等である。人間は、理性と良心とを授けられており、互いに同胞の精神をもって行動しなければならない。</p>
+<p class="label">Korean (Hangul, with spaces)</p>
+<p class="w" lang="ko" dir="ltr">모든 인간은 태어날 때부터 자유로우며 그 존엄과 권리에 있어 평등하다. 인간은 천부적으로 이성과 양심을 부여받았으며 서로 형제애의 정신으로 행동하여야 한다.</p>
+<p class="label">Chinese, Simplified</p>
+<p class="w" lang="zh-Hans" dir="ltr">人人生而自由,在尊严和权利上一律平等。他们赋有理性和良心,并应以兄弟关系的精神相对待。</p>
+<p class="label">Mixed directions — Hebrew and Arabic inside English, digits inside RTL</p>
+<p class="w" lang="en" dir="ltr">The word שלום (shalom) and the word سلام (salām) both mean “peace”; the Hebrew year תשפ״ו is 2025/26, written 5786 in digits. Phone: +49 30 1234567; price: $12.50 (≈ 11,80 €).</p>
 
 </body>
 </html>
