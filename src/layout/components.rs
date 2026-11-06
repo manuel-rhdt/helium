@@ -463,6 +463,11 @@ pub enum TextOperator {
     /// for glyphs that the font positions vertically, like marks and cursive attachments.
     SetRise(PixelLength),
     SetTransform(TransformMatrix),
+    /// Starts marked content whose `/ActualText` is the given text: extractors use it instead of
+    /// the `ToUnicode` text of the glyphs that follow, up to `EndActualText`. Used for clusters
+    /// that a per-glyph `ToUnicode` map cannot describe.
+    BeginActualText(String),
+    EndActualText,
     NewLine {
         x_offset: PixelLength,
         leading: PixelLength,

@@ -291,6 +291,10 @@ fn op_json(op: &TextOperator) -> String {
                 number(spacing.0)
             )
         }
+        TextOperator::BeginActualText(text) => {
+            format!("{{\"op\": \"actual_text\", \"text\": {}}}", json_string(text))
+        }
+        TextOperator::EndActualText => "{\"op\": \"end_actual_text\"}".to_string(),
         TextOperator::SetRise(rise) => {
             format!("{{\"op\": \"rise\", \"value\": {}}}", number(rise.0))
         }

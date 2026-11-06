@@ -1713,7 +1713,8 @@ pub(super) fn shape_piece(
         }
     };
 
-    record_to_unicode(characters, &shaped, &font_at);
+    let (actual_text, boundaries) = record_to_unicode(characters, &shaped, &font_at);
+    let mut open_cluster: Option<usize> = None;
 
     let mut out = GlyphRunWriter::default();
     let mut current_font = 0u16;
@@ -1744,6 +1745,19 @@ pub(super) fn shape_piece(
             }
         }
         previous_cluster = Some(cluster);
+
+        let cluster = grapheme_start(&boundaries, cluster);
+        if open_cluster != Some(cluster) {
+            if open_cluster.take().is_some() {
+                out.flush(ops);
+                ops.push(TextOperator::EndActualText);
+            }
+            if let Some(text) = actual_text.get(&cluster) {
+                out.flush(ops);
+                ops.push(TextOperator::BeginActualText(text.clone()));
+                open_cluster = Some(cluster);
+            }
+        }
 
         if glyph_info.font != current_font {
             out.flush(ops);
@@ -1778,6 +1792,10 @@ pub(super) fn shape_piece(
             advance += word_spacing;
             out.kern(FontUnit(-word_spacing_units.0));
         }
+    }
+    if open_cluster.is_some() {
+        out.flush(ops);
+        ops.push(TextOperator::EndActualText);
     }
     // the text that follows continues from the unshifted pen position on the baseline
     out.kern(shift_x);
@@ -1837,43 +1855,70 @@ impl GlyphRunWriter {
     }
 }
 
-/// Records which characters every glyph of `shaped` (in logical order) stands for in the
-/// `ToUnicode` map of its font, so that the text can be copied from the PDF. The first glyph of a
-/// cluster stands for all of its characters.
+/// Records which characters the glyphs of `shaped` (in logical order) stand for, so that the text
+/// can be extracted from the PDF.
+///
+/// A cluster of one glyph goes into the `ToUnicode` map of its font, unless the map already says
+/// something else for that glyph. Every other cluster (a glyph sequence like a reordered
+/// vowel sign and its consonant, or a glyph that is used for different text) cannot be
+/// described by a map from glyph to text: it is returned, by its start offset, with the text to
+/// give it as `/ActualText`.
 fn record_to_unicode<'a>(
     characters: &str,
     shaped: &[(super::text::GlyphPosition, super::text::GlyphInfo)],
     font_at: &impl Fn(u16) -> &'a Font,
-) {
-    let mut to_unicode_maps: BTreeMap<u16, BTreeMap<GlyphIndex, String>> = BTreeMap::new();
-    let mut cluster_start: Option<(usize, u16, GlyphIndex)> = None;
+) -> (std::collections::HashMap<usize, String>, Vec<usize>) {
+    // The unit of `/ActualText` is the grapheme cluster: a base character with its marks, whose
+    // glyphs the extractor would otherwise have to assemble from the positions of the marks.
+    use unicode_segmentation::UnicodeSegmentation;
+    let boundaries: Vec<usize> = characters.grapheme_indices(true).map(|(i, _)| i).collect();
+    let mut clusters: BTreeMap<usize, Vec<(u16, GlyphIndex)>> = BTreeMap::new();
     for (_, info) in shaped {
-        let cluster = info.cluster as usize;
-        match cluster_start {
-            Some((start, _, _)) if start == cluster => continue,
-            Some((start, font, glyph)) if start < cluster => {
-                // without the invisible characters that were dropped in front of this cluster
-                let text = characters[start..cluster].trim_end_matches(is_invisible_formatting);
-                to_unicode_maps
-                    .entry(font)
-                    .or_default()
-                    .insert(glyph, text.to_owned());
-            }
-            _ => {}
+        clusters
+            .entry(info.cluster as usize)
+            .or_default()
+            .push((info.font, GlyphIndex(info.codepoint)));
+    }
+    let starts: Vec<usize> = clusters.keys().copied().collect();
+    let mut unclean = std::collections::BTreeSet::new();
+    for (i, (&start, glyphs)) in clusters.iter().enumerate() {
+        let end = starts.get(i + 1).copied().unwrap_or(characters.len());
+        // without the invisible characters that were dropped in front of the next cluster
+        let Some(text) = characters.get(start..end) else { continue };
+        let text = text.trim_end_matches(is_invisible_formatting);
+        if text.is_empty() {
+            continue;
         }
-        cluster_start = Some((cluster, info.font, GlyphIndex(info.codepoint)));
+        let clean = match glyphs[..] {
+            [(font, glyph)] => {
+                let mut map = font_at(font).to_unicode.lock();
+                match map.get(&glyph) {
+                    Some(existing) => existing == text,
+                    None => {
+                        map.insert(glyph, text.to_owned());
+                        true
+                    }
+                }
+            }
+            _ => false,
+        };
+        if !clean {
+            unclean.insert(grapheme_start(&boundaries, start));
+        }
     }
-    if let Some((start, font, glyph)) = cluster_start
-        && let Some(text) = characters.get(start..)
-    {
-        to_unicode_maps.entry(font).or_default().insert(
-            glyph,
-            text.trim_end_matches(is_invisible_formatting).to_owned(),
-        );
+    let mut actual_text = std::collections::HashMap::new();
+    for &start in &unclean {
+        let i = boundaries.partition_point(|&b| b <= start);
+        let end = boundaries.get(i).copied().unwrap_or(characters.len());
+        let text = characters[start..end].trim_end_matches(is_invisible_formatting);
+        actual_text.insert(start, text.to_owned());
     }
-    for (font_index, mut map) in to_unicode_maps {
-        font_at(font_index).to_unicode.lock().append(&mut map);
-    }
+    (actual_text, boundaries)
+}
+
+/// The start of the grapheme cluster that contains the byte `offset`.
+fn grapheme_start(boundaries: &[usize], offset: usize) -> usize {
+    boundaries[boundaries.partition_point(|&b| b <= offset).saturating_sub(1)]
 }
 
 #[cfg(test)]
