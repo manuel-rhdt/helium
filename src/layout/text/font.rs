@@ -60,6 +60,44 @@ impl Clone for Font {
 const BUNDLED_REGULAR: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSans.ttf");
 const BUNDLED_BOLD: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSans-Bold.ttf");
 
+// `EMBEDDED_FONTS`: the Noto fonts for the scripts that DejaVu Sans lacks, subset by `build.rs`.
+include!(concat!(env!("OUT_DIR"), "/fonts/bundled_fonts.rs"));
+
+/// Free, metric-compatible stand-ins for the Helvetica, Times and Courier families of the PDF
+/// standard fonts (TeX Gyre Heros, Termes and Cursor), always available through the font
+/// database so that the generic families and the standard font names resolve without any
+/// installed fonts.
+macro_rules! tex_gyre {
+    ($($file:literal),* $(,)?) => {
+        &[$(include_bytes!(concat!("../../../resources/fonts/", $file))),*]
+    };
+}
+const TEX_GYRE: &[&[u8]] = tex_gyre![
+    "texgyreheros-regular.otf",
+    "texgyreheros-bold.otf",
+    "texgyreheros-italic.otf",
+    "texgyreheros-bolditalic.otf",
+    "texgyretermes-regular.otf",
+    "texgyretermes-bold.otf",
+    "texgyretermes-italic.otf",
+    "texgyretermes-bolditalic.otf",
+    "texgyrecursor-regular.otf",
+    "texgyrecursor-bold.otf",
+    "texgyrecursor-italic.otf",
+    "texgyrecursor-bolditalic.otf",
+];
+
+/// Names of the PDF standard fonts and their common look-alikes, with the bundled family that
+/// stands in for them when they are not installed.
+const BUNDLED_ALIASES: &[(&str, &str)] = &[
+    ("Helvetica", "TeX Gyre Heros"),
+    ("Arial", "TeX Gyre Heros"),
+    ("Times", "TeX Gyre Termes"),
+    ("Times New Roman", "TeX Gyre Termes"),
+    ("Courier", "TeX Gyre Cursor"),
+    ("Courier New", "TeX Gyre Cursor"),
+];
+
 impl Font {
     /// Loads face `index` of a font file, or returns `None` if it cannot be parsed.
     pub(crate) fn load(data: Arc<Vec<u8>>, index: u32) -> Option<Self> {
@@ -202,6 +240,11 @@ fn system_fonts() -> &'static fontdb::Database {
     DATABASE.get_or_init(|| {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
+        // Loaded after the system fonts so that installed fonts win ties; the bundled
+        // families are only used when asked for by name or when nothing else matches.
+        for data in TEX_GYRE.iter().chain(EMBEDDED_FONTS) {
+            db.load_font_source(fontdb::Source::Binary(Arc::new(*data)));
+        }
         // `fontdb` names fixed families for the generic ones, which are rarely installed on
         // Linux; use what the system prefers, or else the first installed common family.
         let has = |db: &fontdb::Database, name: &str| {
@@ -209,9 +252,9 @@ fn system_fonts() -> &'static fontdb::Database {
                 .any(|face| face.families.iter().any(|(f, _)| f.eq_ignore_ascii_case(name)))
         };
         let generics: [(&str, &[&str]); 3] = [
-            ("sans-serif", &["DejaVu Sans", "Noto Sans", "Liberation Sans", "Arial", "Helvetica"]),
-            ("serif", &["DejaVu Serif", "Noto Serif", "Liberation Serif", "Times New Roman", "Times"]),
-            ("monospace", &["DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Courier New", "Menlo"]),
+            ("sans-serif", &["DejaVu Sans", "Noto Sans", "Liberation Sans", "Arial", "Helvetica", "TeX Gyre Heros"]),
+            ("serif", &["DejaVu Serif", "Noto Serif", "Liberation Serif", "Times New Roman", "Times", "TeX Gyre Termes"]),
+            ("monospace", &["DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Courier New", "Menlo", "TeX Gyre Cursor"]),
         ];
         for (generic, candidates) in generics {
             let family = super::fallback::default_family(generic)
@@ -236,13 +279,21 @@ pub(crate) fn system_font(
     style: &FontStyle,
 ) -> Option<Font> {
     let db = system_fonts();
+    // A requested standard font name is followed by its bundled stand-in, which is only used
+    // when the name itself is not installed.
     let families = families
         .iter()
-        .map(|family| match family {
-            FontFamily::Monospace => fontdb::Family::Monospace,
-            FontFamily::SansSerif => fontdb::Family::SansSerif,
-            FontFamily::Serif => fontdb::Family::Serif,
-            FontFamily::Named(name) => fontdb::Family::Name(name),
+        .flat_map(|family| match family {
+            FontFamily::Monospace => vec![fontdb::Family::Monospace],
+            FontFamily::SansSerif => vec![fontdb::Family::SansSerif],
+            FontFamily::Serif => vec![fontdb::Family::Serif],
+            FontFamily::Named(name) => {
+                let alias = BUNDLED_ALIASES
+                    .iter()
+                    .find(|(from, _)| from.eq_ignore_ascii_case(name))
+                    .map(|(_, to)| fontdb::Family::Name(to));
+                [Some(fontdb::Family::Name(name)), alias].into_iter().flatten().collect()
+            }
         })
         .collect::<Vec<_>>();
     let id = db.query(&fontdb::Query {
@@ -291,6 +342,37 @@ mod tests {
 
         assert!(!font.postscript_name().is_empty());
         assert!(font.covers('a'));
+    }
+
+    #[test]
+    fn standard_font_names_resolve_without_installed_fonts() {
+        use super::system_font;
+        let style = crate::style::properties::computed::FontStyle::Italic;
+        for family in ["Helvetica", "Arial", "Times", "Times New Roman", "Courier", "Courier New"] {
+            let font = system_font(
+                &[FontFamily::Named(family.to_owned())],
+                &FontWeight::Bold,
+                &style,
+            )
+            .expect(family);
+            // an installed font of that name is fine too
+            assert!(font.covers('a'), "{family}");
+        }
+        for generic in [FontFamily::SansSerif, FontFamily::Serif, FontFamily::Monospace] {
+            assert!(system_font(&[generic], &FontWeight::Normal, &style).is_some());
+        }
+    }
+
+    #[test]
+    fn embedded_fonts_cover_the_major_scripts() {
+        use super::EMBEDDED_FONTS;
+        let fonts: Vec<Font> = EMBEDDED_FONTS
+            .iter()
+            .map(|data| Font::load(std::sync::Arc::new(data.to_vec()), 0).expect("embedded fonts are valid"))
+            .collect();
+        for ch in "中漢字あカ한ع پ ٹ ی ת क ব த ไ ລ ក မ ა ա አ ∑ ♥".chars().filter(|c| !c.is_whitespace()) {
+            assert!(fonts.iter().any(|font| font.covers(ch)), "no embedded font covers {ch}");
+        }
     }
 
     #[test]
