@@ -186,6 +186,19 @@ pub fn write_pdf(
                                     page_context.push_operand(Pt::from(spacing))?;
                                     page_context.apply_operator("Tw")?;
                                 }
+                                TextOperator::BeginActualText(text) => {
+                                    page_context.push_operand(RawPdf("/Span".into()))?;
+                                    let mut hex = String::from("FEFF");
+                                    for unit in text.encode_utf16() {
+                                        hex.push_str(&format!("{unit:04X}"));
+                                    }
+                                    page_context
+                                        .push_operand(RawPdf(format!("<< /ActualText <{hex}> >>")))?;
+                                    page_context.apply_operator("BDC")?;
+                                }
+                                TextOperator::EndActualText => {
+                                    page_context.apply_operator("EMC")?;
+                                }
                                 &TextOperator::SetRise(rise) => {
                                     page_context.push_operand(Pt::from(rise))?;
                                     page_context.apply_operator("Ts")?;
@@ -272,4 +285,15 @@ pub fn write_pdf(
     context.finish()?;
 
     Ok(())
+}
+
+/// An operand that is written to the content stream as it is.
+#[derive(Debug)]
+struct RawPdf(String);
+
+impl lemon_pdf::object::PdfFormat for RawPdf {
+    fn write(&self, output: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
+        use std::io::Write;
+        write!(output, "{}", self.0)
+    }
 }
