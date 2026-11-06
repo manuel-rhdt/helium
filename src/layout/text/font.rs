@@ -2,12 +2,15 @@ pub use super::HarfbuzzFont;
 pub use lemon_pdf::font::FontUnit;
 
 use crate::style::properties::computed::{
-    ComputedValues, FontFamily, FontStyle, FontWeight, Language, PixelLength,
+    ComputedValues, FontFamily, FontStyle, FontWeight, PixelLength,
 };
 
 use harfbuzz_rs::{Blob, Face as HbFace, Font as HbFont, HarfbuzzObject, sys};
 use parking_lot::{Mutex, RwLock};
-use std::collections::BTreeMap;
+use super::fallback::FallbackKey;
+use super::segment::needs_font;
+use std::collections::{BTreeMap, HashMap};
+use unicode_script::Script;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -18,6 +21,43 @@ fn scale_ext(upem: u32, metric: i32) -> FontUnit {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct GlyphIndex(pub u32);
+
+/// The fallback fonts of a font for one font description and which of them is used for which
+/// cluster. Which font a cluster gets depends only on the description and the cluster, not on the
+/// order the fonts were added in.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FallbackSet {
+    /// The fallback fonts. A glyph with `GlyphInfo::font == n > 0` belongs to `fonts[n - 1]`.
+    pub(crate) fonts: Vec<Arc<Font>>,
+    /// For a cluster, the script it was itemized as and the 1-based index in `fonts`.
+    choices: HashMap<String, Vec<(Script, u16)>>,
+}
+
+impl FallbackSet {
+    /// The font with the index `index` (as in `GlyphInfo::font`): `primary` or a fallback font.
+    pub(crate) fn font_at<'a>(&'a self, primary: &'a Font, index: u16) -> &'a Font {
+        match index {
+            0 => primary,
+            n => &self.fonts[n as usize - 1],
+        }
+    }
+
+    /// The index (as in `GlyphInfo::font`) of the font for `cluster` in `script`: `0` for
+    /// `primary` if it covers the cluster or no fallback font was chosen.
+    pub(crate) fn index_for(&self, primary: &Font, cluster: &str, script: Script) -> u16 {
+        if primary.covers_cluster(cluster) {
+            return 0;
+        }
+        match self.choices.get(cluster) {
+            Some(choices) => choices
+                .iter()
+                .find(|(s, _)| *s == script)
+                .or(choices.first())
+                .map_or(0, |(_, index)| *index),
+            None => 0,
+        }
+    }
+}
 
 /// A font file (a system font or one of the fonts built into Helium). Every font that is used
 /// is embedded into the PDF.
@@ -31,14 +71,14 @@ pub struct Font {
     /// The bytes of the font file and the index of the face in it.
     pub(crate) data: Arc<Vec<u8>>,
     pub(crate) index: u32,
-    /// Fonts that provide the characters this font has no glyph for, in order of preference, for
-    /// text in each language: the preferred fallback fonts depend on the language (e.g. the
-    /// Chinese or the Japanese forms of Han characters).
+    /// Fonts that provide the clusters this font has no glyphs for, for text of each font
+    /// description (`FallbackKey`: the `font-family` list, weight, style and language), which
+    /// decides the fallback fonts.
     ///
     /// They are filled in during box construction (see `fallback::FontResolver`), when the text
     /// that is rendered with this font is known, and used by `shape`. Every font in here is also
     /// an entry of the `FontMap`, so that it is embedded into the PDF.
-    pub(crate) fallbacks: RwLock<BTreeMap<Language, Vec<Arc<Font>>>>,
+    pub(crate) fallbacks: RwLock<BTreeMap<FallbackKey, Arc<FallbackSet>>>,
 }
 
 impl Clone for Font {
@@ -159,29 +199,54 @@ impl Font {
         self.hb_font.get_nominal_glyph(ch).is_some()
     }
 
-    /// A snapshot of the fallback fonts of this font for text in `lang`.
-    pub fn fallbacks(&self, lang: &Language) -> Vec<Arc<Font>> {
-        self.fallbacks
-            .read()
-            .get(lang)
-            .cloned()
-            .unwrap_or_default()
+    /// Whether this font has glyphs for all characters of the grapheme cluster that need one.
+    pub fn covers_cluster(&self, cluster: &str) -> bool {
+        cluster.chars().all(|ch| !needs_font(ch) || self.covers(ch))
     }
 
-    /// Appends `fallback` to the fallback fonts for `lang` unless it is this font or already one
-    /// of them.
-    pub(crate) fn add_fallback(&self, lang: &Language, fallback: Arc<Font>) {
+    /// A snapshot of the fallback fonts of this font for text of the font description `key`.
+    pub fn fallbacks(&self, key: &FallbackKey) -> Vec<Arc<Font>> {
+        self.fallback_set(key).fonts.clone()
+    }
+
+    /// A snapshot of the fallback fonts of this font for `key` and the clusters that they were
+    /// chosen for.
+    pub(crate) fn fallback_set(&self, key: &FallbackKey) -> Arc<FallbackSet> {
+        self.fallbacks.read().get(key).cloned().unwrap_or_default()
+    }
+
+    /// Uses `fallback` for `cluster` (itemized as `script`) in text of the description `key`.
+    /// Returns whether the cluster is new.
+    pub(crate) fn add_fallback(
+        &self,
+        key: &FallbackKey,
+        cluster: &str,
+        script: Script,
+        fallback: Arc<Font>,
+    ) -> bool {
         if fallback.postscript_name == self.postscript_name {
-            return;
+            return false;
         }
         let mut fallbacks = self.fallbacks.write();
-        let fallbacks = fallbacks.entry(lang.clone()).or_default();
-        if !fallbacks
+        let set = Arc::make_mut(fallbacks.entry(key.clone()).or_default());
+        let index = match set
+            .fonts
             .iter()
-            .any(|font| font.postscript_name == fallback.postscript_name)
+            .position(|font| font.postscript_name == fallback.postscript_name)
         {
-            fallbacks.push(fallback);
+            Some(index) => index,
+            None => {
+                set.fonts.push(fallback);
+                set.fonts.len() - 1
+            }
+        } as u16
+            + 1;
+        let choices = set.choices.entry(cluster.to_owned()).or_default();
+        if choices.iter().any(|(s, _)| *s == script) {
+            return false;
         }
+        choices.push((script, index));
+        true
     }
 
     pub fn postscript_name(&self) -> String {
@@ -441,4 +506,9 @@ mod tests {
         assert!(regular.covers('→'));
         assert!(regular.is_truetype());
     }
+}
+#[cfg(test)]
+pub(super) fn bundled_font_data() -> Vec<Vec<u8>> {
+    let dejavu: &[&[u8]] = &[BUNDLED_REGULAR, BUNDLED_BOLD];
+    TEX_GYRE.iter().chain(MATH_FONTS).chain(EMBEDDED_FONTS).chain(dejavu).map(|d| d.to_vec()).collect()
 }

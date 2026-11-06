@@ -15,7 +15,7 @@ use crate::tree::{DomRef, NodeData, TreeLinked};
 use html5ever::{Attribute, QualName, local_name, ns};
 use specs::{Builder, Entities, Entity, SystemData, World, WorldExt, WriteStorage};
 
-use super::text::fallback::{FontResolver, register_font};
+use super::text::fallback::{FontResolver, TextFonts, register_font};
 use components::TextRun;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -79,8 +79,11 @@ impl FlowConstructor {
                         _ => None,
                     })
                     .collect();
-                self.entity_constructor
+                // the text of the margin box is put together later: the fonts of its clusters
+                let fallback = self
+                    .entity_constructor
                     .ensure_coverage(&style, &font, &static_text);
+                let fallback = TextFonts::without_runs(fallback.key);
                 let font_name = font.postscript_name();
                 resolved.push(ResolvedMarginBox {
                     kind,
@@ -88,7 +91,7 @@ impl FlowConstructor {
                     font_name,
                     font_size: style.font.font_size,
                     color: color_to_rgba(style.font.color),
-                    lang: style.font.lang.clone(),
+                    fallback,
                     text_align: text_align.unwrap_or(match kind {
                         MarginBoxKind::TopCenter | MarginBoxKind::BottomCenter => TextAlign::Center,
                         MarginBoxKind::TopRight | MarginBoxKind::BottomRight => TextAlign::Right,
@@ -386,10 +389,10 @@ impl EntityConstructor {
     }
 
     /// Adds fallback fonts to `font` for the characters of `text` it has no glyph for.
-    fn ensure_coverage(&mut self, style: &ComputedValues, font: &Font, text: &str) {
+    fn ensure_coverage(&mut self, style: &ComputedValues, font: &Font, text: &str) -> TextFonts {
         let mut font_map = self.world.write_resource::<FontMap>();
         self.font_resolver
-            .ensure_coverage(style, font, text, &mut font_map);
+            .ensure_coverage(style, font, text, &mut font_map)
     }
 
     // Called on top-down traversal. Takes a node and its style to create a corresponding
@@ -437,14 +440,14 @@ impl EntityConstructor {
                     .filter(|_| is_list_item);
                 let marker = marker_text.map(|text| {
                     let font = self.match_font(&style);
-                    self.ensure_coverage(&style, &font, &text);
+                    let fallback = self.ensure_coverage(&style, &font, &text);
                     let font_name = font.postscript_name();
                     components::ListMarker {
                         text,
                         font_name,
                         font_size: style.font.font_size,
                         color: crate::style::properties::computed::color_to_rgba(style.font.color),
-                        lang: style.font.lang.clone(),
+                        fallback,
                     }
                 });
 
@@ -538,7 +541,7 @@ impl EntityConstructor {
                 visible_text.push(character);
             }
         }
-        self.ensure_coverage(&style, &font, &visible_text);
+        let fallback = self.ensure_coverage(&style, &font, &visible_text);
         // a hyphen is inserted when a word is hyphenated
         self.ensure_coverage(&style, &font, "-");
 
@@ -570,6 +573,7 @@ impl EntityConstructor {
                 hyphens,
                 manual_hyphen_points,
                 lang,
+                fallback,
             })
             .build();
         LayoutEntity(entity)

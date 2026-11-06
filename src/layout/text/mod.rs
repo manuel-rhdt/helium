@@ -1,5 +1,7 @@
 pub mod fallback;
+mod fallback_data;
 pub mod font;
+pub mod segment;
 mod shape;
 mod to_pdf_font;
 pub mod whitespace;
