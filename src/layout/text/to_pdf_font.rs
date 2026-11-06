@@ -36,8 +36,18 @@ impl Font {
                 glyphs.insert(glyph.0);
             }
         }
+        // `Identity-H` text selects glyphs by CID, and a PDF viewer finds the glyph of a CID in a
+        // CID-keyed CFF font (the Noto CJK fonts) through the charset of the font. The shaper
+        // returns glyph indices, which are the same as the CIDs only if the charset is the
+        // identity. A subset of the font (like the one bundled with Helium, whose glyphs are
+        // numbered anew) keeps the CIDs of the original, so the charset is renumbered:
+        // together with the retained glyph indices CID = glyph index. This has no effect on
+        // other fonts.
         input.set_flags(
-            SubsetFlags::RETAIN_GIDS | SubsetFlags::NO_LAYOUT_CLOSURE | SubsetFlags::NOTDEF_OUTLINE,
+            SubsetFlags::RETAIN_GIDS
+                | SubsetFlags::CFF_IDENTITY_CHARSET
+                | SubsetFlags::NO_LAYOUT_CLOSURE
+                | SubsetFlags::NOTDEF_OUTLINE,
         );
         {
             // Layout tables are not needed in a PDF.
@@ -54,21 +64,19 @@ impl Font {
         Ok(bytes)
     }
 
-    /// The font file to embed, and whether it is a subset.
+    /// The font file to embed: the subset of the font to the glyphs that are used.
     ///
-    /// If subsetting fails the complete font is embedded instead.
-    fn embedded_font_bytes(&self) -> (Vec<u8>, bool) {
-        match self.subset_font_bytes() {
-            Ok(bytes) => (bytes, true),
-            Err(err) => {
-                log::warn!(
-                    "Could not subset font {}: {}. Embedding the complete font.",
-                    self.postscript_name,
-                    err
-                );
-                (self.hb_font.face().face_data().as_ref().to_vec(), false)
-            }
-        }
+    /// Failing to subset is an error rather than a reason to embed the complete font. The
+    /// complete font would work for most fonts, but not for a CID-keyed CFF font whose charset is
+    /// not the identity (the glyph indices in the text would select the wrong glyphs, see
+    /// `subset_font_bytes`), and a font that cannot be subsetted is not in a state to trust.
+    fn embedded_font_bytes(&self) -> Result<Vec<u8>> {
+        self.subset_font_bytes().map_err(|err| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("could not subset font {} for embedding: {}", self.postscript_name, err),
+            )
+        })
     }
 
     /// The six-letter tag that PDF requires in front of the name of a subset font
@@ -162,12 +170,8 @@ impl Font {
     }
 
     pub fn embed_into_pdf(&self, pdf_context: &mut DocumentContext) -> Result<PdfFont> {
-        let (font_file, subsetted) = self.embedded_font_bytes();
-        let name = if subsetted {
-            format!("{}+{}", self.subset_tag(), self.postscript_name())
-        } else {
-            self.postscript_name()
-        };
+        let font_file = self.embedded_font_bytes()?;
+        let name = format!("{}+{}", self.subset_tag(), self.postscript_name());
         let font_data = pdf_context.write_object(self.pdf_font_stream(&font_file)?)?;
         let fd = pdf_context.write_object(self.pdf_font_descriptor(name.clone(), font_data)?)?;
 
@@ -313,5 +317,67 @@ end"
             to_unicode: Some(to_unicode_stream),
         };
         Ok(PdfFont::Composite(font))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::text::font::{GlyphIndex, system_font};
+    use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
+
+    fn load(family: &str) -> Font {
+        system_font(&[FontFamily::Named(family.into())], &FontWeight::Normal, &FontStyle::Normal)
+            .unwrap()
+    }
+
+    /// Records that `text` is drawn with `font`, like the layout does.
+    fn use_glyphs(font: &Font, text: &str) -> Vec<u16> {
+        text.chars()
+            .map(|ch| {
+                let glyph = font.hb_font.get_nominal_glyph(ch).expect("the font has the glyph");
+                font.glyph_advances.lock().insert(GlyphIndex(glyph), FontUnit(1000.0));
+                glyph as u16
+            })
+            .collect()
+    }
+
+    fn cids(font_bytes: &[u8], glyphs: &[u16]) -> Vec<Option<u16>> {
+        let face = ttf_parser::Face::parse(font_bytes, 0).unwrap();
+        let cff = face.tables().cff.as_ref().expect("a CFF font");
+        glyphs.iter().map(|g| cff.glyph_cid(ttf_parser::GlyphId(*g))).collect()
+    }
+
+    /// The text of the PDF contains glyph indices, so in the embedded font, whose glyphs are
+    /// found by CID, the CID of every glyph must be its glyph index. The bundled CJK font is a
+    /// CID-keyed CFF whose glyphs were renumbered by the subsetting in `build.rs`, so
+    /// the CIDs differ from the glyph indices in the font that is embedded.
+    #[test]
+    fn cid_keyed_cff_fonts_are_embedded_with_cids_equal_to_glyph_indices() {
+        let font = load("Noto Sans CJK JP");
+        let glyphs = use_glyphs(&font, "道可名非常");
+        // the premise: the CIDs of the bundled font are not its glyph indices
+        let original = cids(&font.data, &glyphs);
+        assert!(
+            original.iter().zip(&glyphs).any(|(cid, glyph)| *cid != Some(*glyph)),
+            "{original:?} {glyphs:?}"
+        );
+        // the embedded font has identity CIDs
+        let embedded = font.subset_font_bytes().unwrap();
+        let expected: Vec<_> = glyphs.iter().map(|g| Some(*g)).collect();
+        assert_eq!(cids(&embedded, &glyphs), expected);
+    }
+
+    /// Fonts that are not CID-keyed are not changed in how they are numbered.
+    #[test]
+    fn other_fonts_keep_their_glyph_indices() {
+        let font = load("TeX Gyre Termes");
+        let glyphs = use_glyphs(&font, "abc");
+        let embedded = font.subset_font_bytes().unwrap();
+        let face = harfbuzz_rs::Face::from_bytes(&embedded, 0);
+        let font = harfbuzz_rs::Font::new(face);
+        for (ch, glyph) in "abc".chars().zip(glyphs) {
+            assert_eq!(font.get_nominal_glyph(ch), Some(glyph as u32));
+        }
     }
 }
