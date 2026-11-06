@@ -94,14 +94,29 @@ fn the_language_chooses_the_dictionary() {
 }
 
 #[test]
-fn text_in_a_language_without_a_dictionary_is_not_hyphenated() {
-    // the language is inherited from the parent element
-    let german = dump(
-        "lang_de",
+fn the_language_is_inherited_from_ancestors() {
+    let word = "Donaudampfschifffahrt";
+    let inherited = dump(
+        "lang_inherited",
         55,
         "auto",
-        r#"<div lang="de"><span>representation</span></div>"#,
+        &format!(r#"<div lang="de"><span>{word}</span></div>"#),
     );
-    let none = dump("lang_de_none", 55, "none", "representation");
-    assert_eq!(count_glyphs(&german), count_glyphs(&none));
+    let explicit = dump(
+        "lang_explicit",
+        55,
+        "auto",
+        &format!(r#"<span lang="de">{word}</span>"#),
+    );
+    let english = dump(
+        "lang_inherited_en",
+        55,
+        "auto",
+        &format!(r#"<div lang="en"><span>{word}</span></div>"#),
+    );
+    let none = dump("lang_inherited_none", 55, "none", word);
+    assert!(count_glyphs(&inherited) > count_glyphs(&none));
+    assert_eq!(count_glyphs(&inherited), count_glyphs(&explicit));
+    // otherwise the test could not tell inherited German from the English fallback
+    assert_ne!(count_glyphs(&inherited), count_glyphs(&english));
 }
