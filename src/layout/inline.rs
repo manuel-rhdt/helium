@@ -1490,6 +1490,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         let hyphen = to_break.hyphen && Some(piece_index) == last_piece;
                         let mut piece_width = Px(0.0);
                         if hyphen && rtl {
+                            ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
                             piece_width +=
                                 shape_piece(
                                 "-",
@@ -1502,6 +1503,7 @@ impl<'a> System<'a> for LineBoxCreator {
                                 true,
                                 &mut ops,
                             );
+                            ops.push(TextOperator::EndMarkedContent);
                         }
                         piece_width += shape_piece(
                             characters,
@@ -1515,6 +1517,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             &mut ops,
                         );
                         if hyphen && !rtl {
+                            ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
                             piece_width +=
                                 shape_piece(
                                 "-",
@@ -1527,6 +1530,7 @@ impl<'a> System<'a> for LineBoxCreator {
                                 false,
                                 &mut ops,
                             );
+                            ops.push(TextOperator::EndMarkedContent);
                         }
                         if !run.decoration.is_none() && piece_width > Px(0.0) {
                             let page_pos = components::Position {
@@ -1675,6 +1679,10 @@ fn decoration_lines(
     ]
 }
 
+/// The text of an inserted hyphen as far as extraction is concerned: a hyphen that exists only
+/// because of a line break must not be taken for a hyphen of the word.
+const SOFT_HYPHEN: &str = "\u{AD}";
+
 /// Draws `characters`, which start at the byte `at` of the text that `fonts` is for (if they are
 /// part of it), with `font` (and its fallback fonts) by appending the text operators to
 /// `ops` and returns the width of the text. `word_spacing` is added to every space and in front
@@ -1716,13 +1724,20 @@ pub(super) fn shape_piece(
     let (actual_text, boundaries) = record_to_unicode(characters, &shaped, &font_at);
     let mut open_cluster: Option<usize> = None;
 
-    let mut out = GlyphRunWriter::default();
-    let mut current_font = 0u16;
-    let mut advance = Px(0.0);
-    // The offset (`x_offset`, `y_offset`) of the last glyph, which the pen is currently shifted by.
-    let mut shift_x = FontUnit(0.0);
-    let mut rise = FontUnit(0.0);
     let word_spacing_units = FontUnit((word_spacing / font_size.0).0 as f64 * 1000.0);
+
+    // First the glyphs are placed in visual order (left to right) to find where each is drawn.
+    struct Placed {
+        glyph: GlyphIndex,
+        font: u16,
+        cluster: usize,
+        /// Where the pen is when the glyph is drawn, relative to the start of the piece.
+        x: FontUnit,
+        rise: FontUnit,
+    }
+    let mut placed: Vec<Placed> = Vec::with_capacity(shaped.len());
+    let mut advance = Px(0.0);
+    let mut pen = FontUnit(0.0);
     let mut previous_cluster: Option<usize> = None;
     let visual_order: Box<dyn Iterator<Item = &(_, _)>> = if rtl {
         Box::new(shaped.iter().rev())
@@ -1741,16 +1756,44 @@ pub(super) fn shape_piece(
                 .count();
             for _ in 0..gaps {
                 advance += word_spacing;
-                out.kern(FontUnit(-word_spacing_units.0));
+                pen.0 += word_spacing_units.0;
             }
         }
         previous_cluster = Some(cluster);
 
-        let cluster = grapheme_start(&boundaries, cluster);
+        advance += font_at(glyph_info.font).scale_to_px(pos.x_advance, font_size);
+        placed.push(Placed {
+            glyph: GlyphIndex(glyph_info.codepoint),
+            font: glyph_info.font,
+            cluster,
+            x: FontUnit(pen.0 + pos.x_offset.0),
+            rise: pos.y_offset,
+        });
+        pen.0 += pos.x_advance.0;
+        // adjust the width of space glyphs to allow text justification
+        if characters[cluster..].starts_with(char::is_whitespace) {
+            advance += word_spacing;
+            pen.0 += word_spacing_units.0;
+        }
+    }
+    let piece_end = pen;
+
+    // The glyphs are written in visual order: the extractors that are used most (poppler, pdfium)
+    // expect that and apply the bidirectional algorithm themselves, so that text written in
+    // logical order would come out reversed. (Those that don't, like mutool, get it wrong
+    // for right-to-left text; measured with the multiscript specimen.) Each kern moves the pen to
+    // where its glyph is drawn.
+    let mut out = GlyphRunWriter::default();
+    let mut current_font = 0u16;
+    let mut rise = FontUnit(0.0);
+    // where the pen is after the last glyph
+    let mut pen = FontUnit(0.0);
+    for glyph in &placed {
+        let cluster = grapheme_start(&boundaries, glyph.cluster);
         if open_cluster != Some(cluster) {
             if open_cluster.take().is_some() {
                 out.flush(ops);
-                ops.push(TextOperator::EndActualText);
+                ops.push(TextOperator::EndMarkedContent);
             }
             if let Some(text) = actual_text.get(&cluster) {
                 out.flush(ops);
@@ -1759,9 +1802,9 @@ pub(super) fn shape_piece(
             }
         }
 
-        if glyph_info.font != current_font {
+        if glyph.font != current_font {
             out.flush(ops);
-            current_font = glyph_info.font;
+            current_font = glyph.font;
             ops.push(TextOperator::SetFont(
                 font_at(current_font).postscript_name(),
                 font_size,
@@ -1769,36 +1812,23 @@ pub(super) fn shape_piece(
         }
         let glyph_font = font_at(current_font);
 
-        advance += glyph_font.scale_to_px(pos.x_advance, font_size);
-
-        // The glyph is drawn at its pen position moved by its offset. In `TJ`, a positive kern
-        // moves the pen to the left, so shifting the pen from the previous glyph's offset to
-        // this one's is a kern of `shift_x - x_offset`.
-        out.kern(shift_x - pos.x_offset);
-        shift_x = pos.x_offset;
+        // In `TJ`, a positive kern moves the pen to the left.
+        out.kern(FontUnit(pen.0 - glyph.x.0));
         // fonts have rounding noise in their anchors; below 1/1000 em a rise is invisible
-        if (pos.y_offset - rise).0.abs() >= 1.0 {
+        if (glyph.rise - rise).0.abs() >= 1.0 {
             out.flush(ops);
-            rise = pos.y_offset;
+            rise = glyph.rise;
             ops.push(TextOperator::SetRise(font_size * (rise.0 as f32 / 1000.0)));
         }
-
-        let glyph = GlyphIndex(glyph_info.codepoint);
-        out.glyph(glyph);
-        out.kern(glyph_font.advance(glyph) - pos.x_advance);
-
-        // adjust kerning of space glyphs to allow text justification
-        if characters[glyph_info.cluster as usize..].starts_with(char::is_whitespace) {
-            advance += word_spacing;
-            out.kern(FontUnit(-word_spacing_units.0));
-        }
+        out.glyph(glyph.glyph);
+        pen = FontUnit(glyph.x.0 + glyph_font.advance(glyph.glyph).0);
     }
     if open_cluster.is_some() {
         out.flush(ops);
-        ops.push(TextOperator::EndActualText);
+        ops.push(TextOperator::EndMarkedContent);
     }
-    // the text that follows continues from the unshifted pen position on the baseline
-    out.kern(shift_x);
+    // the text that follows continues from the end of the piece on the baseline
+    out.kern(FontUnit(pen.0 - piece_end.0));
     out.flush(ops);
     if rise.0 != 0.0 {
         ops.push(TextOperator::SetRise(Px(0.0)));
@@ -1925,6 +1955,218 @@ fn grapheme_start(boundaries: &[usize], offset: usize) -> usize {
 mod tests {
     use super::*;
     use crate::style::properties::computed::Language as Lang;
+
+    /// Glyph clusters that a map from glyph to text cannot describe get `/ActualText`; the
+    /// others go into the `ToUnicode` map, where a glyph keeps the text of its first use.
+    #[test]
+    fn ambiguous_clusters_get_actual_text() {
+        use crate::layout::text::{GlyphInfo, GlyphPosition};
+        use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
+        let font = crate::layout::text::font::system_font(
+            &[FontFamily::Named("TeX Gyre Termes".into())],
+            &FontWeight::Normal,
+            &FontStyle::Normal,
+        )
+        .unwrap();
+        let glyph = |ch: char| font.hb_font.get_nominal_glyph(ch).unwrap();
+        let info = |codepoint: u32, cluster: u32| {
+            (GlyphPosition::default(), GlyphInfo { codepoint, cluster, font: 0 })
+        };
+        // "a" one glyph; "b" drawn with the glyph of "a"; "c" with two glyphs; "d" one glyph
+        let characters = "abcd";
+        let shaped = [
+            info(glyph('a'), 0),
+            info(glyph('a'), 1),
+            info(glyph('c'), 2),
+            info(glyph('c'), 2),
+            info(glyph('d'), 3),
+        ];
+        let (actual_text, _) = record_to_unicode(characters, &shaped, &|_| &font);
+        let mut found: Vec<_> = actual_text.into_iter().collect();
+        found.sort();
+        assert_eq!(found, [(1, "b".to_owned()), (2, "c".to_owned())]);
+        let map = font.to_unicode.lock();
+        assert_eq!(map.get(&GlyphIndex(glyph('a'))).map(String::as_str), Some("a"));
+        assert_eq!(map.get(&GlyphIndex(glyph('d'))).map(String::as_str), Some("d"));
+    }
+
+    fn font_named(family: &str) -> Font {
+        use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
+        crate::layout::text::font::system_font(
+            &[FontFamily::Named(family.into())],
+            &FontWeight::Normal,
+            &FontStyle::Normal,
+        )
+        .unwrap()
+    }
+
+    /// The operators `shape_piece` emits for `text`, with the width it returns.
+    fn pieces(family: &str, text: &str, rtl: bool, word_spacing: Px) -> (Vec<TextOperator>, Px, Font) {
+        let font = font_named(family);
+        let fonts = crate::layout::text::fallback::TextFonts::default();
+        let mut ops = Vec::new();
+        let width = shape_piece(text, &font, &fonts, None, Px(16.0), word_spacing, &[], rtl, &mut ops);
+        (ops, width, font)
+    }
+
+    fn actual_texts(ops: &[TextOperator]) -> Vec<&str> {
+        ops.iter()
+            .filter_map(|op| match op {
+                TextOperator::BeginActualText(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Marked content is not nested and ends before the operators of the piece do.
+    fn assert_balanced(ops: &[TextOperator]) {
+        let mut open = false;
+        for op in ops {
+            match op {
+                TextOperator::BeginActualText(_) | TextOperator::BeginArtifact => {
+                    assert!(!open, "nested marked content: {ops:?}");
+                    open = true;
+                }
+                TextOperator::EndMarkedContent => {
+                    assert!(open, "unmatched end of marked content: {ops:?}");
+                    open = false;
+                }
+                _ => {}
+            }
+        }
+        assert!(!open, "marked content is not ended: {ops:?}");
+    }
+
+    /// The glyphs of the `TJ` operators, in order.
+    fn glyph_count(ops: &[TextOperator]) -> usize {
+        ops.iter()
+            .map(|op| match op {
+                TextOperator::KernedGlyphs(items) => items
+                    .iter()
+                    .map(|item| match item {
+                        KernedGlyphs::Glyphs(glyphs) => glyphs.0.len(),
+                        KernedGlyphs::Kern(_) => 0,
+                    })
+                    .sum(),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// The pen has to end where the returned width says it does: the glyph advances minus
+    /// the kerns of the `TJ` operators is the width of the piece.
+    fn net_advance(ops: &[TextOperator], font: &Font, size: f32) -> f32 {
+        let mut total = 0.0;
+        for op in ops {
+            if let TextOperator::KernedGlyphs(items) = op {
+                for item in items {
+                    match item {
+                        KernedGlyphs::Glyphs(glyphs) => {
+                            total += glyphs.0.iter().map(|g| font.advance(*g).0 as f32).sum::<f32>()
+                        }
+                        KernedGlyphs::Kern(kern) => total -= kern.0 as f32,
+                    }
+                }
+            }
+        }
+        total * size / 1000.0
+    }
+
+    #[test]
+    fn plain_text_has_no_marked_content() {
+        let (ops, _, _) = pieces("TeX Gyre Termes", "Hello, world", false, Px(0.0));
+        assert!(actual_texts(&ops).is_empty(), "{ops:?}");
+        assert!(!ops.iter().any(|op| matches!(op, TextOperator::EndMarkedContent)));
+        assert_eq!(glyph_count(&ops), "Hello, world".len());
+    }
+
+    /// The i-matra of "कि" comes first in the glyphs and is drawn before the consonant. Only
+    /// that cluster is marked; the space between the clusters is not.
+    #[test]
+    fn reordered_clusters_are_wrapped_in_actual_text() {
+        let (ops, _, _) = pieces("Noto Sans Devanagari", "कि पि", false, Px(0.0));
+        assert_eq!(actual_texts(&ops), ["कि", "पि"]);
+        assert_balanced(&ops);
+        // each cluster's glyphs are inside of its marked content, so there are at least as many
+        // `TJ` operators as clusters and the first operator is the start of the first span
+        let begin = ops.iter().position(|op| matches!(op, TextOperator::BeginActualText(_))).unwrap();
+        let end = ops.iter().position(|op| matches!(op, TextOperator::EndMarkedContent)).unwrap();
+        assert!(
+            ops[begin..end].iter().any(|op| matches!(op, TextOperator::KernedGlyphs(_))),
+            "{ops:?}"
+        );
+    }
+
+    /// The same shaped text gives the same operators the second time, although the `ToUnicode`
+    /// map has the glyphs of the first by then.
+    #[test]
+    fn marking_does_not_depend_on_earlier_text() {
+        let font = font_named("Noto Sans Devanagari");
+        let fonts = crate::layout::text::fallback::TextFonts::default();
+        let mut first = Vec::new();
+        let mut second = Vec::new();
+        for ops in [&mut first, &mut second] {
+            shape_piece("कि", &font, &fonts, None, Px(16.0), Px(0.0), &[], false, ops);
+        }
+        assert_eq!(format!("{first:?}"), format!("{second:?}"));
+    }
+
+    #[test]
+    fn pointed_hebrew_is_marked_per_grapheme_and_stays_balanced() {
+        let (ops, _, _) = pieces("Noto Sans Hebrew", "בְּרֵאשִׁית", true, Px(0.0));
+        // base letters with several marks are wrapped as a whole
+        let texts = actual_texts(&ops);
+        assert!(texts.contains(&"בְּ"), "{texts:?}");
+        assert_balanced(&ops);
+    }
+
+    #[test]
+    fn two_part_vowel_signs_are_marked() {
+        let (ops, _, _) = pieces("Noto Sans Bengali", "কো", false, Px(0.0));
+        assert_eq!(actual_texts(&ops), ["কো"]);
+        assert_balanced(&ops);
+    }
+
+    /// The glyphs are written left to right whichever direction the text has, and the kerns put
+    /// the pen at the end of the piece.
+    #[test]
+    fn pen_ends_at_the_end_of_the_piece() {
+        for (family, text, rtl, spacing) in [
+            ("TeX Gyre Termes", "Hello world", false, Px(0.0)),
+            ("TeX Gyre Termes", "Hello world", false, Px(3.0)),
+            ("Noto Sans Hebrew", "בראשית ברא", true, Px(0.0)),
+            ("Noto Sans Hebrew", "בְּרֵאשִׁית ברא", true, Px(2.5)),
+        ] {
+            let (ops, width, font) = pieces(family, text, rtl, spacing);
+            let net = net_advance(&ops, &font, 16.0);
+            assert!(
+                (net - width.0).abs() < 0.05,
+                "{family} {text:?}: net advance {net} but width {width:?}"
+            );
+        }
+    }
+
+    /// Right-to-left text is stored in visual order: the first glyph is the last letter.
+    #[test]
+    fn right_to_left_glyphs_are_in_visual_order() {
+        let font = font_named("Noto Sans Hebrew");
+        let (ops, _, _) = pieces("Noto Sans Hebrew", "אב", true, Px(0.0));
+        let glyphs: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                TextOperator::KernedGlyphs(items) => Some(items),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|item| match item {
+                KernedGlyphs::Glyphs(g) => Some(g.0.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let expected = [font.hb_font.get_nominal_glyph('ב').unwrap(), font.hb_font.get_nominal_glyph('א').unwrap()];
+        assert_eq!(glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected);
+    }
 
     #[test]
     fn languages_get_their_hyphenation_dictionaries() {
