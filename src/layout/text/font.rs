@@ -87,6 +87,16 @@ const TEX_GYRE: &[&[u8]] = tex_gyre![
     "texgyrecursor-bolditalic.otf",
 ];
 
+/// The OpenType math fonts (Latin Modern Math and STIX Two Math), used for MathML when
+/// `font-family` does not name a font with a `MATH` table.
+const MATH_FONTS: &[&[u8]] = &[
+    include_bytes!("../../../resources/fonts/latinmodern-math.otf"),
+    include_bytes!("../../../resources/fonts/STIXTwoMath-Regular.ttf"),
+];
+
+/// Families of `MATH_FONTS` in order of preference.
+const MATH_FAMILIES: &[&str] = &["Latin Modern Math", "STIX Two Math"];
+
 /// Names of the PDF standard fonts and their common look-alikes, with the bundled family that
 /// stands in for them when they are not installed.
 const BUNDLED_ALIASES: &[(&str, &str)] = &[
@@ -205,6 +215,12 @@ impl Font {
             .or_insert_with(|| scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0)))
     }
 
+    /// Whether the font has an OpenType `MATH` table.
+    pub fn has_math_table(&self) -> bool {
+        // SAFETY: the font is alive; `hb_font_get_face` returns its face.
+        unsafe { sys::hb_ot_math_has_data(sys::hb_font_get_face(self.hb_font.as_raw())) != 0 }
+    }
+
     pub fn scale_to_px(&self, val: FontUnit, font_size: PixelLength) -> PixelLength {
         val.0 as f32 * font_size / 1000.0f32
     }
@@ -242,23 +258,26 @@ fn system_fonts() -> &'static fontdb::Database {
         db.load_system_fonts();
         // Loaded after the system fonts so that installed fonts win ties; the bundled
         // families are only used when asked for by name or when nothing else matches.
-        for data in TEX_GYRE.iter().chain(EMBEDDED_FONTS) {
+        for data in TEX_GYRE.iter().chain(MATH_FONTS).chain(EMBEDDED_FONTS) {
             db.load_font_source(fontdb::Source::Binary(Arc::new(*data)));
         }
         // `fontdb` names fixed families for the generic ones, which are rarely installed on
-        // Linux; use what the system prefers, or else the first installed common family.
+        // Linux; use what the system prefers, or else the bundled TeX Gyre family. DejaVu is
+        // what fontconfig answers on an unconfigured system, so it is not taken as a
+        // preference: DejaVu stays a fallback for characters (see `fallback`) but does not
+        // decide the look of the default fonts.
         let has = |db: &fontdb::Database, name: &str| {
             db.faces()
                 .any(|face| face.families.iter().any(|(f, _)| f.eq_ignore_ascii_case(name)))
         };
         let generics: [(&str, &[&str]); 3] = [
-            ("sans-serif", &["DejaVu Sans", "Noto Sans", "Liberation Sans", "Arial", "Helvetica", "TeX Gyre Heros"]),
-            ("serif", &["DejaVu Serif", "Noto Serif", "Liberation Serif", "Times New Roman", "Times", "TeX Gyre Termes"]),
-            ("monospace", &["DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Courier New", "Menlo", "TeX Gyre Cursor"]),
+            ("sans-serif", &["TeX Gyre Heros"]),
+            ("serif", &["TeX Gyre Termes"]),
+            ("monospace", &["TeX Gyre Cursor"]),
         ];
         for (generic, candidates) in generics {
             let family = super::fallback::default_family(generic)
-                .filter(|family| has(&db, family))
+                .filter(|family| !family.starts_with("DejaVu") && has(&db, family))
                 .or_else(|| candidates.iter().find(|c| has(&db, c)).map(|c| c.to_string()));
             if let Some(family) = family {
                 match generic {
@@ -325,6 +344,21 @@ pub fn match_font(style: &ComputedValues) -> Font {
         .collect::<Vec<_>>();
     system_font(&families, &style.font.font_weight, &style.font.font_style)
         .unwrap_or_else(|| Font::bundled(&style.font.font_weight))
+}
+
+/// The font for MathML text: the font of `font-family` if it has a `MATH` table, else Latin
+/// Modern Math, else STIX Two Math (both are built in), else the font of `match_font`.
+pub fn match_math_font(style: &ComputedValues) -> Font {
+    let font = match_font(style);
+    if font.has_math_table() {
+        return font;
+    }
+    let bundled = MATH_FAMILIES
+        .iter()
+        .map(|name| [FontFamily::Named((*name).to_owned())])
+        .find_map(|family| system_font(&family, &style.font.font_weight, &style.font.font_style))
+        .filter(Font::has_math_table);
+    bundled.unwrap_or(font)
 }
 
 #[cfg(test)]
