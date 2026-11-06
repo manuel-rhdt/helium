@@ -22,16 +22,11 @@
 //! Characters that no font covers are collected in the `MissingGlyphs` resource and reported
 //! to the user (see `MissingGlyphs::report`).
 
-use super::font::Font;
+use super::font::{Font, system_font};
 use crate::layout::FontMap;
 use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, Language,
 };
-
-use font_kit::family_name::FamilyName;
-use font_kit::handle::Handle;
-use font_kit::properties::Properties;
-use font_kit::source::SystemSource;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
@@ -338,7 +333,6 @@ fn is_serif(families: &[FontFamily]) -> bool {
 /// Finds fallback fonts. One resolver is used for the whole document so that every font is
 /// loaded at most once.
 pub struct FontResolver {
-    source: SystemSource,
     /// The installed font (if any) for a family, weight and style.
     family_cache: HashMap<(String, FontWeight, FontStyle), Option<Arc<Font>>>,
     /// The font that fontconfig found for a character, weight and style.
@@ -349,7 +343,6 @@ pub struct FontResolver {
 impl Default for FontResolver {
     fn default() -> Self {
         FontResolver {
-            source: SystemSource::new(),
             family_cache: HashMap::new(),
             char_cache: HashMap::new(),
             missing: MissingGlyphs::default(),
@@ -432,16 +425,16 @@ impl FontResolver {
             .font
             .font_family
             .iter()
-            .map(|family| FamilyName::from(family.clone()))
+            .cloned()
             .chain(
                 language_families(ch, serif, &style.font.lang)
                     .iter()
                     .chain(script_families(ch, serif))
                     .chain(if serif { SERIF_FAMILIES } else { &[] })
                     .chain(FALLBACK_FAMILIES)
-                    .map(|name| FamilyName::Title(name.to_string())),
+                    .map(|name| FontFamily::Named(name.to_string())),
             )
-            .chain([FamilyName::SansSerif, FamilyName::Serif]);
+            .chain([FontFamily::SansSerif, FontFamily::Serif]);
         for family in families {
             if let Some(font) = self.family_font(family, &weight, &font_style, font_map)
                 && font.covers(ch)
@@ -460,7 +453,7 @@ impl FontResolver {
             .entry((ch, weight.clone(), font_style.clone(), lang.clone()))
             .or_insert_with(|| {
                 system::font_file_for_char(ch, &weight, &font_style, &lang)
-                    .and_then(|(path, index)| Font::load(Handle::from_path(path, index)))
+                    .and_then(|(path, index)| Font::load(Arc::new(std::fs::read(path).ok()?), index))
                     .map(|font| register_font(font_map, font))
             })
             .clone()
@@ -469,23 +462,15 @@ impl FontResolver {
 
     fn family_font(
         &mut self,
-        family: FamilyName,
+        family: FontFamily,
         weight: &FontWeight,
         style: &FontStyle,
         font_map: &mut FontMap,
     ) -> Option<Arc<Font>> {
-        let source = &self.source;
         self.family_cache
             .entry((format!("{:?}", family), weight.clone(), style.clone()))
             .or_insert_with(|| {
-                let mut properties = Properties::new();
-                properties
-                    .weight(weight.clone().into())
-                    .style(style.clone().into());
-                source
-                    .select_best_match(&[family], &properties)
-                    .ok()
-                    .and_then(Font::load)
+                system_font(&[family], weight, style)
                     .map(|font| register_font(font_map, font))
             })
             .clone()
@@ -622,19 +607,52 @@ fn format_font_family(families: &[FontFamily]) -> String {
         .join(", ")
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios")))]
+pub(super) use system::default_family;
+
+#[cfg(all(
+    feature = "fontconfig",
+    not(any(target_os = "windows", target_os = "macos", target_os = "ios"))
+))]
 mod system {
     //! Finding a font for a character with fontconfig, like browsers do on Linux.
 
     use crate::style::properties::computed::{FontStyle, FontWeight, Language};
     use fontconfig_sys::constants::{
-        FC_CHARSET, FC_FILE, FC_INDEX, FC_LANG, FC_SLANT, FC_SLANT_ITALIC, FC_SLANT_OBLIQUE, FC_SLANT_ROMAN,
+        FC_CHARSET, FC_FAMILY, FC_FILE, FC_INDEX, FC_LANG, FC_SLANT, FC_SLANT_ITALIC, FC_SLANT_OBLIQUE, FC_SLANT_ROMAN,
         FC_WEIGHT, FC_WEIGHT_BOLD, FC_WEIGHT_REGULAR,
     };
     use fontconfig_sys::*;
     use std::ffi::{CStr, c_char};
     use std::path::PathBuf;
     use std::ptr;
+
+    /// The family that fontconfig substitutes for a generic family name such as `sans-serif`.
+    pub fn default_family(generic: &str) -> Option<String> {
+        let generic = std::ffi::CString::new(generic).ok()?;
+        // SAFETY: the pattern and the match are destroyed before returning, and the family
+        // name is copied before the match is destroyed.
+        unsafe {
+            let pattern = FcPatternCreate();
+            if pattern.is_null() {
+                return None;
+            }
+            FcPatternAddString(pattern, FC_FAMILY.as_ptr(), generic.as_ptr() as *const FcChar8);
+            FcConfigSubstitute(ptr::null_mut(), pattern, FcMatchPattern);
+            FcDefaultSubstitute(pattern);
+            let mut result = FcResultMatch;
+            let matched = FcFontMatch(ptr::null_mut(), pattern, &mut result);
+            let mut family = None;
+            if !matched.is_null() {
+                let mut name = ptr::null_mut();
+                if FcPatternGetString(matched, FC_FAMILY.as_ptr(), 0, &mut name) == FcResultMatch {
+                    family = CStr::from_ptr(name as *const c_char).to_str().ok().map(str::to_owned);
+                }
+                FcPatternDestroy(matched);
+            }
+            FcPatternDestroy(pattern);
+            family
+        }
+    }
 
     /// The file and face index of the installed font that fontconfig considers the best match
     /// for the weight and style among the fonts that cover `ch`.
@@ -713,10 +731,18 @@ mod system {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "ios"))]
+#[cfg(not(all(
+    feature = "fontconfig",
+    not(any(target_os = "windows", target_os = "macos", target_os = "ios"))
+)))]
 mod system {
     use crate::style::properties::computed::{FontStyle, FontWeight, Language};
     use std::path::PathBuf;
+
+    /// Not implemented on this platform.
+    pub fn default_family(_generic: &str) -> Option<String> {
+        None
+    }
 
     /// Not implemented on this platform; only `FALLBACK_FAMILIES` are tried.
     pub fn font_file_for_char(

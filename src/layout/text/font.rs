@@ -5,12 +5,7 @@ use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, Language, PixelLength,
 };
 
-use font_kit;
-use font_kit::family_name::FamilyName;
-use font_kit::properties::Properties;
-use font_kit::{handle::Handle, source::SystemSource};
-
-use harfbuzz_rs::{Blob, Face as HbFace, Font as HbFont};
+use harfbuzz_rs::{Blob, Face as HbFace, Font as HbFont, HarfbuzzObject, sys};
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
@@ -32,7 +27,9 @@ pub struct Font {
     pub(crate) to_unicode: Mutex<BTreeMap<GlyphIndex, String>>,
     pub(crate) hb_font: HarfbuzzFont,
     pub(crate) postscript_name: String,
-    pub(crate) handle: Handle,
+    /// The bytes of the font file and the index of the face in it.
+    pub(crate) data: Arc<Vec<u8>>,
+    pub(crate) index: u32,
     /// Fonts that provide the characters this font has no glyph for, in order of preference, for
     /// text in each language: the preferred fallback fonts depend on the language (e.g. the
     /// Chinese or the Japanese forms of Han characters).
@@ -49,7 +46,8 @@ impl Clone for Font {
             upem: self.upem,
             glyph_advances: Mutex::new(self.glyph_advances.lock().clone()),
             to_unicode: Mutex::new(self.to_unicode.lock().clone()),
-            handle: self.handle.clone(),
+            data: self.data.clone(),
+            index: self.index,
             hb_font: self.hb_font.clone(),
             postscript_name: self.postscript_name.clone(),
             fallbacks: RwLock::new(self.fallbacks.read().clone()),
@@ -63,31 +61,37 @@ const BUNDLED_REGULAR: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSa
 const BUNDLED_BOLD: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSans-Bold.ttf");
 
 impl Font {
-    /// Loads a font, or returns `None` if the font file cannot be read.
-    pub(crate) fn load(handle: Handle) -> Option<Self> {
-        let loaded = handle.load().ok()?;
-
-        let upem = loaded.metrics().units_per_em;
-        let font_bytes = loaded.copy_font_data()?;
-        let index = match handle {
-            Handle::Memory { font_index, .. } => font_index,
-            Handle::Path { font_index, .. } => font_index,
-        };
-        let name = loaded
-            .postscript_name()
-            .unwrap_or_else(|| loaded.full_name());
-        let blob = Blob::with_bytes_owned(font_bytes, |b| &*b);
-        let face = HbFace::new(blob, index);
-        let hb_font = HbFont::new(face).into();
+    /// Loads face `index` of a font file, or returns `None` if it cannot be parsed.
+    pub(crate) fn load(data: Arc<Vec<u8>>, index: u32) -> Option<Self> {
+        let blob = Blob::with_bytes_owned(data.clone(), |b| &**b);
+        let hb_face = HbFace::new(blob, index);
+        if hb_face.glyph_count() == 0 || hb_face.table_with_tag(b"head").is_none() {
+            return None;
+        }
+        let upem = hb_face.upem();
+        let name = name_of(&hb_face, sys::HB_OT_NAME_ID_POSTSCRIPT_NAME)
+            .or_else(|| name_of(&hb_face, sys::HB_OT_NAME_ID_FULL_NAME))
+            .or_else(|| name_of(&hb_face, sys::HB_OT_NAME_ID_FONT_FAMILY))?;
+        let hb_font = HbFont::new(hb_face).into();
         Some(Font {
             upem,
             glyph_advances: Default::default(),
             to_unicode: Default::default(),
             hb_font,
             postscript_name: name,
-            handle,
+            data,
+            index,
             fallbacks: Default::default(),
         })
+    }
+
+    /// A metric of the OpenType `OS/2` or `MVAR` tables in font units, if the font has it.
+    pub(crate) fn ot_metric(&self, tag: sys::hb_ot_metrics_tag_t) -> Option<i32> {
+        let mut position = 0;
+        // SAFETY: the font is alive and `position` is a valid out pointer.
+        let found =
+            unsafe { sys::hb_ot_metrics_get_position(self.hb_font.as_raw(), tag, &mut position) };
+        (found != 0).then_some(position)
     }
 
     /// The font built into Helium (DejaVu Sans) in the given weight.
@@ -98,7 +102,7 @@ impl Font {
             FontWeight::Normal => REGULAR.get_or_init(|| Arc::new(BUNDLED_REGULAR.to_vec())),
             FontWeight::Bold => BOLD.get_or_init(|| Arc::new(BUNDLED_BOLD.to_vec())),
         };
-        Font::load(Handle::from_memory(bytes.clone(), 0)).expect("the bundled fonts are valid")
+        Font::load(bytes.clone(), 0).expect("the bundled fonts are valid")
     }
 
     /// Whether this font has a glyph for `ch`.
@@ -172,14 +176,90 @@ impl Font {
     }
 }
 
-impl<'a> From<&'a ComputedValues> for Properties {
-    fn from(computed_values: &'a ComputedValues) -> Properties {
-        let mut props = Properties::new();
-        props
-            .style(computed_values.font.font_style.clone().into())
-            .weight(computed_values.font.font_weight.clone().into());
-        props
+/// A string from the `name` table of a font (`id` is a `HB_OT_NAME_ID_*`).
+pub(crate) fn name_of(face: &HbFace, id: u32) -> Option<String> {
+    let raw = face.as_raw();
+    let language = std::ptr::null();
+    let mut size = 0;
+    // SAFETY: with a null buffer harfbuzz only reports the length of the name.
+    let length =
+        unsafe { sys::hb_ot_name_get_utf8(raw, id, language, &mut size, std::ptr::null_mut()) };
+    if length == 0 {
+        return None;
     }
+    // room for the terminating NUL that harfbuzz appends
+    let mut buffer = vec![0u8; length as usize + 1];
+    let mut size = buffer.len() as u32;
+    // SAFETY: `buffer` has room for `size` bytes.
+    unsafe { sys::hb_ot_name_get_utf8(raw, id, language, &mut size, buffer.as_mut_ptr().cast()) };
+    buffer.truncate(size as usize);
+    String::from_utf8(buffer).ok()
+}
+
+/// The fonts installed on the system, scanned once.
+fn system_fonts() -> &'static fontdb::Database {
+    static DATABASE: OnceLock<fontdb::Database> = OnceLock::new();
+    DATABASE.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        // `fontdb` names fixed families for the generic ones, which are rarely installed on
+        // Linux; use what the system prefers, or else the first installed common family.
+        let has = |db: &fontdb::Database, name: &str| {
+            db.faces()
+                .any(|face| face.families.iter().any(|(f, _)| f.eq_ignore_ascii_case(name)))
+        };
+        let generics: [(&str, &[&str]); 3] = [
+            ("sans-serif", &["DejaVu Sans", "Noto Sans", "Liberation Sans", "Arial", "Helvetica"]),
+            ("serif", &["DejaVu Serif", "Noto Serif", "Liberation Serif", "Times New Roman", "Times"]),
+            ("monospace", &["DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Courier New", "Menlo"]),
+        ];
+        for (generic, candidates) in generics {
+            let family = super::fallback::default_family(generic)
+                .filter(|family| has(&db, family))
+                .or_else(|| candidates.iter().find(|c| has(&db, c)).map(|c| c.to_string()));
+            if let Some(family) = family {
+                match generic {
+                    "sans-serif" => db.set_sans_serif_family(family),
+                    "serif" => db.set_serif_family(family),
+                    _ => db.set_monospace_family(family),
+                }
+            }
+        }
+        db
+    })
+}
+
+/// The installed font that best matches the first available of `families`.
+pub(crate) fn system_font(
+    families: &[FontFamily],
+    weight: &FontWeight,
+    style: &FontStyle,
+) -> Option<Font> {
+    let db = system_fonts();
+    let families = families
+        .iter()
+        .map(|family| match family {
+            FontFamily::Monospace => fontdb::Family::Monospace,
+            FontFamily::SansSerif => fontdb::Family::SansSerif,
+            FontFamily::Serif => fontdb::Family::Serif,
+            FontFamily::Named(name) => fontdb::Family::Name(name),
+        })
+        .collect::<Vec<_>>();
+    let id = db.query(&fontdb::Query {
+        families: &families,
+        weight: match weight {
+            FontWeight::Normal => fontdb::Weight::NORMAL,
+            FontWeight::Bold => fontdb::Weight::BOLD,
+        },
+        stretch: fontdb::Stretch::Normal,
+        style: match style {
+            FontStyle::Normal => fontdb::Style::Normal,
+            FontStyle::Italic => fontdb::Style::Italic,
+            FontStyle::Oblique => fontdb::Style::Oblique,
+        },
+    })?;
+    let (data, index) = db.with_face_data(id, |data, index| (data.to_vec(), index))?;
+    Font::load(Arc::new(data), index)
 }
 
 /// The font for `style`: the first installed family of `font-family`, else the system's
@@ -189,13 +269,10 @@ pub fn match_font(style: &ComputedValues) -> Font {
         .font
         .font_family
         .iter()
-        .map(|fam| FamilyName::from(fam.clone()))
-        .chain([FamilyName::SansSerif])
+        .cloned()
+        .chain([FontFamily::SansSerif])
         .collect::<Vec<_>>();
-    SystemSource::new()
-        .select_best_match(&families, &style.into())
-        .ok()
-        .and_then(Font::load)
+    system_font(&families, &style.font.font_weight, &style.font.font_style)
         .unwrap_or_else(|| Font::bundled(&style.font.font_weight))
 }
 
@@ -224,35 +301,5 @@ mod tests {
         assert_eq!(bold.postscript_name(), "DejaVuSans-Bold");
         assert!(regular.covers('→'));
         assert!(regular.is_truetype());
-    }
-}
-
-impl From<FontFamily> for FamilyName {
-    fn from(family: FontFamily) -> FamilyName {
-        match family {
-            FontFamily::Monospace => FamilyName::Monospace,
-            FontFamily::SansSerif => FamilyName::SansSerif,
-            FontFamily::Serif => FamilyName::Serif,
-            FontFamily::Named(name) => FamilyName::Title(name),
-        }
-    }
-}
-
-impl From<FontStyle> for font_kit::properties::Style {
-    fn from(style: FontStyle) -> font_kit::properties::Style {
-        match style {
-            FontStyle::Normal => font_kit::properties::Style::Normal,
-            FontStyle::Italic => font_kit::properties::Style::Italic,
-            FontStyle::Oblique => font_kit::properties::Style::Oblique,
-        }
-    }
-}
-
-impl From<FontWeight> for font_kit::properties::Weight {
-    fn from(weight: FontWeight) -> font_kit::properties::Weight {
-        match weight {
-            FontWeight::Normal => font_kit::properties::Weight::NORMAL,
-            FontWeight::Bold => font_kit::properties::Weight::BOLD,
-        }
     }
 }

@@ -126,26 +126,29 @@ impl Font {
         name: String,
         font_data: IndirectReference<Stream>,
     ) -> Result<FontDescriptor> {
-        let font = self
-            .handle
-            .load()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        let bbox = font.metrics().bounding_box;
-        let bbox = [
-            self.to_font_unit(bbox.min_x()),
-            self.to_font_unit(bbox.min_y()),
-            self.to_font_unit(bbox.max_x()),
-            self.to_font_unit(bbox.max_y()),
-        ];
+        let face = self.hb_font.face();
+        let invalid = |reason: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, reason.to_owned());
+        // xMin, yMin, xMax, yMax of the `head` table
+        let head = face.table_with_tag(b"head").ok_or_else(|| invalid("font has no head table"))?;
+        let head: &[u8] = head.as_ref();
+        if head.len() < 44 {
+            return Err(invalid("the head table is truncated"));
+        }
+        let bbox = [36, 38, 40, 42].map(|offset| {
+            self.to_font_unit(i16::from_be_bytes([head[offset], head[offset + 1]]) as f32)
+        });
+        let extents = self.hb_font.get_font_h_extents().unwrap_or_default();
 
         let mut font_descriptor = FontDescriptor {
             font_name: name.clone(),
-            font_family: font.family_name().as_bytes().to_owned(),
+            font_family: super::font::name_of(&face, harfbuzz_rs::sys::HB_OT_NAME_ID_FONT_FAMILY)
+                .unwrap_or_else(|| self.postscript_name.clone())
+                .into_bytes(),
             font_b_box: bbox,
-            cap_height: self.to_font_unit(font.metrics().cap_height),
-            x_height: self.to_font_unit(font.metrics().x_height),
-            ascent: self.to_font_unit(font.metrics().ascent),
-            descent: self.to_font_unit(font.metrics().descent),
+            cap_height: self.to_font_unit(self.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_CAP_HEIGHT).unwrap_or(0) as f32),
+            x_height: self.to_font_unit(self.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_X_HEIGHT).unwrap_or(0) as f32),
+            ascent: self.to_font_unit(extents.ascender as f32),
+            descent: self.to_font_unit(extents.descender as f32),
             ..Default::default()
         };
 

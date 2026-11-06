@@ -7,7 +7,7 @@ edition = "2024"
 [dependencies]
 structopt = ">= 0.2"
 derive_more = { version = "*", features = ["full"] }
-font-kit = "0.14.0"
+fontdb = "0.24"
 html5ever = "0.40"
 log = { version = "0.4.8", features = ["std", "max_level_trace", "release_max_level_trace"] }
 cssparser = "0.38"
@@ -28,15 +28,21 @@ cssparser-color = "0.6"
 precomputed-hash = "0.1"
 imbl = "7"
 smallvec = "1.16.3"
-hyphenation = { version = "0.8.4", features = ["embed_en-us"] }
+hyphenation = { version = "0.8.4", features = ["embed_all"] }
 unicode-bidi = "0.3"
 taffy = { version = "=0.15.1", default-features = false, features = ["std", "block_layout", "flexbox", "grid", "float_layout", "content_size", "calc", "detailed_layout_info"] }
 unicode-linebreak = "0.1"
 
 # Finding an installed font for characters that the fonts of `font-family` lack
-# (already a dependency of font-kit on these platforms).
 [target.'cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios")))'.dependencies]
-yeslogic-fontconfig-sys = "6"
+yeslogic-fontconfig-sys = { version = "6", optional = true }
+
+[features]
+default = ["fontconfig"]
+# Ask fontconfig for the default generic families and for fallback fonts on Linux/BSD. Disable
+# for fully static (musl) builds, which can't link the system's fontconfig; installed fonts are
+# then found by scanning the font directories only.
+fontconfig = ["dep:yeslogic-fontconfig-sys"]
 
 [dev-dependencies]
 assert_cmd = "1"
@@ -55,3 +61,8 @@ proc-macro2 = "1"
 # since only one package may link to native harfbuzz.
 [patch.crates-io]
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main" }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
