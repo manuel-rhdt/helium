@@ -1,0 +1,61 @@
+name: Release
+
+# Builds a fully static (musl) Linux binary. Pushing a tag like `v0.1.0` publishes it as a
+# GitHub release; running the workflow manually only uploads the binary as a build artifact.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: x86_64-unknown-linux-musl
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v5
+    - name: Install stable toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-linux-musl
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+    # zig serves as the C/C++ cross compiler: harfbuzz is compiled from its bundled source and
+    # needs a C++ toolchain targeting musl. fontconfig can't be linked statically, so it is
+    # turned off with --no-default-features.
+    - name: Install zig and cargo-zigbuild
+      run: pip install ziglang==0.17.1 cargo-zigbuild==0.24.1
+    - name: Build
+      run: cargo zigbuild --release --locked --no-default-features --target "$TARGET"
+    - name: Check that the binary is static
+      run: |
+        file "target/$TARGET/release/helium"
+        ! ldd "target/$TARGET/release/helium"
+    - name: Smoke test
+      run: |
+        "target/$TARGET/release/helium" tests/documents/book.html book.pdf
+        test -s book.pdf
+    - name: Package
+      id: package
+      run: |
+        name="helium-${GITHUB_REF_NAME//\//-}-$TARGET"
+        mkdir "$name"
+        cp "target/$TARGET/release/helium" resources/fonts/LICENSE-DejaVu.txt "$name/"
+        tar czf "$name.tar.gz" "$name"
+        sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+        echo "name=$name" >> "$GITHUB_OUTPUT"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.package.outputs.name }}
+        path: ${{ steps.package.outputs.name }}.tar.gz*
+    - name: Publish release
+      if: startsWith(github.ref, 'refs/tags/v')
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create "$GITHUB_REF_NAME" --generate-notes \
+          "${{ steps.package.outputs.name }}.tar.gz" "${{ steps.package.outputs.name }}.tar.gz.sha256"
