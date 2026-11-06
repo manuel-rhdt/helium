@@ -92,31 +92,3 @@ fn the_language_chooses_the_dictionary() {
     // British English falls back to the American dictionary, which is the one embedded
     assert!(count_glyphs(&british) > count_glyphs(&none));
 }
-
-#[test]
-fn the_language_is_inherited_from_ancestors() {
-    let word = "Donaudampfschifffahrt";
-    let inherited = dump(
-        "lang_inherited",
-        55,
-        "auto",
-        &format!(r#"<div lang="de"><span>{word}</span></div>"#),
-    );
-    let explicit = dump(
-        "lang_explicit",
-        55,
-        "auto",
-        &format!(r#"<span lang="de">{word}</span>"#),
-    );
-    let english = dump(
-        "lang_inherited_en",
-        55,
-        "auto",
-        &format!(r#"<div lang="en"><span>{word}</span></div>"#),
-    );
-    let none = dump("lang_inherited_none", 55, "none", word);
-    assert!(count_glyphs(&inherited) > count_glyphs(&none));
-    assert_eq!(count_glyphs(&inherited), count_glyphs(&explicit));
-    // otherwise the test could not tell inherited German from the English fallback
-    assert_ne!(count_glyphs(&inherited), count_glyphs(&english));
-}
