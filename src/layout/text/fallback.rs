@@ -11,7 +11,9 @@
 //!    sans-serif design depending on the `font-family` (`is_serif`), like the default fonts per
 //!    script of browsers, and for serif text general serif families (`SERIF_FAMILIES`),
 //! 3. a fixed list of families with a broad character coverage (`FALLBACK_FAMILIES`),
-//! 4. the font built into Helium (DejaVu Sans, see `Font::bundled`),
+//! 4. the font built into Helium (DejaVu Sans, see `Font::bundled`); the Noto fonts embedded for
+//!    other scripts (`EMBEDDED_FONTS`, subset by `build.rs`) are found by name in step 2 like
+//!    installed fonts, which take precedence over them,
 //! 5. on Linux, any installed font that covers the character, as found by fontconfig.
 //!
 //! Shaping (`shape`) then splits the text into runs per font, and painting switches to the
@@ -202,8 +204,14 @@ fn script_families(ch: char, serif: bool) -> &'static [&'static str] {
         ),
         // Hangul
         '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}' => (
-            &["Noto Serif CJK KR", "Source Han Serif K", "AppleMyungjo", "Batang"],
-            &["Noto Sans CJK KR", "Source Han Sans K", "Apple SD Gothic Neo", "Malgun Gothic"],
+            &["Noto Serif CJK KR", "Source Han Serif K", "AppleMyungjo", "Batang", "Noto Serif CJK JP"],
+            &[
+                "Noto Sans CJK KR",
+                "Source Han Sans K",
+                "Apple SD Gothic Neo",
+                "Malgun Gothic",
+                "Noto Sans CJK JP",
+            ],
         ),
         // Han and CJK punctuation
         '\u{2E80}'..='\u{2FDF}'

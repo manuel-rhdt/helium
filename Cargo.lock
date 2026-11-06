@@ -613,7 +613,6 @@ dependencies = [
 name = "helium"
 version = "0.1.0"
 dependencies = [
- "Inflector",
  "assert_cmd",
  "cssparser",
  "cssparser-color",
@@ -635,10 +634,8 @@ dependencies = [
  "pest_derive",
  "precomputed-hash",
  "predicates 1.0.8",
- "proc-macro2 1.0.107",
  "quickcheck",
  "quickcheck_macros",
- "quote 1.0.47",
  "rustyline",
  "selectors",
  "serde_json",

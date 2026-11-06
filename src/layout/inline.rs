@@ -1903,7 +1903,7 @@ mod tests {
         // no break in front of the comma or the full stop
         assert_eq!(breaks("道，非。名"), vec![6, 12]);
         // no break after the opening bracket
-        assert_eq!(breaks("「道」"), vec![]);
+        assert_eq!(breaks("「道」"), Vec::<usize>::new());
     }
 
     #[test]
