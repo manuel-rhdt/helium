@@ -377,6 +377,14 @@ impl EntityConstructor {
         font_map[font_name].clone()
     }
 
+    /// Like `match_font`, but prefers a font with an OpenType `MATH` table.
+    fn match_math_font(&mut self, style: &ComputedValues) -> Arc<Font> {
+        let font = crate::layout::text::font::match_math_font(style);
+        let mut font_map = self.world.write_resource::<FontMap>();
+        let name = register_font(&mut font_map, font).postscript_name();
+        font_map[&name].clone()
+    }
+
     /// Adds fallback fonts to `font` for the characters of `text` it has no glyph for.
     fn ensure_coverage(&mut self, style: &ComputedValues, font: &Font, text: &str) {
         let mut font_map = self.world.write_resource::<FontMap>();
@@ -868,7 +876,7 @@ impl EntityConstructor {
         };
         let LayoutEntity(entity) = node.layout_entity().unwrap();
         let style = node.style();
-        let font_name = self.match_font(&style).postscript_name();
+        let font_name = self.match_math_font(&style).postscript_name();
 
         let kind = if element_data.name.ns == ns!(mathml) {
             NodeKind::Math(MathElement::from_local_name(&element_data.name.local))
