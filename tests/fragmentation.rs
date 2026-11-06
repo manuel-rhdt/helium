@@ -5,6 +5,10 @@ use serde_json::Value;
 use std::process::Command;
 
 fn rects(name: &str, html: &str) -> Vec<Value> {
+    dump(name, html)["paint"]["rects"].as_array().unwrap().clone()
+}
+
+fn dump(name: &str, html: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("{}.html", name));
     std::fs::write(&input, html).unwrap();
@@ -25,8 +29,7 @@ fn rects(name: &str, html: &str) -> Vec<Value> {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let dump: Value = serde_json::from_slice(&output.stdout).unwrap();
-    dump["paint"]["rects"].as_array().unwrap().clone()
+    serde_json::from_slice(&output.stdout).unwrap()
 }
 
 fn f(rect: &Value, key: &str) -> f64 {
@@ -117,4 +120,89 @@ fn box_on_a_single_page_is_not_split() {
         r#"<div style="border: 4px solid #ff0000; padding: 10px"><p>short</p></div>"#,
     );
     assert_eq!(rects.len(), 4);
+}
+
+fn element<'a>(dump: &'a Value, id: &str) -> &'a Value {
+    fn find<'a>(node: &'a Value, id: &str) -> Option<&'a Value> {
+        if node["id"] == id {
+            return Some(node);
+        }
+        node["children"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find_map(|child| find(child, id))
+    }
+    find(&dump["document"], id).unwrap_or_else(|| panic!("no element #{id}"))
+}
+
+/// The page of an element and the bottom edge of its border box.
+fn page_and_bottom(dump: &Value, id: &str) -> (u64, f64) {
+    let el = element(dump, id);
+    let b = &el["border_box"];
+    (
+        el["page"].as_u64().unwrap(),
+        f(b, "y") + f(b, "height"),
+    )
+}
+
+/// 300pt pages with 20pt margins: the content area ends at 280pt = 373.33px.
+const SMALL_PAGE: &str = "@page { width: 300pt; height: 300pt; margin: 20pt } body { margin: 0 }";
+const PAGE_BOTTOM: f64 = 280.0 * 4.0 / 3.0 + 0.5;
+
+#[test]
+fn table_taller_than_a_page_breaks_between_rows() {
+    let rows: String = (0..60)
+        .map(|i| format!("<tr id=r{i}><td>row {i}</td><td>x</td></tr>"))
+        .collect();
+    let html = format!(
+        "<style>{SMALL_PAGE}</style><table>{rows}</table><table>{rows}</table><p id=after>AFTER</p>"
+    );
+    let dump = dump("long_table", &html);
+
+    let mut last_page = 0;
+    for i in 0..60 {
+        let (page, bottom) = page_and_bottom(&dump, &format!("r{i}"));
+        assert!(page >= last_page, "row {i} is on an earlier page");
+        assert!(bottom <= PAGE_BOTTOM, "row {i} overflows page {page}: {bottom}");
+        last_page = page;
+    }
+    assert!(last_page >= 3, "60 rows need several pages, got {}", last_page + 1);
+    let (after_page, after_bottom) = page_and_bottom(&dump, "after");
+    assert!(after_page > last_page);
+    assert!(after_bottom <= PAGE_BOTTOM);
+}
+
+#[test]
+fn table_does_not_break_inside_a_row_span() {
+    // Every row is 33px, so 10 rows fit on a page and the page would break between rows 9 and
+    // 10, but the cell that spans them must stay in one piece.
+    let rows: String = (0..30)
+        .map(|i| match i {
+            9 => format!("<tr id=r{i}><td>{i}</td><td id=span rowspan=2>span</td></tr>"),
+            10 => format!("<tr id=r{i}><td>{i}</td></tr>"),
+            _ => format!("<tr id=r{i}><td>{i}</td><td>x</td></tr>"),
+        })
+        .collect();
+    let html = format!(
+        "<style>{SMALL_PAGE} tr {{ height: 33px }} table {{ border-spacing: 0 }}</style><table>{rows}</table>"
+    );
+    let dump = dump("table_row_span", &html);
+    let (span_page, span_bottom) = page_and_bottom(&dump, "span");
+    let (r10_page, _) = page_and_bottom(&dump, "r10");
+    assert_eq!(span_page, r10_page);
+    assert!(span_bottom <= PAGE_BOTTOM, "the spanning cell overflows: {span_bottom}");
+}
+
+#[test]
+fn content_after_an_unbreakable_box_taller_than_a_page_is_kept() {
+    let html = format!(
+        "<style>{SMALL_PAGE}</style><p id=before>before</p>\
+         <div style=\"display: flex; height: 600px\">tall</div><p id=after>AFTER</p>"
+    );
+    let dump = dump("tall_monolithic", &html);
+    let (before_page, _) = page_and_bottom(&dump, "before");
+    let (after_page, after_bottom) = page_and_bottom(&dump, "after");
+    assert!(after_page > before_page);
+    assert!(after_bottom <= PAGE_BOTTOM);
 }
