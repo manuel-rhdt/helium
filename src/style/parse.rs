@@ -1,6 +1,6 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
-use super::properties::specified::{Font, ParseDeclaration, PropertyDeclaration};
+use super::properties::specified::{CssWideDeclaration, Font, ParseDeclaration, PropertyDeclaration};
 use crate::tree::ElementRef;
 
 use cssparser::{
@@ -432,7 +432,7 @@ impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
         if name.eq_ignore_ascii_case("content") {
             Ok(PageBodyItem::Content(parse_content(input)?))
         } else {
-            PropertyDeclaration::parse_declaration(name, input).map(PageBodyItem::Declaration)
+            parse_property(name, input).map(PageBodyItem::Declaration)
         }
     }
 }
@@ -692,8 +692,19 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
         input: &mut Parser<'i>,
         _declaration_start: &ParserState,
     ) -> Result<Self::Declaration, ParseError<Self::Error>> {
-        PropertyDeclaration::parse_declaration(name, input)
+        parse_property(name, input)
     }
+}
+
+/// Parses the value of a property declaration, which may be a CSS-wide keyword like `inherit`.
+fn parse_property<'i>(
+    name: CowRcStr<'i>,
+    input: &mut Parser<'i>,
+) -> Result<PropertyDeclaration<'static>, ParseError<StyleParseError>> {
+    if let Some(declaration) = CssWideDeclaration::parse(&name, input) {
+        return Ok(PropertyDeclaration::CssWide(declaration));
+    }
+    PropertyDeclaration::parse_declaration(name, input)
 }
 
 impl<'i> AtRuleParser<'i> for StyleDeclarationParser {

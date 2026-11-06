@@ -23,6 +23,148 @@ pub trait ApplyToComputedValues {
     fn apply_to(&self, computed: &mut super::computed::ComputedValues);
 }
 
+/// The CSS-wide keywords.
+/// https://www.w3.org/TR/css-cascade-4/#defaulting-keywords
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CssWide {
+    Inherit,
+    Initial,
+    /// `inherit` for inherited properties and `initial` for the others.
+    Unset,
+}
+
+/// Resets a property by name to the value of its parent or its initial value. Implemented for
+/// the declaration enums by `#[derive(ParseDeclaration)]`; returns whether the property is known.
+pub trait CssWideProperties {
+    fn apply_css_wide(
+        name: &str,
+        keyword: CssWide,
+        computed: &mut super::computed::ComputedValues,
+        parent: &super::computed::ComputedValues,
+        initial: &super::computed::ComputedValues,
+    ) -> bool;
+}
+
+/// Whether a property is inherited (for `unset`). Must agree with `StyleBuilder::new`.
+fn is_inherited_property(name: &str) -> bool {
+    const INHERITED: &[&str] = &[
+        "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
+        "list-style-type", "white-space", "text-indent", "text-align", "hyphens", "direction",
+        "border-spacing", "border-collapse", "widows", "orphans", "math-style", "math-shift",
+        "math-depth",
+    ];
+    INHERITED.iter().any(|inherited| name.eq_ignore_ascii_case(inherited))
+}
+
+/// A property set to a CSS-wide keyword, e.g. `font: inherit`. It is resolved against the values
+/// of the parent element when the style is built (`StyleBuilder::add_declaration`).
+#[derive(Debug, Clone)]
+pub struct CssWideDeclaration {
+    pub keyword: CssWide,
+    /// The name of the property or shorthand, as written.
+    pub property: String,
+}
+
+/// The properties that the `font` shorthand resets.
+const FONT_LONGHANDS: &[&str] = &["font-family", "font-style", "font-weight", "font-size", "line-height"];
+
+impl CssWideDeclaration {
+    /// Parses a CSS-wide keyword as the whole value of the declaration of property `name`, if
+    /// that is a supported property.
+    pub fn parse<'i>(name: &str, input: &mut Parser<'i>) -> Option<Self> {
+        let state = input.state();
+        let keyword = input.try_parse(|input| {
+            let ident = input.expect_ident()?.clone();
+            Ok::<_, ParseError<()>>(match_ignore_ascii_case! { &ident,
+                "inherit" => CssWide::Inherit,
+                "initial" => CssWide::Initial,
+                "unset" => CssWide::Unset,
+                _ => return Err(ParseError::custom(())),
+            })
+        });
+        // nothing but `!important` may follow
+        let keyword = keyword.ok().filter(|_| {
+            let rest = input.state();
+            let ok = match input.next() {
+                Err(_) => true,
+                Ok(Token::Delim('!')) => true,
+                Ok(_) => false,
+            };
+            input.reset(&rest);
+            ok
+        });
+        let declaration = keyword.map(|keyword| CssWideDeclaration { keyword, property: name.to_owned() });
+        match declaration {
+            Some(declaration) if declaration.is_supported() => Some(declaration),
+            _ => {
+                input.reset(&state);
+                None
+            }
+        }
+    }
+
+    fn is_supported(&self) -> bool {
+        let scratch = super::computed::ComputedValues::default();
+        self.property.eq_ignore_ascii_case("font")
+            || PropertyDeclaration::apply_css_wide(
+                &self.property,
+                self.keyword,
+                &mut scratch.clone(),
+                &scratch,
+                &scratch,
+            )
+    }
+
+    /// Whether this declaration resets the property `name` (directly or as part of `font`).
+    pub fn resets_property(&self, name: &str) -> bool {
+        self.property.eq_ignore_ascii_case(name)
+            || (self.property.eq_ignore_ascii_case("font") && FONT_LONGHANDS.contains(&name))
+    }
+
+    pub fn apply(
+        &self,
+        computed: &mut super::computed::ComputedValues,
+        parent: &super::computed::ComputedValues,
+    ) {
+        let initial = super::computed::ComputedValues::default();
+        if self.property.eq_ignore_ascii_case("font") {
+            for longhand in FONT_LONGHANDS {
+                PropertyDeclaration::apply_css_wide(longhand, self.keyword, computed, parent, &initial);
+            }
+        } else {
+            PropertyDeclaration::apply_css_wide(&self.property, self.keyword, computed, parent, &initial);
+        }
+    }
+}
+
+impl<'i> ParseDeclaration<'i> for CssWideDeclaration {
+    type Error = StyleParseError;
+
+    /// CSS-wide keywords are recognized before the property is parsed (`CssWideDeclaration::parse`).
+    fn parse_declaration(
+        name: CowRcStr<'i>,
+        _input: &mut Parser<'i>,
+    ) -> Result<Self, ParseError<StyleParseError>> {
+        Err(ParseError::custom(StyleParseError::UnknownProperty { name: name.to_string() }))
+    }
+}
+
+impl ApplyToComputedValues for CssWideDeclaration {
+    fn apply_to(&self, _: &mut super::computed::ComputedValues) {}
+}
+
+impl CssWideProperties for CssWideDeclaration {
+    fn apply_css_wide(
+        _: &str,
+        _: CssWide,
+        _: &mut super::computed::ComputedValues,
+        _: &super::computed::ComputedValues,
+        _: &super::computed::ComputedValues,
+    ) -> bool {
+        false
+    }
+}
+
 pub trait PropertyValue<'i>: Sized {
     type Error: 'i;
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>>
@@ -98,6 +240,7 @@ pub enum PropertyDeclaration<'a> {
     Background(Background),
     Page(Page),
     Math(Math),
+    CssWide(CssWideDeclaration),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]

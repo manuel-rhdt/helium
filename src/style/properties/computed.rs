@@ -411,7 +411,7 @@ impl Default for Position {
     }
 }
 
-use std::convert::AsMut;
+use std::convert::{AsMut, AsRef};
 
 /// Contains the style structs and encompasses all the style information for
 /// an element.
@@ -426,9 +426,19 @@ pub struct ComputedValues {
     pub math: Arc<Math>,
 }
 
+impl AsRef<Box> for ComputedValues {
+    fn as_ref(&self) -> &Box {
+        &self.box_
+    }
+}
 impl AsMut<Box> for ComputedValues {
     fn as_mut(&mut self) -> &mut Box {
         Arc::make_mut(&mut self.box_)
+    }
+}
+impl AsRef<Position> for ComputedValues {
+    fn as_ref(&self) -> &Position {
+        &self.position
     }
 }
 impl AsMut<Position> for ComputedValues {
@@ -436,9 +446,19 @@ impl AsMut<Position> for ComputedValues {
         Arc::make_mut(&mut self.position)
     }
 }
+impl AsRef<Font> for ComputedValues {
+    fn as_ref(&self) -> &Font {
+        &self.font
+    }
+}
 impl AsMut<Font> for ComputedValues {
     fn as_mut(&mut self) -> &mut Font {
         Arc::make_mut(&mut self.font)
+    }
+}
+impl AsRef<Text> for ComputedValues {
+    fn as_ref(&self) -> &Text {
+        &self.text
     }
 }
 impl AsMut<Text> for ComputedValues {
@@ -446,14 +466,29 @@ impl AsMut<Text> for ComputedValues {
         Arc::make_mut(&mut self.text)
     }
 }
+impl AsRef<Background> for ComputedValues {
+    fn as_ref(&self) -> &Background {
+        &self.background
+    }
+}
 impl AsMut<Background> for ComputedValues {
     fn as_mut(&mut self) -> &mut Background {
         Arc::make_mut(&mut self.background)
     }
 }
+impl AsRef<Page> for ComputedValues {
+    fn as_ref(&self) -> &Page {
+        &self.page
+    }
+}
 impl AsMut<Page> for ComputedValues {
     fn as_mut(&mut self) -> &mut Page {
         Arc::make_mut(&mut self.page)
+    }
+}
+impl AsRef<Math> for ComputedValues {
+    fn as_ref(&self) -> &Math {
+        &self.math
     }
 }
 impl AsMut<Math> for ComputedValues {
@@ -524,6 +559,8 @@ fn math_depth_scale(depth: i32) -> f32 {
 #[derive(Debug, Default)]
 pub struct StyleBuilder {
     new_values: ComputedValues,
+    /// The values of the parent element, for `inherit`.
+    parent: ComputedValues,
     is_display_none: bool,
     parent_math_depth: i32,
     parent_math_style: MathStyle,
@@ -537,6 +574,7 @@ impl StyleBuilder {
         // Here we define which CSS property values are inherited
 
         let parent_font_size = inherited_values.font.font_size;
+        let parent = inherited_values.clone();
         let inherited = ComputedValues {
             font: inherited_values.font,
             text: Arc::new(Text {
@@ -571,6 +609,7 @@ impl StyleBuilder {
             parent_font_size,
             font_size_is_math: false,
             new_values: inherited,
+            parent,
             is_display_none: inherited_values.box_.display == Display::None,
         }
     }
@@ -594,6 +633,13 @@ impl StyleBuilder {
         if let specified::PropertyDeclaration::Font(specified::Font::FontSize(size)) = decl {
             // The last `font-size` declaration wins.
             self.font_size_is_math = matches!(size, specified::FontSize::Math);
+        }
+        if let specified::PropertyDeclaration::CssWide(css_wide) = decl {
+            if css_wide.resets_property("font-size") {
+                self.font_size_is_math = false;
+            }
+            css_wide.apply(&mut self.new_values, &self.parent);
+            return;
         }
         decl.apply_to(&mut self.new_values)
     }
@@ -1041,5 +1087,61 @@ mod language_tests {
         let lang = Language::from_tag("");
         assert_eq!(lang, Language::default());
         assert_eq!(lang.primary(), None);
+    }
+}
+
+#[cfg(test)]
+mod css_wide_tests {
+    use super::*;
+    use crate::style::parse::PropertyDeclarationBlock;
+
+    fn child(parent: &ComputedValues, css: &str) -> ComputedValues {
+        let mut builder = StyleBuilder::new(parent.clone());
+        for decl in PropertyDeclarationBlock::parse_inline(css).declarations() {
+            builder.add_declaration(decl);
+        }
+        builder.build()
+    }
+
+    #[test]
+    fn inherit_copies_the_value_of_the_parent_even_for_non_inherited_properties() {
+        let parent = child(&ComputedValues::default(), "width: 10px; margin-left: 7px");
+        let c = child(&parent, "");
+        assert!(matches!(c.position.width, GenericSize::Auto));
+        let c = child(&parent, "width: inherit; margin: inherit");
+        assert!(!matches!(c.position.width, GenericSize::Auto));
+        assert!(!matches!(c.position.margin_left, GenericSize::Auto));
+        assert!(!matches!(c.position.margin_left, GenericSize::Auto));
+    }
+
+    #[test]
+    fn font_shorthand_with_a_keyword_resets_the_font_properties() {
+        let parent = child(&ComputedValues::default(), "font-weight: normal");
+        // a user agent style makes the element bold, the author style undoes it
+        let c = child(&parent, "font-weight: bold; font: inherit");
+        assert_eq!(c.font.font_weight, FontWeight::Normal);
+        let c = child(&parent, "font-weight: bold; font: initial");
+        assert_eq!(c.font.font_weight, FontWeight::Normal);
+        // later declarations still win
+        let c = child(&parent, "font: inherit; font-weight: bold");
+        assert_eq!(c.font.font_weight, FontWeight::Bold);
+    }
+
+    #[test]
+    fn initial_and_unset() {
+        let parent = child(&ComputedValues::default(), "font-weight: bold; width: 10px");
+        assert_eq!(child(&parent, "").font.font_weight, FontWeight::Bold);
+        assert_eq!(child(&parent, "font-weight: initial").font.font_weight, FontWeight::Normal);
+        // font-weight is inherited, width is not
+        assert_eq!(child(&parent, "font-weight: unset").font.font_weight, FontWeight::Bold);
+        assert!(matches!(child(&parent, "width: unset").position.width, GenericSize::Auto));
+    }
+
+    #[test]
+    fn later_keywords_win_and_unknown_properties_are_ignored() {
+        let parent = child(&ComputedValues::default(), "font-weight: bold");
+        let c = child(&parent, "font-weight: normal; font-weight: inherit");
+        assert_eq!(c.font.font_weight, FontWeight::Bold);
+        child(&parent, "bogus: inherit");
     }
 }

@@ -60,6 +60,8 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
     };
 
     let mut property_cases = vec![];
+    // Cases of `CssWideProperties::apply_css_wide`, which resets a property by name.
+    let mut css_wide_cases = vec![];
 
     let if_clauses = variants.into_iter().map(|Variant { ident, fields, attrs, .. }| {
         let mut variant_attribute = None;
@@ -77,6 +79,7 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
         };
         if variant_attribute.is_some() {
             let shorthands = parse_shorthands(&attrs);
+            let shorthands_names = shorthands.iter().map(|sh| sh.property_name.value()).collect::<Vec<_>>();
 
             let ident_kebab = to_kebab_case(&ident.to_string());
             let ident_snake = Ident::new(&to_snake_case(&ident.to_string()),ident.span());
@@ -103,12 +106,46 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
                 ident_kebab
             };
 
+            if shorthands.is_empty() {
+                css_wide_cases.push(quote! {
+                    if name.eq_ignore_ascii_case(#property_name) {
+                        let from_parent = match keyword {
+                            CssWide::Inherit => true,
+                            CssWide::Initial => false,
+                            CssWide::Unset => is_inherited_property(#property_name),
+                        };
+                        let source: &#computed_values_type = if from_parent {
+                            std::convert::AsRef::<#computed_values_type>::as_ref(parent)
+                        } else {
+                            std::convert::AsRef::<#computed_values_type>::as_ref(initial)
+                        };
+                        let value = source.#ident_snake.clone();
+                        std::convert::AsMut::<#computed_values_type>::as_mut(computed).#ident_snake = value;
+                        return true;
+                    }
+                });
+            } else {
+                // a shorthand resets its longhands
+                let longhands = shorthands_names.clone();
+                css_wide_cases.push(quote! {
+                    if name.eq_ignore_ascii_case(#property_name) {
+                        #(<Self as CssWideProperties>::apply_css_wide(#longhands, keyword, computed, parent, initial);)*
+                        return true;
+                    }
+                });
+            }
+
             quote! {
                 if name.eq_ignore_ascii_case(#property_name) {
                     return <#parser_ty as PropertyValue>::from_css_property_value(input).map(#name::#ident);
                 }
             }
         } else {
+            css_wide_cases.push(quote! {
+                if <#parser_ty as CssWideProperties>::apply_css_wide(name, keyword, computed, parent, initial) {
+                    return true;
+                }
+            });
             property_cases.push(quote! {
                 #name::#ident(val) => { val.apply_to(computed) }
             });
@@ -129,6 +166,19 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
             fn parse_declaration(name: cssparser::CowRcStr<'i>, input: &mut cssparser::Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
                 #(#if_clauses)*
                 Err(cssparser::ParseError::custom(StyleParseError::UnknownProperty { name: name.to_string() }))
+            }
+        }
+
+        impl #generics CssWideProperties for #name #generics {
+            fn apply_css_wide(
+                name: &str,
+                keyword: CssWide,
+                computed: &mut super::computed::ComputedValues,
+                parent: &super::computed::ComputedValues,
+                initial: &super::computed::ComputedValues,
+            ) -> bool {
+                #(#css_wide_cases)*
+                false
             }
         }
 
