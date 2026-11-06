@@ -3,9 +3,7 @@
 
 mod common;
 
-use assert_cmd::prelude::*;
 use common::*;
-use std::process::Command;
 
 #[test]
 fn wpt_layout_checks() {
@@ -25,7 +23,7 @@ fn wpt_layout_checks() {
     let mut problems = stale_expectations(&known_failures);
     for test in &tests {
         let name = test_name(test);
-        let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        let output = common::helium()
             .unwrap()
             .arg("--check-layout")
             .arg(test)

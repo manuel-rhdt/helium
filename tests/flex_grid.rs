@@ -1,15 +1,16 @@
 //! Flexbox and grid layout, which only the Taffy layout engine supports.
 
-use assert_cmd::prelude::*;
+mod common;
+
 use serde_json::Value;
-use std::process::{Command, Output};
+use std::process::Output;
 
 fn run(name: &str, html: &str, args: &[&str]) -> Output {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("flex_grid__{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    common::helium()
         .unwrap()
         .args(["--layout-engine", "taffy"])
         .args(args)

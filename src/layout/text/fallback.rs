@@ -24,7 +24,7 @@
 //! Characters that no font covers are collected in the `MissingGlyphs` resource and reported
 //! to the user (see `MissingGlyphs::report`).
 
-use super::font::{Font, system_font};
+use super::font::{Font, system_font, use_system_fonts};
 use crate::layout::FontMap;
 use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, Language,
@@ -429,15 +429,27 @@ impl FontResolver {
         let font_style = style.font.font_style.clone();
 
         let serif = is_serif(&style.font.font_family);
+        let lang = &style.font.lang;
+        // For serif text, the sans-serif fonts of the script come after its serif ones: a font
+        // designed for the script beats no glyph or the rudimentary ones of the broad fallback
+        // families, and the embedded Noto fonts (the only fonts without an installed font
+        // directory or fontconfig) are mostly sans-serif.
+        let (sans_language, sans_script): (&[&str], &[&str]) = if serif {
+            (language_families(ch, false, lang), script_families(ch, false))
+        } else {
+            (&[], &[])
+        };
         let families = style
             .font
             .font_family
             .iter()
             .cloned()
             .chain(
-                language_families(ch, serif, &style.font.lang)
+                language_families(ch, serif, lang)
                     .iter()
                     .chain(script_families(ch, serif))
+                    .chain(sans_language)
+                    .chain(sans_script)
                     .chain(if serif { SERIF_FAMILIES } else { &[] })
                     .chain(FALLBACK_FAMILIES)
                     .map(|name| FontFamily::Named(name.to_string())),
@@ -456,6 +468,9 @@ impl FontResolver {
             return Some(bundled);
         }
 
+        if !use_system_fonts() {
+            return None;
+        }
         let lang = style.font.lang.clone();
         self.char_cache
             .entry((ch, weight.clone(), font_style.clone(), lang.clone()))
@@ -867,12 +882,32 @@ mod tests {
         resolver.ensure_coverage(&style, &font, "a 漢 b \u{0378}", &mut font_map);
         let missing = resolver.take_missing_glyphs();
         assert!(missing.0.contains_key(&'\u{0378}'));
-        // Depends on the installed fonts: either a fallback was found, or the character was
-        // reported as missing.
-        let covered = font.fallbacks(&style.font.lang).iter().any(|f| f.covers('漢'));
-        assert_ne!(covered, missing.0.contains_key(&'漢'));
+        // Unit tests use only the built-in fonts, which include a CJK font.
+        assert!(font.fallbacks(&style.font.lang).iter().any(|f| f.covers('漢')));
+        assert!(!missing.0.contains_key(&'漢'));
         for fallback in font.fallbacks(&style.font.lang) {
             assert!(font_map.contains_key(&fallback.postscript_name()));
         }
+    }
+
+    /// Text in a serif font gets the embedded sans-serif fonts for scripts that no serif font
+    /// covers, rather than an empty box: without installed fonts, they are all there is.
+    #[test]
+    fn serif_text_falls_back_to_the_embedded_sans_serif_fonts() {
+        let mut font_map = FontMap::new();
+        let mut resolver = FontResolver::default();
+        let mut style = ComputedValues::default();
+        AsMut::<crate::style::properties::computed::Font>::as_mut(&mut style).font_family =
+            vec![named("TeX Gyre Termes"), FontFamily::Serif];
+        let font = register_font(
+            &mut font_map,
+            system_font(&style.font.font_family, &FontWeight::Normal, &FontStyle::Normal).unwrap(),
+        );
+        let text = "道可道，非常道。 ქართული ไทย ខ្មែរ";
+        resolver.ensure_coverage(&style, &font, text, &mut font_map);
+        let missing = resolver.take_missing_glyphs();
+        assert!(missing.is_empty(), "{}", missing.report().unwrap_or_default());
+        let fallbacks = font.fallbacks(&style.font.lang);
+        assert!(fallbacks.iter().any(|f| f.postscript_name() == "NotoSansCJKjp-Regular"));
     }
 }

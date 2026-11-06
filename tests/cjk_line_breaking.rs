@@ -2,9 +2,9 @@
 //! assertions do not depend on the widths of the glyphs, so that they hold whichever font the
 //! system falls back to for the ideographs.
 
-use assert_cmd::prelude::*;
+mod common;
+
 use serde_json::Value;
-use std::process::Command;
 
 /// The ops of the painted text of a document with `body`.
 fn ops(name: &str, body: &str) -> Vec<Value> {
@@ -15,7 +15,7 @@ fn ops(name: &str, body: &str) -> Vec<Value> {
         body
     );
     std::fs::write(&input, html).unwrap();
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let output = common::helium()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

@@ -1,6 +1,6 @@
-use assert_cmd::prelude::*;
+mod common;
+
 use serde_json::Value;
-use std::process::Command;
 
 fn dump(name: &str, width: u32, hyphens: &str, text: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -14,7 +14,7 @@ fn dump(name: &str, width: u32, hyphens: &str, text: &str) -> Value {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let output = common::helium()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

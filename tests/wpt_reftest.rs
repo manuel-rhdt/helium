@@ -9,17 +9,15 @@
 
 mod common;
 
-use assert_cmd::prelude::*;
 use common::*;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Maximum difference in px for two coordinates to count as equal.
 const TOLERANCE: f64 = 0.5;
 
 fn dump_layout(input: &Path) -> Result<Value, String> {
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    let output = common::helium()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

@@ -2,11 +2,10 @@ mod common;
 
 use assert_cmd::prelude::*;
 use predicates::prelude::*;
-use std::process::Command;
 
 #[test]
 fn file_doesnt_exist() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    let mut cmd = common::helium()?;
     cmd.args(&["test/file/doesnt/exist", "never.pdf"]);
     cmd.assert()
         .failure()
@@ -27,7 +26,7 @@ fn converts_loremipsum_to_pdf() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::remove_file(&output)?;
     }
 
-    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    let mut cmd = common::helium()?;
     cmd.arg(input).arg(&output);
     cmd.assert().success();
 
@@ -72,7 +71,7 @@ fn convert_to_pdf(name: &str, html: &str) -> Result<Vec<u8>, Box<dyn std::error:
         std::fs::remove_file(&output)?;
     }
 
-    Command::cargo_bin(env!("CARGO_PKG_NAME"))?
+    common::helium()?
         .arg(&input)
         .arg(&output)
         .assert()
@@ -122,7 +121,7 @@ fn dumps_layout_as_json() -> Result<(), Box<dyn std::error::Error>> {
         r#"<!DOCTYPE html><div id="a" style="width: 100px; height: 20px; padding: 5px; margin: 3px"></div>"#,
     )?;
 
-    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    let mut cmd = common::helium()?;
     cmd.arg("--dump-layout")
         .arg("-")
         .arg(&input)
@@ -157,7 +156,7 @@ fn loads_relative_external_stylesheets() -> Result<(), Box<dyn std::error::Error
         "<html><head><link rel=\"stylesheet\" href=\"external_stylesheet_assets/print.css\"></head><body><div id=\"styled\"></div></body></html>",
     )?;
 
-    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    let mut cmd = common::helium()?;
     cmd.arg("--dump-layout")
         .arg("-")
         .arg(&input)
@@ -183,7 +182,7 @@ fn loads_full_quarto_html_from_document() -> Result<(), Box<dyn std::error::Erro
     );
     assert!(html.contains("<pre class=\"sourceCode python"));
 
-    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    let mut cmd = common::helium()?;
     cmd.arg("--dump-layout").arg("-").arg(input).arg(&output);
     let result = cmd.output()?;
     assert!(
@@ -250,7 +249,7 @@ fn higher_specificity_beats_later_rule() -> Result<(), Box<dyn std::error::Error
          <body><div id=\"header\"><p>Centered</p></div><p>Justified</p></body></html>",
     )
     .unwrap();
-    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    let mut cmd = common::helium()?;
     cmd.arg("--dump-layout")
         .arg("-")
         .arg(&input)
@@ -290,7 +289,7 @@ fn sibling_selectors_terminate() {
          <body><h1>One</h1><p>Hi</p><h1>Two</h1></body></html>",
     )
     .unwrap();
-    Command::cargo_bin(env!("CARGO_PKG_NAME"))
+    common::helium()
         .unwrap()
         .arg(&input)
         .arg(dir.join("sibling_selectors.pdf"))

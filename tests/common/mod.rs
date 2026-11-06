@@ -1,4 +1,4 @@
-//! Helpers shared by the web-platform-tests runners.
+//! Helpers shared by the integration tests.
 #![allow(dead_code)]
 
 use std::collections::BTreeSet;
@@ -83,4 +83,13 @@ pub fn expand_object_streams(pdf: &[u8]) -> Vec<u8> {
         result.extend_from_slice(&inflated);
     }
     result
+}
+
+/// The `helium` binary, set up to use only its built-in fonts (`HELIUM_NO_SYSTEM_FONTS`), so
+/// that the tests do not depend on the fonts installed on the machine.
+pub fn helium() -> Result<std::process::Command, assert_cmd::cargo::CargoError> {
+    use assert_cmd::prelude::*;
+    let mut cmd = std::process::Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
+    cmd.env("HELIUM_NO_SYSTEM_FONTS", "1");
+    Ok(cmd)
 }

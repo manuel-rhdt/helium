@@ -8,6 +8,7 @@ use crate::style::properties::computed::{
 use harfbuzz_rs::{Blob, Face as HbFace, Font as HbFont, HarfbuzzObject, sys};
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 fn scale_ext(upem: u32, metric: i32) -> FontUnit {
@@ -250,15 +251,35 @@ pub(crate) fn name_of(face: &HbFace, id: u32) -> Option<String> {
     String::from_utf8(buffer).ok()
 }
 
-/// The fonts installed on the system, scanned once.
+/// Whether the fonts installed on the system are used; if not, only the fonts built into Helium
+/// are. Unit tests use only the built-in fonts by default, so
+/// that their results do not depend on the machine.
+static USE_SYSTEM_FONTS: AtomicBool = AtomicBool::new(!cfg!(test));
+
+/// Sets whether the fonts installed on the system are used (see `USE_SYSTEM_FONTS`). Must be
+/// called before the first font is looked up: the installed fonts are scanned only once.
+pub fn set_use_system_fonts(enabled: bool) {
+    USE_SYSTEM_FONTS.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether the fonts installed on the system are used.
+pub(crate) fn use_system_fonts() -> bool {
+    USE_SYSTEM_FONTS.load(Ordering::Relaxed)
+}
+
+/// The fonts installed on the system (unless disabled, see `use_system_fonts`) and the fonts
+/// built into Helium, scanned once.
 fn system_fonts() -> &'static fontdb::Database {
     static DATABASE: OnceLock<fontdb::Database> = OnceLock::new();
     DATABASE.get_or_init(|| {
         let mut db = fontdb::Database::new();
-        db.load_system_fonts();
+        if use_system_fonts() {
+            db.load_system_fonts();
+        }
         // Loaded after the system fonts so that installed fonts win ties; the bundled
         // families are only used when asked for by name or when nothing else matches.
-        for data in TEX_GYRE.iter().chain(MATH_FONTS).chain(EMBEDDED_FONTS) {
+        let dejavu: &[&[u8]] = &[BUNDLED_REGULAR, BUNDLED_BOLD];
+        for data in TEX_GYRE.iter().chain(MATH_FONTS).chain(EMBEDDED_FONTS).chain(dejavu) {
             db.load_font_source(fontdb::Source::Binary(Arc::new(*data)));
         }
         // `fontdb` names fixed families for the generic ones, which are rarely installed on
@@ -276,7 +297,9 @@ fn system_fonts() -> &'static fontdb::Database {
             ("monospace", &["TeX Gyre Cursor"]),
         ];
         for (generic, candidates) in generics {
-            let family = super::fallback::default_family(generic)
+            let family = use_system_fonts()
+                .then(|| super::fallback::default_family(generic))
+                .flatten()
                 .filter(|family| !family.starts_with("DejaVu") && has(&db, family))
                 .or_else(|| candidates.iter().find(|c| has(&db, c)).map(|c| c.to_string()));
             if let Some(family) = family {
