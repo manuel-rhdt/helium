@@ -467,7 +467,11 @@ pub enum TextOperator {
     /// the `ToUnicode` text of the glyphs that follow, up to `EndActualText`. Used for clusters
     /// that a per-glyph `ToUnicode` map cannot describe.
     BeginActualText(String),
-    EndActualText,
+    /// Starts marked content that is not part of the text of the document (a page number):
+    /// extractors that honour `/Artifact` leave it out.
+    BeginArtifact,
+    /// Ends the marked content that `BeginActualText` or `BeginArtifact` started.
+    EndMarkedContent,
     NewLine {
         x_offset: PixelLength,
         leading: PixelLength,

@@ -173,6 +173,7 @@ impl<'a> System<'a> for MarginBoxPaint {
                     TextOperator::SetFont(margin_box.font_name.clone(), margin_box.font_size),
                     TextOperator::SetColor(margin_box.color),
                 ];
+                ops.insert(0, TextOperator::BeginArtifact);
                 let width =
                     shape_piece(
                     &text,
@@ -185,6 +186,7 @@ impl<'a> System<'a> for MarginBoxPaint {
                     false,
                     &mut ops,
                 );
+                ops.push(TextOperator::EndMarkedContent);
 
                 let x = match margin_box.text_align.resolve(false) {
                     TextAlign::Center => area_left + (area_width - width) / 2.0,
@@ -218,7 +220,9 @@ impl<'a> System<'a> for MarginBoxPaint {
                             y,
                             width,
                             height,
-                            z: ZIndex::default(),
+                            // last in the content stream, so that the page numbers come after the
+                            // text of the page for extractors that read it in stream order
+                            z: ZIndex(i64::MAX),
                             page,
                         },
                         &mut positions,

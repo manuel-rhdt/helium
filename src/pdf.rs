@@ -100,6 +100,8 @@ pub fn write_pdf(
                             });
 
                         if let Some((x, y)) = point_iter.next() {
+                            page_context.push_operand(RawPdf("/Artifact".into()))?;
+                            page_context.apply_operator("BMC")?;
                             page_context.move_to(x, y)?
                         } else {
                             continue;
@@ -111,6 +113,7 @@ pub fn write_pdf(
 
                         page_context.line_width(line_width.into())?;
                         page_context.stroke_path()?;
+                        page_context.apply_operator("EMC")?;
                     }
                     &DisplayItem::FilledRect(Rect {
                         x,
@@ -123,8 +126,11 @@ pub fn write_pdf(
                         let width = Pt::from(width);
                         let height = Pt::from(height);
 
+                        page_context.push_operand(RawPdf("/Artifact".into()))?;
+                        page_context.apply_operator("BMC")?;
                         page_context.rect(x, y, width, height)?;
                         page_context.fill_path()?;
+                        page_context.apply_operator("EMC")?;
                     }
                     &DisplayItem::Text(
                         display_list::Point { x, y },
@@ -196,7 +202,11 @@ pub fn write_pdf(
                                         .push_operand(RawPdf(format!("<< /ActualText <{hex}> >>")))?;
                                     page_context.apply_operator("BDC")?;
                                 }
-                                TextOperator::EndActualText => {
+                                TextOperator::BeginArtifact => {
+                                    page_context.push_operand(RawPdf("/Artifact".into()))?;
+                                    page_context.apply_operator("BMC")?;
+                                }
+                                TextOperator::EndMarkedContent => {
                                     page_context.apply_operator("EMC")?;
                                 }
                                 &TextOperator::SetRise(rise) => {

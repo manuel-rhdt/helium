@@ -294,7 +294,8 @@ fn op_json(op: &TextOperator) -> String {
         TextOperator::BeginActualText(text) => {
             format!("{{\"op\": \"actual_text\", \"text\": {}}}", json_string(text))
         }
-        TextOperator::EndActualText => "{\"op\": \"end_actual_text\"}".to_string(),
+        TextOperator::BeginArtifact => "{\"op\": \"artifact\"}".to_string(),
+        TextOperator::EndMarkedContent => "{\"op\": \"end_marked_content\"}".to_string(),
         TextOperator::SetRise(rise) => {
             format!("{{\"op\": \"rise\", \"value\": {}}}", number(rise.0))
         }
