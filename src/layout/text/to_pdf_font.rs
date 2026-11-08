@@ -220,8 +220,13 @@ impl Font {
                             if !advances.is_empty() {
                                 metrics_h.push(MetricsEntry::Consecutive { start, advances })
                             }
+                            // The run described here is the two dropped entries plus the
+                            // current glyph, so it starts at `glyph.0 - 2`. Starting at
+                            // `glyph.0 - 3` swallowed the glyph before the run, whose
+                            // advance is already in the entry pushed above: the range wins,
+                            // and every glyph after it is drawn at the wrong x.
                             Some(MetricsEntry::Range {
-                                from: glyph.0 - 3,
+                                from: glyph.0 - 2,
                                 to: glyph.0,
                                 advance,
                             })
