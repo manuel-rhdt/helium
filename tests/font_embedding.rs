@@ -102,3 +102,153 @@ fn missing_glyphs_use_a_fallback_font_or_are_reported() {
     // The bundled font has an arrow, so it is always found.
     assert!(!stderr.contains("U+2192"), "{stderr}");
 }
+
+
+/// One entry of a CID font's `/W` array: the CIDs it assigns an advance to.
+#[derive(Debug)]
+enum WidthEntry {
+    /// `c_first c_last w` — every CID in the range gets `w`.
+    Range { from: u32, to: u32, advance: f64 },
+    /// `c_first [w1 w2 …]` — consecutive CIDs with individual advances.
+    Consecutive { start: u32, advances: Vec<f64> },
+}
+
+impl WidthEntry {
+    fn cids(&self) -> std::ops::RangeInclusive<u32> {
+        match self {
+            WidthEntry::Range { from, to, .. } => *from..=*to,
+            WidthEntry::Consecutive { start, advances } => {
+                *start..=*start + advances.len() as u32 - 1
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum WidthToken {
+    Number(f64),
+    Array(Vec<f64>),
+}
+
+/// Parses the `/W` array of the first CID font of an expanded PDF.
+fn width_entries(pdf: &[u8]) -> Vec<WidthEntry> {
+    let key = b"/W [";
+    let start = (0..pdf.len().saturating_sub(key.len()))
+        .find(|&i| &pdf[i..i + key.len()] == key)
+        .expect("no /W array in the PDF");
+    let mut tokens = vec![];
+    let mut numbers: Vec<f64> = vec![];
+    let mut buf = String::new();
+    let mut in_array = false;
+    for &b in &pdf[start + key.len()..] {
+        match b {
+            b'[' => {
+                in_array = true;
+                numbers.clear();
+                buf.clear();
+            }
+            b']' if in_array => {
+                if let Ok(value) = buf.parse::<f64>() {
+                    numbers.push(value);
+                }
+                tokens.push(WidthToken::Array(numbers.clone()));
+                in_array = false;
+                buf.clear();
+            }
+            b']' => {
+                if let Ok(value) = buf.parse::<f64>() {
+                    tokens.push(WidthToken::Number(value));
+                }
+                break;
+            }
+            b'0'..=b'9' | b'-' | b'.' | b'+' => buf.push(b as char),
+            b' ' | b'\n' | b'\r' | b'\t' | b',' => {
+                if let Ok(value) = buf.parse::<f64>() {
+                    if in_array {
+                        numbers.push(value);
+                    } else {
+                        tokens.push(WidthToken::Number(value));
+                    }
+                }
+                buf.clear();
+            }
+            _ => break,
+        }
+    }
+
+    let mut entries = vec![];
+    let mut i = 0;
+    while i < tokens.len() {
+        let WidthToken::Number(cid) = tokens[i] else {
+            panic!("unexpected /W token: {:?}", tokens[i]);
+        };
+        match tokens.get(i + 1) {
+            Some(WidthToken::Array(advances)) => {
+                entries.push(WidthEntry::Consecutive {
+                    start: cid as u32,
+                    advances: advances.clone(),
+                });
+                i += 2;
+            }
+            Some(WidthToken::Number(to)) => {
+                let advance = match tokens.get(i + 2) {
+                    Some(WidthToken::Number(advance)) => *advance,
+                    other => panic!("truncated /W entry after CID {cid}: {other:?}"),
+                };
+                entries.push(WidthEntry::Range {
+                    from: cid as u32,
+                    to: *to as u32,
+                    advance,
+                });
+                i += 3;
+            }
+            other => panic!("unexpected /W token after CID {cid}: {other:?}"),
+        }
+    }
+    entries
+}
+
+/// A viewer advances the pen by the `/W` advance, so every entry must own the CIDs it names.
+/// A compact `c_first c_last w` range that starts one CID early takes the glyph before the run
+/// with it: the range wins over the per-glyph entry already written, and that glyph plus
+/// everything after it in the run is drawn at the wrong x — in the reported document a capital
+/// `N` collided with the letter after it.
+#[test]
+fn width_ranges_do_not_take_over_the_glyph_before_the_run() {
+    // Compaction only happens for three consecutive glyphs of equal advance, so the documents
+    // include runs that fonts of every family have: digits, and `<`, `=`, `>`.
+    let documents = [
+        ("width_range_digits", "<p>/0123456789</p>"),
+        ("width_range_punct", "<p>&lt;=&gt; In . Nn9# 012</p>"),
+        (
+            "width_range_sans",
+            r#"<p style="font-family: 'DejaVu Sans'">/0123456 Nn9#</p>"#,
+        ),
+    ];
+    let mut ranges = 0;
+    for (name, html) in documents {
+        let pdf = render(name, html);
+        let entries = width_entries(&pdf);
+        assert!(!entries.is_empty(), "{name}: the PDF has no /W entries");
+        ranges += entries
+            .iter()
+            .filter(|entry| matches!(entry, WidthEntry::Range { .. }))
+            .count();
+
+        let mut seen = std::collections::HashSet::new();
+        for entry in &entries {
+            for cid in entry.cids() {
+                assert!(
+                    seen.insert(cid),
+                    "{name}: CID {cid} is given a width twice, so a glyph is drawn at the \
+                     wrong advance — a compact range must start at the first CID of its run\n\
+                     offending entry: {entry:?}\nall entries: {entries:?}"
+                );
+            }
+        }
+    }
+    assert!(
+        ranges > 0,
+        "no compact /W range was emitted, so the test does not exercise the code it guards"
+    );
+}
