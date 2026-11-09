@@ -874,6 +874,13 @@ impl EntityConstructor {
             .any(|elem| !matches!(elem, BlockLevelElement::Absolute(_)));
         if !has_block_level_elements {
             // no block-level elements were found, so we create a inline_formatting_context
+            if inline_level_elements.is_empty()
+                && let Some(text) = replaced_element_text(node)
+            {
+                // an `<input>` has no children: the text it shows comes from its attributes
+                let text_entity = self.build_text_entity(style.clone(), &text);
+                inline_level_elements.push(text_entity.0);
+            }
             let absolutes = block_level_elements
                 .iter()
                 .map(|elem| elem.entity())
@@ -958,12 +965,10 @@ impl EntityConstructor {
         }
 
         if inline_formatting_context.elements.is_empty() {
-            // An `<input>` has no children: the text it shows comes from its attributes.
-            // Everything else gets a strut.
-            let text = replaced_element_text(node).unwrap_or_default();
+            // insert strut
             inline_formatting_context
                 .elements
-                .push(self.build_text_entity(node.style(), &text).0);
+                .push(self.build_text_entity(node.style(), "").0);
         }
 
         // `unicode-bidi` (e.g. from the `dir` attribute or `<bdo>`) is implemented by bidi
