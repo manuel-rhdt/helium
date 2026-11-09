@@ -427,7 +427,11 @@ fn parse_content<'i>(
             // `string()`, `attr()` and other functions are not supported; skip one item rather
             // than dropping the whole declaration
             cssparser::Token::Function(ref name) => {
-                input.parse_nested_block(|_| Ok::<_, ParseError<StyleParseError>>(()))?;
+                input.parse_nested_block(|input| {
+                    // consume the arguments: `parse_nested_block` fails if anything is left over
+                    while input.next_including_whitespace_and_comments().is_ok() {}
+                    Ok::<_, ParseError<StyleParseError>>(())
+                })?;
                 warn!("Unsupported content function {:?}, ignoring it", name);
             }
             _ => warn!("Unsupported value in `content`, ignoring it"),
