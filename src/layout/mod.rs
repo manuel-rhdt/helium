@@ -20,7 +20,10 @@ use crate::PixelLength;
 use crate::layout::components::{
     EntityHrefs, GoToDestination, Hyperlinks, LayoutContext, Position, RootNode,
 };
-use crate::style::{device::Device, properties::computed::StyleBuilder};
+use crate::style::{
+    device::Device,
+    properties::computed::{GenericSize, StyleBuilder},
+};
 use crate::traverse::Traverse;
 use crate::tree::DomRef;
 use construct::FlowConstructor;
@@ -221,23 +224,19 @@ pub fn layout(
         page_width = PixelLength(0.0);
         page_height = PixelLength(0.0);
     } else {
+        // Page margins cannot be negative: a negative margin would move the content, and with it
+        // the text, off the page where it is silently lost. Clamp instead of rendering a blank
+        // document.
+        let page_margin = |value: GenericSize, container_size: PixelLength| {
+            value
+                .absolute(Default::default(), container_size)
+                .max(PixelLength(0.0))
+        };
         margin = EdgeValues {
-            top: style
-                .position
-                .margin_top
-                .absolute(Default::default(), device.height),
-            left: style
-                .position
-                .margin_left
-                .absolute(Default::default(), device.width),
-            bottom: style
-                .position
-                .margin_bottom
-                .absolute(Default::default(), device.height),
-            right: style
-                .position
-                .margin_right
-                .absolute(Default::default(), device.width),
+            top: page_margin(style.position.margin_top, device.height),
+            left: page_margin(style.position.margin_left, device.width),
+            bottom: page_margin(style.position.margin_bottom, device.height),
+            right: page_margin(style.position.margin_right, device.width),
         };
         page_width = style.position.width.absolute(device.width, device.width);
         page_height = style.position.height.absolute(device.width, device.width);

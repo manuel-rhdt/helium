@@ -913,6 +913,7 @@ pub enum Unit {
     Cm,
     Mm,
     Pt,
+    Pc,
     Em,
     In,
 }
@@ -931,6 +932,7 @@ impl FromStr for Unit {
             "px" => Ok(Unit::Px),
             "cm" => Ok(Unit::Cm),
             "pt" => Ok(Unit::Pt),
+            "pc" => Ok(Unit::Pc),
             "em" => Ok(Unit::Em),
             "mm" => Ok(Unit::Mm),
             "in" => Ok(Unit::In),
@@ -965,6 +967,10 @@ impl<'a, T> List<'a, T>
 where
     [T]: ToOwned<Owned = Vec<T>>,
 {
+    pub fn elements(&self) -> &[T] {
+        &self.elements
+    }
+
     fn make_ref(&'a self) -> Self {
         List {
             elements: Cow::Borrowed(&self.elements),
