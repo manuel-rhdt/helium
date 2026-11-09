@@ -12,6 +12,9 @@ pub use super::specified::{
 
 pub use cssparser_color::Color;
 
+/// The sRGB colour a CSS colour is painted with, see [`super::color`].
+pub use super::color::color_to_rgba;
+
 /// An sRGB color with 8 bits per channel.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct RGBA {
@@ -33,52 +36,6 @@ impl RGBA {
 
     pub const fn transparent() -> Self {
         RGBA::new(0, 0, 0, 0)
-    }
-}
-
-/// The color a CSS color resolves to when painting.
-///
-/// Colors that are not defined in sRGB (lab, oklch, `color()`) are not supported yet and
-/// resolve to transparent. `currentcolor` also resolves to transparent for now.
-pub fn color_to_rgba(color: Color) -> RGBA {
-    use cssparser_color::{hsl_to_rgb, hwb_to_rgb};
-
-    fn channel(value: f32) -> u8 {
-        (value * 255.0).round().clamp(0.0, 255.0) as u8
-    }
-    fn from_floats((r, g, b): (f32, f32, f32), alpha: Option<f32>) -> RGBA {
-        RGBA::new(
-            channel(r),
-            channel(g),
-            channel(b),
-            channel(alpha.unwrap_or(1.0)),
-        )
-    }
-
-    match color {
-        Color::Rgba(c) => RGBA::new(c.red, c.green, c.blue, channel(c.alpha)),
-        Color::Hsl(c) => from_floats(
-            hsl_to_rgb(
-                (c.hue.unwrap_or(0.0) / 360.0).rem_euclid(1.0),
-                c.saturation.unwrap_or(0.0),
-                c.lightness.unwrap_or(0.0),
-            ),
-            c.alpha,
-        ),
-        Color::Hwb(c) => from_floats(
-            hwb_to_rgb(
-                (c.hue.unwrap_or(0.0) / 360.0).rem_euclid(1.0),
-                c.whiteness.unwrap_or(0.0),
-                c.blackness.unwrap_or(0.0),
-            ),
-            c.alpha,
-        ),
-        Color::CurrentColor
-        | Color::Lab(_)
-        | Color::Lch(_)
-        | Color::Oklab(_)
-        | Color::Oklch(_)
-        | Color::ColorFunction(_) => RGBA::transparent(),
     }
 }
 
