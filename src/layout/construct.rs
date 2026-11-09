@@ -270,6 +270,45 @@ fn table_cell_span(element_data: &ElementData) -> Option<components::TableCellSp
     })
 }
 
+/// The text a replaced element shows: the `value` of an `<input>`, or the state of a checkbox or
+/// radio button. Only `<input>` is handled; a renderer without widgets has nothing else to show.
+fn replaced_element_text<'a>(node: &'a impl AbstractNode<'a>) -> Option<String> {
+    let ParsedData::Element(element_data) = node.html_data() else {
+        return None;
+    };
+    if element_data.name != QualName::new(None, ns!(html), local_name!("input")) {
+        return None;
+    }
+
+    let attributes = element_data.attributes.borrow();
+    let has = |name| {
+        attributes
+            .get(&QualName::new(None, ns!(), name))
+            .is_some()
+    };
+    let value = || {
+        attributes
+            .get(&QualName::new(None, ns!(), local_name!("value")))
+            .map(|attribute| attribute.value.to_string())
+    };
+    let kind = attributes
+        .get(&QualName::new(None, ns!(), local_name!("type")))
+        .map(|attribute| attribute.value.to_ascii_lowercase())
+        .unwrap_or_else(|| "text".into());
+
+    Some(match kind.as_str() {
+        // U+2610 and U+2611, the glyphs a font fallback is chosen for
+        "checkbox" | "radio" => {
+            if has(local_name!("checked")) {
+                "\u{2611}".into()
+            } else {
+                "\u{2610}".into()
+            }
+        }
+        _ => value().unwrap_or_default(),
+    })
+}
+
 /// The `<col>` and `<colgroup>` children of a table, in column order.
 /// https://html.spec.whatwg.org/multipage/tables.html#the-colgroup-element
 fn table_columns(table: &DomRef) -> components::TableColumns {
@@ -919,10 +958,12 @@ impl EntityConstructor {
         }
 
         if inline_formatting_context.elements.is_empty() {
-            // insert strut
+            // An `<input>` has no children: the text it shows comes from its attributes.
+            // Everything else gets a strut.
+            let text = replaced_element_text(node).unwrap_or_default();
             inline_formatting_context
                 .elements
-                .push(self.build_text_entity(node.style(), "").0);
+                .push(self.build_text_entity(node.style(), &text).0);
         }
 
         // `unicode-bidi` (e.g. from the `dir` attribute or `<bdo>`) is implemented by bidi
