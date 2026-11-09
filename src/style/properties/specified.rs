@@ -625,8 +625,8 @@ impl Display {
         )
     }
 
-    /// Whether the box is a column or column group, which does not generate a box.
-    /// TODO: use the widths of columns for the table layout
+    /// Whether the box is a column or column group, which does not generate a box. The widths of
+    /// the columns are taken from these elements by the table layout.
     pub fn is_table_column(self) -> bool {
         matches!(self, Display::TableColumn | Display::TableColumnGroup)
     }

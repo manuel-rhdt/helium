@@ -19,7 +19,9 @@ use taffy::{
 };
 
 use crate::layout::absolute::shrink_to_fit;
-use crate::layout::components::{BlockLevelElement, IntrinsicSize, TableCellSpan, TextRun};
+use crate::layout::components::{
+    BlockLevelElement, IntrinsicSize, TableCellSpan, TableColumns, TextRun,
+};
 use crate::layout::inline::InlineFormattingContext;
 use crate::layout::normal_formatting::BlockFormattingContext;
 use crate::style::properties::computed::{ComputedValues, PixelLength};
@@ -80,6 +82,8 @@ pub(super) struct HeliumTree<'a, 'w> {
     pub intrinsic_sizes: &'a mut WriteStorage<'w, IntrinsicSize>,
     pub text_runs: &'a ReadStorage<'w, TextRun>,
     pub table_spans: &'a ReadStorage<'w, TableCellSpan>,
+    /// The `<col>` and `<colgroup>` elements of each table, in column order.
+    pub table_columns: &'a ReadStorage<'w, TableColumns>,
     /// The line width to use for the `inline-block` boxes of an inline context if its width is
     /// not known when it is first measured.
     pub fallback_line_width: f32,
