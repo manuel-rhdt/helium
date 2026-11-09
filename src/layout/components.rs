@@ -3,7 +3,7 @@ use specs::{Component, DenseVecStorage, Entity, NullStorage, World};
 use std::collections::HashMap;
 
 use super::text::font::GlyphIndex;
-use crate::style::properties::computed::{ComputedValues, PixelLength};
+use crate::style::properties::computed::{ComputedValues, GenericSize, PixelLength};
 use lemon_pdf::font::FontUnit;
 use lemon_pdf_derive::PdfFormat;
 
@@ -188,6 +188,28 @@ impl Default for TableCellSpan {
 }
 
 impl Component for TableCellSpan {
+    type Storage = DenseVecStorage<Self>;
+}
+
+/// The `<col>` and `<colgroup>` elements of a table, in column order.
+///
+/// Columns do not generate boxes, so they are not part of the box tree; their widths are
+/// recorded here when the table is built and used to size the table's columns.
+#[derive(Debug, Clone, Default)]
+pub struct TableColumns {
+    pub columns: Vec<TableColumn>,
+}
+
+/// One `<col>`, or a `<colgroup>` without `<col>` children: the columns it covers and its width.
+#[derive(Debug, Copy, Clone)]
+pub struct TableColumn {
+    /// The number of columns the element covers (its `span` attribute).
+    pub span: u16,
+    /// The `width` of the element, which is a minimum width for the columns it covers.
+    pub width: Option<GenericSize>,
+}
+
+impl Component for TableColumns {
     type Storage = DenseVecStorage<Self>;
 }
 
