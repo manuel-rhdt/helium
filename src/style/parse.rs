@@ -148,8 +148,11 @@ impl MarginBoxKind {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum CounterStyle {
     Decimal,
+    DecimalLeadingZero,
     LowerRoman,
     UpperRoman,
+    LowerAlpha,
+    UpperAlpha,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -400,9 +403,19 @@ fn parse_content<'i>(
                         let style = input.expect_ident()?.clone();
                         match_ignore_ascii_case! { &style,
                             "decimal" => CounterStyle::Decimal,
+                            "decimal-leading-zero" => CounterStyle::DecimalLeadingZero,
                             "lower-roman" => CounterStyle::LowerRoman,
                             "upper-roman" => CounterStyle::UpperRoman,
-                            _ => return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) }),
+                            "lower-alpha" => CounterStyle::LowerAlpha,
+                            "lower-latin" => CounterStyle::LowerAlpha,
+                            "upper-alpha" => CounterStyle::UpperAlpha,
+                            "upper-latin" => CounterStyle::UpperAlpha,
+                            // an unsupported style must not remove the whole margin box: fall
+                            // back to decimal, which is what the CSS spec prescribes
+                            _ => {
+                                warn!("Unsupported counter style {:?}, using decimal instead", &*style);
+                                CounterStyle::Decimal
+                            }
                         }
                     } else {
                         CounterStyle::Decimal
@@ -411,7 +424,17 @@ fn parse_content<'i>(
                 })?;
                 items.push(item);
             }
-            _token => return Err(ParseError::unexpected_token()),
+            // `string()`, `attr()` and other functions are not supported; skip one item rather
+            // than dropping the whole declaration
+            cssparser::Token::Function(ref name) => {
+                input.parse_nested_block(|input| {
+                    // consume the arguments: `parse_nested_block` fails if anything is left over
+                    while input.next_including_whitespace_and_comments().is_ok() {}
+                    Ok::<_, ParseError<StyleParseError>>(())
+                })?;
+                warn!("Unsupported content function {:?}, ignoring it", name);
+            }
+            _ => warn!("Unsupported value in `content`, ignoring it"),
         }
     }
     Ok(items)

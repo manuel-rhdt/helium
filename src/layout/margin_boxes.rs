@@ -90,13 +90,34 @@ fn roman(mut n: usize) -> String {
     result
 }
 
+/// `a`, `b`, … `z`, `aa`, `ab`, … — the `lower-alpha` counter style.
+fn alphabetic(mut n: usize) -> String {
+    const LETTERS: &[u8; 26] = b"abcdefghijklmnopqrstuvwxyz";
+    let mut result = Vec::new();
+    while n > 0 {
+        n -= 1;
+        result.push(LETTERS[n % 26]);
+        n /= 26;
+    }
+    result.reverse();
+    String::from_utf8(result).expect("the alphabet is valid UTF-8")
+}
+
 fn format_counter(value: usize, style: CounterStyle) -> String {
     match style {
         CounterStyle::Decimal => value.to_string(),
-        // roman numerals cannot represent 0 (the counter style falls back to decimal)
+        // `decimal-leading-zero` pads to at least two digits: 01, 02, … 10
+        CounterStyle::DecimalLeadingZero => format!("{value:02}"),
+        // roman numerals cannot represent 0, and the alphabetic styles start at 1; both fall
+        // back to decimal for smaller values
         CounterStyle::LowerRoman if value > 0 => roman(value),
         CounterStyle::UpperRoman if value > 0 => roman(value).to_uppercase(),
-        CounterStyle::LowerRoman | CounterStyle::UpperRoman => value.to_string(),
+        CounterStyle::LowerAlpha if value > 0 => alphabetic(value),
+        CounterStyle::UpperAlpha if value > 0 => alphabetic(value).to_uppercase(),
+        CounterStyle::LowerRoman
+        | CounterStyle::UpperRoman
+        | CounterStyle::LowerAlpha
+        | CounterStyle::UpperAlpha => value.to_string(),
     }
 }
 
@@ -229,6 +250,60 @@ mod test {
             ContentItem::Counter(CounterName::Pages, CounterStyle::LowerRoman),
         ];
         assert_eq!(content_text(&content, 2, 14), "Page 2 of xiv");
+    }
+
+    #[test]
+    fn counters_are_formatted_in_every_style() {
+        let format = |style, value| {
+            content_text(&[ContentItem::Counter(CounterName::Page, style)], value, 1)
+        };
+
+        assert_eq!(format(CounterStyle::Decimal, 1), "1");
+        assert_eq!(format(CounterStyle::DecimalLeadingZero, 1), "01");
+        assert_eq!(format(CounterStyle::DecimalLeadingZero, 27), "27");
+        assert_eq!(format(CounterStyle::LowerRoman, 4), "iv");
+        assert_eq!(format(CounterStyle::UpperRoman, 4), "IV");
+        assert_eq!(format(CounterStyle::LowerAlpha, 1), "a");
+        assert_eq!(format(CounterStyle::UpperAlpha, 1), "A");
+        // past z the alphabetic styles continue with aa, ab, …
+        assert_eq!(format(CounterStyle::LowerAlpha, 26), "z");
+        assert_eq!(format(CounterStyle::LowerAlpha, 27), "aa");
+        // roman numerals and letters start at 1, so 0 falls back to decimal
+        assert_eq!(format(CounterStyle::LowerRoman, 0), "0");
+        assert_eq!(format(CounterStyle::LowerAlpha, 0), "0");
+    }
+
+    #[test]
+    fn unsupported_counter_styles_fall_back_to_decimal() {
+        let mut styles = Styles::default();
+        styles.parse_css(
+            "@page { @bottom-center { content: counter(page, lower-greek) \" / \" counter(pages) } }",
+        );
+        let rule = styles.rules_iter().last().unwrap();
+        assert_eq!(
+            rule.margin_boxes[0].content,
+            Some(vec![
+                ContentItem::Counter(CounterName::Page, CounterStyle::Decimal),
+                ContentItem::String(" / ".into()),
+                ContentItem::Counter(CounterName::Pages, CounterStyle::Decimal),
+            ])
+        );
+    }
+
+    #[test]
+    fn unsupported_content_functions_keep_the_rest_of_the_footer() {
+        let mut styles = Styles::default();
+        styles.parse_css(
+            "@page { @bottom-center { content: \"p. \" counter(page) string(chapter) attr(class) } }",
+        );
+        let rule = styles.rules_iter().last().unwrap();
+        assert_eq!(
+            rule.margin_boxes[0].content,
+            Some(vec![
+                ContentItem::String("p. ".into()),
+                ContentItem::Counter(CounterName::Page, CounterStyle::Decimal),
+            ])
+        );
     }
 
     #[test]
