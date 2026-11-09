@@ -4,8 +4,9 @@
 //!
 //! * the cells become the grid items, each placed at the row and column it has in the table
 //!   (with its `colspan` and `rowspan`);
-//! * there is one track per row and column; the `width` of the cells becomes the size of their
-//!   column and the `height` of the rows and cells the size of their row;
+//! * there is one track per row and column; the `width` of the cells and of the `<col>` elements
+//!   that cover a column becomes its size, and the `height` of the rows and cells the size of
+//!   their row;
 //! * `border-spacing` becomes the gap between the tracks, and an empty track at each edge puts
 //!   the spacing between the outermost cells and the border of the table as well;
 //! * captions are grid items that span all columns in rows of their own above the cells.
@@ -14,8 +15,8 @@
 //! tracks they span (see [`HeliumTree::place_table_parts`]), and the cells are moved to be
 //! relative to the row they are in, so the rest of the layout sees an ordinary box tree.
 //!
-//! Not supported yet: `vertical-align` in cells (their contents are at the top), columns
-//! (`<col>`), `table-layout: fixed` and `caption-side`. Grid tracks share extra width equally
+//! Not supported yet: `vertical-align` in cells (their contents are at the top),
+//! `table-layout: fixed` and `caption-side`. Grid tracks share extra width equally
 //! instead of in proportion to their contents. `border-collapse: collapse` is resolved in
 //! [`super::collapse`].
 //!
@@ -350,6 +351,30 @@ impl HeliumTree<'_, '_> {
                     row_tracks[row] = row_tracks[row].max(height + extras.height);
                 }
             }
+        }
+
+        // The widths of `<col>` and `<colgroup>` (CSS 2.1, 17.5.2.2): a column is at least as
+        // wide as the column element that covers it; its cells can still make it wider.
+        let table_columns = self
+            .table_columns
+            .get(self.node(table).entity)
+            .cloned()
+            .unwrap_or_default();
+        let mut index = 0;
+        for column in table_columns.columns {
+            let span = usize::from(column.span.max(1));
+            for track in column_tracks.iter_mut().skip(index).take(span) {
+                match column.width {
+                    Some(GenericSize::LengthPercentage(LengthPercentage::PixelLength(px))) => {
+                        track.length = Some(track.length.unwrap_or(0.0).max(px.0));
+                    }
+                    Some(GenericSize::LengthPercentage(LengthPercentage::Percentage(percent))) => {
+                        track.percent = Some(track.percent.unwrap_or(0.0).max(percent.0));
+                    }
+                    _ => {}
+                }
+            }
+            index += span;
         }
 
         // the grid lines of the first row and column (1-based, after the empty tracks)

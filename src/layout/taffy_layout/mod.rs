@@ -23,7 +23,7 @@ use taffy::tree::NodeId;
 
 use crate::layout::components::{
     AbsoluteGroup, AbsoluteGroups, BlockLevelElement, Decoration, EdgeValues, IntrinsicSize,
-    Position, TableCellSpan, TextList, TextRun, ZIndex,
+    Position, TableCellSpan, TableColumns, TextList, TextRun, ZIndex,
 };
 use crate::layout::inline::InlineFormattingContext;
 use crate::layout::inline_size::decoration_colors;
@@ -52,6 +52,7 @@ impl TaffyBlockLayout {
         world.register::<InlineFormattingContext>();
         world.register::<TextRun>();
         world.register::<TableCellSpan>();
+        world.register::<TableColumns>();
         world.entry::<TextList>().or_insert_with(Default::default);
         world
             .entry::<AbsoluteGroups>()
@@ -64,6 +65,7 @@ impl TaffyBlockLayout {
         let mut intrinsic_sizes = world.write_storage::<IntrinsicSize>();
         let text_runs = world.read_storage::<TextRun>();
         let table_spans = world.read_storage::<TableCellSpan>();
+        let table_columns = world.read_storage::<TableColumns>();
 
         let content_width = (self.page_width - self.margin.left - self.margin.right).0;
         let icb_height = (self.page_height - self.margin.top - self.margin.bottom)
@@ -77,6 +79,7 @@ impl TaffyBlockLayout {
             intrinsic_sizes: &mut intrinsic_sizes,
             text_runs: &text_runs,
             table_spans: &table_spans,
+            table_columns: &table_columns,
             fallback_line_width: content_width.max(0.0),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);

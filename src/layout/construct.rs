@@ -6,7 +6,8 @@ use super::{FontMap, text::Font};
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, Styles};
 use crate::style::properties::computed::{
-    ComputedValues, Display, LineHeight, PositionSpec, StyleBuilder, TextAlign, color_to_rgba,
+    ComputedValues, Display, GenericSize, LineHeight, PositionSpec, StyleBuilder, TextAlign,
+    color_to_rgba,
 };
 use crate::style::properties::specified::{MathFamily, PropertyDeclaration, Text};
 use crate::traverse::Traversal;
@@ -228,6 +229,24 @@ impl Traversal<DomRef> for FlowConstructor {
             ParsedData::Element(_) => self.entity_constructor.build_formatting_context(&node),
             _ => {}
         }
+        // A table's columns do not generate boxes, so their widths are recorded here, where the
+        // table's entity exists and its `<col>` children have their styles.
+        let is_table = NodeData::style(&node)
+            .map(|style| style.box_.display == Display::Table)
+            .unwrap_or(false);
+        let Some(LayoutEntity(entity)) = node.layout_entity() else {
+            return;
+        };
+        if is_table {
+            let columns = table_columns(&node);
+            if !columns.columns.is_empty() {
+                self.entity_constructor
+                    .world
+                    .write_storage::<components::TableColumns>()
+                    .insert(entity, columns)
+                    .unwrap();
+            }
+        }
     }
 }
 
@@ -249,6 +268,63 @@ fn table_cell_span(element_data: &ElementData) -> Option<components::TableCellSp
         columns: columns.unwrap_or(1).clamp(1, 1000) as u16,
         rows: rows.unwrap_or(1).min(65534) as u16,
     })
+}
+
+/// The `<col>` and `<colgroup>` children of a table, in column order.
+/// https://html.spec.whatwg.org/multipage/tables.html#the-colgroup-element
+fn table_columns(table: &DomRef) -> components::TableColumns {
+    /// The `span` attribute, clamped to the range HTML allows.
+    fn span(element_data: &ElementData) -> u16 {
+        let attributes = element_data.attributes.borrow();
+        attributes
+            .get(&QualName::new(None, ns!(), local_name!("span")))
+            .and_then(|attribute| attribute.value.trim().parse::<u32>().ok())
+            .unwrap_or(1)
+            .clamp(1, 1000) as u16
+    }
+
+    /// The `width` of a column element; `auto` and percentages of unknown size are skipped.
+    fn width(style: Option<ComputedValues>) -> Option<GenericSize> {
+        match style?.position.width {
+            GenericSize::Auto => None,
+            width => Some(width),
+        }
+    }
+
+    fn collect(
+        children: impl Iterator<Item = DomRef>,
+        group_width: Option<GenericSize>,
+        columns: &mut Vec<components::TableColumn>,
+    ) {
+        for child in children {
+            let Some(style) = NodeData::style(&child) else {
+                continue;
+            };
+            let display = style.box_.display;
+            if !display.is_table_column() {
+                continue;
+            }
+            let ParsedData::Element(element_data) = child.html_data() else {
+                continue;
+            };
+            let span = span(element_data);
+            let width = width(Some(style)).or(group_width);
+            if display == Display::TableColumnGroup {
+                // a group without `<col>` children covers its own columns
+                let count = columns.len();
+                collect(TreeLinked::children(&child), width, columns);
+                if columns.len() == count {
+                    columns.push(components::TableColumn { span, width });
+                }
+            } else {
+                columns.push(components::TableColumn { span, width });
+            }
+        }
+    }
+
+    let mut columns = vec![];
+    collect(TreeLinked::children(table), None, &mut columns);
+    components::TableColumns { columns }
 }
 
 pub trait AssignLayoutEntity {
@@ -356,6 +432,7 @@ impl EntityConstructor {
         world.register::<components::Decoration>();
         world.register::<MathNode>();
         world.register::<components::TableCellSpan>();
+        world.register::<components::TableColumns>();
         world.insert(FontMap::new());
         world.insert(RootNode(None));
         EntityConstructor {
