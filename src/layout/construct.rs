@@ -432,6 +432,7 @@ impl EntityConstructor {
         world.register::<components::Decoration>();
         world.register::<MathNode>();
         world.register::<components::TableCellSpan>();
+        world.register::<components::TableColumns>();
         world.insert(FontMap::new());
         world.insert(RootNode(None));
         EntityConstructor {
