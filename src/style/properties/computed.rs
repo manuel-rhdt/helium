@@ -119,6 +119,7 @@ impl PixelLength {
             Unit::Px => Self(val),
             Unit::Cm => Self::from_val_unit(val / 2.54, Unit::In, font_size),
             Unit::Pt => Self::from_pt(val),
+            Unit::Pc => Self::from_val_unit(val * 12.0, Unit::Pt, font_size),
             Unit::Em => val * font_size,
             Unit::Mm => Self::from_val_unit(0.1 * val, Unit::Cm, font_size),
             Unit::In => Self::from_val_unit(val * 72.0, Unit::Pt, font_size),
