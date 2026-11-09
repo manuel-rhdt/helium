@@ -107,6 +107,47 @@ address {
   font-style: italic;
 }
 
+/* A horizontal rule is a 1px border at the top and bottom of an empty box, which abut and read as
+ * a 2px line. https://html.spec.whatwg.org/multipage/rendering.html#the-hr-element-2 */
+hr {
+  border-color: #808080;
+  border-style: solid;
+  border-width: 1px 0;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+/* Form controls are drawn as small boxes that keep their text on a line of its own. */
+input,
+select,
+textarea,
+button {
+  display: inline-block;
+  background: #f0f0f0;
+  border-color: #767676;
+  border-style: solid;
+  border-width: 1px;
+  padding: 1px 4px;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  background: transparent;
+  border-style: none;
+  padding: 0 2px;
+}
+
+input[type="hidden"] {
+  display: none;
+}
+
+/* `<details>` collapses its content into the summary; without scripting there is nothing to
+ * toggle, so the summary and the content are both blocks. */
+details,
+summary {
+  display: block;
+}
+
 dir,
 dd,
 dl,
