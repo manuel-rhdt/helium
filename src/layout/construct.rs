@@ -312,7 +312,7 @@ fn table_columns(table: &DomRef) -> components::TableColumns {
             if display == Display::TableColumnGroup {
                 // a group without `<col>` children covers its own columns
                 let count = columns.len();
-                collect(child.children(), width, columns);
+                collect(TreeLinked::children(&child), width, columns);
                 if columns.len() == count {
                     columns.push(components::TableColumn { span, width });
                 }
@@ -323,7 +323,7 @@ fn table_columns(table: &DomRef) -> components::TableColumns {
     }
 
     let mut columns = vec![];
-    collect(table.children(), None, &mut columns);
+    collect(TreeLinked::children(table), None, &mut columns);
     components::TableColumns { columns }
 }
 
