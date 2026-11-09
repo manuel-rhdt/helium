@@ -320,6 +320,45 @@ fn table_cell_span(element_data: &ElementData) -> Option<components::TableCellSp
     })
 }
 
+/// The text a replaced element shows: the `value` of an `<input>`, or the state of a checkbox or
+/// radio button. Only `<input>` is handled; a renderer without widgets has nothing else to show.
+fn replaced_element_text<'a>(node: &'a impl AbstractNode<'a>) -> Option<String> {
+    let ParsedData::Element(element_data) = node.html_data() else {
+        return None;
+    };
+    if element_data.name != QualName::new(None, ns!(html), local_name!("input")) {
+        return None;
+    }
+
+    let attributes = element_data.attributes.borrow();
+    let has = |name| {
+        attributes
+            .get(&QualName::new(None, ns!(), name))
+            .is_some()
+    };
+    let value = || {
+        attributes
+            .get(&QualName::new(None, ns!(), local_name!("value")))
+            .map(|attribute| attribute.value.to_string())
+    };
+    let kind = attributes
+        .get(&QualName::new(None, ns!(), local_name!("type")))
+        .map(|attribute| attribute.value.to_ascii_lowercase())
+        .unwrap_or_else(|| "text".into());
+
+    Some(match kind.as_str() {
+        // U+2610 and U+2611, the glyphs a font fallback is chosen for
+        "checkbox" | "radio" => {
+            if has(local_name!("checked")) {
+                "\u{2611}".into()
+            } else {
+                "\u{2610}".into()
+            }
+        }
+        _ => value().unwrap_or_default(),
+    })
+}
+
 /// The `<col>` and `<colgroup>` children of a table, in column order.
 /// https://html.spec.whatwg.org/multipage/tables.html#the-colgroup-element
 fn table_columns(table: &DomRef) -> components::TableColumns {
@@ -847,6 +886,12 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_block_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+        // An `<input>` has no children: the text it shows comes from its attributes. It has to be
+        // built before the storages below borrow the world.
+        let replaced_text = replaced_element_text(node)
+            .filter(|_| node.children().next().is_none())
+            .map(|text| self.build_text_entity(node.style(), &text).0);
+
         let entities = self.world.entities();
         let mut block_formatting_contexts = self.world.write_storage::<BlockFormattingContext>();
         let mut inline_formatting_contexts = self.world.write_storage::<InlineFormattingContext>();
@@ -879,6 +924,11 @@ impl EntityConstructor {
             .any(|elem| !matches!(elem, BlockLevelElement::Absolute(_)));
         if !has_block_level_elements {
             // no block-level elements were found, so we create a inline_formatting_context
+            if inline_level_elements.is_empty()
+                && let Some(text) = replaced_text
+            {
+                inline_level_elements.push(text);
+            }
             let absolutes = block_level_elements
                 .iter()
                 .map(|elem| elem.entity())
