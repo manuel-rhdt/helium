@@ -174,6 +174,10 @@ impl<'a> IterChildren<'a> for &'a Node {
     fn previous_sibling(&self) -> Option<Self> {
         None
     }
+
+    fn parent_node(&self) -> Option<Self> {
+        None
+    }
 }
 
 /// Create a block-level html element.
