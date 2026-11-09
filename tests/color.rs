@@ -59,6 +59,37 @@ fn nested_element_overrides_color() {
     assert_eq!(text_colors(&dump).len(), 3, "{:?}", text_colors(&dump));
 }
 
+/// Assert that `actual` (an `[r, g, b, a]` array from the dump) is `expected` within `tolerance`.
+fn assert_color(actual: &Value, expected: [u8; 4], tolerance: i32, what: &str) {
+    let channels = actual.as_array().unwrap();
+    for (i, want) in expected.iter().enumerate() {
+        let got = channels[i].as_u64().unwrap() as i32;
+        assert!(
+            (got - *want as i32).abs() <= tolerance,
+            "{what}: channel {i} is {got}, expected {want} ({actual:?})"
+        );
+    }
+}
+
+#[test]
+fn modern_colour_spaces_render_as_srgb() {
+    // all of these are sRGB red
+    let spaces = [
+        ("oklch", "oklch(62.8% 0.2577 29.23)"),
+        ("oklab", "oklab(62.8% 0.2249 0.1258)"),
+        ("lab", "lab(54.288 80.798 69.879)"),
+        ("lch", "lch(54.288 106.824 40.855)"),
+        ("color-srgb", "color(srgb 1 0 0)"),
+        ("color-xyz", "color(xyz-d65 0.4124 0.2126 0.0193)"),
+    ];
+    for (name, value) in spaces {
+        let dump = dump(name, &format!(r#"<p style="color: {value}">x</p>"#));
+        let colors = text_colors(&dump);
+        assert_eq!(colors.len(), 1, "{name}: {colors:?}");
+        assert_color(&colors[0], [255, 0, 0, 255], 2, name);
+    }
+}
+
 #[test]
 fn border_defaults_to_current_color() {
     let dump = dump(
