@@ -94,3 +94,57 @@ fn ordered_list_numbers_its_items() {
         .collect();
     assert_eq!(glyphs.len(), 4, "{:?}", glyphs);
 }
+
+/// The glyph runs of the list markers of the only list in the document, in document order.
+fn markers(dump: &Value) -> Vec<String> {
+    let items = find(&dump["document"], "l").unwrap()["children"]
+        .as_array()
+        .unwrap();
+    let left = items[0]["border_box"]["x"].as_f64().unwrap();
+    let mut runs: Vec<(f64, f64, String)> = dump["paint"]["text"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|run| run["x"].as_f64().unwrap() < left)
+        .map(|run| {
+            (
+                run["y"].as_f64().unwrap(),
+                run["x"].as_f64().unwrap(),
+                run["ops"].to_string(),
+            )
+        })
+        .collect();
+    runs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    runs.into_iter().map(|(_, _, ops)| ops).collect()
+}
+
+#[test]
+fn ordered_list_honours_the_start_attribute() {
+    let started = dump(
+        "ol_start",
+        r#"<style>body { margin: 0 }</style><ol id="l" start="5"><li>a</li><li>b</li></ol>"#,
+    );
+    let plain = dump(
+        "ol_plain6",
+        r#"<style>body { margin: 0 }</style><ol id="l"><li>a</li><li>b</li><li>c</li><li>d</li><li>e</li><li>f</li></ol>"#,
+    );
+    // `start="5"` numbers like the fifth and sixth item of a list that starts at one
+    assert_eq!(markers(&started), markers(&plain)[4..6]);
+}
+
+#[test]
+fn list_item_value_restarts_the_numbering() {
+    let restarted = dump(
+        "li_value",
+        r#"<style>body { margin: 0 }</style><ol id="l"><li>a</li><li value="9">b</li><li>c</li></ol>"#,
+    );
+    let plain = dump(
+        "ol_plain10",
+        r#"<style>body { margin: 0 }</style><ol id="l"><li>a</li><li>b</li><li>c</li><li>d</li><li>e</li><li>f</li><li>g</li><li>h</li><li>i</li><li>j</li></ol>"#,
+    );
+    let plain = markers(&plain);
+    assert_eq!(
+        markers(&restarted),
+        vec![plain[0].clone(), plain[8].clone(), plain[9].clone()]
+    );
+}

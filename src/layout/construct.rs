@@ -231,6 +231,56 @@ impl Traversal<DomRef> for FlowConstructor {
     }
 }
 
+/// The number shown next to a list item: `<ol start>` sets the first number and `<li value>`
+/// restarts the count at that item.
+/// https://html.spec.whatwg.org/multipage/grouping-content.html#the-ol-element
+fn list_item_ordinal<'a, N: AbstractNode<'a>>(node: &N) -> i64 {
+    /// The value of an attribute, if it is a valid HTML integer.
+    fn integer(element_data: &ElementData, name: html5ever::LocalName) -> Option<i64> {
+        let attributes = element_data.attributes.borrow();
+        let attribute = attributes.get(&QualName::new(None, ns!(), name))?;
+        attribute.value.trim().parse::<i64>().ok()
+    }
+    fn is_li(data: &ElementData) -> bool {
+        data.name == QualName::new(None, ns!(html), local_name!("li"))
+    }
+
+    // An `<ol>` numbers from its `start` attribute; a list item that is not in an ordered list
+    // gets no number of its own (its marker does not use one).
+    let start = match node.parent_node() {
+        Some(parent) => match parent.html_data() {
+            ParsedData::Element(data)
+                if data.name == QualName::new(None, ns!(html), local_name!("ol")) =>
+            {
+                integer(data, local_name!("start")).unwrap_or(1)
+            }
+            _ => 1,
+        },
+        None => 1,
+    };
+
+    // Run the count over the preceding list items in document order.
+    let mut preceding = vec![];
+    let mut previous = node.previous_sibling();
+    while let Some(sibling) = previous {
+        previous = sibling.previous_sibling();
+        preceding.push(sibling);
+    }
+    let mut ordinal = start;
+    for sibling in preceding.into_iter().rev() {
+        if let ParsedData::Element(data) = sibling.html_data() {
+            if is_li(data) {
+                ordinal = integer(data, local_name!("value")).unwrap_or(ordinal) + 1;
+            }
+        }
+    }
+
+    match node.html_data() {
+        ParsedData::Element(data) => integer(data, local_name!("value")).unwrap_or(ordinal),
+        _ => ordinal,
+    }
+}
+
 /// The `colspan` and `rowspan` attributes of a table cell, if it has any.
 /// https://html.spec.whatwg.org/multipage/tables.html#attributes-common-to-td-and-th-elements
 fn table_cell_span(element_data: &ElementData) -> Option<components::TableCellSpan> {
@@ -292,6 +342,7 @@ pub trait IterChildren<'a>: Sized {
 
     fn next_sibling(&self) -> Option<Self>;
     fn previous_sibling(&self) -> Option<Self>;
+    fn parent_node(&self) -> Option<Self>;
 }
 
 impl<'a> IterChildren<'a> for DomRef {
@@ -306,6 +357,10 @@ impl<'a> IterChildren<'a> for DomRef {
 
     fn previous_sibling(&self) -> Option<Self> {
         crate::tree::TreeLinked::previous_sibling(&self)
+    }
+
+    fn parent_node(&self) -> Option<Self> {
+        crate::tree::TreeLinked::parent(&self)
     }
 }
 
@@ -418,18 +473,7 @@ impl EntityConstructor {
                 let is_list_item =
                     element_data.name == QualName::new(None, ns!(html), local_name!("li"));
                 let ordinal = if is_list_item {
-                    // the number of `li` siblings up to and including this one
-                    let mut count = 1;
-                    let mut sibling = node.previous_sibling();
-                    while let Some(s) = sibling {
-                        if let ParsedData::Element(data) = s.html_data() {
-                            if data.name == QualName::new(None, ns!(html), local_name!("li")) {
-                                count += 1;
-                            }
-                        }
-                        sibling = s.previous_sibling();
-                    }
-                    count
+                    list_item_ordinal(&node)
                 } else {
                     0
                 };

@@ -1260,7 +1260,8 @@ impl Default for ListStyleType {
 
 impl ListStyleType {
     /// The text of the marker of the `ordinal`th (1-based) list item, without any spacing.
-    pub fn marker_text(self, ordinal: usize) -> Option<String> {
+    /// The ordinal can be zero or negative when `<li value>` or a negative `<ol start>` says so.
+    pub fn marker_text(self, ordinal: i64) -> Option<String> {
         fn alpha(mut n: usize, first: u8) -> String {
             let mut letters = vec![];
             while n > 0 {
@@ -1303,11 +1304,11 @@ impl ListStyleType {
             ListStyleType::None => return None,
             // roman numerals and letters are only defined for positive numbers
             ListStyleType::Decimal => format!("{}.", ordinal),
-            _ if ordinal == 0 => format!("{}.", ordinal),
-            ListStyleType::LowerAlpha => format!("{}.", alpha(ordinal, b'a')),
-            ListStyleType::UpperAlpha => format!("{}.", alpha(ordinal, b'A')),
-            ListStyleType::LowerRoman => format!("{}.", roman(ordinal).to_lowercase()),
-            ListStyleType::UpperRoman => format!("{}.", roman(ordinal)),
+            _ if ordinal <= 0 => format!("{}.", ordinal),
+            ListStyleType::LowerAlpha => format!("{}.", alpha(ordinal as usize, b'a')),
+            ListStyleType::UpperAlpha => format!("{}.", alpha(ordinal as usize, b'A')),
+            ListStyleType::LowerRoman => format!("{}.", roman(ordinal as usize).to_lowercase()),
+            ListStyleType::UpperRoman => format!("{}.", roman(ordinal as usize)),
         })
     }
 }
