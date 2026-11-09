@@ -842,6 +842,12 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_block_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+        // An `<input>` has no children: the text it shows comes from its attributes. It has to be
+        // built before the storages below borrow the world.
+        let replaced_text = replaced_element_text(node)
+            .filter(|_| node.children().next().is_none())
+            .map(|text| self.build_text_entity(node.style(), &text).0);
+
         let entities = self.world.entities();
         let mut block_formatting_contexts = self.world.write_storage::<BlockFormattingContext>();
         let mut inline_formatting_contexts = self.world.write_storage::<InlineFormattingContext>();
@@ -875,11 +881,9 @@ impl EntityConstructor {
         if !has_block_level_elements {
             // no block-level elements were found, so we create a inline_formatting_context
             if inline_level_elements.is_empty()
-                && let Some(text) = replaced_element_text(node)
+                && let Some(text) = replaced_text
             {
-                // an `<input>` has no children: the text it shows comes from its attributes
-                let text_entity = self.build_text_entity(style.clone(), &text);
-                inline_level_elements.push(text_entity.0);
+                inline_level_elements.push(text);
             }
             let absolutes = block_level_elements
                 .iter()
