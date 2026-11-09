@@ -417,6 +417,28 @@ fn parse_content<'i>(
     Ok(items)
 }
 
+/// Whether any component of a margin declaration is `auto`.
+fn has_auto_margin(declaration: &PropertyDeclaration) -> bool {
+    use super::properties::specified::{AutoOrQuantityOrPercentage, Position};
+
+    fn is_auto(value: &AutoOrQuantityOrPercentage) -> bool {
+        matches!(value, AutoOrQuantityOrPercentage::Auto)
+    }
+
+    match declaration {
+        PropertyDeclaration::Position(Position::Margin(list)) => {
+            list.elements().iter().any(is_auto)
+        }
+        PropertyDeclaration::Position(
+            Position::MarginTop(value)
+            | Position::MarginBottom(value)
+            | Position::MarginLeft(value)
+            | Position::MarginRight(value),
+        ) => is_auto(value),
+        _ => false,
+    }
+}
+
 struct PageBodyParser;
 
 impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
@@ -430,10 +452,18 @@ impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
         _declaration_start: &ParserState,
     ) -> Result<Self::Declaration, ParseError<Self::Error>> {
         if name.eq_ignore_ascii_case("content") {
-            Ok(PageBodyItem::Content(parse_content(input)?))
-        } else {
-            parse_property(name, input).map(PageBodyItem::Declaration)
+            return Ok(PageBodyItem::Content(parse_content(input)?));
         }
+        let declaration = parse_property(name, input)?;
+        // `auto` is not a valid page margin (CSS Paged Media 3, § 7.1). It would resolve to a
+        // margin of zero and silently remove the page margin, so the declaration is rejected and
+        // the default margin from the user agent stylesheet stays in effect.
+        if has_auto_margin(&declaration) {
+            return Err(ParseError {
+                kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue),
+            });
+        }
+        Ok(PageBodyItem::Declaration(declaration))
     }
 }
 
