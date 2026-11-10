@@ -481,6 +481,15 @@ pub enum TextOperator {
         x_offset: PixelLength,
         leading: PixelLength,
     },
+    /// The place of an atomic inline (a formula) whose own [`Paragraph`] is painted here, so
+    /// that the content stream follows the logical order of the text. The embedded operators
+    /// position their glyphs absolutely; afterwards the text line matrix is set back to `(x, y)`
+    /// (absolute) and the font and color are set again by the operators that follow.
+    Embed {
+        entity: specs::Entity,
+        x: PixelLength,
+        y: PixelLength,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -317,6 +317,11 @@ fn op_json(op: &TextOperator) -> String {
             number(x_offset.0),
             number(leading.0)
         ),
+        TextOperator::Embed { x, y, .. } => format!(
+            "{{\"op\": \"embed\", \"x\": {}, \"y\": {}}}",
+            number(x.0),
+            number(y.0)
+        ),
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::layout::components::{
-    Decoration, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, VectorGraphics,
-    ZIndex,
+    Decoration, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
+    TransformMatrix, VectorGraphics, ZIndex,
 };
 use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{PixelLength, RGBA};
@@ -322,12 +322,92 @@ impl<'a> System<'a> for DisplayText {
         ReadStorage<'a, Paragraph>,
     );
 
+    /// Paints the paragraphs of the page in the logical order of their content (the order of
+    /// the structure tree), so that extractors that follow the content stream read the text in
+    /// order. Formulas inside a line are painted where they appear in it (see
+    /// [`TextOperator::Embed`]).
     fn run(&mut self, (entities, positions, paragraphs): Self::SystemData) {
-        for (entity, pos, paragraph, _) in (&entities, &positions, &paragraphs, &self.bitset).join()
-        {
+        let on_page: Vec<(Entity, &Position, &Paragraph)> =
+            (&entities, &positions, &paragraphs, &self.bitset)
+                .join()
+                .map(|(entity, pos, paragraph, _)| (entity, pos, paragraph))
+                .collect();
+
+        let embedded: std::collections::HashSet<Entity> = on_page
+            .iter()
+            .flat_map(|(_, _, paragraph)| paragraph.ops.iter())
+            .filter_map(|op| match op {
+                TextOperator::Embed { entity, .. } => Some(*entity),
+                _ => None,
+            })
+            .collect();
+
+        let mut ordered: Vec<(Option<(u32, u32)>, Entity, &Position, Paragraph)> = on_page
+            .iter()
+            .filter(|(entity, _, _)| !embedded.contains(entity))
+            .map(|&(entity, pos, paragraph)| {
+                let paragraph = resolve_embeds(paragraph, &paragraphs, &self.bitset);
+                (logical_position(&paragraph), entity, pos, paragraph)
+            })
+            .collect();
+        // content without a tag (artifacts like running headers) first, in their old order
+        ordered.sort_by_key(|(key, ..)| *key);
+
+        for (_, entity, pos, paragraph) in ordered {
+            // The z of a box is its depth in the box tree. Like the inline content of a stacking
+            // context in CSS (CSS 2.1 appendix E), the text goes over the backgrounds and borders
+            // of all boxes, in tree order rather than by depth. The page margin boxes are a
+            // layer of their own on top.
+            let z = if pos.z == ZIndex(i64::MAX) {
+                pos.z
+            } else {
+                ZIndex(i64::MAX - 1)
+            };
             self.display_list
-                .append(DisplayItem::Paragraph(paragraph.clone()), entity, pos.z)
+                .append(DisplayItem::Paragraph(paragraph), entity, z)
         }
+    }
+}
+
+/// The content slot and offset of the first tagged content of a paragraph.
+fn logical_position(paragraph: &Paragraph) -> Option<(u32, u32)> {
+    paragraph.ops.iter().find_map(|op| match op {
+        TextOperator::BeginTag(tag) => Some((tag.slot, tag.offset)),
+        _ => None,
+    })
+}
+
+/// Replaces the [`TextOperator::Embed`] placeholders of a paragraph by the operators of the
+/// embedded paragraphs.
+fn resolve_embeds(
+    paragraph: &Paragraph,
+    paragraphs: &ReadStorage<Paragraph>,
+    page: &specs::BitSet,
+) -> Paragraph {
+    if !paragraph
+        .ops
+        .iter()
+        .any(|op| matches!(op, TextOperator::Embed { .. }))
+    {
+        return paragraph.clone();
+    }
+    let mut ops = Vec::with_capacity(paragraph.ops.len());
+    for op in &paragraph.ops {
+        match op {
+            &TextOperator::Embed { entity, x, y } => {
+                if page.contains(entity.id()) {
+                    if let Some(embedded) = paragraphs.get(entity) {
+                        ops.extend(embedded.ops.iter().cloned());
+                    }
+                }
+                ops.push(TextOperator::SetTransform(TransformMatrix::translation(x, y)));
+            }
+            op => ops.push(op.clone()),
+        }
+    }
+    Paragraph {
+        start_pos: paragraph.start_pos,
+        ops,
     }
 }
 
