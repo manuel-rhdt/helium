@@ -313,6 +313,13 @@ impl LayoutMathGlyphs {
                         let _ = font.advance(glyph_index);
                         para.ops
                             .push(TextOperator::Glyphs(Glyphs(vec![glyph_index])));
+                        // the pieces of a stretched operator have no text of their own
+                        if let Some(text) = text {
+                            font.to_unicode_fallback
+                                .lock()
+                                .entry(glyph_index)
+                                .or_insert_with(|| text.to_owned());
+                        }
 
                         if let Some(text) = text {
                             if glyph.cluster != previous_cluster {

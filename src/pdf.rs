@@ -94,6 +94,16 @@ pub fn write_pdf(
     if let Some(lang) = &structure.lang {
         context.set_lang(lang);
     }
+    if tagged {
+        // PDF/UA (ISO 14289-1 7.2, 7.1) needs both
+        if structure.lang.is_none() {
+            log::warn!("The document has no `lang`: the PDF does not conform to PDF/UA.");
+        }
+        if structure.title.is_none() {
+            log::warn!("The document has no `<title>`: the PDF does not conform to PDF/UA.");
+        }
+    }
+    context.set_metadata(&xmp_metadata(structure.title.as_deref(), structure.lang.as_deref(), tagged))?;
     // All pages get their references up front so that links can point to later pages.
     let page_references: Vec<IndirectReference<Page>> = (0..print_pages.pages.len())
         .map(|_| context.create_reference())
@@ -104,7 +114,7 @@ pub fn write_pdf(
         if !font.glyph_advances.lock().is_empty() {
             log::info!("Embedding font {} into PDF file.", font_name);
             let font = font.embed_into_pdf(&mut context)?;
-            let font = context.write_object(font)?;
+            let font: IndirectReference<lemon_pdf::font::Font> = context.write_object(font)?;
             font_map.insert(font_name.clone(), font);
         }
     }
@@ -435,4 +445,43 @@ impl lemon_pdf::object::PdfFormat for RawPdf {
         use std::io::Write;
         write!(output, "{}", self.0)
     }
+}
+
+/// The XMP packet of the document metadata (ISO 32000-1 14.3.2). A tagged document claims
+/// conformance to PDF/UA-1 (`pdfuaid:part`, ISO 14289-1 5); PDF/UA also wants the title in
+/// `dc:title` (7.1).
+fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String {
+    fn escape(text: &str) -> String {
+        text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    }
+    let mut properties = String::new();
+    if let Some(title) = title {
+        properties += &format!(
+            "   <dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">{}</rdf:li></rdf:Alt></dc:title>\n",
+            escape(title)
+        );
+    }
+    if let Some(lang) = lang {
+        properties += &format!("   <dc:language><rdf:Bag><rdf:li>{}</rdf:li></rdf:Bag></dc:language>\n", escape(lang));
+    }
+    properties += &format!(
+        "   <pdf:Producer>Helium {}</pdf:Producer>\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    if tagged {
+        properties += "   <pdfuaid:part>1</pdfuaid:part>\n";
+    }
+    format!(
+        "<?xpacket begin=\"\u{FEFF}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">
+ <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">
+  <rdf:Description rdf:about=\"\"
+    xmlns:dc=\"http://purl.org/dc/elements/1.1/\"
+    xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"
+    xmlns:pdfuaid=\"http://www.aiim.org/pdfua/ns/id/\">
+{properties}  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end=\"w\"?>"
+    )
 }

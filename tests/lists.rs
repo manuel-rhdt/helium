@@ -107,10 +107,18 @@ fn markers(dump: &Value) -> Vec<String> {
         .iter()
         .filter(|run| run["x"].as_f64().unwrap() < left)
         .map(|run| {
+            // what is drawn, without the marked content of the structure tree, whose node
+            // numbers depend on the position of the item
+            let ops: Vec<&Value> = run["ops"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|op| !matches!(op["op"].as_str(), Some("tag" | "end_marked_content")))
+                .collect();
             (
                 run["y"].as_f64().unwrap(),
                 run["x"].as_f64().unwrap(),
-                run["ops"].to_string(),
+                serde_json::to_string(&ops).unwrap(),
             )
         })
         .collect();

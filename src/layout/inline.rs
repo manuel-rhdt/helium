@@ -1765,7 +1765,14 @@ pub(super) fn shape_piece(
         }
     };
 
-    let (actual_text, boundaries) = record_to_unicode(characters, &shaped, &font_at);
+    let (mut actual_text, boundaries) = record_to_unicode(characters, &shaped, &font_at);
+    // Right-to-left glyphs are written in visual order, but text is logical order: the whole
+    // piece gets its text as `/ActualText` (ISO 32000-1 14.9.4), which replaces the text of
+    // the glyphs in it, including that of the graphemes that would have their own.
+    let run_text = (rtl && !shaped.is_empty()).then(|| trim_invisible(characters));
+    if run_text.is_some() {
+        actual_text.clear();
+    }
     let mut open_cluster: Option<usize> = None;
 
     let word_spacing_units = FontUnit((word_spacing / font_size.0).0 as f64 * 1000.0);
@@ -1822,16 +1829,16 @@ pub(super) fn shape_piece(
     }
     let piece_end = pen;
 
-    // The glyphs are written in visual order: the extractors that are used most (poppler, pdfium)
-    // expect that and apply the bidirectional algorithm themselves, so that text written in
-    // logical order would come out reversed. (Those that don't, like mutool, get it wrong
-    // for right-to-left text; measured with the multiscript specimen.) Each kern moves the pen to
-    // where its glyph is drawn.
+    // The glyphs are written in visual order, and right-to-left text gets its logical order from
+    // `/ActualText`. Each kern moves the pen to where its glyph is drawn.
     let mut out = GlyphRunWriter::default();
     let mut current_font = 0u16;
     let mut rise = FontUnit(0.0);
     // where the pen is after the last glyph
     let mut pen = FontUnit(0.0);
+    if let Some(text) = run_text {
+        ops.push(TextOperator::BeginActualText(text.to_owned()));
+    }
     for glyph in &placed {
         let cluster = grapheme_start(&boundaries, glyph.cluster);
         if open_cluster != Some(cluster) {
@@ -1874,6 +1881,9 @@ pub(super) fn shape_piece(
     // the text that follows continues from the end of the piece on the baseline
     out.kern(FontUnit(pen.0 - piece_end.0));
     out.flush(ops);
+    if run_text.is_some() {
+        ops.push(TextOperator::EndMarkedContent);
+    }
     if rise.0 != 0.0 {
         ops.push(TextOperator::SetRise(Px(0.0)));
     }
@@ -1985,6 +1995,13 @@ fn record_to_unicode<'a>(
             _ => false,
         };
         if !clean {
+            for &(font, glyph) in glyphs {
+                font_at(font)
+                    .to_unicode_fallback
+                    .lock()
+                    .entry(glyph)
+                    .or_insert_with(|| text.to_owned());
+            }
             unclean.insert(grapheme_start(&boundaries, start));
         }
     }
@@ -2169,13 +2186,15 @@ mod tests {
         assert_eq!(format!("{first:?}"), format!("{second:?}"));
     }
 
+    /// Right-to-left text, whose glyphs are in visual order, is marked with its text in logical
+    /// order as a whole, marks and spaces included.
     #[test]
-    fn pointed_hebrew_is_marked_per_grapheme_and_stays_balanced() {
-        let (ops, _, _) = pieces("Noto Sans Hebrew", "בְּרֵאשִׁית", true, Px(0.0));
-        // base letters with several marks are wrapped as a whole
-        let texts = actual_texts(&ops);
-        assert!(texts.contains(&"בְּ"), "{texts:?}");
-        assert_balanced(&ops);
+    fn right_to_left_pieces_get_their_logical_text() {
+        for text in ["בְּרֵאשִׁית בָּרָא", "אב"] {
+            let (ops, _, _) = pieces("Noto Sans Hebrew", text, true, Px(0.0));
+            assert_eq!(actual_texts(&ops), [text], "{ops:?}");
+            assert_balanced(&ops);
+        }
     }
 
     /// A glyph cluster of several grapheme clusters (a Kannada conjunct with its vowel sign, a

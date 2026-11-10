@@ -431,7 +431,13 @@ impl Builder {
                     return;
                 }
                 let style = NodeData::style(dom).unwrap_or_default();
-                let element_lang = style.font.lang.tag().unwrap_or("").to_owned();
+                let element_lang = style
+                    .font
+                    .lang
+                    .tag()
+                    .filter(|tag| is_language_tag(tag))
+                    .unwrap_or("")
+                    .to_owned();
                 let lang_changed = element_lang != lang;
                 let inline = !style.box_.display.is_block_level();
 
@@ -576,8 +582,21 @@ fn find_root_lang(dom: &DomRef) -> Option<String> {
                     .map(|attribute| attribute.value.to_string())
             })
             .map(|lang| lang.trim().to_owned())
-            .filter(|lang| !lang.is_empty())
+            .filter(|lang| is_language_tag(lang))
     })
+}
+
+/// Whether `tag` has the syntax of a language identifier (ISO 32000-1 14.9.2, RFC 3066), which
+/// PDF/UA requires of every `Lang` (ISO 14289-1 7.2). A `lang` attribute that is not one (like
+/// the `$lang$` of an unfilled template) gives no language.
+fn is_language_tag(tag: &str) -> bool {
+    let mut subtags = tag.split('-');
+    let primary = subtags.next().unwrap_or("");
+    (1..=8).contains(&primary.len())
+        && primary.bytes().all(|b| b.is_ascii_alphabetic())
+        && subtags.all(|subtag| {
+            (1..=8).contains(&subtag.len()) && subtag.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
 }
 
 impl StructureTree {
@@ -976,5 +995,15 @@ mod tests {
         );
         assert_eq!(tree.title.as_deref(), Some("My Doc"));
         assert_eq!(tree.outline(), "Document\n  P #1\n");
+    }
+
+    #[test]
+    fn language_tags_are_checked() {
+        for tag in ["en", "de-CH", "zh-Hant", "sr-Latn-RS", "x-klingon"] {
+            assert!(is_language_tag(tag), "{tag}");
+        }
+        for tag in ["", "$lang$", "en_US", "en-", "-en", "toolongprimary"] {
+            assert!(!is_language_tag(tag), "{tag}");
+        }
     }
 }
