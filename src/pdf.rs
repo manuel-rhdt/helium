@@ -329,6 +329,16 @@ pub fn write_pdf(
                                     page_context.push_operand(Pt::from(rise))?;
                                     page_context.apply_operator("Ts")?;
                                 }
+                                &TextOperator::Embed { x, y, .. } => {
+                                    // resolved by the display list; only the position is left
+                                    page_context.push_operand(1.0f32)?;
+                                    page_context.push_operand(0.0f32)?;
+                                    page_context.push_operand(0.0f32)?;
+                                    page_context.push_operand(1.0f32)?;
+                                    page_context.push_operand(Pt::from(x).0 as f32)?;
+                                    page_context.push_operand(Pt::from(page_height - y).0 as f32)?;
+                                    page_context.apply_operator("Tm")?;
+                                }
                                 &TextOperator::SetTransform(matrix) => {
                                     let matrix: [f32; 6] = [
                                         matrix.a,

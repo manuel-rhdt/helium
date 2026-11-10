@@ -15,6 +15,8 @@
 //! tree is the logical order of the DOM, whatever order the content has on the page (bidi
 //! reordering, page margin boxes, z-index).
 
+mod linear_math;
+
 use std::collections::HashMap;
 
 use html5ever::{LocalName, QualName, ns};
@@ -337,7 +339,7 @@ fn collapse_whitespace(text: &str) -> String {
 }
 
 /// The alternate description of a `<math>` element: its `alttext`, else a TeX annotation,
-/// else its text content.
+/// else a linear form of the MathML that keeps its structure ([`linear_math`]).
 fn formula_alt(node: &DomRef, element: &ElementData) -> String {
     if let Some(alt) = attribute(element, "alttext").filter(|alt| !alt.trim().is_empty()) {
         return alt;
@@ -357,9 +359,7 @@ fn formula_alt(node: &DomRef, element: &ElementData) -> String {
     if let Some(tex) = find_annotation(node) {
         return tex;
     }
-    let mut text = String::new();
-    text_content(node, &mut text);
-    collapse_whitespace(&text)
+    linear_math::linearize(node)
 }
 
 struct Builder {

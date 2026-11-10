@@ -1610,16 +1610,27 @@ impl<'a> System<'a> for LineBoxCreator {
                         baseline,
                     }) = intrinsic_sizes.get(entity)
                     {
-                        ops.push(TextOperator::NewLine {
-                            x_offset: advance + width - text_cursor,
-                            leading: Px(0.0),
-                        });
-                        text_cursor = advance + width;
-
                         // The contents of an `inline-block` box are placed by `PlaceInlineBlocks`.
                         let is_inline_block = computed_values
                             .get(entity)
                             .map_or(false, |style| style.box_.display.is_atomic_inline());
+                        if is_inline_block {
+                            ops.push(TextOperator::NewLine {
+                                x_offset: advance + width - text_cursor,
+                                leading: Px(0.0),
+                            });
+                        } else {
+                            // the content of a formula is painted here, in logical order
+                            ops.push(TextOperator::Embed {
+                                entity,
+                                x: line_pos.x + advance + width,
+                                y: line_pos.y + line.baseline,
+                            });
+                            previous_font = None;
+                            previous_color = None;
+                        }
+                        text_cursor = advance + width;
+
                         if !is_inline_block {
                             positions
                                 .insert(
