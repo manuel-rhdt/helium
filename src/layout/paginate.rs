@@ -183,11 +183,11 @@ impl<'world> System<'world> for Paginator {
                         // the content after it is not lost.
                         1e30
                     } else {
-                        std::f64::INFINITY
+                        f64::INFINITY
                     }
                 } else {
                     if break_points[to].forced {
-                        return std::f64::NEG_INFINITY;
+                        return f64::NEG_INFINITY;
                     }
                     if to == last_break_point {
                         // the last page is allowed to be partially filled

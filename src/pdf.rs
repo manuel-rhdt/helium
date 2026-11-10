@@ -165,14 +165,14 @@ pub fn write_pdf(
                         page_context.concatenate_matrix(1.0, 0.0, 0.0, 1.0, x.into(), y.into())?;
                     }
                     &DisplayItem::Color(color) => {
-                        let floatize = |val: u8| f64::from(val) / f64::from(u8::max_value());
+                        let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
                         let red = floatize(color.red);
                         let green = floatize(color.green);
                         let blue = floatize(color.blue);
                         page_context.device_rgb_fill_color(red, green, blue)?;
                     }
                     &DisplayItem::StrokeColor(color) => {
-                        let floatize = |val: u8| f64::from(val) / f64::from(u8::max_value());
+                        let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
                         let red = floatize(color.red);
                         let green = floatize(color.green);
                         let blue = floatize(color.blue);
@@ -263,7 +263,7 @@ pub fn write_pdf(
                                 }
                                 &TextOperator::SetColor(color) => {
                                     let floatize =
-                                        |val: u8| f64::from(val) / f64::from(u8::max_value());
+                                        |val: u8| f64::from(val) / f64::from(u8::MAX);
                                     page_context.device_rgb_fill_color(
                                         floatize(color.red),
                                         floatize(color.green),
