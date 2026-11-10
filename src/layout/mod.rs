@@ -255,6 +255,9 @@ pub fn layout(
     // computed when the line boxes are created.
     let entity_hrefs = collect_entity_hrefs(&dom);
     layout_context.insert(entity_hrefs);
+    // The logical structure (tagged PDF) follows the DOM; the content that is painted below is
+    // tagged with the nodes of this tree.
+    layout_context.insert(crate::tagging::StructureTree::build(&dom));
     layout_context.insert(Hyperlinks::default());
 
     layout_context.register::<components::IntrinsicSize>();

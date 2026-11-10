@@ -1,4 +1,5 @@
 use super::components::{self, EntityHrefs, Hyperlink, Hyperlinks, Paragraph, TextOperator};
+use crate::tagging::{ContentTag, StructNodeId, StructureTree};
 use super::{
     FontMap,
     text::{Font, font::GlyphIndex},
@@ -1071,11 +1072,12 @@ impl<'a> System<'a> for ListMarkerCreator {
         WriteStorage<'a, Paragraph>,
         WriteStorage<'a, components::VectorGraphics>,
         Read<'a, FontMap>,
+        Read<'a, StructureTree>,
     );
 
     fn run(
         &mut self,
-        (entities, text_list, ifcs, markers, mut positions, mut paragraphs, mut graphics, font_map): Self::SystemData,
+        (entities, text_list, ifcs, markers, mut positions, mut paragraphs, mut graphics, font_map, structure): Self::SystemData,
     ) {
         use components::BlockLevelElement;
         // the markers whose item has not yet produced its first line
@@ -1105,14 +1107,14 @@ impl<'a> System<'a> for ListMarkerCreator {
                     for item in pending.drain(..) {
                         let marker = markers.get(item).unwrap();
                         let item_x = positions.get(item).map_or(line_pos.x, |pos| pos.x);
-                        created.push((item_x, line_pos, baseline, marker.clone()));
+                        created.push((item, item_x, line_pos, baseline, marker.clone()));
                     }
                 }
                 _ => {}
             }
         }
 
-        for (item_x, line_pos, baseline, marker) in created {
+        for (item, item_x, line_pos, baseline, marker) in created {
             let size = marker.font_size;
             // These shapes are not available in most fonts, so they are drawn instead.
             let shape = match marker.text.as_str() {
@@ -1192,6 +1194,11 @@ impl<'a> System<'a> for ListMarkerCreator {
                 false,
                 &mut ops,
             );
+            // the marker is the label (`Lbl`) of the list item
+            if let Some(tag) = structure.content_tag(item, 0) {
+                ops.insert(0, TextOperator::BeginTag(tag));
+                ops.push(TextOperator::EndMarkedContent);
+            }
             let gap = marker.font_size * 0.4;
             entities
                 .build_entity()
@@ -1356,6 +1363,7 @@ impl<'a> System<'a> for LineBoxCreator {
         WriteStorage<'a, Paragraph>,
         WriteStorage<'a, components::VectorGraphics>,
         Read<'a, FontMap>,
+        Read<'a, StructureTree>,
     );
 
     fn run(
@@ -1372,6 +1380,7 @@ impl<'a> System<'a> for LineBoxCreator {
             mut paragraphs,
             mut graphics,
             font_map,
+            structure,
         ): Self::SystemData,
     ) {
         for ifc in inline_formatting_contexts.join() {
@@ -1395,9 +1404,15 @@ impl<'a> System<'a> for LineBoxCreator {
             let mut paragraph_start = (Px(0.0), Px(0.0));
 
             // The x-intervals on the current line of the hyperlinks that have text on it, as
-            // `(href, start, end)`. Adjacent intervals of the same link are merged as the pieces
-            // of the line are visited from left to right.
-            let mut link_intervals: Vec<(&str, Px, Px)> = Vec::new();
+            // `(href, link node, start, end)`. Adjacent intervals of the same link are merged as
+            // the pieces of the line are visited from left to right.
+            let mut link_intervals: Vec<(&str, Option<StructNodeId>, Px, Px)> = Vec::new();
+
+            // The tag of the open marked-content sequence and the end of the text it covers so
+            // far. Consecutive pieces of the same text node share a sequence as long as they
+            // are in logical order; it ends at page breaks because every page has its own
+            // content stream.
+            let mut open_tag: Option<(ContentTag, usize)> = None;
 
             for (line_num, line) in lines.iter().enumerate() {
                 let to = line.to_break;
@@ -1417,6 +1432,9 @@ impl<'a> System<'a> for LineBoxCreator {
                 // break happend we have to add the existing (partial) paragraph to the previous
                 // page and create a fresh paragraph for the remaining lines.
                 if paragraph_pos.map(|pos| pos.page) != Some(line_pos.page) {
+                    if open_tag.take().is_some() {
+                        ops.push(TextOperator::EndMarkedContent);
+                    }
                     if let Some(pos) = paragraph_pos {
                         entities
                             .build_entity()
@@ -1471,6 +1489,25 @@ impl<'a> System<'a> for LineBoxCreator {
                     // The x position of the current piece on the line, before its width is
                     // added to `advance`.
                     let piece_start = advance;
+                    let tag = text_runs
+                        .get(entity)
+                        .and_then(|_| structure.content_tag(entity, piece.start));
+                    match (open_tag, tag) {
+                        (Some((open, end)), Some(tag))
+                            if open.slot == tag.slot && piece.start >= end =>
+                        {
+                            open_tag = Some((open, piece.end));
+                        }
+                        _ => {
+                            if open_tag.take().is_some() {
+                                ops.push(TextOperator::EndMarkedContent);
+                            }
+                            if let Some(tag) = tag {
+                                ops.push(TextOperator::BeginTag(tag));
+                                open_tag = Some((tag, piece.end));
+                            }
+                        }
+                    }
                     let piece_width = if let Some(run) = text_runs.get(entity) {
                         if previous_font != Some((run.font_name.clone(), run.font_size)) {
                             ops.push(TextOperator::SetFont(run.font_name.clone(), run.font_size));
@@ -1607,13 +1644,16 @@ impl<'a> System<'a> for LineBoxCreator {
                     // Extend the interval of the hyperlink this piece belongs to, if any.
                     if piece_width > Px(0.0) {
                         if let Some(href) = entity_hrefs.href_of(entity) {
+                            let node = structure.link_node(entity);
                             match link_intervals.last_mut() {
                                 Some(interval)
-                                    if interval.0 == href && interval.2 == piece_start =>
+                                    if interval.0 == href
+                                        && interval.1 == node
+                                        && interval.3 == piece_start =>
                                 {
-                                    interval.2 = advance;
+                                    interval.3 = advance;
                                 }
-                                _ => link_intervals.push((href, piece_start, advance)),
+                                _ => link_intervals.push((href, node, piece_start, advance)),
                             }
                         }
                     }
@@ -1628,7 +1668,7 @@ impl<'a> System<'a> for LineBoxCreator {
                 }
 
                 // Convert the intervals of this line into clickable areas for the hyperlinks.
-                for (href, start, end) in link_intervals.drain(..) {
+                for (href, node, start, end) in link_intervals.drain(..) {
                     if end <= start {
                         continue;
                     }
@@ -1642,8 +1682,12 @@ impl<'a> System<'a> for LineBoxCreator {
                         },
                         href: href.to_owned(),
                         destination: None, // resolved later, once all positions are final
+                        node,
                     });
                 }
+            }
+            if open_tag.take().is_some() {
+                ops.push(TextOperator::EndMarkedContent);
             }
             if let Some(pos) = paragraph_pos {
                 entities
@@ -1898,10 +1942,7 @@ fn record_to_unicode<'a>(
     shaped: &[(super::text::GlyphPosition, super::text::GlyphInfo)],
     font_at: &impl Fn(u16) -> &'a Font,
 ) -> (std::collections::HashMap<usize, String>, Vec<usize>) {
-    // The unit of `/ActualText` is the grapheme cluster: a base character with its marks, whose
-    // glyphs the extractor would otherwise have to assemble from the positions of the marks.
     use unicode_segmentation::UnicodeSegmentation;
-    let boundaries: Vec<usize> = characters.grapheme_indices(true).map(|(i, _)| i).collect();
     let mut clusters: BTreeMap<usize, Vec<(u16, GlyphIndex)>> = BTreeMap::new();
     for (_, info) in shaped {
         clusters
@@ -1910,12 +1951,23 @@ fn record_to_unicode<'a>(
             .push((info.font, GlyphIndex(info.codepoint)));
     }
     let starts: Vec<usize> = clusters.keys().copied().collect();
+    // The unit of `/ActualText` is the grapheme cluster: a base character with its marks, whose
+    // glyphs the extractor would otherwise have to assemble from the positions of the marks.
+    // A unit has to hold whole glyph clusters too, since a glyph cannot be split between two
+    // texts: a conjunct with its vowel sign (Kannada "ಲ್ಲಾ", Sinhala "ක්‍රි") is several
+    // grapheme clusters but one glyph cluster. So a unit boundary is a grapheme boundary where a
+    // glyph cluster starts.
+    let boundaries: Vec<usize> = characters
+        .grapheme_indices(true)
+        .map(|(i, _)| i)
+        .filter(|&i| i == 0 || starts.binary_search(&i).is_ok())
+        .collect();
     let mut unclean = std::collections::BTreeSet::new();
     for (i, (&start, glyphs)) in clusters.iter().enumerate() {
         let end = starts.get(i + 1).copied().unwrap_or(characters.len());
         // without the invisible characters that were dropped in front of the next cluster
         let Some(text) = characters.get(start..end) else { continue };
-        let text = text.trim_end_matches(is_invisible_formatting);
+        let text = trim_invisible(text);
         if text.is_empty() {
             continue;
         }
@@ -1940,10 +1992,16 @@ fn record_to_unicode<'a>(
     for &start in &unclean {
         let i = boundaries.partition_point(|&b| b <= start);
         let end = boundaries.get(i).copied().unwrap_or(characters.len());
-        let text = characters[start..end].trim_end_matches(is_invisible_formatting);
-        actual_text.insert(start, text.to_owned());
+        actual_text.insert(start, trim_invisible(&characters[start..end]).to_owned());
     }
     (actual_text, boundaries)
+}
+
+/// `text` without the invisible formatting characters at its end, which have no glyphs. The
+/// joiners stay: they are part of the spelling in Indic and Arabic scripts (a Malayalam chillu,
+/// a Sinhala yansaya, a Persian half-space).
+fn trim_invisible(text: &str) -> &str {
+    text.trim_end_matches(|ch| is_invisible_formatting(ch) && !matches!(ch, '\u{200C}' | '\u{200D}'))
 }
 
 /// The start of the grapheme cluster that contains the byte `offset`.
@@ -2117,6 +2175,19 @@ mod tests {
         // base letters with several marks are wrapped as a whole
         let texts = actual_texts(&ops);
         assert!(texts.contains(&"בְּ"), "{texts:?}");
+        assert_balanced(&ops);
+    }
+
+    /// A glyph cluster of several grapheme clusters (a Kannada conjunct with its vowel sign, a
+    /// Sinhala yansaya with its vowel sign) is marked with the text of all of them.
+    #[test]
+    fn actual_text_covers_the_whole_glyph_cluster() {
+        let (ops, _, _) = pieces("Noto Sans Kannada", "ಎಲ್ಲಾ", false, Px(0.0));
+        assert_eq!(actual_texts(&ops).concat(), "ಲ್ಲಾ", "{ops:?}");
+        assert_balanced(&ops);
+        let (ops, _, _) = pieces("Noto Sans Sinhala", "ක්\u{200D}රියා", false, Px(0.0));
+        let texts = actual_texts(&ops);
+        assert!(texts.contains(&"ක්\u{200D}රි"), "{texts:?}");
         assert_balanced(&ops);
     }
 

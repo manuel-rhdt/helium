@@ -398,6 +398,7 @@ impl<'world> System<'world> for LayoutMathGlyphs {
         WriteStorage<'world, VectorGraphics>,
         ReadStorage<'world, ComputedValues>,
         Read<'world, FontMap>,
+        Read<'world, crate::tagging::StructureTree>,
     );
     fn run(
         &mut self,
@@ -410,6 +411,7 @@ impl<'world> System<'world> for LayoutMathGlyphs {
             mut vector_graphics,
             computed_values,
             font_map,
+            structure,
         ): Self::SystemData,
     ) {
         let mut to_unicode_maps = HashMap::new();
@@ -436,6 +438,11 @@ impl<'world> System<'world> for LayoutMathGlyphs {
                     layout,
                     &mut to_unicode_maps,
                 );
+            }
+            // the formula is tagged as a whole
+            if let Some(tag) = structure.content_tag(entity, 0) {
+                para.ops.insert(0, TextOperator::BeginTag(tag));
+                para.ops.push(TextOperator::EndMarkedContent);
             }
             paragraphs.insert(entity, para).unwrap();
             vector_graphics.insert(entity, vg).unwrap();

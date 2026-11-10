@@ -6,6 +6,7 @@ use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{PixelLength, RGBA};
 
 use specs::prelude::*;
+use std::ops::Deref;
 
 #[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct Point {
@@ -154,6 +155,8 @@ pub struct PrintPages {
     pub pages: Vec<PrintPage>,
     /// All hyperlinks in the document, in page order.
     pub hyperlinks: Vec<Hyperlink>,
+    /// The logical structure of the document (tagged PDF).
+    pub structure: crate::tagging::StructureTree,
 }
 
 impl PrintPages {
@@ -480,5 +483,9 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         font_map: (*world.read_resource::<crate::layout::FontMap>()).clone(),
         pages: page_vec,
         hyperlinks: world.read_resource::<Hyperlinks>().0.clone(),
+        structure: world
+            .read_resource::<crate::tagging::StructureTree>()
+            .deref()
+            .clone(),
     }
 }

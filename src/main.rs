@@ -29,6 +29,7 @@ mod parser;
 mod pdf;
 pub mod simple_dom;
 pub mod style;
+pub mod tagging;
 mod traverse;
 mod tree;
 
@@ -45,6 +46,10 @@ struct Options {
     no_filter: bool,
     #[structopt(long = "crop")]
     crop: bool,
+    /// Write an untagged PDF: without the structure tree (the logical structure of the document
+    /// for assistive technology, reflow and text extraction) that is derived from the HTML.
+    #[structopt(long = "no-tags")]
+    no_tags: bool,
     /// Write the computed layout as JSON to this file (use `-` for stdout)
     #[structopt(long = "dump-layout", parse(from_os_str))]
     dump_layout: Option<PathBuf>,
@@ -166,7 +171,13 @@ fn main() -> Result<(), Error> {
 
     let display_list = display_list::generate_display_list(&mut layout_context);
 
-    pdf::write_pdf(opt.output, display_list, opt.no_filter, opt.crop)?;
+    pdf::write_pdf(
+        opt.output,
+        display_list,
+        opt.no_filter,
+        opt.crop,
+        !opt.no_tags,
+    )?;
 
     if let Some(code) = check_exit_code {
         std::process::exit(code);
