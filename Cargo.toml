@@ -34,6 +34,7 @@ taffy = { version = "=0.15.1", default-features = false, features = ["std", "blo
 unicode-linebreak = "0.1"
 unicode-script = "0.5.9"
 unicode-segmentation = "1.13.3"
+ttf-parser = { version = "0.25.1", default-features = false, features = ["glyph-names", "std"] }
 
 # Finding an installed font for characters that the fonts of `font-family` lack
 [target.'cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios")))'.dependencies]
@@ -53,7 +54,6 @@ quickcheck = "1"
 quickcheck_macros = "1"
 serde_json = "1.0.154"
 flate2 = "1"
-ttf-parser = { version = "0.25.1", default-features = false, features = ["glyph-names", "std"] }
 
 [build-dependencies]
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }

@@ -1,6 +1,7 @@
 use super::font::Font;
 
-use super::font::FontUnit;
+use super::font::{FontUnit, GlyphIndex};
+use std::collections::BTreeMap;
 use lemon_pdf::DocumentContext;
 use lemon_pdf::font::Font as PdfFont;
 use lemon_pdf::font::{
@@ -185,6 +186,46 @@ impl Font {
         Ok(font_descriptor)
     }
 
+    /// The text of every glyph that is used, for the `ToUnicode` map: PDF/UA wants all of them
+    /// mapped (ISO 14289-1 7.21.7). A glyph that no text was recorded for gets the character
+    /// that the font maps to it, else the text of a cluster it was drawn in, else U+FFFD.
+    fn complete_to_unicode(&self) -> BTreeMap<GlyphIndex, String> {
+        let mut map = self.to_unicode.lock().clone();
+        let used = self.glyph_advances.lock();
+        let mut missing: std::collections::BTreeSet<GlyphIndex> =
+            used.keys().filter(|glyph| !map.contains_key(*glyph)).copied().collect();
+        if missing.is_empty() {
+            return map;
+        }
+        if let Ok(face) = ttf_parser::Face::parse(&self.data, self.index) {
+            if let Some(cmap) = face.tables().cmap {
+                for subtable in cmap.subtables.into_iter().filter(|s| s.is_unicode()) {
+                    subtable.codepoints(|codepoint| {
+                        let Some(glyph) = subtable.glyph_index(codepoint) else { return };
+                        let glyph = GlyphIndex(glyph.0 as u32);
+                        if missing.contains(&glyph) {
+                            // the lowest code point wins, so the result does not depend on
+                            // the order of the subtables
+                            if let Some(ch) = char::from_u32(codepoint) {
+                                let entry = map.entry(glyph).or_insert_with(|| ch.to_string());
+                                if entry.chars().next().is_some_and(|old| ch < old) {
+                                    *entry = ch.to_string();
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        missing.retain(|glyph| !map.contains_key(glyph));
+        let fallback = self.to_unicode_fallback.lock();
+        for glyph in missing {
+            let text = fallback.get(&glyph).cloned().unwrap_or_else(|| "\u{FFFD}".to_owned());
+            map.insert(glyph, text);
+        }
+        map
+    }
+
     pub fn embed_into_pdf(&self, pdf_context: &mut DocumentContext) -> Result<PdfFont> {
         let font_file = self.embedded_font_bytes()?;
         let name = format!("{}+{}", self.subset_tag(), self.postscript_name());
@@ -304,7 +345,7 @@ endcodespacerange
         )
         .into_bytes();
 
-        let to_unicode = self.to_unicode.lock();
+        let to_unicode = self.complete_to_unicode();
 
         // A single beginbfchar section may hold at most 100 entries.
         let entries: Vec<_> = to_unicode.iter().collect();

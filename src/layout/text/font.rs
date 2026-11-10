@@ -66,6 +66,10 @@ pub struct Font {
     pub(crate) upem: u32,
     pub(crate) glyph_advances: Mutex<BTreeMap<GlyphIndex, FontUnit>>,
     pub(crate) to_unicode: Mutex<BTreeMap<GlyphIndex, String>>,
+    /// Text for the `ToUnicode` map of glyphs that `to_unicode` has nothing for: the text of a
+    /// glyph cluster that a glyph is drawn in (which `/ActualText` gives exactly). PDF/UA wants
+    /// every glyph mapped to Unicode (ISO 14289-1 7.21.7).
+    pub(crate) to_unicode_fallback: Mutex<BTreeMap<GlyphIndex, String>>,
     pub(crate) hb_font: HarfbuzzFont,
     pub(crate) postscript_name: String,
     /// The bytes of the font file and the index of the face in it.
@@ -87,6 +91,7 @@ impl Clone for Font {
             upem: self.upem,
             glyph_advances: Mutex::new(self.glyph_advances.lock().clone()),
             to_unicode: Mutex::new(self.to_unicode.lock().clone()),
+            to_unicode_fallback: Mutex::new(self.to_unicode_fallback.lock().clone()),
             data: self.data.clone(),
             index: self.index,
             hb_font: self.hb_font.clone(),
@@ -166,6 +171,7 @@ impl Font {
             upem,
             glyph_advances: Default::default(),
             to_unicode: Default::default(),
+            to_unicode_fallback: Default::default(),
             hb_font,
             postscript_name: name,
             data,
