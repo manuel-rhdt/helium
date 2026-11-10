@@ -4,14 +4,31 @@ use super::font::FontUnit;
 use lemon_pdf::DocumentContext;
 use lemon_pdf::font::Font as PdfFont;
 use lemon_pdf::font::{
-    FontType,
-    descriptor::FontDescriptor,
-    type0::{CIDFont, CIDFontType, CompositeFont, MetricsEntry},
+    FontType, ToUnicodeCMapDict,
+    descriptor::{
+        FontDescriptor, FontFile3, FontFile3Dict, FontFile3Subtype, TrueTypeFontFile,
+        TrueTypeFontFileDict,
+    },
+    type0::{CIDFont, CIDFontType, CompositeFont, MetricsEntry, Widths},
 };
-use lemon_pdf::object::{IndirectReference, Object};
+use lemon_pdf::object::{ByteString, IndirectReference, Name, Object};
 use lemon_pdf::stream::Stream;
 
 use std::io::{Result, Write};
+
+/// The embedded font program of a CIDFont.
+enum FontProgram {
+    /// A complete TrueType sfnt (`FontFile2`).
+    TrueType(TrueTypeFontFile),
+    /// A bare CFF table (`FontFile3` with subtype `CIDFontType0C`).
+    Cff(FontFile3),
+}
+
+/// A reference to the embedded font program of a CIDFont.
+enum FontProgramRef {
+    TrueType(IndirectReference<TrueTypeFontFile>),
+    Cff(IndirectReference<FontFile3>),
+}
 
 impl Font {
     pub fn is_truetype(&self) -> bool {
@@ -100,11 +117,13 @@ impl Font {
     }
 
     /// Builds the `FontFile2`/`FontFile3` stream from the font file bytes.
-    fn pdf_font_stream(&self, font_file: &[u8]) -> Result<Stream> {
-        let mut stream = Stream::with_bytes(vec![], None);
+    fn pdf_font_stream(&self, font_file: &[u8]) -> Result<FontProgram> {
         if self.is_truetype() {
             // FontFile2: a complete TrueType sfnt.
-            stream.bytes.write_all(font_file)?;
+            let dict = TrueTypeFontFileDict {
+                length1: font_file.len(),
+            };
+            Ok(FontProgram::TrueType(Stream::new(dict, font_file.to_vec())))
         } else {
             // FontFile3 / CIDFontType0C: the bare CFF table.
             let face = harfbuzz_rs::Face::from_bytes(font_file, 0);
@@ -119,21 +138,18 @@ impl Font {
                     format!("font {} {}", self.postscript_name, reason),
                 )
             })?;
-            stream.bytes.write_all(&cff_data)?;
-            stream.add_key_value("Subtype".to_owned(), Box::new("CIDFontType0C"));
+            let dict = FontFile3Dict {
+                subtype: FontFile3Subtype::CIDFontType0C,
+            };
+            Ok(FontProgram::Cff(Stream::new(dict, cff_data.to_vec())))
         }
-        Ok(stream)
     }
 
     pub fn to_font_unit(&self, val: f32) -> FontUnit {
         FontUnit((val * 1000.0 / self.upem as f32) as f64)
     }
 
-    pub fn pdf_font_descriptor(
-        &self,
-        name: String,
-        font_data: IndirectReference<Stream>,
-    ) -> Result<FontDescriptor> {
+    fn pdf_font_descriptor(&self, name: Name, font_data: FontProgramRef) -> Result<FontDescriptor> {
         let face = self.hb_font.face();
         let invalid = |reason: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, reason.to_owned());
         // xMin, yMin, xMax, yMax of the `head` table
@@ -148,22 +164,22 @@ impl Font {
         let extents = self.hb_font.get_font_h_extents().unwrap_or_default();
 
         let mut font_descriptor = FontDescriptor {
-            font_name: name.clone(),
-            font_family: super::font::name_of(&face, harfbuzz_rs::sys::HB_OT_NAME_ID_FONT_FAMILY)
-                .unwrap_or_else(|| self.postscript_name.clone())
-                .into_bytes(),
+            font_family: Some(ByteString::from(
+                super::font::name_of(&face, harfbuzz_rs::sys::HB_OT_NAME_ID_FONT_FAMILY)
+                    .unwrap_or_else(|| self.postscript_name.clone())
+                    .into_bytes(),
+            )),
             font_b_box: bbox,
             cap_height: self.to_font_unit(self.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_CAP_HEIGHT).unwrap_or(0) as f32),
             x_height: self.to_font_unit(self.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_X_HEIGHT).unwrap_or(0) as f32),
             ascent: self.to_font_unit(extents.ascender as f32),
             descent: self.to_font_unit(extents.descender as f32),
-            ..Default::default()
+            ..FontDescriptor::new(name)
         };
 
-        if self.is_truetype() {
-            font_descriptor.font_file2 = Some(font_data);
-        } else {
-            font_descriptor.font_file3 = Some(font_data);
+        match font_data {
+            FontProgramRef::TrueType(font_data) => font_descriptor.font_file2 = Some(font_data),
+            FontProgramRef::Cff(font_data) => font_descriptor.font_file3 = Some(font_data),
         }
 
         Ok(font_descriptor)
@@ -172,8 +188,13 @@ impl Font {
     pub fn embed_into_pdf(&self, pdf_context: &mut DocumentContext) -> Result<PdfFont> {
         let font_file = self.embedded_font_bytes()?;
         let name = format!("{}+{}", self.subset_tag(), self.postscript_name());
-        let font_data = pdf_context.write_object(self.pdf_font_stream(&font_file)?)?;
-        let fd = pdf_context.write_object(self.pdf_font_descriptor(name.clone(), font_data)?)?;
+        let font_data = match self.pdf_font_stream(&font_file)? {
+            FontProgram::TrueType(stream) => FontProgramRef::TrueType(pdf_context.write_object(stream)?),
+            FontProgram::Cff(stream) => FontProgramRef::Cff(pdf_context.write_object(stream)?),
+        };
+        let fd = pdf_context.write_object(
+            self.pdf_font_descriptor(Name::from(name.clone()), font_data)?,
+        )?;
 
         let mut metrics_h = vec![];
         let mut unfinished_entry: Option<MetricsEntry> = None;
@@ -245,7 +266,7 @@ impl Font {
         if let Some(entry) = unfinished_entry {
             metrics_h.push(entry);
         }
-        let metrics_h = pdf_context.write_object(metrics_h)?;
+        let metrics_h = pdf_context.write_object(Widths(metrics_h))?;
 
         let cid_font = CIDFont {
             subtype: if self.is_truetype() {
@@ -253,18 +274,18 @@ impl Font {
             } else {
                 CIDFontType::CIDFontType0
             },
-            base_font: name.clone(),
+            base_font: Name::from(name.clone()),
+            cid_system_info: Default::default(),
             font_descriptor: fd,
             dw: None,
             w: Some(Object::Indirect(metrics_h)),
             dw2: None,
             w2: None,
             cid_to_gid_map: if self.is_truetype() {
-                "Identity".to_string()
+                Some(Name::from("Identity"))
             } else {
-                String::new()
+                None
             },
-            ..Default::default()
         };
         let cid_font = pdf_context.write_object(cid_font)?;
 
@@ -305,7 +326,7 @@ CMapName currentdict /CMap defineresource pop
 end
 end"
         )?;
-        let to_unicode_stream = Stream::with_bytes(to_unicode_stream, None);
+        let to_unicode_stream = Stream::new(ToUnicodeCMapDict {}, to_unicode_stream);
         let to_unicode_stream = pdf_context.write_object(to_unicode_stream)?;
 
         let base_name = if self.is_truetype() {
@@ -316,8 +337,8 @@ end"
 
         let font = CompositeFont {
             subtype: FontType::Type0,
-            base_font: base_name,
-            encoding: "Identity-H".to_string(),
+            base_font: Name::from(base_name),
+            encoding: Name::from("Identity-H"),
             descendant_fonts: [cid_font],
             to_unicode: Some(to_unicode_stream),
         };

@@ -295,6 +295,10 @@ fn op_json(op: &TextOperator) -> String {
             format!("{{\"op\": \"actual_text\", \"text\": {}}}", json_string(text))
         }
         TextOperator::BeginArtifact => "{\"op\": \"artifact\"}".to_string(),
+        TextOperator::BeginTag(tag) => format!(
+            "{{\"op\": \"tag\", \"node\": {}, \"slot\": {}, \"offset\": {}}}",
+            tag.node, tag.slot, tag.offset
+        ),
         TextOperator::EndMarkedContent => "{\"op\": \"end_marked_content\"}".to_string(),
         TextOperator::SetRise(rise) => {
             format!("{{\"op\": \"rise\", \"value\": {}}}", number(rise.0))

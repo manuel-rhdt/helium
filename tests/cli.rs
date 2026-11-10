@@ -373,9 +373,13 @@ fn cross_reference_links_jump_within_the_document() -> Result<(), Box<dyn std::e
         utf8_owned.contains("/S /GoTo"),
         "cross-reference is not a GoTo action"
     );
+    // the destination refers to the first page object (the first kid of the page tree)
+    let kids = &utf8_owned[utf8_owned.find("/Kids [ ").expect("no page tree") + 8..];
+    let first_page = &kids[..kids.find(" R").expect("no page reference") + 2];
     assert!(
-        utf8_owned.contains("/D [ 0 /XYZ"),
-        "GoTo destination does not reference page 0"
+        utf8_owned.contains(&format!("/D [ {} /XYZ", first_page)),
+        "GoTo destination does not reference the first page ({})",
+        first_page
     );
     // and it must not be a URI link
     assert!(
@@ -401,6 +405,24 @@ fn link_to_unknown_fragment_stays_a_uri_link() -> Result<(), Box<dyn std::error:
     assert!(
         !text.contains("/S /GoTo"),
         "unknown fragments must not become GoTo links"
+    );
+    Ok(())
+}
+
+/// A document with a structure tree is declared as a tagged PDF (ISO 32000-1 14.8); without
+/// `/MarkInfo << /Marked true >>` readers that check the flag ignore the tree.
+#[test]
+fn tagged_documents_are_marked() -> Result<(), Box<dyn std::error::Error>> {
+    let pdf = convert_to_pdf(
+        "mark_info",
+        "<!DOCTYPE html><html lang=en><body><h1>Title</h1><p>Text.</p></body></html>",
+    )?;
+    let text = String::from_utf8_lossy(&pdf);
+    let squeezed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(text.contains("/StructTreeRoot"), "no structure tree");
+    assert!(
+        squeezed.contains("/MarkInfo << /Marked true >>"),
+        "the catalog does not mark the document as tagged"
     );
     Ok(())
 }

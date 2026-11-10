@@ -52,6 +52,8 @@ pub struct Hyperlink {
     pub href: String,
     /// Where the link jumps to inside the document, if it is a cross-reference (`<a href="#...">`).
     pub destination: Option<GoToDestination>,
+    /// The `Link` element of the structure tree that the link belongs to.
+    pub node: Option<crate::tagging::StructNodeId>,
 }
 
 /// All hyperlinks found in the document, collected while the line boxes are created.
@@ -470,7 +472,10 @@ pub enum TextOperator {
     /// Starts marked content that is not part of the text of the document (a page number):
     /// extractors that honour `/Artifact` leave it out.
     BeginArtifact,
-    /// Ends the marked content that `BeginActualText` or `BeginArtifact` started.
+    /// Starts marked content that belongs to a node of the structure tree (tagged PDF), up to
+    /// the matching `EndMarkedContent`.
+    BeginTag(crate::tagging::ContentTag),
+    /// Ends the marked content that `BeginActualText`, `BeginArtifact` or `BeginTag` started.
     EndMarkedContent,
     NewLine {
         x_offset: PixelLength,

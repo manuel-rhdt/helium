@@ -1,9 +1,11 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::layout::components::TextOperator;
 use crate::style::properties::computed::PixelLength;
+use crate::tagging::TagRecorder;
 use std::path::PathBuf;
 
 use lemon_pdf::pagetree::MediaBox;
+use lemon_pdf::object::{ByteString, IndirectReference, Name, TextString};
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::{DocumentContext, Page, Pt, Version};
 
@@ -17,14 +19,85 @@ impl From<PixelLength> for Pt {
     }
 }
 
+/// Tracks the marked content of a text object while it is written.
+///
+/// In a tagged PDF all content is either tagged or an artifact (PDF/UA). Content that no tag
+/// covers (text hidden from the structure with `aria-hidden`, for instance) is wrapped in an
+/// implicit `/Artifact` marked-content sequence.
+#[derive(Default)]
+struct MarkedContent {
+    /// For every open marked-content sequence, whether it was written (tags are dropped when
+    /// the PDF is not tagged).
+    stack: Vec<bool>,
+    implicit_artifact: bool,
+}
+
+impl MarkedContent {
+    /// Called before content is painted: opens an implicit artifact if no marked content
+    /// covers the content.
+    fn before_content(&mut self, page: &mut PageContext, tagged: bool) -> Result<(), Error> {
+        if tagged && self.stack.is_empty() && !self.implicit_artifact {
+            page.push_operand(RawPdf("/Artifact".into()))?;
+            page.apply_operator("BMC")?;
+            self.implicit_artifact = true;
+        }
+        Ok(())
+    }
+
+    /// Called before an explicit marked-content sequence starts at the top level.
+    fn close_implicit_artifact(&mut self, page: &mut PageContext) -> Result<(), Error> {
+        if self.stack.is_empty() && self.implicit_artifact {
+            page.apply_operator("EMC")?;
+            self.implicit_artifact = false;
+        }
+        Ok(())
+    }
+
+    fn end(&mut self, page: &mut PageContext) -> Result<(), Error> {
+        if self.stack.pop() == Some(true) {
+            page.apply_operator("EMC")?;
+        }
+        Ok(())
+    }
+
+    /// Closes everything that is still open at the end of the text object.
+    fn finish(mut self, page: &mut PageContext) -> Result<(), Error> {
+        while !self.stack.is_empty() {
+            self.end(page)?;
+        }
+        self.close_implicit_artifact(page)
+    }
+}
+
+type PageContext<'p, 'c, 'b> = lemon_pdf::content::PageContext<'p, 'c, 'b>;
+
+/// Writes the pages as a PDF file. If `tagged`, it is a tagged PDF whose structure tree is the
+/// `structure` of the pages.
 pub fn write_pdf(
     output_path: PathBuf,
-    print_pages: PrintPages,
+    mut print_pages: PrintPages,
     no_filter: bool,
     crop: bool,
+    tagged: bool,
 ) -> Result<(), Error> {
     let file = BufWriter::new(File::create(output_path)?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
+
+    let structure = std::mem::take(&mut print_pages.structure);
+    let mut recorder = tagged.then(|| TagRecorder::new(&structure, print_pages.pages.len()));
+    if let Some(title) = &structure.title {
+        context
+            .document_info
+            .insert("Title".to_owned(), TextString(title.clone()));
+        context.set_display_doc_title(true);
+    }
+    if let Some(lang) = &structure.lang {
+        context.set_lang(lang);
+    }
+    // All pages get their references up front so that links can point to later pages.
+    let page_references: Vec<IndirectReference<Page>> = (0..print_pages.pages.len())
+        .map(|_| context.create_reference())
+        .collect();
 
     let mut font_map = HashMap::new();
     for (font_name, font) in &print_pages.font_map {
@@ -41,6 +114,13 @@ pub fn write_pdf(
     for (page_index, mut print_page) in print_pages.pages.into_iter().enumerate() {
         let mut page = Page::new();
         let page_height = print_page.height;
+        if tagged {
+            // the key of the page in the parent tree; annotations follow the order of the
+            // structure tree
+            page.struct_parents = Some(page_index as i64);
+            page.tabs = Some(Name::from("S"));
+        }
+        let recorder = &mut recorder;
 
         if crop {
             page.set_media_box(MediaBox::new(
@@ -141,12 +221,15 @@ pub fn write_pdf(
                         let x = x;
                         let y = page_height - y;
                         page_context.begin_text()?;
+                        let mut marked = MarkedContent::default();
                         let font_ref = font_map[font_name];
                         let key = page_context.add_font(font_ref);
                         page_context.set_font(&key, font_size.into())?;
                         page_context.set_position(x.into(), y.into())?;
+                        marked.before_content(page_context, tagged)?;
                         page_context.push_operand(glyphs)?;
                         page_context.apply_operator("Tj")?;
+                        marked.finish(page_context)?;
                         page_context.end_text()?;
                     }
                     DisplayItem::Paragraph(par) => {
@@ -155,6 +238,7 @@ pub fn write_pdf(
 
                         page_context.begin_text()?;
                         page_context.set_position(x.into(), y.into())?;
+                        let mut marked = MarkedContent::default();
 
                         for op in &par.ops {
                             match op {
@@ -177,10 +261,12 @@ pub fn write_pdf(
                                     )?;
                                 }
                                 TextOperator::Glyphs(glyphs) => {
+                                    marked.before_content(page_context, tagged)?;
                                     page_context.push_operand(glyphs)?;
                                     page_context.apply_operator("Tj")?;
                                 }
                                 TextOperator::KernedGlyphs(glyphs) => {
+                                    marked.before_content(page_context, tagged)?;
                                     page_context.push_operand(glyphs)?;
                                     page_context.apply_operator("TJ")?;
                                 }
@@ -193,6 +279,8 @@ pub fn write_pdf(
                                     page_context.apply_operator("Tw")?;
                                 }
                                 TextOperator::BeginActualText(text) => {
+                                    marked.before_content(page_context, tagged)?;
+                                    marked.stack.push(true);
                                     page_context.push_operand(RawPdf("/Span".into()))?;
                                     let mut hex = String::from("FEFF");
                                     for unit in text.encode_utf16() {
@@ -203,11 +291,29 @@ pub fn write_pdf(
                                     page_context.apply_operator("BDC")?;
                                 }
                                 TextOperator::BeginArtifact => {
+                                    // page numbers, running headers and footers
+                                    marked.close_implicit_artifact(page_context)?;
+                                    marked.stack.push(true);
                                     page_context.push_operand(RawPdf("/Artifact".into()))?;
-                                    page_context.apply_operator("BMC")?;
+                                    page_context
+                                        .push_operand(RawPdf("<< /Type /Pagination >>".into()))?;
+                                    page_context.apply_operator("BDC")?;
                                 }
+                                TextOperator::BeginTag(tag) => match recorder.as_mut() {
+                                    Some(recorder) => {
+                                        marked.close_implicit_artifact(page_context)?;
+                                        marked.stack.push(true);
+                                        let (role, mcid) = recorder.mark(page_index, *tag);
+                                        page_context.push_operand(RawPdf(format!("/{role}")))?;
+                                        page_context.push_operand(RawPdf(format!(
+                                            "<< /MCID {mcid} >>"
+                                        )))?;
+                                        page_context.apply_operator("BDC")?;
+                                    }
+                                    None => marked.stack.push(false),
+                                },
                                 TextOperator::EndMarkedContent => {
-                                    page_context.apply_operator("EMC")?;
+                                    marked.end(page_context)?;
                                 }
                                 &TextOperator::SetRise(rise) => {
                                     page_context.push_operand(Pt::from(rise))?;
@@ -230,6 +336,7 @@ pub fn write_pdf(
                             }
                         }
 
+                        marked.finish(page_context)?;
                         page_context.end_text()?;
                     }
                 }
@@ -267,30 +374,52 @@ pub fn write_pdf(
                 let y = Pt::from(page_height - (destination.y - offset_y));
                 LinkAction::GoTo(GoToAction {
                     destination: lemon_pdf::annotation::Destination {
-                        page_index: destination.page as u32,
+                        page: page_references[destination.page],
                         point: (x, y),
                     },
                 })
             } else {
                 LinkAction::Uri(UriAction {
-                    uri: hyperlink.href.clone(),
+                    uri: ByteString::from(hyperlink.href.as_str()),
                 })
             };
 
-            let annotation =
-                lemon_pdf::annotation::Annotation::Link(lemon_pdf::annotation::LinkAnnotation {
-                    rect: [
-                        Pt::from(xmin),
-                        Pt::from(page_height - ymin - (ymax - ymin)),
-                        Pt::from(xmax),
-                        Pt::from(page_height - ymin),
-                    ],
-                    action,
-                });
-            page.add_annotation(&mut context, annotation)?;
+            // the annotation is the content of the `Link` element of the structure tree, next to
+            // the text of the link
+            let link_node = hyperlink.node;
+            let struct_parent = match (recorder.as_mut(), link_node) {
+                (Some(recorder), Some(_)) => Some(recorder.annotation_key()),
+                _ => None,
+            };
+            let contents = link_node
+                .and_then(|node| structure.nodes[node as usize].link_text.clone())
+                .or_else(|| Some(hyperlink.href.clone()))
+                .map(TextString);
+
+            let mut link = lemon_pdf::annotation::LinkAnnotation::new(
+                [
+                    Pt::from(xmin),
+                    Pt::from(page_height - ymin - (ymax - ymin)),
+                    Pt::from(xmax),
+                    Pt::from(page_height - ymin),
+                ],
+                action,
+            );
+            link.contents = contents;
+            link.struct_parent = struct_parent;
+            let annotation = lemon_pdf::annotation::Annotation::Link(link);
+            let annotation = page.add_annotation(&mut context, annotation)?;
+            if let (Some(recorder), Some(node), Some(key)) =
+                (recorder.as_mut(), link_node, struct_parent)
+            {
+                recorder.add_annotation(node, page_index, annotation, key);
+            }
         }
 
-        context.add_page(page);
+        context.add_reserved_page(page_references[page_index], page)?;
+    }
+    if let Some(recorder) = recorder {
+        recorder.finish(&mut context, &page_references)?;
     }
     context.finish()?;
 
