@@ -205,6 +205,28 @@ pub fn write_pdf(
                         page_context.stroke_path()?;
                         page_context.apply_operator("EMC")?;
                     }
+                    DisplayItem::FillPath { path, even_odd } => {
+                        page_context.push_operand(RawPdf("/Artifact".into()))?;
+                        page_context.apply_operator("BMC")?;
+                        emit_path(page_context, path, page_height)?;
+                        let rule = if *even_odd {
+                            lemon_pdf::graphics_state::FillRule::EvenOdd
+                        } else {
+                            lemon_pdf::graphics_state::FillRule::NonZero
+                        };
+                        page_context.fill_path_with_rule(rule)?;
+                        page_context.apply_operator("EMC")?;
+                    }
+                    DisplayItem::ClipPath { path, even_odd } => {
+                        emit_path(page_context, path, page_height)?;
+                        let rule = if *even_odd {
+                            lemon_pdf::graphics_state::FillRule::EvenOdd
+                        } else {
+                            lemon_pdf::graphics_state::FillRule::NonZero
+                        };
+                        page_context.clip(rule)?;
+                        page_context.end_path()?;
+                    }
                     &DisplayItem::FilledRect(Rect {
                         x,
                         y,
@@ -460,6 +482,36 @@ impl lemon_pdf::object::PdfFormat for RawPdf {
 /// The XMP packet of the document metadata (ISO 32000-1 14.3.2). A tagged document claims
 /// conformance to PDF/UA-1 (`pdfuaid:part`, ISO 14289-1 5); PDF/UA also wants the title in
 /// `dc:title` (7.1).
+/// Constructs the path (without painting it) on the page.
+fn emit_path(
+    page_context: &mut lemon_pdf::content::PageContext<'_, '_, '_>,
+    path: &[display_list::PathSegment],
+    page_height: PixelLength,
+) -> Result<(), Error> {
+    use display_list::PathSegment;
+    let pt = |p: display_list::Point| (Pt::from(p.x), Pt::from(page_height - p.y));
+    for segment in path {
+        match *segment {
+            PathSegment::MoveTo(p) => {
+                let (x, y) = pt(p);
+                page_context.move_to(x, y)?
+            }
+            PathSegment::LineTo(p) => {
+                let (x, y) = pt(p);
+                page_context.line_to(x, y)?
+            }
+            PathSegment::CurveTo(c1, c2, end) => {
+                let (x1, y1) = pt(c1);
+                let (x2, y2) = pt(c2);
+                let (x3, y3) = pt(end);
+                page_context.curve_to(x1, y1, x2, y2, x3, y3)?
+            }
+            PathSegment::Close => page_context.close_path()?,
+        }
+    }
+    Ok(())
+}
+
 fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String {
     fn escape(text: &str) -> String {
         text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")

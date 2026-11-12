@@ -1,7 +1,7 @@
 //! Conversion of helium's computed style to Taffy's [`taffy::Style`].
 
 use crate::style::properties::computed::{
-    ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
+    BoxSizing, ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
     GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize,
 };
 use crate::style::properties::specified::{Display, PositionSpec};
@@ -12,7 +12,7 @@ use taffy::style_helpers::{
 
 use taffy::geometry::{Rect, Size};
 use taffy::style::{
-    BoxSizing, Dimension, LengthPercentage as TLengthPercentage, LengthPercentageAuto, Position,
+    BoxSizing as TBoxSizing, Dimension, LengthPercentage as TLengthPercentage, LengthPercentageAuto, Position,
 };
 
 fn length_percentage(value: LengthPercentage) -> TLengthPercentage {
@@ -177,12 +177,15 @@ pub fn taffy_style(style: &ComputedValues) -> taffy::Style {
             height: TLengthPercentage::length(style.text.border_spacing.vertical.0),
         };
     }
-    // Tables are `box-sizing: border-box` (HTML user agent stylesheet), everything else has the
-    // CSS initial value; Taffy defaults to `border-box`.
+    // Tables are always laid out as `box-sizing: border-box` (their `width` includes the border
+    // and padding). Everything else follows the `box-sizing` property.
     let box_sizing = if is_table {
-        BoxSizing::BorderBox
+        TBoxSizing::BorderBox
     } else {
-        BoxSizing::ContentBox
+        match box_.box_sizing {
+            BoxSizing::ContentBox => TBoxSizing::ContentBox,
+            BoxSizing::BorderBox => TBoxSizing::BorderBox,
+        }
     };
     taffy::Style {
         display,
@@ -239,6 +242,16 @@ pub fn taffy_style(style: &ComputedValues) -> taffy::Style {
         size: Size {
             width: dimension(pos.width),
             height: dimension(pos.height),
+        },
+        // `auto` is the initial value of `min-*`, which Taffy treats as zero for block boxes, and
+        // is used for `max-*: none` (no limit).
+        min_size: Size {
+            width: length_percentage_auto(pos.min_width),
+            height: length_percentage_auto(pos.min_height),
+        },
+        max_size: Size {
+            width: length_percentage_auto(pos.max_width),
+            height: length_percentage_auto(pos.max_height),
         },
         margin: Rect {
             left: length_percentage_auto(pos.margin_left),
