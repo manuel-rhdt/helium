@@ -212,16 +212,25 @@ fn loads_full_quarto_html_from_document() -> Result<(), Box<dyn std::error::Erro
             .find_map(|child| find_node_by_id(child, id))
     }
 
-    let line_y = ["cb1-1", "cb1-2", "cb1-3"].map(|id| {
-        find_node_by_id(&layout["document"], id)
-            .and_then(|node| node.get("border_box"))
+    // `y` is relative to the code line's page, and a long `pre` may be fragmented between two
+    // pages, so the lines are ordered by page first.
+    let line_pos = ["cb1-1", "cb1-2", "cb1-3"].map(|id| {
+        let node = find_node_by_id(&layout["document"], id)
+            .unwrap_or_else(|| panic!("missing layout position for code line {id}"));
+        let page = node
+            .get("page")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let y = node
+            .get("border_box")
             .and_then(|box_| box_.get("y"))
             .and_then(serde_json::Value::as_f64)
-            .unwrap_or_else(|| panic!("missing layout position for code line {id}"))
+            .unwrap_or_else(|| panic!("missing layout position for code line {id}"));
+        (page, y)
     });
     assert!(
-        line_y[0] < line_y[1] && line_y[1] < line_y[2],
-        "preformatted code lines should have distinct baselines: {line_y:?}"
+        line_pos[0] < line_pos[1] && line_pos[1] < line_pos[2],
+        "preformatted code lines should run top to bottom in document order: {line_pos:?}"
     );
 
     let pdf = std::fs::read(output)?;
