@@ -250,6 +250,16 @@ pub enum Position<'a> {
     Width(AutoOrQuantityOrPercentage),
     #[property]
     Height(AutoOrQuantityOrPercentage),
+    /// https://www.w3.org/TR/CSS22/visudet.html#min-max-widths
+    #[property]
+    MinWidth(AutoOrQuantityOrPercentage),
+    #[property]
+    MaxWidth(NoneOrQuantityOrPercentage),
+    /// https://www.w3.org/TR/CSS22/visudet.html#min-max-heights
+    #[property]
+    MinHeight(AutoOrQuantityOrPercentage),
+    #[property]
+    MaxHeight(NoneOrQuantityOrPercentage),
 
     /// Offsets of positioned boxes.
     /// https://www.w3.org/TR/CSS22/visuren.html#position-props
@@ -303,6 +313,22 @@ pub enum Position<'a> {
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-right
     #[property]
     PaddingRight(QuantityOrPercentage),
+
+    /// https://www.w3.org/TR/css-backgrounds-3/#border-radius
+    #[property]
+    BorderTopLeftRadius(QuantityOrPercentage),
+    #[property]
+    BorderTopRightRadius(QuantityOrPercentage),
+    #[property]
+    BorderBottomRightRadius(QuantityOrPercentage),
+    #[property]
+    BorderBottomLeftRadius(QuantityOrPercentage),
+    #[property]
+    #[shorthand("border-top-left-radius", method = "top_left")]
+    #[shorthand("border-top-right-radius", method = "top_right")]
+    #[shorthand("border-bottom-right-radius", method = "bottom_right")]
+    #[shorthand("border-bottom-left-radius", method = "bottom_left")]
+    BorderRadius(BorderRadiusShorthand),
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-border-top-width
     #[property]
@@ -417,6 +443,9 @@ pub enum Box {
     UnicodeBidi(UnicodeBidi),
     #[property]
     Position(PositionSpec),
+    /// https://www.w3.org/TR/css-sizing-3/#box-sizing
+    #[property]
+    BoxSizing(BoxSizing),
 
     // Flexbox: https://www.w3.org/TR/css-flexbox-1/
     #[property]
@@ -498,6 +527,12 @@ pub enum Text {
     TextAlign(TextAlign),
     #[property]
     Hyphens(Hyphens),
+    /// https://www.w3.org/TR/css-text-3/#letter-spacing-property
+    #[property]
+    LetterSpacing(NormalOrQuantity),
+    /// https://www.w3.org/TR/css-text-3/#text-transform-property
+    #[property]
+    TextTransform(TextTransform),
     /// https://www.w3.org/TR/css-writing-modes-3/#direction
     #[property]
     Direction(Direction),
@@ -757,6 +792,64 @@ impl<'i> PropertyValue<'i> for FlexShorthand {
             shrink: shrink.unwrap_or(1.0),
             // an omitted basis is 0
             basis: basis.unwrap_or(AutoOrQuantityOrPercentage::Percentage(Percentage(0.0))),
+        })
+    }
+}
+
+/// The value of `border-radius`: one to four radii in the order top-left, top-right,
+/// bottom-right, bottom-left, with missing values taken from the opposite corner like for
+/// `margin`. Only circular corners are supported, so the `/` syntax for elliptical corners is
+/// a parse error.
+/// https://www.w3.org/TR/css-backgrounds-3/#border-radius
+#[derive(Debug, Copy, Clone)]
+pub struct BorderRadiusShorthand {
+    pub top_left: QuantityOrPercentage,
+    pub top_right: QuantityOrPercentage,
+    pub bottom_right: QuantityOrPercentage,
+    pub bottom_left: QuantityOrPercentage,
+}
+
+impl BorderRadiusShorthand {
+    pub fn top_left(&self) -> QuantityOrPercentage {
+        self.top_left
+    }
+    pub fn top_right(&self) -> QuantityOrPercentage {
+        self.top_right
+    }
+    pub fn bottom_right(&self) -> QuantityOrPercentage {
+        self.bottom_right
+    }
+    pub fn bottom_left(&self) -> QuantityOrPercentage {
+        self.bottom_left
+    }
+}
+
+impl<'i> PropertyValue<'i> for BorderRadiusShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let first = input
+            .try_parse(QuantityOrPercentage::from_css_property_value)
+            .map_err(|_| input.new_error_for_next_token())?;
+        let second = input
+            .try_parse(QuantityOrPercentage::from_css_property_value)
+            .ok();
+        let third = second.and_then(|_| {
+            input
+                .try_parse(QuantityOrPercentage::from_css_property_value)
+                .ok()
+        });
+        let fourth = third.and_then(|_| {
+            input
+                .try_parse(QuantityOrPercentage::from_css_property_value)
+                .ok()
+        });
+        let second_value = second.unwrap_or(first);
+        Ok(BorderRadiusShorthand {
+            top_left: first,
+            top_right: second_value,
+            bottom_right: third.unwrap_or(first),
+            bottom_left: fourth.unwrap_or(second_value),
         })
     }
 }
@@ -1111,6 +1204,48 @@ impl Default for AutoOrQuantityOrPercentage {
     fn default() -> Self {
         AutoOrQuantityOrPercentage::Auto
     }
+}
+
+/// The value of `text-transform`. `full-width` and `full-size-kana` are not supported.
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PropertyValue)]
+pub enum TextTransform {
+    #[default]
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
+/// The value of `letter-spacing`: `normal` or a length.
+#[derive(Debug, Copy, Clone, Default, PropertyValue)]
+pub enum NormalOrQuantity {
+    #[default]
+    Normal,
+    Quantity(Quantity),
+}
+
+/// The value of `max-width` and `max-height`: `none` means there is no limit.
+#[derive(Debug, Copy, Clone, PropertyValue)]
+pub enum NoneOrQuantityOrPercentage {
+    None,
+    Quantity(Quantity),
+    Percentage(Percentage),
+}
+
+impl Default for NoneOrQuantityOrPercentage {
+    fn default() -> Self {
+        NoneOrQuantityOrPercentage::None
+    }
+}
+
+/// https://www.w3.org/TR/css-sizing-3/#box-sizing
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum BoxSizing {
+    /// `width` and `height` set the size of the content box.
+    #[default]
+    ContentBox,
+    /// `width` and `height` set the size of the border box, i.e. they include padding and border.
+    BorderBox,
 }
 
 #[derive(Debug, Copy, Clone, PropertyValue)]
