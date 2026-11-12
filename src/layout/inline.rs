@@ -463,7 +463,7 @@ impl InlineFormattingContext {
                 }
             })
             .fold(
-                (Px(0.0), Px(10.0)),
+                (Px(0.0), Px(0.0)),
                 |(height, depth), (new_height, new_depth)| {
                     (height.max(new_height), depth.max(new_depth))
                 },
