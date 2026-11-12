@@ -6,8 +6,8 @@ use super::{FontMap, text::Font};
 use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, Styles};
 use crate::style::properties::computed::{
-    ComputedValues, Display, GenericSize, LineHeight, PositionSpec, StyleBuilder, TextAlign,
-    color_to_rgba,
+    ComputedValues, Display, GenericSize, LineHeight, PixelLength as Px, PositionSpec, StyleBuilder,
+    TextAlign, color_to_rgba,
 };
 use crate::style::properties::specified::{MathFamily, PropertyDeclaration, Text};
 use crate::traverse::Traversal;
@@ -689,6 +689,22 @@ impl EntityConstructor {
         self.world.create_entity().with(style).build().into()
     }
 
+    /// The ascent and descent of the strut of a block: a zero-width inline box with the block's
+    /// font and line height. Line boxes start with it (CSS 2.1 §10.8.1), so a line without any
+    /// inline content is still one line of the block's font tall.
+    fn strut(&mut self, style: &ComputedValues) -> (Px, Px) {
+        let font = self.match_font(style);
+        let font_size = style.font.font_size;
+        let font_height = font.scale_to_px(font.font_height(), font_size);
+        let line_height = match style.font.line_height {
+            LineHeight::Normal => font_height * 1.2,
+            LineHeight::LengthPercentage(lp) => lp.absolute(style.font.font_size),
+        };
+        let baseline =
+            font.scale_to_px(font.ascent(), font_size) + (line_height - font_height) / 2.0;
+        (baseline, line_height - baseline)
+    }
+
     fn build_text_entity(&mut self, style: ComputedValues, text: &str) -> LayoutEntity {
         let font = self.match_font(&style);
         let font_name = font.postscript_name();
@@ -780,7 +796,7 @@ impl EntityConstructor {
         entities
             .build_entity()
             .with(
-                InlineFormattingContext::new(elements.to_owned(), vec![], style),
+                InlineFormattingContext::new(elements.to_owned(), vec![], style, (Px(0.0), Px(0.0))),
                 inline_formatting_contexts,
             )
             .with(style.anonymous_block(), computed_values)
@@ -891,6 +907,9 @@ impl EntityConstructor {
         let replaced_text = replaced_element_text(node)
             .filter(|_| node.children().next().is_none())
             .map(|text| self.build_text_entity(node.style(), &text).0);
+        // The strut is computed from the block's font, which needs the font map: like the text
+        // above, it has to be built before the storages below borrow the world.
+        let strut = self.strut(&node.style());
 
         let entities = self.world.entities();
         let mut block_formatting_contexts = self.world.write_storage::<BlockFormattingContext>();
@@ -936,7 +955,7 @@ impl EntityConstructor {
             inline_formatting_contexts
                 .insert(
                     entity,
-                    InlineFormattingContext::new(inline_level_elements, absolutes, &style),
+                    InlineFormattingContext::new(inline_level_elements, absolutes, &style, strut),
                 )
                 .unwrap();
             return;
@@ -976,8 +995,9 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_inline_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
+        let strut = self.strut(&node.style());
         let mut inline_formatting_context =
-            InlineFormattingContext::new(vec![], vec![], &node.style());
+            InlineFormattingContext::new(vec![], vec![], &node.style(), strut);
         for child in node.children() {
             let child_entity = match child.layout_entity() {
                 Some(LayoutEntity(entity)) => entity,
