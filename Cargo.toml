@@ -1,6 +1,6 @@
 [package]
 name = "helium"
-version = "0.1.5"
+version = "0.1.6"
 authors = ["Manuel Reinhardt"]
 edition = "2024"
 
