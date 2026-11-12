@@ -59,6 +59,10 @@ pub struct InlineFormattingContext {
     /// The runs of the paragraph with the same bidi embedding level in logical order, set by
     /// `FindPossibleLineBreaks`. Empty if all of the text is left-to-right.
     pub bidi_runs: Vec<BidiRun>,
+    /// The ascent and descent of the strut: a zero-width inline box with the block container's
+    /// font and line height. Every line box starts with it (CSS 2.1 §10.8.1), so an empty line
+    /// is exactly one line of the block's font tall.
+    pub strut: (Px, Px),
 }
 
 /// A part of the content of a paragraph with the same bidi embedding level, inside of one
@@ -101,7 +105,12 @@ impl BidiRun {
 }
 
 impl InlineFormattingContext {
-    pub fn new(elements: Vec<Entity>, absolutes: Vec<Entity>, style: &ComputedValues) -> Self {
+    pub fn new(
+        elements: Vec<Entity>,
+        absolutes: Vec<Entity>,
+        style: &ComputedValues,
+        strut: (Px, Px),
+    ) -> Self {
         InlineFormattingContext {
             text_align: style.text.text_align,
             elements,
@@ -113,6 +122,7 @@ impl InlineFormattingContext {
             plaintext: style.box_.unicode_bidi == UnicodeBidi::Plaintext,
             base_rtl: style.text.direction == Direction::Rtl,
             bidi_runs: vec![],
+            strut,
         }
     }
 
@@ -463,7 +473,7 @@ impl InlineFormattingContext {
                 }
             })
             .fold(
-                (Px(0.0), Px(10.0)),
+                self.strut,
                 |(height, depth), (new_height, new_depth)| {
                     (height.max(new_height), depth.max(new_depth))
                 },
