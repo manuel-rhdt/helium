@@ -19,6 +19,15 @@
   @page :right { @top-center { content: "Pride and Prejudice"; } }
   @page :first { @top-center { content: none; } @bottom-center { content: none; } }
 
+  /* The binding is on the left of right pages and on the right of left pages: the inner margins
+     are wider than the outer ones, with the same total width. */
+  @page :right { margin-left: 0.85in; margin-right: 0.55in; }
+  @page :left { margin-left: 0.55in; margin-right: 0.85in; }
+
+  /* The page that opens a chapter has no running head */
+  @page chapter:first { @top-center { content: none; } }
+  section.chapter { page: chapter; }
+
   html { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, "Latin Modern Roman", serif; }
   body { font-size: 10.5pt; line-height: 14.5pt; color: #111; margin: 0; orphans: 2; widows: 2; }
 
@@ -119,6 +128,7 @@
   <p class="entry"><a href="#ch60">Chapter LX</a></p>
   <p class="entry"><a href="#ch61">Chapter LXI</a></p>
 </div>
+<section class="chapter">
 <h2 id="ch1">Chapter I.</h2>
 
 <p>IT is a truth universally acknowledged, that a single man in possession
@@ -234,9 +244,8 @@ was less difficult to develope. She was a woman of mean understanding,
 little information, and uncertain temper. When she was discontented, she
 fancied herself nervous. The business of her life was to get her
 daughters married: its solace was visiting and news.</p>
-
-
-
+</section>
+<section class="chapter">
 <h2 id="ch2">Chapter II.</h2>
 
 <p>MR. BENNET was among the earliest of those who waited on Mr. Bingley. He
@@ -341,9 +350,8 @@ youngest, I’m the tallest.”</p>
 <p>The rest of the evening was spent in conjecturing how soon he would
 return Mr. Bennet’s visit, and determining when they should ask him to
 dinner.</p>
-
-
-
+</section>
+<section class="chapter">
 <h2 id="ch3">Chapter III.</h2>
 
 <p>NOT all that Mrs. Bennet, however, with the assistance of her five
@@ -516,7 +524,8 @@ all worth pleasing. So high and so conceited, that there was no enduring
 him! He walked here, and he walked there, fancying himself so very
 great! Not handsome enough to dance with! I wish you had been there, my
 dear, to have given him one of your set-downs. I quite detest the man.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch4">Chapter IV.</h2>
 
 <p>WHEN Jane and Elizabeth were alone, the former, who had been cautious in
@@ -627,7 +636,8 @@ her and liked her, and pronounced her to be a sweet girl, and one whom
 they should not object to know more of. Miss Bennet was therefore
 established as a sweet girl; and their brother felt authorized by such
 commendation to think of her as he chose.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch5">Chapter V.</h2>
 
 <p>WITHIN a short walk of Longbourn lived a family with whom the Bennets
@@ -739,7 +749,8 @@ directly.”</p>
 
 <p>The boy protested that she should not; she continued to declare that she
 would; and the argument ended only with the visit.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch6">Chapter VI.</h2>
 
 <p>THE ladies of Longbourn soon waited on those of Netherfield. The visit
@@ -1006,7 +1017,8 @@ of course she will be always at Pemberley with you.”</p>
 <p>He listened to her with perfect indifference, while she chose to
 entertain herself in this manner; and as his composure convinced her
 that all was safe, her wit flowed along.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch7">Chapter VII.</h2>
 
 <p>MR. BENNET’S property consisted almost entirely in an estate of two
@@ -1223,7 +1235,8 @@ of the chaise into an invitation to remain at Netherfield for the
 present. Elizabeth most thankfully consented, and a servant was
 despatched to Longbourn, to acquaint the family with her stay, and bring
 back a supply of clothes.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch8">Chapter VIII.</h2>
 
 <p>AT five o’clock the two ladies retired to dress, and at half-past six
@@ -1468,7 +1481,8 @@ declared that they were miserable. They solaced their wretchedness,
 however, by duets after supper; while he could find no better relief to
 his feelings than by giving his housekeeper directions that every
 possible attention might be paid to the sick lady and her sister.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch9">Chapter IX.</h2>
 
 <p>ELIZABETH passed the chief of the night in her sister’s room, and in the
@@ -1659,7 +1673,8 @@ instantly to Jane, leaving her own and her relations’ behaviour to the
 remarks of the two ladies and Mr. Darcy; the latter of whom, however,
 could not be prevailed on to join in their censure of <i>her</i>, in spite of
 all Miss Bingley’s witticisms on <i>fine eyes</i>.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch10">Chapter X.</h2>
 
 <p>THE day passed much as the day before had done. Mrs. Hurst and Miss
@@ -1938,7 +1953,8 @@ fourth. Good-bye.”</p>
 <p>She then ran gaily off, rejoicing, as she rambled about, in the hope of
 being at home again in a day or two. Jane was already so much recovered
 as to intend leaving her room for a couple of hours that evening.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch11">Chapter XI.</h2>
 
 <p>WHEN the ladies removed after dinner Elizabeth ran up to her sister, and
@@ -2121,7 +2137,8 @@ waking Mr. Hurst.”</p>
 <p>Her sister made not the smallest objection, and the pianoforte was
 opened; and Darcy, after a few moments’ recollection, was not sorry for
 it. He began to feel the danger of paying Elizabeth too much attention.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch12">Chapter XII.</h2>
 
 <p>IN consequence of an agreement between the sisters, Elizabeth wrote the
@@ -2188,7 +2205,8 @@ for them of a different sort. Much had been done, and much had been said
 in the regiment since the preceding Wednesday; several of the officers
 had dined lately with their uncle; a private had been flogged; and it
 had actually been hinted that Colonel Forster was going to be married.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch13">Chapter XIII.</h2>
 
 <p>
@@ -2330,7 +2348,8 @@ cook, and that her daughters had nothing to do in the kitchen. He begged
 pardon for having displeased her. In a softened tone she declared
 herself not at all offended; but he continued to apologize for about a
 quarter of an hour.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch14">Chapter XIV.</h2>
 
 <p>
@@ -2452,7 +2471,8 @@ resume his book; but Mr. Collins, after assuring them that he bore his
 young cousin no ill-will, and should never resent her behaviour as any
 affront, seated himself at another table with Mr. Bennet, and prepared
 for backgammon.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch15">Chapter XV.</h2>
 
 <p>MR. COLLINS was not a sensible man, and the deficiency of nature had
@@ -2613,7 +2633,8 @@ pointedly included him in her invitation for the next evening, although
 utterly unknown to her before. Something, he supposed, might be
 attributed to his connection with them, but yet he had never met with so
 much attention in the whole course of his life.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch16">Chapter XVI.</h2>
 
 <p>AS no objection was made to the young people’s engagement with their
@@ -2977,7 +2998,8 @@ Mrs. Philips, protesting that he did not in the least regard his losses
 at whist, enumerating all the dishes at supper, and repeatedly fearing
 that he crowded his cousins, had more to say than he could well manage
 before the carriage stopped at Longbourn House.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch17">Chapter XVII.</h2>
 
 <p>ELIZABETH related to Jane, the next day, what had passed between Mr.
@@ -3106,7 +3128,8 @@ trial of her patience in weather which totally suspended the improvement
 of her acquaintance with Mr. Wickham; and nothing less than a dance on
 Tuesday could have made such a Friday, Saturday, Sunday, and Monday
 endurable to Kitty and Lydia.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch18">Chapter XVIII.</h2>
 
 <p>TILL Elizabeth entered the drawing-room at Netherfield, and looked in
@@ -3638,7 +3661,8 @@ with equal certainty, and with considerable, though not equal, pleasure.
 Elizabeth was the least dear to her of all her children; and though the
 man and the match were quite good enough for <i>her</i>, the worth of each
 was eclipsed by Mr. Bingley and Netherfield.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch19">Chapter XIX.</h2>
 
 <p>THE next day opened a new scene at Longbourn. Mr. Collins made his
@@ -3826,7 +3850,8 @@ persisted in considering her repeated refusals as flattering
 encouragement, to apply to her father, whose negative might be uttered
 in such a manner as must be decisive, and whose behaviour at least could
 not be mistaken for the affectation and coquetry of an elegant female.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch20">Chapter XX.</h2>
 
 <p>MR. COLLINS was not left long to the silent contemplation of his
@@ -4009,7 +4034,8 @@ liable to error. I have certainly meant well through the whole affair.
 My object has been to secure an amiable companion for myself, with due
 consideration for the advantage of all your family; and if my <i>manner</i>
 has been at all reprehensible, I here beg leave to apologize.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch21">Chapter XXI.</h2>
 
 <p>THE discussion of Mr. Collins’s offer was now nearly at an end, and
@@ -4215,7 +4241,8 @@ thinking that Mr. Bingley would be soon down again, and soon dining at
 Longbourn; and the conclusion of all was the comfortable declaration,
 that, though he had been invited only to a family dinner, she would take
 care to have two full courses.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch22">Chapter XXII.</h2>
 
 <p>THE Bennets were engaged to dine with the Lucases; and again, during the
@@ -4391,7 +4418,8 @@ most humiliating picture! And to the pang of a friend disgracing
 herself, and sunk in her esteem, was added the distressing conviction
 that it was impossible for that friend to be tolerably happy in the lot
 she had chosen.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch23">Chapter XXIII.</h2>
 
 <p>ELIZABETH was sitting with her mother and sisters, reflecting on what
@@ -4564,7 +4592,8 @@ daughters I cannot understand; and all for the sake of Mr. Collins, too!
 Why should <i>he</i> have it more than anybody else?”</p>
 
 <p>“I leave it to yourself to determine,” said Mr. Bennet.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch24">Chapter XXIV.</h2>
 
 <p>MISS BINGLEY’S letter arrived, and put an end to doubt. The very first
@@ -4765,7 +4794,8 @@ extenuating circumstances in the case unknown to the society of
 Hertfordshire: her mild and steady candour always pleaded for
 allowances, and urged the possibility of mistakes; but by everybody else
 Mr. Darcy was condemned as the worst of men.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch25">Chapter XXV.</h2>
 
 <p>AFTER a week spent in professions of love and schemes of felicity, Mr.
@@ -4925,7 +4955,8 @@ that gentleman’s reputed disposition, when quite a lad, which might
 agree with it; and was confident, at last, that she recollected having
 heard Mr. Fitzwilliam Darcy formerly spoken of as a very proud,
 ill-natured boy.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch26">Chapter XXVI.</h2>
 
 <p>MRS. GARDINER’S caution to Elizabeth was punctually and kindly given on
@@ -5112,7 +5143,8 @@ his defection much more to heart than I do. They are young in the ways
 of the world, and not yet open to the mortifying conviction that
 handsome young men must have something to live on as well as the
 plain.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch27">Chapter XXVII.</h2>
 
 <p>WITH no greater events than these in the Longbourn family, and otherwise
@@ -5250,7 +5282,8 @@ and rivers, shall not be jumbled together in our imaginations; nor, when
 we attempt to describe any particular scene, will we begin quarrelling
 about its relative situation. Let <i>our</i> first effusions be less
 insupportable than those of the generality of travellers.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch28">Chapter XXVIII.</h2>
 
 <p>EVERY object in the next day’s journey was new and interesting to
@@ -5402,7 +5435,8 @@ the others returned into the house. Mr. Collins no sooner saw the two
 girls than he began to congratulate them on their good fortune, which
 Charlotte explained by letting them know that the whole party was asked
 to dine at Rosings the next day.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch29">Chapter XXIX.</h2>
 
 <p>MR. COLLINS’S triumph, in consequence of this invitation, was complete.
@@ -5664,7 +5698,8 @@ for Charlotte’s sake, she made more favourable than it really was. But
 her commendation, though costing her some trouble, could by no means
 satisfy Mr. Collins, and he was very soon obliged to take her Ladyship’s
 praise into his own hands.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch30">Chapter XXX.</h2>
 
 <p>SIR WILLIAM stayed only a week at Hunsford; but his visit was long
@@ -5789,7 +5824,8 @@ Bingleys and Jane; and she thought he looked a little confused as he
 answered that he had never been so fortunate as to meet Miss Bennet. The
 subject was pursued no further, and the gentlemen soon afterwards went
 away.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch31">Chapter XXXI.</h2>
 
 <p>COLONEL FITZWILLIAM’S manners were very much admired at the Parsonage,
@@ -5957,7 +5993,8 @@ with them many instructions on execution and taste. Elizabeth received
 them with all the forbearance of civility; and at the request of the
 gentlemen remained at the instrument till her Ladyship’s carriage was
 ready to take them all home.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch32">Chapter XXXII.</h2>
 
 <p>ELIZABETH was sitting by herself the next morning, and writing to Jane,
@@ -6127,7 +6164,8 @@ Colonel Fitzwilliam. He was, beyond comparison, the pleasantest man: he
 certainly admired her, and his situation in life was most eligible; but,
 to counterbalance these advantages, Mr. Darcy had considerable patronage
 in the church, and his cousin could have none at all.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch33">Chapter XXXIII.</h2>
 
 <p>MORE than once did Elizabeth, in her ramble within the park,
@@ -6337,7 +6375,8 @@ seeing that she was really unwell, did not press her to go, and as much
 as possible prevented her husband from pressing her; but Mr. Collins
 could not conceal his apprehension of Lady Catherine’s being rather
 displeased by her staying at home.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch34">Chapter XXXIV.</h2>
 
 <p>WHEN they were gone, Elizabeth, as if intending to exasperate herself as
@@ -6555,7 +6594,8 @@ attachment had for a moment excited.</p>
 <p>She continued in very agitating reflections till the sound of Lady
 Catherine’s carriage made her feel how unequal she was to encounter
 Charlotte’s observation, and hurried her away to her room.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch35">Chapter XXXV.</h2>
 
 <p>ELIZABETH awoke the next morning to the same thoughts and meditations
@@ -6811,7 +6851,8 @@ course of the morning. I will only add, God bless you.</p>
 <p>
 “<span class="smcap">Fitzwilliam Darcy.</span>”<br>
 </p>
-
+</section>
+<section class="chapter">
 <h2 id="ch36">Chapter XXXVI.</h2>
 
 <p>
@@ -7006,7 +7047,8 @@ an hour, hoping for her return, and almost resolving to walk after her
 till she could be found. Elizabeth could but just <i>affect</i> concern in
 missing him; she really rejoiced at it. Colonel Fitzwilliam was no
 longer an object. She could think only of her letter.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch37">Chapter XXXVII.</h2>
 
 <p>THE two gentlemen left Rosings the next morning; and Mr. Collins having
@@ -7152,7 +7194,8 @@ work of the morning, and pack her trunk afresh.</p>
 a good journey, and invited them to come to Hunsford again next year;
 and Miss de Bourgh exerted herself so far as to courtesy and hold out
 her hand to both.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch38">Chapter XXXVIII.</h2>
 
 <p>ON Saturday morning Elizabeth and Mr. Collins met for breakfast a few
@@ -7265,7 +7308,8 @@ in which she remained as to the extent of what she should communicate,
 and her fear, if she once entered on the subject, of being hurried into
 repeating something of Bingley, which might only grieve her sister
 further.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch39">Chapter XXXIX.</h2>
 
 <p>IT was the second week in May, in which the three young ladies set out
@@ -7427,7 +7471,8 @@ frequent discussion between her parents. Elizabeth saw directly that her
 father had not the smallest intention of yielding; but his answers were
 at the same time so vague and equivocal, that her mother, though often
 disheartened, had never yet despaired of succeeding at last.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch40">Chapter XL.</h2>
 
 <p>ELIZABETH’S impatience to acquaint Jane with what had happened could no
@@ -7614,7 +7659,8 @@ quite as their own, I dare say, whenever that happens.”</p>
 often talk of it between themselves. Well, if they can be easy with an
 estate that is not lawfully their own, so much the better. <i>I</i> should be
 ashamed of having one that was only entailed on me.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch41">Chapter XLI.</h2>
 
 <p>THE first week of their return was soon gone. The second began. It was
@@ -7860,7 +7906,8 @@ opportunity of enjoying herself as much as possible,—advice which there
 was every reason to believe would be attended to; and, in the clamorous
 happiness of Lydia herself in bidding farewell, the more gentle adieus
 of her sisters were uttered without being heard.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch42">Chapter XLII.</h2>
 
 <p>HAD Elizabeth’s opinion been all drawn from her own family, she could
@@ -8040,7 +8087,8 @@ with a proper air of indifference, that she had not really any dislike
 to the scheme.</p>
 
 <p>To Pemberley, therefore, they were to go.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch43">Chapter XLIII.</h2>
 
 <p>ELIZABETH, as they drove along, watched for the first appearance of
@@ -8547,7 +8595,8 @@ intercourse renewed after many years’ discontinuance.</p>
 much attention for any of these new friends; and she could do nothing
 but think, and think with wonder, of Mr. Darcy’s civility, and, above
 all, of his wishing her to be acquainted with his sister.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch44">Chapter XLIV.</h2>
 
 <p>ELIZABETH had settled it that Mr. Darcy would bring his sister to visit
@@ -8767,7 +8816,8 @@ she asked herself the reason, she had very little to say in reply.</p>
 <p>Mr. Gardiner left them soon after breakfast. The fishing scheme had been
 renewed the day before, and a positive engagement made of his meeting
 some of the gentlemen at Pemberley by noon.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch45">Chapter XLV.</h2>
 
 <p>CONVINCED as Elizabeth now was that Miss Bingley’s dislike of her had
@@ -8941,7 +8991,8 @@ of his sister, his friends, his house, his fruit, of everything but
 himself; yet Elizabeth was longing to know what Mrs. Gardiner thought of
 him, and Mrs. Gardiner would have been highly gratified by her niece’s
 beginning the subject.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch46">Chapter XLVI.</h2>
 
 <p>
@@ -9233,7 +9284,8 @@ Gardiner, meanwhile, having settled his account at the inn, nothing
 remained to be done but to go; and Elizabeth, after all the misery of
 the morning, found herself, in a shorter space of time than she could
 have supposed, seated in the carriage, and on the road to Longbourn.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch47">Chapter XLVII.</h2>
 
 <p>
@@ -9636,7 +9688,8 @@ to find out the stand and number of the coach. I do not know of any
 other designs that he had formed; but he was in such a hurry to be gone,
 and his spirits so greatly discomposed, that I had difficulty in finding
 out even so much as this.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch48">Chapter XLVIII.</h2>
 
 <p>THE whole party were in hopes of a letter from Mr. Bennet the next
@@ -9857,7 +9910,8 @@ minutes of every day in a rational manner.”</p>
 <p>“Well, well,” said he, “do not make yourself unhappy. If you are a good
 girl for the next ten years, I will take you to a review at the end of
 them.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch49">Chapter XLIX.</h2>
 
 <p>TWO days after Mr. Bennet’s return, as Jane and Elizabeth were walking
@@ -10105,7 +10159,8 @@ had need to be thankful. She felt it so; and though, in looking forward,
 neither rational happiness, nor worldly prosperity could be justly
 expected for her sister, in looking back to what they had feared, only
 two hours ago, she felt all the advantages of what they had gained.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch50">Chapter L.</h2>
 
 <p>MR. BENNET had very often wished, before this period of his life, that,
@@ -10324,7 +10379,8 @@ as the ceremony was over, they should proceed to Longbourn. Elizabeth
 was surprised, however, that Wickham should consent to such a scheme;
 and, had she consulted only her own inclination, any meeting with him
 would have been the last object of her wishes.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch51">Chapter LI.</h2>
 
 <p>THEIR sister’s wedding-day arrived; and Jane and Elizabeth felt for her
@@ -10546,7 +10602,8 @@ out.”</p>
 Elizabeth privately of what Lydia had let fall; Elizabeth was glad of
 it:—till it appeared whether her inquiries would receive any
 satisfaction, she had rather be without a confidante.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch52">Chapter LII.</h2>
 
 <p>ELIZABETH had the satisfaction of receiving an answer to her letter as
@@ -10696,7 +10753,8 @@ mind.”</p>
 
 <p>She held out her hand: he kissed it with affectionate gallantry, though
 he hardly knew how to look, and they entered the house.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch53">Chapter LIII.</h2>
 
 <p>MR. WICKHAM was so perfectly satisfied with this conversation, that he
@@ -11012,7 +11070,8 @@ there that day; but, though she always kept a very good table, she did
 not think anything less than two courses could be good enough for a man
 on whom she had such anxious designs, or satisfy the appetite and pride
 of one who had ten thousand a year.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch54">Chapter LIV.</h2>
 
 <p>AS soon as they were gone, Elizabeth walked out to recover her spirits;
@@ -11195,7 +11254,8 @@ acknowledge?”</p>
 instruct, though we can teach only what is not worth knowing. Forgive
 me; and if you persist in indifference, do not make <i>me</i> your
 confidante.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch55">Chapter LV.</h2>
 
 <p>A FEW days after this visit, Mr. Bingley called again, and alone. His
@@ -11464,7 +11524,8 @@ neighbours in Meryton.</p>
 <p>The Bennets were speedily pronounced to be the luckiest family in the
 world; though only a few weeks before, when Lydia had first run away,
 they had been generally proved to be marked out for misfortune.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch56">Chapter LVI.</h2>
 
 <p>ONE morning, about a week after Bingley’s engagement with Jane had been
@@ -11795,7 +11856,8 @@ nothing particular to say to you, Lizzy?”</p>
 
 <p>Elizabeth was forced to give in to a little falsehood here; for to
 acknowledge the substance of their conversation was impossible.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch57">Chapter LVII.</h2>
 
 <p>THE discomposure of spirits which this extraordinary visit threw
@@ -11961,7 +12023,8 @@ would rather have cried. Her father had most cruelly mortified her by
 what he said of Mr. Darcy’s indifference; and she could do nothing but
 wonder at such a want of penetration, or fear that, perhaps, instead of
 his seeing too <i>little</i>, she might have fancied too <i>much</i>.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch58">Chapter LVIII.</h2>
 
 <p>INSTEAD of receiving any such letter of excuse from his friend, as
@@ -12226,7 +12289,8 @@ it was rather too early to begin. In anticipating the happiness of
 Bingley, which of course was to be inferior only to his own, he
 continued the conversation till they reached the house. In the hall they
 parted.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch59">Chapter LIX.</h2>
 
 <p>
@@ -12495,7 +12559,8 @@ every hour in his esteem.</p>
 <p>“I admire all my three sons-in-law highly,” said he. “Wickham, perhaps,
 is my favourite; but I think I shall like <i>your</i> husband quite as well
 as Jane’s.”</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch60">Chapter LX.</h2>
 
 <p>ELIZABETH’S spirits soon rising to playfulness again, she wanted Mr.
@@ -12656,7 +12721,8 @@ pleasure, it added to the hope of the future; and she looked forward
 with delight to the time when they should be removed from society so
 little pleasing to either, to all the comfort and elegance of their
 family party at Pemberley.</p>
-
+</section>
+<section class="chapter">
 <h2 id="ch61">Chapter LXI.</h2>
 
 <p>HAPPY for all her maternal feelings was the day on which Mrs. Bennet got
@@ -12769,5 +12835,6 @@ sensible of the warmest gratitude towards the persons who, by bringing
 her into Derbyshire, had been the means of uniting them.</p>
 
 
+</section>
 </body>
 </html>
