@@ -482,6 +482,11 @@ impl BackgroundShorthand {
     pub fn images(&self) -> CommaSeparated<SpecifiedImage> {
         CommaSeparated::new(self.images.clone())
     }
+
+    /// The shorthand resets `background-blend-mode` to its initial value.
+    pub fn blend_modes(&self) -> CommaSeparated<super::specified::BlendMode> {
+        CommaSeparated::new(vec![super::specified::BlendMode::Normal])
+    }
 }
 
 impl<'i> PropertyValue<'i> for BackgroundShorthand {

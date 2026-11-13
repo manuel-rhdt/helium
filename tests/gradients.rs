@@ -181,3 +181,65 @@ fn a_box_on_two_pages_has_a_gradient_on_each() {
     );
     assert_eq!(count(&pdf, "sh"), 2);
 }
+
+#[test]
+fn blend_modes_paint_the_layers_in_an_isolated_group() {
+    let pdf = render(
+        "blend",
+        &box_with(
+            "background-color: yellow; background-image: linear-gradient(red, blue), linear-gradient(lime, white); \
+             background-blend-mode: multiply, screen",
+        ),
+    );
+    assert!(pdf.contains("/BM /Multiply"), "{}", pdf);
+    assert!(pdf.contains("/BM /Screen"), "{}", pdf);
+    assert!(pdf.contains("/Subtype /Form"), "{}", pdf);
+    assert!(pdf.contains("/S /Transparency"), "{}", pdf);
+    assert!(pdf.contains("/I true"), "{}", pdf);
+    assert_eq!(shading_types(&pdf), [2, 2]);
+}
+
+#[test]
+fn blend_modes_are_repeated_for_more_layers() {
+    let pdf = render(
+        "blend_repeat",
+        &box_with(
+            "background-image: linear-gradient(red, blue), linear-gradient(lime, white), linear-gradient(black, red); \
+             background-blend-mode: difference, normal",
+        ),
+    );
+    // layers one and three (counted from the top) use `difference`, the graphics state is shared
+    assert_eq!(pdf.matches("/BM /Difference").count(), 1, "{}", pdf);
+    assert_eq!(pdf.matches("/BM /Normal").count(), 1, "{}", pdf);
+    let states: Vec<&str> = pdf
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|w| w[1] == "gs")
+        .map(|w| w[0])
+        .collect();
+    // painted from the bottom: difference, normal, difference
+    assert_eq!(states.len(), 3, "{}", pdf);
+    assert_eq!(states[0], states[2], "{}", pdf);
+    assert_ne!(states[0], states[1], "{}", pdf);
+}
+
+#[test]
+fn normal_blend_mode_needs_no_group() {
+    let pdf = render("no_blend", &box_with("background-image: linear-gradient(red, blue)"));
+    assert!(!pdf.contains("/BM"), "{}", pdf);
+    let pdf = render(
+        "normal_blend",
+        &box_with("background-image: linear-gradient(red, blue); background-blend-mode: normal"),
+    );
+    assert!(!pdf.contains("/S /Transparency"), "{}", pdf);
+}
+
+#[test]
+fn background_shorthand_resets_the_blend_mode() {
+    let pdf = render(
+        "blend_reset",
+        &box_with("background-blend-mode: multiply; background: linear-gradient(red, blue)"),
+    );
+    assert!(!pdf.contains("/BM"), "{}", pdf);
+}

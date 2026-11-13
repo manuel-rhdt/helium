@@ -5,6 +5,7 @@ use crate::layout::components::{
 use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{ComputedValues, PixelLength, RGBA};
 use crate::style::properties::gradient::{BoxSize, Image, Resolved};
+use crate::style::properties::specified::BlendMode;
 
 use specs::prelude::*;
 use std::ops::Deref;
@@ -174,7 +175,7 @@ fn rect_path(rect: Rect) -> Vec<PathSegment> {
 /// The gradients in the `background-image` of a style, in the order they are painted (the
 /// first image is on top, so it is painted last). `area` is the padding box, which positions and
 /// sizes the gradients, and `paint` the border box that they are painted into.
-fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<Resolved> {
+fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<Layer> {
     use crate::style::properties::color::color_to_rgba;
     let current = color_to_rgba(style.font.color);
     let size = |rect: Rect| BoxSize {
@@ -184,16 +185,41 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
         height: rect.height.0,
     };
     let (area, paint) = (size(area), size(paint));
+    let modes = &style.background.background_blend_mode;
     style
         .background
         .background_image
         .iter()
+        .enumerate()
         .rev()
-        .filter_map(|image| match image {
-            Image::Gradient(gradient) => gradient.with_current_color(current).resolve(area, paint),
+        .filter_map(|(index, image)| match image {
+            Image::Gradient(gradient) => {
+                let gradient = gradient.with_current_color(current).resolve(area, paint)?;
+                let blend = if modes.is_empty() { BlendMode::Normal } else { modes[index % modes.len()] };
+                Some(Layer { gradient, blend })
+            }
             Image::None => None,
         })
         .collect()
+}
+
+/// A gradient of a background with the way it is blended with the layers below.
+#[derive(Debug, Clone)]
+pub struct Layer {
+    pub gradient: Resolved,
+    pub blend: BlendMode,
+}
+
+/// A background whose layers are blended. The layers only blend with each other, so they are
+/// painted as one isolated group.
+#[derive(Debug, Clone)]
+pub struct BlendGroup {
+    /// The (rounded) border box.
+    pub clip: Vec<PathSegment>,
+    pub bbox: Rect,
+    pub color: RGBA,
+    /// From bottom to top.
+    pub layers: Vec<Layer>,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +241,8 @@ pub enum DisplayItem {
     },
     /// Paints a gradient over the current clip.
     Gradient(Box<Resolved>),
+    /// Paints background layers that have a blend mode.
+    BlendGroup(Box<BlendGroup>),
     Color(RGBA),
     StrokeColor(RGBA),
     Text(Point, PixelLength, String, Glyphs),
@@ -274,9 +302,33 @@ impl DisplayList {
         self.append(DisplayItem::Pop, entity, z);
     }
 
+    /// Paints the background colour and the gradients, clipped to the (rounded) border box
+    /// `clip`. The colour is only painted here when the gradients are blended; it is the
+    /// caller's job otherwise.
+    fn blended_background(
+        &mut self,
+        bbox: Rect,
+        color: RGBA,
+        layers: &[Layer],
+        clip: &[PathSegment],
+        entity: Entity,
+        z: ZIndex,
+    ) {
+        self.append(
+            DisplayItem::BlendGroup(Box::new(BlendGroup {
+                clip: clip.to_vec(),
+                bbox,
+                color,
+                layers: layers.to_vec(),
+            })),
+            entity,
+            z,
+        );
+    }
+
     /// Paints gradients, clipped to the (rounded) border box `clip`.
-    fn gradients(&mut self, gradients: &[Resolved], clip: &[PathSegment], entity: Entity, z: ZIndex) {
-        for gradient in gradients {
+    fn gradients(&mut self, gradients: &[Layer], clip: &[PathSegment], entity: Entity, z: ZIndex) {
+        for Layer { gradient, .. } in gradients {
             self.append(DisplayItem::Push, entity, z);
             self.append(
                 DisplayItem::ClipPath {
@@ -301,14 +353,17 @@ impl DisplayList {
         border: EdgeValues<PixelLength>,
         border_color: EdgeValues<RGBA>,
         background_color: RGBA,
-        gradients: &[Resolved],
+        gradients: &[Layer],
         entity: Entity,
         z: ZIndex,
     ) {
         let zero = PixelLength(0.0);
         let outer_path = rounded_rect_path(rect, outer);
 
-        if background_color != RGBA::transparent() {
+        let blended = gradients.iter().any(|layer| layer.blend != BlendMode::Normal);
+        if blended {
+            self.blended_background(rect, background_color, gradients, &outer_path, entity, z);
+        } else if background_color != RGBA::transparent() {
             self.append(DisplayItem::Push, entity, z);
             self.append(DisplayItem::Color(background_color), entity, z);
             self.append(
@@ -321,7 +376,9 @@ impl DisplayList {
             );
             self.append(DisplayItem::Pop, entity, z);
         }
-        self.gradients(gradients, &outer_path, entity, z);
+        if !blended {
+            self.gradients(gradients, &outer_path, entity, z);
+        }
 
         if border.top <= zero && border.bottom <= zero && border.left <= zero && border.right <= zero
         {
@@ -542,7 +599,17 @@ impl<'a> System<'a> for DisplayDecoration {
                 }
             }
 
-            if background_color != RGBA::transparent() {
+            let blended = gradients.iter().any(|layer| layer.blend != BlendMode::Normal);
+            if blended {
+                self.display_list.blended_background(
+                    border_box,
+                    background_color,
+                    &gradients,
+                    &rect_path(border_box),
+                    entity,
+                    z,
+                );
+            } else if background_color != RGBA::transparent() {
                 self.display_list.append(DisplayItem::Push, entity, z);
                 self.display_list
                     .append(DisplayItem::Color(background_color), entity, z);
@@ -558,8 +625,10 @@ impl<'a> System<'a> for DisplayDecoration {
                 );
                 self.display_list.append(DisplayItem::Pop, entity, z);
             }
-            self.display_list
-                .gradients(&gradients, &rect_path(border_box), entity, z);
+            if !blended {
+                self.display_list
+                    .gradients(&gradients, &rect_path(border_box), entity, z);
+            }
 
             let xmin = x - padding.left - border.left;
             let xmax = x + width + padding.right + border.right;

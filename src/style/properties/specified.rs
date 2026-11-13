@@ -557,10 +557,15 @@ pub enum Background {
     /// https://www.w3.org/TR/css-backgrounds-3/#background-image
     #[property]
     BackgroundImage(CommaSeparated<super::gradient::SpecifiedImage>),
-    /// Only the colour and the images of the shorthand are supported.
+    /// https://www.w3.org/TR/compositing-1/#background-blend-mode
+    #[property]
+    BackgroundBlendMode(CommaSeparated<BlendMode>),
+    /// Only the colour and the images of the shorthand are supported. It resets
+    /// `background-blend-mode`.
     #[property]
     #[shorthand("background-color", method = "color")]
     #[shorthand("background-image", method = "images")]
+    #[shorthand("background-blend-mode", method = "blend_modes")]
     Background(super::gradient::BackgroundShorthand),
 }
 
@@ -592,6 +597,27 @@ pub enum Math {
     MathDepth(MathDepth),
     #[property]
     MathShift(MathShift),
+}
+
+/// https://www.w3.org/TR/compositing-1/#ltblendmodegt
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
