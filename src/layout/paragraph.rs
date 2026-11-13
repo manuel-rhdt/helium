@@ -34,6 +34,49 @@ const ADJACENT_FITNESS_DEMERITS: f64 = 3_000.0;
 const DOUBLE_HYPHEN_DEMERITS: f64 = 10_000.0;
 const FINAL_HYPHEN_DEMERITS: f64 = 5_000.0;
 
+/// Fills every line as far as it fits, like browsers do for text that is not justified: a line
+/// ends at the last break opportunity where the content still fits (or can shrink to fit),
+/// at a mandatory break, or after the first piece if even that does not fit. Optimal breaking
+/// is wrong for ragged text, where there is no glue to stretch and it prefers short first lines.
+///
+/// The arguments are those of [`compute_paragraph_breakpoints`].
+pub fn compute_greedy_breakpoints(
+    opportunities: &[BreakOpportunity],
+    mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
+    mut line_width: impl FnMut(usize) -> f64,
+) -> Vec<usize> {
+    if opportunities.len() < 2 {
+        return opportunities.first().map_or_else(Vec::new, |_| vec![0]);
+    }
+    let last = opportunities.len() - 1;
+    let mut sequence = vec![0];
+    let mut from = 0;
+    while from < last {
+        let width = line_width(from);
+        let mut best = None;
+        for to in from + 1..=last {
+            let fits = line_metrics(from, to).is_some_and(|(natural, glue)| {
+                let delta = width - natural;
+                delta >= 0.0 || (glue.shrink > 0.0 && -delta <= glue.shrink)
+            });
+            if fits {
+                best = Some(to);
+            } else if best.is_some() {
+                break;
+            }
+            // a mandatory break ends the line, whether or not the content fits
+            if opportunities[to].forced {
+                best = best.or(Some(to));
+                break;
+            }
+        }
+        let to = best.unwrap_or(from + 1);
+        sequence.push(to);
+        from = to;
+    }
+    sequence
+}
+
 /// Choose paragraph breaks using adjustment-ratio badness and TeX-style demerits.
 ///
 /// `line_metrics` returns the natural width and the total stretch and shrink of glue strictly
@@ -306,6 +349,42 @@ mod test {
         });
 
         println!("{:?}", sequence);
+    }
+
+    fn pieces(widths: &[f64], forced: &[usize]) -> (Vec<BreakOpportunity>, Vec<f64>) {
+        // widths of the words, with an opportunity in front of each, one at the end
+        let mut advance = vec![0.0];
+        for w in widths {
+            advance.push(advance.last().unwrap() + w);
+        }
+        let opportunities = (0..=widths.len())
+            .map(|i| BreakOpportunity { forced: forced.contains(&i), hyphen: false, penalty: 0 })
+            .collect();
+        (opportunities, advance)
+    }
+
+    #[test]
+    fn greedy_breaking_fills_the_first_lines() {
+        // words of width 4 (no spaces) in lines of width 10: two words fit per line
+        let (opportunities, advance) = pieces(&[4.0; 5], &[]);
+        let sequence = compute_greedy_breakpoints(
+            &opportunities,
+            |from, to| Some((advance[to] - advance[from], GlueTotals::default())),
+            |_| 10.0,
+        );
+        assert_eq!(sequence, [0, 2, 4, 5]);
+    }
+
+    #[test]
+    fn greedy_breaking_respects_mandatory_breaks_and_overfull_words() {
+        let (opportunities, advance) = pieces(&[4.0, 4.0, 4.0, 12.0, 4.0], &[2]);
+        let sequence = compute_greedy_breakpoints(
+            &opportunities,
+            |from, to| Some((advance[to] - advance[from], GlueTotals::default())),
+            |_| 10.0,
+        );
+        // the forced break after the second word, then one word, the overfull one, the rest
+        assert_eq!(sequence, [0, 2, 3, 4, 5]);
     }
 
     #[test]

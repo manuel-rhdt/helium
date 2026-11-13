@@ -315,7 +315,7 @@ fn hyperlinks_are_written_to_the_pdf() -> Result<(), Box<dyn std::error::Error>>
         r#"<!DOCTYPE html>
 <html><body>
 <p>One <a href="https://example.com">link</a> here.</p>
-<p>Another <a href="https://example.org/a/very/long/path">long link that will wrap over the end of this line because it is long enough to do so</a> over.</p>
+<p>Another <a href="https://example.org/a/very/long/path">long link that will wrap over the end of this line because it is long enough to do so, and then some more words to make it wrap</a> over.</p>
 </body></html>"#,
     )?;
     let text = String::from_utf8_lossy(&pdf);
