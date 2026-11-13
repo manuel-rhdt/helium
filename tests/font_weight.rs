@@ -60,20 +60,15 @@ fn invalid_weights_are_ignored() {
 /// The font family of the root element is inherited by the body; the body has none of its own.
 #[test]
 fn the_font_family_of_the_root_element_reaches_the_body() {
-    let on_html = base_fonts(
-        "family_html",
-        "<style>html { font-family: Helvetica }</style><p>text</p>",
-    );
-    assert_eq!(on_html, ["TeXGyreHeros-Regular"]);
-    let on_body = base_fonts(
-        "family_body",
-        "<style>body { font-family: Helvetica }</style><p>text</p>",
-    );
-    assert_eq!(on_body, ["TeXGyreHeros-Regular"]);
-    // the root element's own value is overridden by the body's
+    // the default family is sans-serif, which is Helvetica without system fonts
+    let on_html = base_fonts("family_html", "<style>html { font-family: serif }</style><p>text</p>");
+    assert_eq!(on_html, ["TeXGyreTermes-Regular"]);
+    let on_body = base_fonts("family_body", "<style>body { font-family: serif }</style><p>text</p>");
+    assert_eq!(on_body, ["TeXGyreTermes-Regular"]);
+    // the body's own value wins over the root element's
     let both = base_fonts(
         "family_both",
-        "<style>html { font-family: monospace } body { font-family: Helvetica }</style><p>text</p>",
+        "<style>html { font-family: monospace } body { font-family: serif }</style><p>text</p>",
     );
-    assert_eq!(both, ["TeXGyreHeros-Regular"]);
+    assert_eq!(both, ["TeXGyreTermes-Regular"]);
 }

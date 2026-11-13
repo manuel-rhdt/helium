@@ -199,6 +199,7 @@ pub fn layout(
 
     let mut time_before = Instant::now();
     let mut flow_constructor = FlowConstructor::new(world, stylesheet_base_dir.to_path_buf());
+    dom.traverse(&mut construct::StylesheetReader(&mut flow_constructor));
     dom.traverse(&mut flow_constructor);
     info!("TIMED: construct {:?}", time_before.elapsed());
 
