@@ -424,6 +424,7 @@ impl<'world> System<'world> for Paginator {
             index: 0,
             name: first_name,
             first_in_group: true,
+            rtl: page_margins.rtl,
         };
         let mut group_source = first_source;
         let mut x_offset = page_margins.shift(&first_page);
@@ -455,6 +456,7 @@ impl<'world> System<'world> for Paginator {
                         index: current_page,
                         first_in_group: source.is_some() && source != group_source,
                         name,
+                        rtl: page_margins.rtl,
                     };
                     group_source = source;
                     x_offset = page_margins.shift(&page);

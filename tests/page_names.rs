@@ -247,3 +247,25 @@ fn margins_of_the_plain_rule_apply_to_all_pages() {
         assert!(close(x, 160.0 / 3.0), "{x}");
     }
 }
+
+#[test]
+fn the_first_page_of_a_right_to_left_document_is_a_left_page() {
+    let html = format!(
+        "<html dir=rtl><style>{PAGE} {STYLE} \
+         @page :right {{ margin-left: 20pt; margin-right: 60pt }} \
+         @page :left {{ margin-left: 60pt; margin-right: 20pt }} \
+         @page {{ @top-left {{ content: \"HEAD\" }} @top-center {{ content: none }} @bottom-center {{ content: none }} }} \
+         p {{ break-after: page }}</style><body><p>a</p><p>b</p>"
+    );
+    let dump = dump("rtl_first_page", &html);
+    let header_x = |page| {
+        runs(&dump, page)
+            .iter()
+            .find(|run| run.0)
+            .map(|run| run.1)
+            .unwrap()
+    };
+    // the first page is on the left of the spread, with the binding on its right side
+    assert!(close(header_x(0), 80.0), "{}", header_x(0));
+    assert!(close(header_x(1), 80.0 / 3.0), "{}", header_x(1));
+}

@@ -152,6 +152,7 @@ impl<'a> System<'a> for MarginBoxPaint {
                 index: page,
                 name: None,
                 first_in_group: false,
+                rtl: page_margins.rtl,
             });
             // the margins of the page: the inner and outer margins of a book differ
             let (margin_left, margin_right) = if page_margins.pages.is_empty() {

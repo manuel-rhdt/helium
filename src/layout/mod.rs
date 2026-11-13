@@ -259,13 +259,15 @@ pub fn layout(
     }
 
     // The left and right margins of the kinds of pages (the inner and outer margins of a book)
+    let rtl = flow_constructor.is_rtl();
     let mut page_margins = pages::PageMargins {
+        rtl,
         base: (margin.left, margin.right),
         ..Default::default()
     };
     if !crop {
         page_margins.names = pages::selected_names(&flow_constructor.styles);
-        for page in pages::representative_pages(&page_margins.names) {
+        for page in pages::representative_pages(&page_margins.names, rtl) {
             let mut style_builder = StyleBuilder::new(Default::default());
             for rule in pages::matching_rules(&flow_constructor.styles, &page) {
                 for declaration in rule.properties.declarations() {
