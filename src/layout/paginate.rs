@@ -315,7 +315,9 @@ impl<'world> System<'world> for Paginator {
         let last_break_point = break_points.len() - 1;
         let optimal_sequence =
             super::paragraph::compute_breakpoints(break_points.len(), &mut |from, to| {
-                let height = break_points[to].advance_after - break_points[from].advance_before;
+                // a page starts where the content before the break ends (`advance_after`), which keeps
+                // the margin and padding that follow a forced break
+                let height = break_points[to].advance_after - break_points[from].advance_after;
 
                 if height > self.content_height() {
                     if to == from + 1 {

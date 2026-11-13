@@ -361,3 +361,17 @@ fn widows_are_kept_in_front_of_a_forced_break() {
     assert_eq!(pages(&dump, GREEN), [1]);
     assert_eq!(pages(&dump, BLUE), [2]);
 }
+
+#[test]
+fn the_padding_and_margin_after_a_forced_break_use_up_space_on_the_page() {
+    // the heading takes 60px of padding, a 20px line and 20px of margin: five lines are left
+    let dump = dump(
+        "after_forced_padding",
+        &format!(
+            r#"{}<h2 style="break-before: page; padding-top: 60px; margin-bottom: 20px">heading</h2>{}"#,
+            lines(BLUE_CSS, 2, ""),
+            lines(RED_CSS, 12, "")
+        ),
+    );
+    assert_eq!(lines_per_page(&dump, RED), [(1, 5), (2, 7)]);
+}
