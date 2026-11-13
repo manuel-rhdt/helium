@@ -344,3 +344,20 @@ fn invalid_break_values_are_ignored() {
     // `recto` is not valid for the CSS 2 name; the declaration is dropped
     assert_eq!(pages(&dump, GREEN), [0]);
 }
+
+#[test]
+fn widows_are_kept_in_front_of_a_forced_break() {
+    // the last paragraph before a forced break has 4 lines, of which 2 would fit on the first
+    // page; 3/1 and 2/2 break the default widows and orphans, so it moves as a whole
+    let dump = dump(
+        "widows_forced",
+        &format!(
+            "{}{}{}",
+            lines(RED_CSS, 8, ""),
+            lines(GREEN_CSS, 4, "orphans: 3; widows: 3"),
+            lines(BLUE_CSS, 2, "break-before: page")
+        ),
+    );
+    assert_eq!(pages(&dump, GREEN), [1]);
+    assert_eq!(pages(&dump, BLUE), [2]);
+}
