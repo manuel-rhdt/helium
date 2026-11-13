@@ -893,6 +893,8 @@ pub struct Background {
     pub background_color: Color,
     /// The images from top to bottom, painted above `background_color`.
     pub background_image: Vec<super::gradient::ComputedImage>,
+    /// The blend mode of each image, repeated if there are fewer than images.
+    pub background_blend_mode: Vec<super::specified::BlendMode>,
 }
 
 impl Default for Background {
@@ -900,6 +902,7 @@ impl Default for Background {
         Background {
             background_color: Color::Rgba(cssparser_color::RgbaLegacy::new(0, 0, 0, 0.0)),
             background_image: Vec::new(),
+            background_blend_mode: vec![super::specified::BlendMode::Normal],
         }
     }
 }

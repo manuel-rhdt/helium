@@ -222,6 +222,9 @@ pub fn write_pdf(
                     DisplayItem::Gradient(resolved) => {
                         gradient::paint(page_context, resolved, page_height)?
                     }
+                    DisplayItem::BlendGroup(group) => {
+                        gradient::paint_blend_group(page_context, group, page_height, filter)?
+                    }
                     DisplayItem::ClipPath { path, even_odd } => {
                         emit_path(page_context, path, page_height)?;
                         let rule = if *even_odd {
@@ -488,7 +491,7 @@ impl lemon_pdf::object::PdfFormat for RawPdf {
 /// conformance to PDF/UA-1 (`pdfuaid:part`, ISO 14289-1 5); PDF/UA also wants the title in
 /// `dc:title` (7.1).
 /// Constructs the path (without painting it) on the page.
-fn emit_path(
+pub(crate) fn emit_path(
     page_context: &mut lemon_pdf::content::PageContext<'_, '_, '_>,
     path: &[display_list::PathSegment],
     page_height: PixelLength,
