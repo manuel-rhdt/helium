@@ -153,10 +153,20 @@ impl FlowConstructor {
     }
 }
 
+/// Reads the style sheets of the document before any style is computed: the rules of a `<style>`
+/// element in the head apply to the root element, which comes before it.
+pub struct StylesheetReader<'a>(pub &'a mut FlowConstructor);
+
+impl Traversal<DomRef> for StylesheetReader<'_> {
+    fn preorder_traverse(&mut self, node: DomRef) {
+        self.0.read_stylesheet(&node);
+    }
+
+    fn postorder_traverse(&mut self, _node: DomRef) {}
+}
+
 impl Traversal<DomRef> for FlowConstructor {
     fn preorder_traverse(&mut self, node: DomRef) {
-        self.read_stylesheet(&node);
-
         // TODO: Selector matching, Cascade
         match &node.clone().into_element_ref() {
             Some(element_ref) => {
