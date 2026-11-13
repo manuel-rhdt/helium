@@ -421,6 +421,15 @@ pub enum Font {
     FontSize(FontSize),
     #[property]
     LineHeight(LineHeight),
+    /// https://www.w3.org/TR/css-fonts-4/#font-prop. The system font keywords, `font-variant`
+    /// and `font-stretch` are not supported (the last two are accepted and ignored).
+    #[property]
+    #[shorthand("font-style", method = "style")]
+    #[shorthand("font-weight", method = "weight")]
+    #[shorthand("font-size", method = "size")]
+    #[shorthand("line-height", method = "line_height")]
+    #[shorthand("font-family", method = "family")]
+    Font(FontShorthand),
     /// Inherited like the font properties, so it lives in the same style struct.
     #[property]
     Color(Color),
@@ -1725,12 +1734,40 @@ pub enum LineHeight {
     Normal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FontFamily {
     SansSerif,
     Serif,
     Monospace,
     Named(String),
+}
+
+impl<'i> PropertyValue<'i> for FontFamily {
+    type Error = StyleParseError;
+
+    /// A generic family keyword, a string, or a name of one or more identifiers that are joined
+    /// by single spaces (https://www.w3.org/TR/css-fonts-4/#family-name-syntax).
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        if let Ok(name) = input.try_parse(|input| input.expect_string().map(|s| s.to_string())) {
+            return Ok(FontFamily::Named(name));
+        }
+        let first = input.expect_ident()?.clone();
+        let generic = match_ignore_ascii_case! { &first,
+            "sans-serif" => Some(FontFamily::SansSerif),
+            "serif" => Some(FontFamily::Serif),
+            "monospace" => Some(FontFamily::Monospace),
+            _ => None,
+        };
+        if let Some(generic) = generic {
+            return Ok(generic);
+        }
+        let mut name = first.to_string();
+        while let Ok(next) = input.try_parse(|input| input.expect_ident().cloned()) {
+            name.push(' ');
+            name.push_str(&next);
+        }
+        Ok(FontFamily::Named(name))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
@@ -1743,6 +1780,96 @@ pub enum FontStyle {
 impl Default for FontStyle {
     fn default() -> FontStyle {
         FontStyle::Normal
+    }
+}
+
+/// The value of the `font` shorthand:
+/// `[ <font-style> || <font-variant-css2> || <font-weight> || <font-stretch-css3> ]? <font-size>
+/// [ / <line-height> ]? <font-family>#`. What is left out is reset to its initial value.
+#[derive(Debug, Clone)]
+pub struct FontShorthand {
+    style: FontStyle,
+    weight: FontWeight,
+    size: FontSize,
+    line_height: LineHeight,
+    family: Vec<FontFamily>,
+}
+
+impl FontShorthand {
+    pub fn style(&self) -> FontStyle {
+        self.style.clone()
+    }
+
+    pub fn weight(&self) -> FontWeight {
+        self.weight
+    }
+
+    pub fn size(&self) -> FontSize {
+        self.size
+    }
+
+    pub fn line_height(&self) -> LineHeight {
+        self.line_height
+    }
+
+    pub fn family(&self) -> CommaSeparated<FontFamily> {
+        CommaSeparated::new(self.family.clone())
+    }
+}
+
+impl<'i> PropertyValue<'i> for FontShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        let mut style = None;
+        let mut weight = None;
+        // `normal` stands for the initial value of any of the four, it is only counted
+        let mut normals = 0;
+        let mut others = 0;
+        while normals + others < 4 {
+            if input.try_parse(|input| input.expect_ident_matching("normal")).is_ok() {
+                normals += 1;
+            } else if style.is_none() && let Ok(parsed) = input.try_parse(FontStyle::from_css_property_value) {
+                style = Some(parsed);
+                others += 1;
+            } else if weight.is_none() && let Ok(parsed) = input.try_parse(FontWeight::from_css_property_value) {
+                weight = Some(parsed);
+                others += 1;
+            } else if input
+                .try_parse(|input| {
+                    // `font-variant` of CSS 2 and the keywords of `font-stretch`
+                    let ident = input.expect_ident()?.clone();
+                    match_ignore_ascii_case! { &ident,
+                        "small-caps" | "ultra-condensed" | "extra-condensed" | "condensed"
+                        | "semi-condensed" | "semi-expanded" | "expanded" | "extra-expanded"
+                        | "ultra-expanded" => Ok(()),
+                        _ => Err(input.new_error_for_next_token::<()>()),
+                    }
+                })
+                .is_ok()
+            {
+                others += 1;
+            } else {
+                break;
+            }
+        }
+        let size = FontSize::from_css_property_value(input).map_err(|_| input.new_error_for_next_token())?;
+        let line_height = if input.try_parse(|input| input.expect_delim('/')).is_ok() {
+            LineHeight::from_css_property_value(input).map_err(|_| input.new_error_for_next_token())?
+        } else {
+            LineHeight::Normal
+        };
+        let family = <CommaSeparated<FontFamily>>::from_css_property_value(input)
+            .map_err(|_| input.new_error_for_next_token())?
+            .elements()
+            .to_vec();
+        Ok(FontShorthand {
+            style: style.unwrap_or_default(),
+            weight: weight.unwrap_or_default(),
+            size,
+            line_height,
+            family,
+        })
     }
 }
 

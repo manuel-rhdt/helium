@@ -1258,4 +1258,72 @@ mod css_wide_tests {
         let bolder = child(&bold, "font-weight: bolder");
         assert_eq!(weight(&bolder, ""), 900.0);
     }
+
+    #[test]
+    fn font_shorthand_sets_all_the_font_properties() {
+        use super::super::specified::{FontFamily, FontStyle};
+        let root = ComputedValues::default();
+        let c = child(&root, "font: italic bold 20px/1.5 \"Helvetica\", serif");
+        assert_eq!(c.font.font_style, FontStyle::Italic);
+        assert_eq!(c.font.font_weight, FontWeight::BOLD);
+        assert_eq!(c.font.font_size, PixelLength(20.0));
+        assert!(matches!(c.font.line_height, LineHeight::LengthPercentage(LengthPercentage::Percentage(Percentage(n))) if n == 1.5));
+        assert_eq!(c.font.font_family, [FontFamily::Named("Helvetica".into()), FontFamily::Serif]);
+        // numeric weights and the order of the optional values
+        let c = child(&root, "font: 300 oblique 10px monospace");
+        assert_eq!(c.font.font_weight, FontWeight(300.0));
+        assert_eq!(c.font.font_style, FontStyle::Oblique);
+        assert_eq!(c.font.font_family, [FontFamily::Monospace]);
+        // `normal`, small-caps and stretch keywords are accepted
+        let c = child(&root, "font: normal small-caps condensed bold 12px serif");
+        assert_eq!(c.font.font_weight, FontWeight::BOLD);
+    }
+
+    #[test]
+    fn font_shorthand_resets_what_it_leaves_out() {
+        let parent = child(
+            &ComputedValues::default(),
+            "font-weight: bold; font-style: italic; line-height: 2",
+        );
+        // the parent values are inherited, the shorthand sets all of them
+        let c = child(&parent, "font: 10px serif");
+        assert_eq!(c.font.font_weight, FontWeight::NORMAL);
+        assert_eq!(c.font.font_style, super::super::specified::FontStyle::Normal);
+        assert!(matches!(c.font.line_height, LineHeight::Normal));
+        // the longhands that follow win
+        let c = child(&parent, "font: 10px serif; font-weight: 600");
+        assert_eq!(c.font.font_weight, FontWeight(600.0));
+        // and the shorthand wins over the longhands before it
+        let c = child(&parent, "font-weight: 600; font: 10px serif");
+        assert_eq!(c.font.font_weight, FontWeight::NORMAL);
+    }
+
+    #[test]
+    fn font_shorthand_needs_size_and_family() {
+        let parent = child(&ComputedValues::default(), "font-weight: 600; font-size: 20px");
+        for css in ["font: bold", "font: 12px", "font: bold serif", "font: 12px/ serif", "font: 1500 12px serif"] {
+            let c = child(&parent, css);
+            assert_eq!(c.font.font_weight, FontWeight(600.0), "{css}");
+            assert_eq!(c.font.font_size, PixelLength(20.0), "{css}");
+        }
+    }
+
+    #[test]
+    fn font_family_names_can_be_unquoted_words() {
+        use super::super::specified::FontFamily;
+        let root = ComputedValues::default();
+        let c = child(&root, "font-family: Times New Roman, 'Foo Bar', Sans-Serif, Monospace");
+        assert_eq!(
+            c.font.font_family,
+            [
+                FontFamily::Named("Times New Roman".into()),
+                FontFamily::Named("Foo Bar".into()),
+                FontFamily::SansSerif,
+                FontFamily::Monospace,
+            ]
+        );
+        let c = child(&root, "font: 14px Courier New");
+        assert_eq!(c.font.font_family, [FontFamily::Named("Courier New".into())]);
+        assert_eq!(c.font.font_size, PixelLength(14.0));
+    }
 }
