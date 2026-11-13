@@ -50,7 +50,7 @@ fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
         "list-style-type", "white-space", "text-indent", "text-align", "hyphens", "direction",
-        "border-spacing", "border-collapse", "widows", "orphans", "math-style", "math-shift",
+        "border-spacing", "border-collapse", "widows", "orphans", "page", "math-style", "math-shift",
         "math-depth",
     ];
     INHERITED.iter().any(|inherited| name.eq_ignore_ascii_case(inherited))
@@ -596,6 +596,9 @@ pub enum Page {
     /// https://www.w3.org/TR/css-page-3/#page-size-prop
     #[property]
     Size(PageSize),
+    /// https://www.w3.org/TR/css-page-3/#using-named-pages
+    #[property]
+    Page(PageName),
     #[property]
     Orphans(usize),
     #[property]
@@ -1996,6 +1999,31 @@ impl NamedPageSize {
     }
 }
 
+/// The value of `page`: the name of the kind of page the element is printed on, or `auto`
+/// (`None`), which is the name of the parent.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PageName(pub Option<std::sync::Arc<str>>);
+
+impl<'i> PropertyValue<'i> for PageName {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        input.parse_entirely(|input| {
+            let ident = input.expect_ident()?.clone();
+            if ident.eq_ignore_ascii_case("auto") {
+                Ok(PageName(None))
+            } else if ident.eq_ignore_ascii_case("inherit")
+                || ident.eq_ignore_ascii_case("initial")
+                || ident.eq_ignore_ascii_case("unset")
+            {
+                Err(input.new_error_for_next_token())
+            } else {
+                Ok(PageName(Some(std::sync::Arc::from(&*ident))))
+            }
+        })
+    }
+}
+
 /// The value of `size` in `@page`: `auto`, one or two lengths, or a page size name and/or an
 /// orientation.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -2325,6 +2353,17 @@ mod function_syntax_tests {
         assert_eq!(parse::<MathDepth>("add(1 2)"), None);
         assert_eq!(parse::<MathDepth>("add()"), None);
         assert_eq!(parse::<MathDepth>("add"), None);
+    }
+
+    #[test]
+    fn page_names() {
+        assert_eq!(parse("auto"), Some(PageName(None)));
+        assert_eq!(parse("chapter"), Some(PageName(Some("chapter".into()))));
+        // names are case-sensitive
+        assert_ne!(parse::<PageName>("Chapter"), parse::<PageName>("chapter"));
+        assert_eq!(parse::<PageName>("10"), None);
+        assert_eq!(parse::<PageName>("a b"), None);
+        assert_eq!(parse::<PageName>("inherit"), None);
     }
 
     #[test]
