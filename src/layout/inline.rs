@@ -814,9 +814,9 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 Some(dictionary) => word_ranges(&text_run.text)
                                     .into_iter()
                                     .flat_map(|(word_start, word_end)| {
-                                        dictionary
-                                            .hyphenate(&text_run.text[word_start..word_end])
-                                            .breaks
+                                        let word = &text_run.text[word_start..word_end];
+                                        let breaks = dictionary.hyphenate(word).breaks;
+                                        limit_hyphenation_chars(word, breaks)
                                             .into_iter()
                                             .map(move |offset| word_start + offset)
                                     })
@@ -1060,6 +1060,29 @@ impl HyphenationDictionaries {
             })
             .as_ref()
     }
+}
+
+/// The shortest word that is hyphenated, and the fewest characters in front of and after the
+/// hyphen: the default of `hyphenate-limit-chars`, which is `auto` (5 2 2) in browsers. Words
+/// are not broken after a single letter, which looks as bad as it reads.
+/// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
+const HYPHENATE_MIN_WORD: usize = 5;
+const HYPHENATE_MIN_BEFORE: usize = 2;
+const HYPHENATE_MIN_AFTER: usize = 2;
+
+/// The hyphenation points of `word` (byte offsets) that leave enough characters on both sides.
+fn limit_hyphenation_chars(word: &str, breaks: Vec<usize>) -> Vec<usize> {
+    let length = word.chars().count();
+    if length < HYPHENATE_MIN_WORD {
+        return Vec::new();
+    }
+    breaks
+        .into_iter()
+        .filter(|&offset| {
+            let before = word[..offset].chars().count();
+            before >= HYPHENATE_MIN_BEFORE && length - before >= HYPHENATE_MIN_AFTER
+        })
+        .collect()
 }
 
 /// The language of the hyphenation dictionaries for text in `lang`.
@@ -2358,6 +2381,16 @@ mod tests {
             .collect();
         let expected = [font.hb_font.get_nominal_glyph('ב').unwrap(), font.hb_font.get_nominal_glyph('א').unwrap()];
         assert_eq!(glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn hyphenation_leaves_two_characters_on_both_sides() {
+        // a-ka-de-mi-a: no break after the first or in front of the last letter
+        assert_eq!(limit_hyphenation_chars("akademia", vec![1, 3, 5, 7]), vec![3, 5]);
+        // short words are not hyphenated at all
+        assert_eq!(limit_hyphenation_chars("akme", vec![2]), Vec::<usize>::new());
+        // the counts are in characters, not bytes: ά is two bytes
+        assert_eq!(limit_hyphenation_chars("άκρας", vec![2, 4]), vec![4]);
     }
 
     #[test]
