@@ -133,9 +133,16 @@ pub fn compute_paragraph_breakpoints(
                     continue;
                 };
                 let (previous_fitness, previous_hyphen) = decode_state(previous_state);
-                let mut demerits = previous.demerits + (LINE_PENALTY + badness).powi(2);
+                // like in TeX the penalty of a break counts towards the badness of the line before
+                // it is squared: a hyphen is worth a looser line
+                let penalty = if opportunity.penalty > 0 && opportunity.penalty < 10_000 {
+                    f64::from(opportunity.penalty)
+                } else {
+                    0.0
+                };
+                let mut demerits = previous.demerits + (LINE_PENALTY + badness + penalty).powi(2);
 
-                if opportunity.penalty > 0 {
+                if opportunity.penalty >= 10_000 {
                     demerits += f64::from(opportunity.penalty).powi(2);
                 } else if opportunity.penalty < 0 && opportunity.penalty > -10_000 {
                     demerits -= f64::from(opportunity.penalty).powi(2);
@@ -429,6 +436,32 @@ mod test {
             |from, to| match (from, to) {
                 (0, 3) | (1, 2) => None,
                 _ => Some((10.0, GlueTotals::default())),
+            },
+            |_| 10.0,
+        );
+
+        assert_eq!(sequence, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn the_penalty_of_a_hyphen_is_added_to_the_badness_of_its_line() {
+        // Without the hyphen the first line is a bit loose (badness 45); with the hyphen it is
+        // perfect. As in TeX the hyphen penalty (50) is added to the badness before the sum is
+        // squared, which makes the loose line the cheaper one. Added after squaring it would
+        // be cheaper to hyphenate.
+        let opportunities = [
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
+            BreakOpportunity { forced: false, hyphen: true, penalty: 50 },
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
+        ];
+        let sequence = compute_paragraph_breakpoints(
+            &opportunities,
+            |from, to| match (from, to) {
+                (0, 1) | (1, 3) => Some((10.0, GlueTotals::default())),
+                (0, 2) => Some((2.34, GlueTotals { stretch: 10.0, shrink: 0.0 })),
+                (2, 3) => Some((5.0, GlueTotals::default())),
+                _ => None,
             },
             |_| 10.0,
         );
