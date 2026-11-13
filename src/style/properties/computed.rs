@@ -6,7 +6,7 @@ use super::specified::{
 };
 pub use super::specified::{
     BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle,
-    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, PageBreak,
+    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, Break, BreakInside,
     Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
 
@@ -946,8 +946,9 @@ impl Default for Background {
 pub struct Page {
     pub widows: usize,
     pub orphans: usize,
-    pub page_break_after: PageBreak,
-    pub page_break_before: PageBreak,
+    pub break_after: Break,
+    pub break_before: Break,
+    pub break_inside: BreakInside,
 }
 
 impl Default for Page {
@@ -955,8 +956,9 @@ impl Default for Page {
         Page {
             widows: 2,
             orphans: 2,
-            page_break_after: PageBreak::Auto,
-            page_break_before: PageBreak::Auto,
+            break_after: Break::Auto,
+            break_before: Break::Auto,
+            break_inside: BreakInside::Auto,
         }
     }
 }

@@ -597,10 +597,25 @@ pub enum Page {
     Orphans(usize),
     #[property]
     Widows(usize),
+    /// https://www.w3.org/TR/css-break-3/#break-between
     #[property]
-    PageBreakAfter(PageBreak),
+    BreakBefore(Break),
     #[property]
-    PageBreakBefore(PageBreak),
+    BreakAfter(Break),
+    /// https://www.w3.org/TR/css-break-3/#break-within
+    #[property]
+    BreakInside(BreakInside),
+    /// The CSS 2 names of `break-before`, `break-after` and `break-inside`.
+    /// https://www.w3.org/TR/CSS22/page.html#page-break-props
+    #[property]
+    #[shorthand("break-before", method = "to_break")]
+    PageBreakBefore(LegacyBreak),
+    #[property]
+    #[shorthand("break-after", method = "to_break")]
+    PageBreakAfter(LegacyBreak),
+    #[property]
+    #[shorthand("break-inside", method = "to_break_inside")]
+    PageBreakInside(LegacyBreakInside),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -1945,15 +1960,91 @@ impl ComputedValue<FontWeight> for super::computed::FontWeight {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
-pub enum PageBreak {
+/// The values of `break-before` and `break-after` that apply to paged media.
+/// https://www.w3.org/TR/css-break-3/#break-between
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PropertyValue)]
+pub enum Break {
+    #[default]
     Auto,
+    /// Avoid a break of any kind.
+    Avoid,
+    AvoidPage,
+    /// A forced page break (the CSS 2 name; the same as `page`).
     Always,
+    Page,
+    /// Forced breaks to a left or right page. Pages are not numbered, so these are forced page
+    /// breaks without the empty page that may be needed to get to the right side.
+    Left,
+    Right,
+    Recto,
+    Verso,
 }
 
-impl Default for PageBreak {
-    fn default() -> Self {
-        PageBreak::Auto
+impl Break {
+    /// Whether this value forces a break.
+    pub fn is_forced(self) -> bool {
+        matches!(
+            self,
+            Break::Always | Break::Page | Break::Left | Break::Right | Break::Recto | Break::Verso
+        )
+    }
+
+    /// Whether this value asks to avoid a break.
+    pub fn is_avoid(self) -> bool {
+        matches!(self, Break::Avoid | Break::AvoidPage)
+    }
+}
+
+/// https://www.w3.org/TR/css-break-3/#break-within
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PropertyValue)]
+pub enum BreakInside {
+    #[default]
+    Auto,
+    Avoid,
+    AvoidPage,
+}
+
+impl BreakInside {
+    pub fn is_avoid(self) -> bool {
+        self != BreakInside::Auto
+    }
+}
+
+/// The values of `page-break-before` and `page-break-after`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum LegacyBreak {
+    Auto,
+    Always,
+    Avoid,
+    Left,
+    Right,
+}
+
+impl LegacyBreak {
+    pub fn to_break(&self) -> Break {
+        match self {
+            LegacyBreak::Auto => Break::Auto,
+            LegacyBreak::Always => Break::Page,
+            LegacyBreak::Avoid => Break::Avoid,
+            LegacyBreak::Left => Break::Left,
+            LegacyBreak::Right => Break::Right,
+        }
+    }
+}
+
+/// The values of `page-break-inside`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum LegacyBreakInside {
+    Auto,
+    Avoid,
+}
+
+impl LegacyBreakInside {
+    pub fn to_break_inside(&self) -> BreakInside {
+        match self {
+            LegacyBreakInside::Auto => BreakInside::Auto,
+            LegacyBreakInside::Avoid => BreakInside::Avoid,
+        }
     }
 }
 
