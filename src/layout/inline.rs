@@ -127,11 +127,13 @@ impl InlineFormattingContext {
     }
 
     /// The extra space after every space on a justified line (all but the last line of a
-    /// paragraph with `text-align: justify`), given the width of the line box.
+    /// paragraph and the lines that end at a forced break, with `text-align: justify`), given
+    /// the width of the line box.
     pub fn word_spacing(&self, line_num: usize, line_width: Px) -> Px {
         let line = &self.lines[line_num];
         let num_spaces = self.space_count(line.from_break, line.to_break);
-        let is_last_line = line_num == self.lines.len() - 1;
+        let is_last_line =
+            line_num == self.lines.len() - 1 || self.break_points[line.to_break].forced;
         if !is_last_line && self.text_align == TextAlign::Justify && num_spaces > 0 {
             (line_width - self.content_width(line.from_break, line.to_break)) / num_spaces as f32
         } else {
