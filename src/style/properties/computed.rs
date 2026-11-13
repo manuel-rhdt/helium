@@ -203,7 +203,7 @@ impl LengthPercentage {
         match self {
             LengthPercentage::PixelLength(len) => len,
             LengthPercentage::Percentage(percentage) => container_size * percentage,
-            _ => unimplemented!(),
+            LengthPercentage::Both { length, percentage } => length + container_size * percentage,
         }
     }
 }
@@ -895,6 +895,11 @@ pub struct Background {
     pub background_image: Vec<super::gradient::ComputedImage>,
     /// The blend mode of each image, repeated if there are fewer than images.
     pub background_blend_mode: Vec<super::specified::BlendMode>,
+    /// Like `background_blend_mode`, the lists of the following properties are repeated if
+    /// there are fewer values than images.
+    pub background_size: Vec<super::background::ComputedSize>,
+    pub background_position: Vec<super::gradient::Position<LengthPercentage>>,
+    pub background_repeat: Vec<super::background::Repeat>,
 }
 
 impl Default for Background {
@@ -903,6 +908,12 @@ impl Default for Background {
             background_color: Color::Rgba(cssparser_color::RgbaLegacy::new(0, 0, 0, 0.0)),
             background_image: Vec::new(),
             background_blend_mode: vec![super::specified::BlendMode::Normal],
+            background_size: vec![Default::default()],
+            background_position: vec![super::gradient::Position {
+                x: LengthPercentage::Percentage(Percentage(0.0)),
+                y: LengthPercentage::Percentage(Percentage(0.0)),
+            }],
+            background_repeat: vec![Default::default()],
         }
     }
 }

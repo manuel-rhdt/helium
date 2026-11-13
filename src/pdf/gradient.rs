@@ -8,7 +8,7 @@
 
 use std::io::{Error, ErrorKind};
 
-use lemon_pdf::content::PageContext;
+use lemon_pdf::content::{Matrix, PageContext};
 use lemon_pdf::form::TransparencyGroup;
 use lemon_pdf::graphics_state::{ExtGState, FillRule, SoftMask};
 use lemon_pdf::stream::StreamFilter;
@@ -214,11 +214,68 @@ fn paint_built(context: &mut PageContext<'_, '_, '_>, built: Built, artifact: bo
     Ok(())
 }
 
-/// Paints `gradient` over the current clip.
+/// Paints `gradient` over the current clip, as tiles if it is a tile that repeats.
 pub fn paint(
     context: &mut PageContext<'_, '_, '_>,
     gradient: &Resolved,
     page_height: PixelLength,
+    filter: Option<StreamFilter>,
+) -> Result<(), Error> {
+    let space = Space { page_height };
+    if let Some(tiling) = &gradient.tiling {
+        // One cell is a tile with its own origin in the lower left corner. The pattern matrix
+        // places it in the page, the pattern then covers the page and is filled into the region.
+        let (width, height) = tiling.size;
+        let bbox = [Pt(0.0), Pt(0.0), Pt(space.length(width)), Pt(space.length(height))];
+        let matrix = Matrix::new(
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            space.x(tiling.origin.0),
+            space.y(tiling.origin.1 + height),
+        );
+        let (x_step, y_step) = (Pt(space.length(tiling.step.0)), Pt(space.length(tiling.step.1)));
+        let cell_height = PixelLength(height);
+        let pattern = context.pdf_context.write_tiling_pattern(bbox, x_step, y_step, matrix, filter, |cell| {
+            paint_plain(cell, gradient, cell_height, false)
+        })?;
+        let key = context.add_tiling_pattern(pattern);
+        let region = tiling.region;
+        context.push_operand(RawPdf("/Artifact".into()))?;
+        context.apply_operator("BMC")?;
+        context.set_fill_pattern(&key)?;
+        context.rect(
+            Pt(space.x(region.x)),
+            Pt(space.y(region.y + region.height)),
+            Pt(space.length(region.width)),
+            Pt(space.length(region.height)),
+        )?;
+        context.fill_path()?;
+        return context.apply_operator("EMC");
+    }
+    if gradient.clip {
+        let paint = gradient.paint;
+        context.save_graphics_state()?;
+        context.rect(
+            Pt(space.x(paint.x)),
+            Pt(space.y(paint.y + paint.height)),
+            Pt(space.length(paint.width)),
+            Pt(space.length(paint.height)),
+        )?;
+        context.clip(FillRule::NonZero)?;
+        context.end_path()?;
+        paint_plain(context, gradient, page_height, true)?;
+        return context.restore_graphics_state();
+    }
+    paint_plain(context, gradient, page_height, true)
+}
+
+fn paint_plain(
+    context: &mut PageContext<'_, '_, '_>,
+    gradient: &Resolved,
+    page_height: PixelLength,
+    artifact: bool,
 ) -> Result<(), Error> {
     let space = Space { page_height };
     let alphas = gradient.stops.iter().map(|stop| stop.color[3]);
@@ -252,7 +309,7 @@ pub fn paint(
         )?;
         context.apply_ext_gstate(ExtGState::new().with_soft_mask(SoftMask::luminosity(mask)))?;
     }
-    paint_built(context, color, true)
+    paint_built(context, color, artifact)
 }
 
 fn blend_mode(mode: BlendMode) -> lemon_pdf::graphics_state::BlendMode {
@@ -316,7 +373,7 @@ pub fn paint_blend_group(
             for layer in &group.layers {
                 form.save_graphics_state()?;
                 form.set_blend_mode(blend_mode(layer.blend))?;
-                paint(form, &layer.gradient, page_height)?;
+                paint(form, &layer.gradient, page_height, filter)?;
                 form.restore_graphics_state()?;
             }
             form.restore_graphics_state()
