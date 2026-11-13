@@ -12,6 +12,8 @@ use std::collections::{HashMap, HashSet};
 /// merely not full, so a break is only avoided if the content fits otherwise, but finite so
 /// that content that does not fit on a page is broken anyway.
 const AVOID_BREAK_COST: f64 = 1e12;
+/// The cost of a page that ends at a forced break; it outweighs all other costs.
+const FORCED_BREAK_COST: f64 = -1e15;
 /// The cost of a page that has fewer lines of a paragraph at its end than `orphans` or at its
 /// start than `widows`. Violating these is preferred to violating an `avoid` value.
 const ORPHANS_WIDOWS_COST: f64 = 1e11;
@@ -325,10 +327,11 @@ impl<'world> System<'world> for Paginator {
                         f64::INFINITY
                     }
                 } else {
-                    if break_points[to].forced {
-                        return f64::NEG_INFINITY;
-                    }
-                    let mut cost = if to == last_break_point {
+                    // A forced break is always taken, but how the page in front of it is
+                    // filled still matters for the widows of its last paragraph.
+                    let mut cost = if break_points[to].forced {
+                        FORCED_BREAK_COST
+                    } else if to == last_break_point {
                         // the last page is allowed to be partially filled
                         0.0
                     } else {
