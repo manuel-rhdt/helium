@@ -40,9 +40,18 @@ impl FlowConstructor {
         }
     }
 
+    /// Whether the document is set from right to left: the `direction` of the root element.
+    pub fn is_rtl(&self) -> bool {
+        let RootNode(root) = *self.entity_constructor.world.read_resource::<RootNode>();
+        let styles = self.entity_constructor.world.read_storage::<ComputedValues>();
+        root.and_then(|root| styles.get(root))
+            .is_some_and(|style| style.text.direction == crate::style::properties::specified::Direction::Rtl)
+    }
+
     /// Resolves the styles and fonts of the margin boxes (headers and footers) of the document.
     pub fn resolve_margin_boxes(&mut self) -> MarginBoxes {
         let names = pages::selected_names(&self.styles);
+        let rtl = self.is_rtl();
         let mut resolve = |page: &PageContext| {
             let mut resolved = vec![];
             for kind in MarginBoxKind::ALL {
@@ -102,7 +111,7 @@ impl FlowConstructor {
             pages: HashMap::new(),
             names: names.clone(),
         };
-        for page in pages::representative_pages(&names) {
+        for page in pages::representative_pages(&names, rtl) {
             boxes.pages.insert(page.clone(), resolve(&page));
         }
         boxes

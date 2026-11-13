@@ -20,11 +20,14 @@ pub struct PageContext {
     pub name: Option<Arc<str>>,
     /// Whether this is the first page of its page group (it only has a group if it has a name).
     pub first_in_group: bool,
+    /// Whether the document is set from right to left. The pages of such a document are bound
+    /// on the right, and the first page is a left page.
+    pub rtl: bool,
 }
 
 impl PageContext {
     pub fn is_left(&self) -> bool {
-        self.index % 2 == 1
+        (self.index % 2 == 1) != self.rtl
     }
 
     pub fn is_first(&self) -> bool {
@@ -74,7 +77,7 @@ pub fn selected_names(styles: &Styles) -> HashSet<Arc<str>> {
 }
 
 /// One page for every combination that the rules can tell apart.
-pub fn representative_pages(names: &HashSet<Arc<str>>) -> Vec<PageContext> {
+pub fn representative_pages(names: &HashSet<Arc<str>>, rtl: bool) -> Vec<PageContext> {
     let mut pages = vec![];
     let names = std::iter::once(None).chain(names.iter().cloned().map(Some));
     for name in names {
@@ -87,6 +90,7 @@ pub fn representative_pages(names: &HashSet<Arc<str>>) -> Vec<PageContext> {
                     index,
                     name: name.clone(),
                     first_in_group,
+                    rtl,
                 });
             }
         }
@@ -105,6 +109,7 @@ pub fn normalize(page: &PageContext, names: &HashSet<Arc<str>>) -> PageContext {
         },
         first_in_group: name.is_some() && page.first_in_group,
         name,
+        rtl: page.rtl,
     }
 }
 
@@ -113,6 +118,8 @@ pub fn normalize(page: &PageContext, names: &HashSet<Arc<str>>) -> PageContext {
 /// sideways (for the inner and outer margins of a book, which have the same sum).
 #[derive(Debug, Default, Clone)]
 pub struct PageMargins {
+    /// Whether the pages are bound on the right (the document is set from right to left).
+    pub rtl: bool,
     /// The margins of the layout: `(left, right)`.
     pub base: (PixelLength, PixelLength),
     pub names: HashSet<Arc<str>>,
@@ -142,7 +149,7 @@ mod tests {
     use super::*;
 
     fn page(index: usize, name: Option<&str>, first_in_group: bool) -> PageContext {
-        PageContext { index, name: name.map(Arc::from), first_in_group }
+        PageContext { index, name: name.map(Arc::from), first_in_group, rtl: false }
     }
 
     fn selector(css: &str) -> PageSelector {
@@ -223,6 +230,6 @@ mod tests {
         assert_eq!(normalized, page(1, Some("chapter"), true));
         // a name that no rule selects is the same as no name
         assert_eq!(normalize(&page(4, Some("other"), true), &names), page(2, None, false));
-        assert!(representative_pages(&names).contains(&normalized));
+        assert!(representative_pages(&names, false).contains(&normalized));
     }
 }
