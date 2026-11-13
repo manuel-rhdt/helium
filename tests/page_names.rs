@@ -269,3 +269,28 @@ fn the_first_page_of_a_right_to_left_document_is_a_left_page() {
     assert!(close(header_x(0), 80.0), "{}", header_x(0));
     assert!(close(header_x(1), 80.0 / 3.0), "{}", header_x(1));
 }
+
+#[test]
+fn right_to_left_text_in_margin_boxes_is_shaped_right_to_left() {
+    let dump = dump(
+        "margin_box_bidi",
+        &format!(
+            "<style>{PAGE} {STYLE} @page {{ @top-center {{ content: \"كليلة ودمنة\" }} \
+             @bottom-center {{ content: none }} }}</style><p>x</p>"
+        ),
+    );
+    let header = dump["paint"]["text"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["ops"][0]["op"] == "artifact")
+        .expect("the header is drawn");
+    // right-to-left glyphs are in visual order, so the logical text is given as `ActualText`
+    let actual = header["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|op| op["op"] == "actual_text")
+        .expect("the glyphs were shaped right-to-left");
+    assert_eq!(actual["text"], "كليلة ودمنة");
+}

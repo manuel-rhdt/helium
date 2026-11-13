@@ -13,6 +13,7 @@ use super::inline::shape_piece;
 use super::pages::{PageContext, PageMargins, Pages, normalize};
 use crate::style::parse::{ContentItem, CounterName, CounterStyle, MarginBoxKind};
 use std::collections::{HashMap, HashSet};
+use unicode_bidi::{BidiInfo, Level};
 use std::sync::Arc;
 use crate::style::properties::computed::{PixelLength as Px, RGBA, TextAlign};
 use specs::{Entities, Read, ReadExpect, System, WriteStorage};
@@ -184,21 +185,33 @@ impl<'a> System<'a> for MarginBoxPaint {
                     TextOperator::SetColor(margin_box.color),
                 ];
                 ops.insert(0, TextOperator::BeginArtifact);
-                let width =
-                    shape_piece(
+                // The text is reordered by the bidirectional algorithm: right-to-left runs are
+                // shaped right-to-left, and the runs are drawn in visual order.
+                let info = BidiInfo::new(
                     &text,
-                    font,
-                    &margin_box.fallback,
-                    None,
-                    margin_box.font_size,
-                    Px(0.0),
-                    &[],
-                    false,
-                    &mut ops,
+                    Some(if page_margins.rtl { Level::rtl() } else { Level::ltr() }),
                 );
+                let mut width = Px(0.0);
+                for paragraph in &info.paragraphs {
+                    let (levels, runs) = info.visual_runs(paragraph, paragraph.range.clone());
+                    for run in runs {
+                        let run_rtl = levels[run.start].is_rtl();
+                        width += shape_piece(
+                            &text[run],
+                            font,
+                            &margin_box.fallback,
+                            None,
+                            margin_box.font_size,
+                            Px(0.0),
+                            &[],
+                            run_rtl,
+                            &mut ops,
+                        );
+                    }
+                }
                 ops.push(TextOperator::EndMarkedContent);
 
-                let x = match margin_box.text_align.resolve(false) {
+                let x = match margin_box.text_align.resolve(page_margins.rtl) {
                     TextAlign::Center => area_left + (area_width - width) / 2.0,
                     TextAlign::Right => area_left + area_width - width,
                     TextAlign::Left | TextAlign::Justify | TextAlign::Start | TextAlign::End => {
