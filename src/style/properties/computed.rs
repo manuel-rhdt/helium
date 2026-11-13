@@ -942,8 +942,52 @@ impl Default for Background {
     }
 }
 
+/// The computed value of `size` in `@page`.
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
+pub enum PageSize {
+    #[default]
+    Auto,
+    Dimensions {
+        width: PixelLength,
+        height: PixelLength,
+    },
+    /// Turn the default page size to the orientation.
+    Orientation { landscape: bool },
+}
+
+impl ComputedValue<specified::PageSize> for PageSize {
+    fn from_specified(spec: &specified::PageSize, style: &ComputedValues) -> Self {
+        let px = |q: specified::Quantity| {
+            PixelLength::from_val_unit(q.value, q.unit, style.font.font_size)
+        };
+        match *spec {
+            specified::PageSize::Auto => PageSize::Auto,
+            specified::PageSize::Lengths(width, height) => PageSize::Dimensions {
+                width: px(width),
+                height: height.map_or(px(width), px),
+            },
+            specified::PageSize::Keywords { name: None, landscape } => PageSize::Orientation {
+                landscape: landscape.unwrap_or(false),
+            },
+            specified::PageSize::Keywords { name: Some(name), landscape } => {
+                let (width, height, unit) = name.dimensions();
+                let (width, height) = (
+                    PixelLength::from_val_unit(width, unit, style.font.font_size),
+                    PixelLength::from_val_unit(height, unit, style.font.font_size),
+                );
+                if landscape == Some(true) {
+                    PageSize::Dimensions { width: height, height: width }
+                } else {
+                    PageSize::Dimensions { width, height }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Page {
+    pub size: PageSize,
     pub widows: usize,
     pub orphans: usize,
     pub break_after: Break,
@@ -954,6 +998,7 @@ pub struct Page {
 impl Default for Page {
     fn default() -> Self {
         Page {
+            size: PageSize::Auto,
             widows: 2,
             orphans: 2,
             break_after: Break::Auto,
