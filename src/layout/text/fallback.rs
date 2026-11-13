@@ -126,6 +126,9 @@ pub struct TextFonts {
     /// Sorted, non-overlapping runs of the text; empty if the primary font is used throughout
     /// and for text without runs.
     runs: Arc<[FontRun]>,
+    /// The `letter-spacing` of the text in 1/1000 em. Optional ligatures are not used if it is
+    /// not zero.
+    pub letter_spacing: f32,
 }
 
 /// The bytes `start..end` of a text are rendered with the font with the index `font` (as in
@@ -140,7 +143,7 @@ pub struct FontRun {
 impl TextFonts {
     /// Fonts for text without known runs: every cluster gets the font chosen for it.
     pub fn without_runs(key: FallbackKey) -> Self {
-        TextFonts { key, runs: Arc::from([]) }
+        TextFonts { key, runs: Arc::from([]), letter_spacing: 0.0 }
     }
 
     pub fn runs(&self) -> &[FontRun] {
@@ -527,7 +530,7 @@ impl FontResolver {
         if runs.iter().all(|run| run.font == 0) {
             runs.clear();
         }
-        TextFonts { key, runs: runs.into() }
+        TextFonts { key, runs: runs.into(), letter_spacing: 0.0 }
     }
 
     /// The characters that could not be rendered with any font.
@@ -1245,6 +1248,7 @@ mod tests {
                 FontRun { start: 3, end: 8, font: 2 },
                 FontRun { start: 10, end: 12, font: 1 },
             ]),
+            letter_spacing: 0.0,
         };
         assert_eq!(fonts.font_at(0), Some(0));
         assert_eq!(fonts.font_at(2), Some(0));

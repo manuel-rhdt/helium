@@ -5,7 +5,7 @@ use super::specified::{
     self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue, MathFamily, MathOperatorForm,
 };
 pub use super::specified::{
-    ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle, FontWeight,
+    BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle, FontWeight,
     GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, PageBreak,
     Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
@@ -276,6 +276,26 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
     }
 }
 
+/// `max-width` and `max-height` reuse [`GenericSize`], where `Auto` stands for the keyword `none`
+/// (no limit).
+impl super::ComputedValue<specified::NoneOrQuantityOrPercentage> for GenericSize {
+    fn from_specified(
+        spec: &specified::NoneOrQuantityOrPercentage,
+        style: &ComputedValues,
+    ) -> Self {
+        match spec {
+            specified::NoneOrQuantityOrPercentage::None => GenericSize::Auto,
+            specified::NoneOrQuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
+            specified::NoneOrQuantityOrPercentage::Quantity(specified::Quantity {
+                value,
+                unit,
+            }) => GenericSize::LengthPercentage(LengthPercentage::PixelLength(
+                PixelLength::from_val_unit(*value, *unit, style.font.font_size),
+            )),
+        }
+    }
+}
+
 impl GenericSize {
     pub fn absolute(self, if_auto: PixelLength, container_size: PixelLength) -> PixelLength {
         match self {
@@ -293,6 +313,12 @@ impl GenericSize {
 pub struct Position {
     pub width: GenericSize,
     pub height: GenericSize,
+    pub min_width: GenericSize,
+    /// `Auto` means `none`.
+    pub max_width: GenericSize,
+    pub min_height: GenericSize,
+    /// `Auto` means `none`.
+    pub max_height: GenericSize,
     pub top: GenericSize,
     pub right: GenericSize,
     pub bottom: GenericSize,
@@ -301,6 +327,11 @@ pub struct Position {
     pub margin_bottom: GenericSize,
     pub margin_left: GenericSize,
     pub margin_right: GenericSize,
+    /// The radius of the corners of the border edge. Percentages refer to the border box.
+    pub border_top_left_radius: LengthPercentage,
+    pub border_top_right_radius: LengthPercentage,
+    pub border_bottom_right_radius: LengthPercentage,
+    pub border_bottom_left_radius: LengthPercentage,
     pub padding_top: LengthPercentage,
     pub padding_bottom: LengthPercentage,
     pub padding_left: LengthPercentage,
@@ -341,6 +372,10 @@ impl Default for Position {
         Position {
             width: GenericSize::Auto,
             height: GenericSize::Auto,
+            min_width: GenericSize::Auto,
+            max_width: GenericSize::Auto,
+            min_height: GenericSize::Auto,
+            max_height: GenericSize::Auto,
             top: GenericSize::Auto,
             right: GenericSize::Auto,
             bottom: GenericSize::Auto,
@@ -349,6 +384,10 @@ impl Default for Position {
             margin_bottom: GenericSize::zero(),
             margin_left: GenericSize::zero(),
             margin_right: GenericSize::zero(),
+            border_top_left_radius: LengthPercentage::default(),
+            border_top_right_radius: LengthPercentage::default(),
+            border_bottom_right_radius: LengthPercentage::default(),
+            border_bottom_left_radius: LengthPercentage::default(),
             padding_top: LengthPercentage::default(),
             padding_bottom: LengthPercentage::default(),
             padding_left: LengthPercentage::default(),
@@ -540,6 +579,8 @@ impl StyleBuilder {
                 text_indent: inherited_values.text.text_indent,
                 text_align: inherited_values.text.text_align,
                 hyphens: inherited_values.text.hyphens,
+                letter_spacing: inherited_values.text.letter_spacing,
+                text_transform: inherited_values.text.text_transform,
                 direction: inherited_values.text.direction,
                 border_spacing: inherited_values.text.border_spacing,
                 border_collapse: inherited_values.text.border_collapse,
@@ -629,6 +670,7 @@ pub struct Box {
     pub display: specified::Display,
     pub unicode_bidi: specified::UnicodeBidi,
     pub position: PositionSpec,
+    pub box_sizing: BoxSizing,
 
     pub flex_direction: FlexDirection,
     pub flex_wrap: FlexWrap,
@@ -662,6 +704,7 @@ impl Default for Box {
             display: Default::default(),
             unicode_bidi: Default::default(),
             position: Default::default(),
+            box_sizing: Default::default(),
             flex_direction: Default::default(),
             flex_wrap: Default::default(),
             flex_grow: 0.0,
@@ -806,10 +849,24 @@ pub struct Text {
     pub text_indent: LengthPercentage,
     pub text_align: specified::TextAlign,
     pub hyphens: specified::Hyphens,
+    /// The extra space after every character; `normal` is 0.
+    pub letter_spacing: PixelLength,
+    pub text_transform: specified::TextTransform,
     pub direction: specified::Direction,
     pub line_break: specified::LineBreak,
     pub border_spacing: BorderSpacing,
     pub border_collapse: specified::BorderCollapse,
+}
+
+impl ComputedValue<specified::NormalOrQuantity> for PixelLength {
+    fn from_specified(spec: &specified::NormalOrQuantity, style: &ComputedValues) -> Self {
+        match spec {
+            specified::NormalOrQuantity::Normal => PixelLength(0.0),
+            specified::NormalOrQuantity::Quantity(q) => {
+                PixelLength::from_val_unit(q.value, q.unit, style.font.font_size)
+            }
+        }
+    }
 }
 
 /// The computed value of `border-spacing`.
@@ -989,6 +1046,17 @@ mod math_depth_tests {
         assert_eq!(child.text.text_align, parent.text.text_align);
         assert_eq!(child.text.hyphens, parent.text.hyphens);
         assert_eq!(child.text.border_spacing, parent.text.border_spacing);
+    }
+
+    #[test]
+    fn letter_spacing_is_inherited_as_a_length() {
+        let parent = root("font-size: 20px; letter-spacing: 0.5em");
+        assert_eq!(parent.text.letter_spacing, PixelLength(10.0));
+        // the computed length is inherited, not the em
+        let grandchild = child(&parent, "font-size: 40px");
+        assert_eq!(grandchild.text.letter_spacing, PixelLength(10.0));
+        let reset = child(&parent, "letter-spacing: normal");
+        assert_eq!(reset.text.letter_spacing, PixelLength(0.0));
     }
 
     #[test]

@@ -310,6 +310,32 @@ pub struct Decoration {
     /// instead of `border` (see [`CollapsedEdge`]). The table itself and its rows have them too,
     /// with nothing to paint, because the cells paint all borders.
     pub collapsed: Option<EdgeValues<CollapsedEdge>>,
+    /// The radii of the corners of the border edge (`border-radius`).
+    pub radius: CornerRadii,
+}
+
+/// The radius of each corner of a box, as computed. Percentages are resolved against the width
+/// (horizontal radius) and height (vertical radius) of the border box when painting.
+/// https://www.w3.org/TR/css-backgrounds-3/#border-radius
+#[derive(Debug, Default, Copy, Clone, PartialEq)]
+pub struct CornerRadii {
+    pub top_left: crate::style::properties::computed::LengthPercentage,
+    pub top_right: crate::style::properties::computed::LengthPercentage,
+    pub bottom_right: crate::style::properties::computed::LengthPercentage,
+    pub bottom_left: crate::style::properties::computed::LengthPercentage,
+}
+
+impl CornerRadii {
+    /// Whether any corner has a radius that could be non-zero.
+    pub fn is_rounded(&self) -> bool {
+        use crate::style::properties::computed::LengthPercentage as Lp;
+        [self.top_left, self.top_right, self.bottom_right, self.bottom_left]
+            .iter()
+            .any(|lp| match lp {
+                Lp::PixelLength(px) => px.0 > 0.0,
+                _ => true,
+            })
+    }
 }
 
 /// A border between two cells (or a cell and the edge of the table) in the collapsing border
@@ -338,6 +364,7 @@ impl Default for Decoration {
             border_color: EdgeValues::all(RGBA::transparent()),
             background_color: RGBA::transparent(),
             collapsed: None,
+            radius: Default::default(),
         }
     }
 }

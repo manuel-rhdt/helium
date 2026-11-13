@@ -4,6 +4,7 @@ pub mod font;
 pub mod segment;
 mod shape;
 mod to_pdf_font;
+pub mod transform;
 pub mod whitespace;
 
 pub use font::Font;

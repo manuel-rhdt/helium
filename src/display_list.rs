@@ -1,5 +1,5 @@
 use crate::layout::components::{
-    Decoration, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
+    Decoration, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
     TransformMatrix, VectorGraphics, ZIndex,
 };
 use crate::layout::normal_formatting::Pages;
@@ -60,6 +60,104 @@ impl Point {
     }
 }
 
+/// One element of a path, in layout coordinates.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum PathSegment {
+    MoveTo(Point),
+    LineTo(Point),
+    CurveTo(Point, Point, Point),
+    Close,
+}
+
+/// Fraction of the radius at which the control points of a Bézier curve approximating a quarter
+/// ellipse are placed.
+const KAPPA: f32 = 0.552_284_75;
+
+/// A closed path that follows `rect` with elliptical corners of radius `(rx, ry)` in the order
+/// top-left, top-right, bottom-right, bottom-left. The radii must already fit into `rect`.
+pub fn rounded_rect_path(rect: Rect, radii: [(PixelLength, PixelLength); 4]) -> Vec<PathSegment> {
+    let p = |x: PixelLength, y: PixelLength| Point::new(x, y);
+    let [tl, tr, br, bl] = radii;
+    let (x0, y0, x1, y1) = (rect.x, rect.y, rect.xmax(), rect.ymax());
+    let mut path = vec![
+        PathSegment::MoveTo(p(x0 + tl.0, y0)),
+        PathSegment::LineTo(p(x1 - tr.0, y0)),
+    ];
+    // each corner is a curve from the end of one side to the start of the next
+    path.push(PathSegment::CurveTo(
+        p(x1 - tr.0 + tr.0 * KAPPA, y0),
+        p(x1, y0 + tr.1 - tr.1 * KAPPA),
+        p(x1, y0 + tr.1),
+    ));
+    path.push(PathSegment::LineTo(p(x1, y1 - br.1)));
+    path.push(PathSegment::CurveTo(
+        p(x1, y1 - br.1 + br.1 * KAPPA),
+        p(x1 - br.0 + br.0 * KAPPA, y1),
+        p(x1 - br.0, y1),
+    ));
+    path.push(PathSegment::LineTo(p(x0 + bl.0, y1)));
+    path.push(PathSegment::CurveTo(
+        p(x0 + bl.0 - bl.0 * KAPPA, y1),
+        p(x0, y1 - bl.1 + bl.1 * KAPPA),
+        p(x0, y1 - bl.1),
+    ));
+    path.push(PathSegment::LineTo(p(x0, y0 + tl.1)));
+    path.push(PathSegment::CurveTo(
+        p(x0, y0 + tl.1 - tl.1 * KAPPA),
+        p(x0 + tl.0 - tl.0 * KAPPA, y0),
+        p(x0 + tl.0, y0),
+    ));
+    path.push(PathSegment::Close);
+    path
+}
+
+/// Resolves the radii of the corners of a border box and scales them down so that they do not
+/// overlap, as specified in https://www.w3.org/TR/css-backgrounds-3/#corner-overlap
+fn resolve_radii(
+    radius: &crate::layout::components::CornerRadii,
+    width: PixelLength,
+    height: PixelLength,
+) -> [(PixelLength, PixelLength); 4] {
+    use crate::style::properties::computed::LengthPercentage as Lp;
+    let resolve = |lp: Lp, container: PixelLength| match lp {
+        Lp::PixelLength(px) => px,
+        Lp::Percentage(pc) => container * pc,
+        Lp::Both { length, percentage } => length + container * percentage,
+    };
+    let resolve_corner = |lp: Lp| {
+        let rx = resolve(lp, width);
+        let ry = resolve(lp, height);
+        (
+            if rx.0 > 0.0 { rx } else { PixelLength(0.0) },
+            if ry.0 > 0.0 { ry } else { PixelLength(0.0) },
+        )
+    };
+    let mut r = [
+        resolve_corner(radius.top_left),
+        resolve_corner(radius.top_right),
+        resolve_corner(radius.bottom_right),
+        resolve_corner(radius.bottom_left),
+    ];
+    let mut factor = 1.0f32;
+    let mut limit = |available: PixelLength, sum: PixelLength| {
+        if sum.0 > 0.0 {
+            factor = factor.min(available.0 / sum.0);
+        }
+    };
+    limit(width, r[0].0 + r[1].0);
+    limit(width, r[3].0 + r[2].0);
+    limit(height, r[0].1 + r[3].1);
+    limit(height, r[1].1 + r[2].1);
+    if factor < 1.0 {
+        let factor = factor.max(0.0);
+        for (rx, ry) in &mut r {
+            *rx = *rx * factor;
+            *ry = *ry * factor;
+        }
+    }
+    r
+}
+
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
     LineString {
@@ -67,6 +165,16 @@ pub enum DisplayItem {
         line_width: PixelLength,
     },
     FilledRect(Rect),
+    /// Fills a closed path with the current fill colour.
+    FillPath {
+        path: Vec<PathSegment>,
+        even_odd: bool,
+    },
+    /// Intersects the clip with the path, until the enclosing `Pop`.
+    ClipPath {
+        path: Vec<PathSegment>,
+        even_odd: bool,
+    },
     Color(RGBA),
     StrokeColor(RGBA),
     Text(Point, PixelLength, String, Glyphs),
@@ -124,6 +232,133 @@ impl DisplayList {
             z,
         );
         self.append(DisplayItem::Pop, entity, z);
+    }
+
+    /// Paints the background and borders of a box with rounded corners. `outer` are the radii
+    /// of the border edge, the radii of the padding edge are derived from them.
+    #[allow(clippy::too_many_arguments)]
+    fn rounded_decoration(
+        &mut self,
+        rect: Rect,
+        outer: [(PixelLength, PixelLength); 4],
+        border: EdgeValues<PixelLength>,
+        border_color: EdgeValues<RGBA>,
+        background_color: RGBA,
+        entity: Entity,
+        z: ZIndex,
+    ) {
+        let zero = PixelLength(0.0);
+        let outer_path = rounded_rect_path(rect, outer);
+
+        if background_color != RGBA::transparent() {
+            self.append(DisplayItem::Push, entity, z);
+            self.append(DisplayItem::Color(background_color), entity, z);
+            self.append(
+                DisplayItem::FillPath {
+                    path: outer_path.clone(),
+                    even_odd: false,
+                },
+                entity,
+                z,
+            );
+            self.append(DisplayItem::Pop, entity, z);
+        }
+
+        if border.top <= zero && border.bottom <= zero && border.left <= zero && border.right <= zero
+        {
+            return;
+        }
+
+        // the padding edge: the radii shrink by the width of the adjacent borders
+        let inner_rect = Rect {
+            x: rect.x + border.left,
+            y: rect.y + border.top,
+            width: (rect.width - border.left - border.right).max(zero),
+            height: (rect.height - border.top - border.bottom).max(zero),
+        };
+        let shrink = |(rx, ry): (PixelLength, PixelLength), bx: PixelLength, by: PixelLength| {
+            ((rx - bx).max(zero), (ry - by).max(zero))
+        };
+        let inner = [
+            shrink(outer[0], border.left, border.top),
+            shrink(outer[1], border.right, border.top),
+            shrink(outer[2], border.right, border.bottom),
+            shrink(outer[3], border.left, border.bottom),
+        ];
+        let mut ring = outer_path;
+        ring.extend(rounded_rect_path(inner_rect, inner));
+
+        let uniform = border.top == border.bottom
+            && border.top == border.left
+            && border.top == border.right
+            && border_color.top == border_color.bottom
+            && border_color.top == border_color.left
+            && border_color.top == border_color.right;
+        if uniform {
+            self.append(DisplayItem::Push, entity, z);
+            self.append(DisplayItem::Color(border_color.top), entity, z);
+            self.append(
+                DisplayItem::FillPath {
+                    path: ring,
+                    even_odd: true,
+                },
+                entity,
+                z,
+            );
+            self.append(DisplayItem::Pop, entity, z);
+            return;
+        }
+
+        // Every side is painted into the ring, clipped to the region between the diagonals
+        // through the corners of the border edge and the padding edge.
+        let p = Point::new;
+        let (ox0, oy0, ox1, oy1) = (rect.x, rect.y, rect.xmax(), rect.ymax());
+        let (ix0, iy0, ix1, iy1) = (
+            inner_rect.x,
+            inner_rect.y,
+            inner_rect.xmax(),
+            inner_rect.ymax(),
+        );
+        let wedge = |pts: [Point; 4]| {
+            vec![
+                PathSegment::MoveTo(pts[0]),
+                PathSegment::LineTo(pts[1]),
+                PathSegment::LineTo(pts[2]),
+                PathSegment::LineTo(pts[3]),
+                PathSegment::Close,
+            ]
+        };
+        let sides = [
+            (border.top, border_color.top, [p(ox0, oy0), p(ox1, oy0), p(ix1, iy0), p(ix0, iy0)]),
+            (border.right, border_color.right, [p(ox1, oy0), p(ox1, oy1), p(ix1, iy1), p(ix1, iy0)]),
+            (border.bottom, border_color.bottom, [p(ox1, oy1), p(ox0, oy1), p(ix0, iy1), p(ix1, iy1)]),
+            (border.left, border_color.left, [p(ox0, oy1), p(ox0, oy0), p(ix0, iy0), p(ix0, iy1)]),
+        ];
+        for (width, color, pts) in sides {
+            if width <= zero {
+                continue;
+            }
+            self.append(DisplayItem::Push, entity, z);
+            self.append(
+                DisplayItem::ClipPath {
+                    path: ring.clone(),
+                    even_odd: true,
+                },
+                entity,
+                z,
+            );
+            self.append(
+                DisplayItem::ClipPath {
+                    path: wedge(pts),
+                    even_odd: false,
+                },
+                entity,
+                z,
+            );
+            self.append(DisplayItem::Color(color), entity, z);
+            self.append(DisplayItem::FilledRect(rect), entity, z);
+            self.append(DisplayItem::Pop, entity, z);
+        }
     }
 
     // fn append_text(&mut self, pos: Point, text: &components::Text, z_index: ZIndex) {
@@ -212,6 +447,22 @@ impl<'a> System<'a> for DisplayDecoration {
                 collapsed,
                 ..
             } = deco;
+
+            let border_box = Rect {
+                x: x - padding.left - border.left,
+                y: y - padding.top - border.top,
+                width: width + padding.left + padding.right + border.left + border.right,
+                height: height + padding.top + padding.bottom + border.top + border.bottom,
+            };
+            if collapsed.is_none() && deco.radius.is_rounded() {
+                let outer = resolve_radii(&deco.radius, border_box.width, border_box.height);
+                if outer.iter().any(|&(rx, ry)| rx.0 > 0.0 && ry.0 > 0.0) {
+                    self.display_list.rounded_decoration(
+                        border_box, outer, border, border_color, background_color, entity, z,
+                    );
+                    continue;
+                }
+            }
 
             if background_color != RGBA::transparent() {
                 self.display_list.append(DisplayItem::Push, entity, z);

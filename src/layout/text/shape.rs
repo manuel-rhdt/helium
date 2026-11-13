@@ -60,6 +60,31 @@ pub fn shape(
     shape_directed(text, font, fonts, at, false)
 }
 
+/// Adds the letter spacing after every grapheme cluster of `glyphs`, which are the glyphs of
+/// `text` in logical order. The spacing goes to the glyph that is drawn last in the cluster.
+fn apply_letter_spacing(
+    glyphs: &mut [(GlyphPosition, GlyphInfo)],
+    text: &str,
+    spacing: f32,
+    rtl: bool,
+) {
+    let starts: Vec<u32> = clusters(text).into_iter().map(|c| c.start as u32).collect();
+    let cluster_of = |glyph: &(GlyphPosition, GlyphInfo)| {
+        starts.partition_point(|&start| start <= glyph.1.cluster)
+    };
+    let ids: Vec<usize> = glyphs.iter().map(cluster_of).collect();
+    for (i, (position, _)) in glyphs.iter_mut().enumerate() {
+        let last_drawn = if rtl {
+            i == 0 || ids[i - 1] != ids[i]
+        } else {
+            i + 1 == ids.len() || ids[i + 1] != ids[i]
+        };
+        if last_drawn {
+            position.x_advance.0 += spacing as f64;
+        }
+    }
+}
+
 /// Shapes `text` of embedding levels `levels`: runs `(start, level)` of the text that `text`
 /// starts at byte `offset` of (as in `InlineFormattingContext::bidi_runs`). Every run is shaped
 /// in its direction. The glyphs are returned in logical order, with clusters relative to `text`.
@@ -138,11 +163,26 @@ pub fn shape_directed(
         return Vec::new();
     }
 
+    let mut glyphs = shape_runs(text, font, fonts, at, rtl);
+    if fonts.letter_spacing != 0.0 {
+        apply_letter_spacing(&mut glyphs, text, fonts.letter_spacing, rtl);
+    }
+    glyphs
+}
+
+fn shape_runs(
+    text: &str,
+    font: &Font,
+    fonts: &TextFonts,
+    at: Option<usize>,
+    rtl: bool,
+) -> Vec<(GlyphPosition, GlyphInfo)> {
     let lang = &fonts.key.lang;
+    let ligatures = fonts.letter_spacing == 0.0;
     let set = font.fallback_set(&fonts.key);
     if set.fonts.is_empty() && text.is_ascii() {
         // the script is guessed
-        return shape_single(text, font, lang, None, 0, 0, rtl);
+        return shape_single(text, font, lang, None, 0, 0, rtl, ligatures);
     }
     let fallbacks = &set.fonts;
 
@@ -177,13 +217,23 @@ pub fn shape_directed(
                 fallbacks,
                 (current, script),
                 rtl,
+                ligatures,
             ));
             run_start = cluster.start;
         }
         run = Some((ch_font, cluster.script));
     }
     if let Some(current) = run {
-        result.extend(shape_run(&text[run_start..], run_start, font, lang, fallbacks, current, rtl));
+        result.extend(shape_run(
+            &text[run_start..],
+            run_start,
+            font,
+            lang,
+            fallbacks,
+            current,
+            rtl,
+            ligatures,
+        ));
     }
     result
 }
@@ -212,6 +262,7 @@ fn shape_run(
     fallbacks: &[std::sync::Arc<Font>],
     (font_index, script): (u16, Script),
     rtl: bool,
+    ligatures: bool,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     shape_single(
         text,
@@ -221,6 +272,7 @@ fn shape_run(
         offset as u32,
         font_index,
         rtl,
+        ligatures,
     )
 }
 
@@ -235,6 +287,7 @@ fn shape_single(
     cluster_offset: u32,
     font_index: u16,
     rtl: bool,
+    ligatures: bool,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     // The direction is always set: harfbuzz would otherwise guess it from the script, so that
     // e.g. Hebrew text in a left-to-right run would be shaped right-to-left. The script (for
@@ -261,7 +314,14 @@ fn shape_single(
     }
     buffer = buffer.guess_segment_properties();
 
-    let result = hb_shape(&font.hb_font, buffer, &[]);
+    // Letter spaced text does not use the optional ligatures:
+    // https://www.w3.org/TR/css-text-3/#letter-spacing-property
+    let no_ligatures = [
+        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('l', 'i', 'g', 'a'), 0, ..),
+        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('c', 'l', 'i', 'g'), 0, ..),
+    ];
+    let features: &[harfbuzz_rs::Feature] = if ligatures { &[] } else { &no_ligatures };
+    let result = hb_shape(&font.hb_font, buffer, features);
 
     let scale = |val| FontUnit(val as f64 * (1000f64 / font.upem as f64));
 
@@ -435,5 +495,58 @@ mod tests {
         }
         assert!(!is_invisible_formatting('a'));
         assert!(!is_invisible_formatting(' '));
+    }
+
+    fn spaced(s: &Setup, spacing: f32) -> TextFonts {
+        let mut fonts = s.fonts.clone();
+        fonts.letter_spacing = spacing;
+        fonts
+    }
+
+    fn total(glyphs: &[(GlyphPosition, GlyphInfo)]) -> f64 {
+        glyphs.iter().map(|(p, _)| p.x_advance.0).sum()
+    }
+
+    #[test]
+    fn letter_spacing_is_added_after_every_character() {
+        let s = setup("hello");
+        let plain = shape("hello", &s.font, &s.fonts, Some(0));
+        let wide = shape("hello", &s.font, &spaced(&s, 100.0), Some(0));
+        assert_eq!(plain.len(), wide.len());
+        assert!((total(&wide) - total(&plain) - 500.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn letter_spacing_keeps_marks_with_their_base() {
+        let s = setup("e\u{301}x");
+        let plain = shape("e\u{301}x", &s.font, &s.fonts, Some(0));
+        let wide = shape("e\u{301}x", &s.font, &spaced(&s, 100.0), Some(0));
+        // two grapheme clusters
+        assert!((total(&wide) - total(&plain) - 200.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn letter_spacing_disables_ligatures() {
+        let s = setup("office");
+        let plain = shape("office", &s.font, &s.fonts, Some(0));
+        let wide = shape("office", &s.font, &spaced(&s, 1.0), Some(0));
+        assert!(plain.len() < 6, "the font has no ffi ligature: {}", plain.len());
+        assert_eq!(wide.len(), 6);
+    }
+
+    #[test]
+    fn negative_letter_spacing_narrows_the_text() {
+        let s = setup("abc");
+        let plain = shape("abc", &s.font, &s.fonts, Some(0));
+        let narrow = shape("abc", &s.font, &spaced(&s, -50.0), Some(0));
+        assert!((total(&plain) - total(&narrow) - 150.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn letter_spacing_applies_to_right_to_left_text_once_per_character() {
+        let s = setup("אבג");
+        let plain = shape_directed("אבג", &s.font, &s.fonts, Some(0), true);
+        let wide = shape_directed("אבג", &s.font, &spaced(&s, 100.0), Some(0), true);
+        assert!((total(&wide) - total(&plain) - 300.0).abs() < 1e-6);
     }
 }

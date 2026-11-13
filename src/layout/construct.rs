@@ -507,6 +507,9 @@ pub struct EntityConstructor {
     in_math: bool,
     pub world: World,
     trim_next_inline_whitespace: bool,
+    /// Whether the text before the next text node ends inside of a word, for
+    /// `text-transform: capitalize`.
+    in_word: bool,
 }
 
 impl std::fmt::Debug for EntityConstructor {
@@ -535,6 +538,7 @@ impl EntityConstructor {
             font_resolver: Default::default(),
             in_math: false,
             trim_next_inline_whitespace: true,
+            in_word: false,
         }
     }
 
@@ -562,8 +566,15 @@ impl EntityConstructor {
     /// Adds fallback fonts to `font` for the characters of `text` it has no glyph for.
     fn ensure_coverage(&mut self, style: &ComputedValues, font: &Font, text: &str) -> TextFonts {
         let mut font_map = self.world.write_resource::<FontMap>();
-        self.font_resolver
-            .ensure_coverage(style, font, text, &mut font_map)
+        let mut fonts = self
+            .font_resolver
+            .ensure_coverage(style, font, text, &mut font_map);
+        // the spacing is in 1/1000 em, like the glyph advances
+        let font_size = style.font.font_size.0;
+        if font_size > 0.0 {
+            fonts.letter_spacing = style.text.letter_spacing.0 / font_size * 1000.0;
+        }
+        fonts
     }
 
     // Called on top-down traversal. Takes a node and its style to create a corresponding
@@ -584,6 +595,11 @@ impl EntityConstructor {
                 if element_data.name == QualName::new(None, ns!(html), local_name!("br")) {
                     // treat <br> as whitespace
                     self.trim_next_inline_whitespace = true;
+                    self.in_word = false;
+                }
+                // the text in a box of its own does not continue a word of the text before it
+                if style.box_.display != Display::Inline {
+                    self.in_word = false;
                 }
 
                 let is_list_item =
@@ -670,7 +686,13 @@ impl EntityConstructor {
                 if text.is_empty() {
                     return;
                 } else {
-                    self.build_text_entity(style, &*text)
+                    let transformed = super::text::transform::apply(
+                        &text,
+                        style.text.text_transform,
+                        &style.font.lang,
+                        &mut self.in_word,
+                    );
+                    self.build_text_entity(style, transformed.as_deref().unwrap_or(&*text))
                 }
             }
             _ => self.build_default_entity(style),
