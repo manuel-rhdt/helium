@@ -1,6 +1,7 @@
 use super::components::{self, BlockLevelElement, LayoutEntity, MathNode, Position, RootNode};
 use super::inline::InlineFormattingContext;
-use super::margin_boxes::{self, MarginBoxes, ResolvedMarginBox};
+use super::margin_boxes::{MarginBoxes, ResolvedMarginBox};
+use super::pages::{self, PageContext};
 use super::normal_formatting::BlockFormattingContext;
 use super::{FontMap, text::Font};
 use crate::parser::{ElementData, ParsedData};
@@ -41,19 +42,14 @@ impl FlowConstructor {
 
     /// Resolves the styles and fonts of the margin boxes (headers and footers) of the document.
     pub fn resolve_margin_boxes(&mut self) -> MarginBoxes {
-        let mut resolve = |first: bool, left: bool| {
+        let names = pages::selected_names(&self.styles);
+        let mut resolve = |page: &PageContext| {
             let mut resolved = vec![];
             for kind in MarginBoxKind::ALL {
                 let mut style_builder = StyleBuilder::new(Default::default());
                 let mut content = None;
                 let mut text_align = None;
-                for rule in self.styles.rules_iter() {
-                    let Some(selector) = rule.page_selector() else {
-                        continue;
-                    };
-                    if !margin_boxes::selector_matches(selector, first, left) {
-                        continue;
-                    }
+                for rule in pages::matching_rules(&self.styles, page) {
                     for margin_box in rule.margin_boxes.iter().filter(|b| b.kind == kind) {
                         for declaration in margin_box.properties.declarations() {
                             if let PropertyDeclaration::Text(Text::TextAlign(align)) = declaration {
@@ -102,12 +98,14 @@ impl FlowConstructor {
             }
             resolved
         };
-        // the first page is a right page
-        MarginBoxes {
-            first: resolve(true, false),
-            left: resolve(false, true),
-            right: resolve(false, false),
+        let mut boxes = MarginBoxes {
+            pages: HashMap::new(),
+            names: names.clone(),
+        };
+        for page in pages::representative_pages(&names) {
+            boxes.pages.insert(page.clone(), resolve(&page));
         }
+        boxes
     }
 
     /// The world with the constructed boxes. It contains the characters that could not be

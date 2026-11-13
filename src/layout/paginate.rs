@@ -3,9 +3,11 @@ use super::components::{
     Position, TextList,
 };
 use super::inline::InlineFormattingContext;
+use super::pages::{PageContext, PageMargins, Pages};
 use crate::style::properties::computed::{ComputedValues, Display, PixelLength};
-use specs::{Entities, Entity, Join, Read, ReadStorage, System, WriteStorage};
+use specs::{Entities, Entity, Join, Read, ReadStorage, System, Write, WriteStorage};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// The cost of a page break at a place where a break should be avoided (`break-inside: avoid`
 /// or `break-before`/`break-after: avoid`). It is larger than the cost of any page that is
@@ -94,6 +96,8 @@ impl<'world> System<'world> for Paginator {
         Entities<'world>,
         Read<'world, TextList>,
         Read<'world, AbsoluteGroups>,
+        Read<'world, PageMargins>,
+        Write<'world, Pages>,
         WriteStorage<'world, Position>,
         WriteStorage<'world, Decoration>,
         WriteStorage<'world, Fragmented>,
@@ -107,6 +111,8 @@ impl<'world> System<'world> for Paginator {
             entities,
             text_list,
             absolute_groups,
+            page_margins,
+            mut pages,
             mut positions,
             mut decorations,
             mut fragmented,
@@ -124,6 +130,20 @@ impl<'world> System<'world> for Paginator {
                 line_info.insert(line.entity, (owner, number, context.lines.len()));
             }
         }
+
+        // The name of the page that an element is printed on (the `page` property), if the
+        // element has a style. Lines have the page name of their paragraph.
+        let page_name = |elem: BlockLevelElement| {
+            let entity = elem.entity();
+            computed_values
+                .get(entity)
+                .or_else(|| {
+                    line_info
+                        .get(&entity)
+                        .and_then(|&(owner, ..)| computed_values.get(owner))
+                })
+                .map(|style| style.page.page.0.clone())
+        };
 
         // The values of `break-after` of the boxes that end in front of the element at `index`
         // of the text list and of `break-before` of those that start there. They are the boxes
@@ -208,7 +228,12 @@ impl<'world> System<'world> for Paginator {
                             .last()
                             .is_none_or(|&cells_bottom| cells_bottom.0 <= pos.y.0 + 0.01) =>
                 {
-                    let (forced, avoid_between) = break_values(index);
+                    let (mut forced, avoid_between) = break_values(index);
+                    // a change of the page name forces a page break
+                    if let (Some(before), Some(after)) = (page_name(previous_elem), page_name(elem))
+                    {
+                        forced |= before != after;
+                    }
                     let in_lines = match (previous_elem, elem) {
                         (BlockLevelElement::Leaf(a), BlockLevelElement::Leaf(b)) => {
                             match (line_info.get(&a), line_info.get(&b)) {
@@ -356,6 +381,54 @@ impl<'world> System<'world> for Paginator {
         let mut next_break = optimal_sequence_iter.next();
 
         let mut current_page = 0;
+        // the pages in the document, and how far the content of a page is moved sideways
+        // because of the left and right margins of the page
+        // The name of a page is the name of its first box: the first leaf at or after the element
+        // that starts the page, with the boxes that are open around it.
+        let first_leaf = |open: &[Entity], index: usize| {
+            let mut around = open.to_vec();
+            for &elem in &text_list.list[index..] {
+                match elem {
+                    BlockLevelElement::ContainerStart(entity) => around.push(entity),
+                    BlockLevelElement::Leaf(_) => return Some((around, elem)),
+                    _ => return None,
+                }
+            }
+            None
+        };
+        // The box that the name of a page comes from: the outermost of the boxes around the first
+        // element on the page that have that name. A page group is a run of pages of one such box.
+        let page_start = |open: &[Entity], index: usize| -> (Option<Arc<str>>, Option<Entity>) {
+            let Some((around, leaf)) = first_leaf(open, index) else {
+                return (None, None);
+            };
+            let Some(name) = page_name(leaf).flatten() else {
+                return (None, None);
+            };
+            let own = line_info.get(&leaf.entity()).map_or(leaf.entity(), |info| info.0);
+            let mut source = own;
+            for &entity in around.iter().rev() {
+                let named = computed_values
+                    .get(entity)
+                    .is_some_and(|style| style.page.page.0.as_ref() == Some(&name));
+                if !named {
+                    break;
+                }
+                source = entity;
+            }
+            (Some(name), Some(source))
+        };
+        let mut open_containers: Vec<Entity> = vec![];
+        let (first_name, first_source) = page_start(&open_containers, 0);
+        let first_page = PageContext {
+            index: 0,
+            name: first_name,
+            first_in_group: true,
+        };
+        let mut group_source = first_source;
+        let mut x_offset = page_margins.shift(&first_page);
+        let mut x_offsets = vec![x_offset];
+        pages.0 = vec![first_page];
         let mut y_offset = self.margin.top;
         // the vertical offset that was applied to the contents of every page
         let mut page_offsets = vec![y_offset];
@@ -375,6 +448,18 @@ impl<'world> System<'world> for Paginator {
                     ..
                 }) if before_index == index => {
                     current_page += 1;
+                    let (name, source) = page_start(&open_containers, index);
+                    // a page starts a page group if the name comes from another box than on
+                    // the page before
+                    let page = PageContext {
+                        index: current_page,
+                        first_in_group: source.is_some() && source != group_source,
+                        name,
+                    };
+                    group_source = source;
+                    x_offset = page_margins.shift(&page);
+                    x_offsets.push(x_offset);
+                    pages.0.push(page);
                     y_offset = self.margin.top - advance_after;
                     page_offsets.push(y_offset);
                     next_break = optimal_sequence_iter.next();
@@ -383,10 +468,18 @@ impl<'world> System<'world> for Paginator {
             };
 
             page_of_index.push(current_page);
+            match elem {
+                BlockLevelElement::ContainerStart(entity) => open_containers.push(entity),
+                BlockLevelElement::ContainerEnd(_) => {
+                    open_containers.pop();
+                }
+                _ => {}
+            }
 
             if processed_entities.insert(elem.entity()) {
-                if let Some(Position { page, y, .. }) = positions.get_mut(elem.entity()) {
+                if let Some(Position { page, x, y, .. }) = positions.get_mut(elem.entity()) {
                     *page = current_page;
+                    *x = *x + x_offset;
                     *y = *y + y_offset;
                 }
             }
@@ -509,6 +602,7 @@ impl<'world> System<'world> for Paginator {
             for &entity in &group.entities {
                 if let Some(pos) = positions.get_mut(entity) {
                     pos.page = page;
+                    pos.x += x_offsets[page];
                     pos.y += offset;
                 }
             }

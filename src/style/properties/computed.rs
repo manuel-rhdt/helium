@@ -988,11 +988,26 @@ impl ComputedValue<specified::PageSize> for PageSize {
     }
 }
 
+/// The computed value of `page`: the name of the page, if any. `auto` is the name of the parent.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PageName(pub Option<std::sync::Arc<str>>);
+
+impl ComputedValue<specified::PageName> for PageName {
+    fn from_specified(spec: &specified::PageName, style: &ComputedValues) -> Self {
+        match &spec.0 {
+            Some(name) => PageName(Some(name.clone())),
+            // the declarations are applied to a style that has the inherited values of the
+            // parent
+            None => style.page.page.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Page {
     pub size: PageSize,
     /// The name of the page: `auto` is the name of the parent, so the used value is inherited.
-    pub page: specified::PageName,
+    pub page: PageName,
     pub widows: usize,
     pub orphans: usize,
     pub break_after: Break,
