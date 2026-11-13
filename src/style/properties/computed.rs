@@ -507,6 +507,7 @@ impl ComputedValues {
             position: Default::default(),
             background: Default::default(),
             page: Arc::new(Page {
+                page: self.page.page.clone(),
                 widows: self.page.widows,
                 orphans: self.page.orphans,
                 ..Default::default()
@@ -586,8 +587,10 @@ impl StyleBuilder {
                 border_collapse: inherited_values.text.border_collapse,
                 ..Default::default()
             }),
-            // widows and orphans are inherited, the page break properties are not
+            // widows and orphans and the used value of `page` are inherited, the page break
+            // properties are not
             page: Arc::new(Page {
+                page: inherited_values.page.page.clone(),
                 widows: inherited_values.page.widows,
                 orphans: inherited_values.page.orphans,
                 ..Default::default()
@@ -988,6 +991,8 @@ impl ComputedValue<specified::PageSize> for PageSize {
 #[derive(Debug, Clone)]
 pub struct Page {
     pub size: PageSize,
+    /// The name of the page: `auto` is the name of the parent, so the used value is inherited.
+    pub page: specified::PageName,
     pub widows: usize,
     pub orphans: usize,
     pub break_after: Break,
@@ -999,6 +1004,7 @@ impl Default for Page {
     fn default() -> Self {
         Page {
             size: PageSize::Auto,
+            page: Default::default(),
             widows: 2,
             orphans: 2,
             break_after: Break::Auto,
