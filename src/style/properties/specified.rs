@@ -593,6 +593,9 @@ pub enum Background {
 #[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Page"]
 pub enum Page {
+    /// https://www.w3.org/TR/css-page-3/#page-size-prop
+    #[property]
+    Size(PageSize),
     #[property]
     Orphans(usize),
     #[property]
@@ -1957,6 +1960,107 @@ impl ComputedValue<FontWeight> for super::computed::FontWeight {
                 _ => 700.0,
             }),
         }
+    }
+}
+
+/// The sizes with a name for `@page { size }`, in portrait orientation.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum NamedPageSize {
+    A5,
+    A4,
+    A3,
+    B5,
+    B4,
+    JisB5,
+    JisB4,
+    Letter,
+    Legal,
+    Ledger,
+}
+
+impl NamedPageSize {
+    /// The width and height in millimetres, or inches for the American sizes.
+    pub fn dimensions(self) -> (f32, f32, Unit) {
+        match self {
+            NamedPageSize::A5 => (148.0, 210.0, Unit::Mm),
+            NamedPageSize::A4 => (210.0, 297.0, Unit::Mm),
+            NamedPageSize::A3 => (297.0, 420.0, Unit::Mm),
+            NamedPageSize::B5 => (176.0, 250.0, Unit::Mm),
+            NamedPageSize::B4 => (250.0, 353.0, Unit::Mm),
+            NamedPageSize::JisB5 => (182.0, 257.0, Unit::Mm),
+            NamedPageSize::JisB4 => (257.0, 364.0, Unit::Mm),
+            NamedPageSize::Letter => (8.5, 11.0, Unit::In),
+            NamedPageSize::Legal => (8.5, 14.0, Unit::In),
+            NamedPageSize::Ledger => (11.0, 17.0, Unit::In),
+        }
+    }
+}
+
+/// The value of `size` in `@page`: `auto`, one or two lengths, or a page size name and/or an
+/// orientation.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum PageSize {
+    Auto,
+    /// One length is both width and height.
+    Lengths(Quantity, Option<Quantity>),
+    /// A named size or only an orientation. A name without orientation is portrait; without a
+    /// name, the orientation applies to the default page size.
+    Keywords {
+        name: Option<NamedPageSize>,
+        landscape: Option<bool>,
+    },
+}
+
+impl Default for PageSize {
+    fn default() -> Self {
+        PageSize::Auto
+    }
+}
+
+impl<'i> PropertyValue<'i> for PageSize {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        input.parse_entirely(|input| {
+            if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+                return Ok(PageSize::Auto);
+            }
+            if let Ok(width) = input.try_parse(Quantity::from_css_property_value) {
+                let height = input.try_parse(Quantity::from_css_property_value).ok();
+                return Ok(PageSize::Lengths(width, height));
+            }
+            let (mut name, mut landscape) = (None, None);
+            while !input.is_exhausted() {
+                let ident = input.expect_ident()?.clone();
+                let named = match_ignore_ascii_case! { &ident,
+                    "a5" => Some(NamedPageSize::A5),
+                    "a4" => Some(NamedPageSize::A4),
+                    "a3" => Some(NamedPageSize::A3),
+                    "b5" => Some(NamedPageSize::B5),
+                    "b4" => Some(NamedPageSize::B4),
+                    "jis-b5" => Some(NamedPageSize::JisB5),
+                    "jis-b4" => Some(NamedPageSize::JisB4),
+                    "letter" => Some(NamedPageSize::Letter),
+                    "legal" => Some(NamedPageSize::Legal),
+                    "ledger" => Some(NamedPageSize::Ledger),
+                    _ => None,
+                };
+                let orientation = match_ignore_ascii_case! { &ident,
+                    "landscape" => Some(true),
+                    "portrait" => Some(false),
+                    _ => None,
+                };
+                match (named, orientation) {
+                    (Some(size), _) if name.is_none() => name = Some(size),
+                    (_, Some(value)) if landscape.is_none() => landscape = Some(value),
+                    _ => return Err(input.new_error_for_next_token()),
+                }
+            }
+            if name.is_none() && landscape.is_none() {
+                return Err(input.new_error_for_next_token());
+            }
+            Ok(PageSize::Keywords { name, landscape })
+        })
     }
 }
 

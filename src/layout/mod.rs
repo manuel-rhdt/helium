@@ -22,7 +22,7 @@ use crate::layout::components::{
 };
 use crate::style::{
     device::Device,
-    properties::computed::{GenericSize, StyleBuilder},
+    properties::computed::{GenericSize, PageSize, StyleBuilder},
 };
 use crate::traverse::Traverse;
 use crate::tree::DomRef;
@@ -224,6 +224,22 @@ pub fn layout(
         page_width = PixelLength(0.0);
         page_height = PixelLength(0.0);
     } else {
+        // `size` replaces the default size and the `width` and `height` of the page
+        let (mut width, mut height) = (
+            style.position.width.absolute(device.width, device.width),
+            style.position.height.absolute(device.width, device.width),
+        );
+        match style.page.size {
+            PageSize::Auto => {}
+            PageSize::Dimensions { width: w, height: h } => (width, height) = (w, h),
+            PageSize::Orientation { landscape } => {
+                if (width < height) == landscape {
+                    (width, height) = (height, width);
+                }
+            }
+        }
+        page_width = width;
+        page_height = height;
         // Page margins cannot be negative: a negative margin would move the content, and with it
         // the text, off the page where it is silently lost. Clamp instead of rendering a blank
         // document.
@@ -233,13 +249,11 @@ pub fn layout(
                 .max(PixelLength(0.0))
         };
         margin = EdgeValues {
-            top: page_margin(style.position.margin_top, device.height),
-            left: page_margin(style.position.margin_left, device.width),
-            bottom: page_margin(style.position.margin_bottom, device.height),
-            right: page_margin(style.position.margin_right, device.width),
+            top: page_margin(style.position.margin_top, width),
+            left: page_margin(style.position.margin_left, width),
+            bottom: page_margin(style.position.margin_bottom, width),
+            right: page_margin(style.position.margin_right, width),
         };
-        page_width = style.position.width.absolute(device.width, device.width);
-        page_height = style.position.height.absolute(device.width, device.width);
     }
 
     let margin_boxes = if crop {
