@@ -193,9 +193,11 @@ impl Font {
     pub fn bundled(weight: &FontWeight) -> Self {
         static REGULAR: OnceLock<Arc<Vec<u8>>> = OnceLock::new();
         static BOLD: OnceLock<Arc<Vec<u8>>> = OnceLock::new();
-        let bytes = match weight {
-            FontWeight::Normal => REGULAR.get_or_init(|| Arc::new(BUNDLED_REGULAR.to_vec())),
-            FontWeight::Bold => BOLD.get_or_init(|| Arc::new(BUNDLED_BOLD.to_vec())),
+        // the closer of the two weights, a tie goes to the heavier one like in font matching
+        let bytes = if weight.0 >= 550.0 {
+            BOLD.get_or_init(|| Arc::new(BUNDLED_BOLD.to_vec()))
+        } else {
+            REGULAR.get_or_init(|| Arc::new(BUNDLED_REGULAR.to_vec()))
         };
         Font::load(bytes.clone(), 0).expect("the bundled fonts are valid")
     }
@@ -411,10 +413,7 @@ pub(crate) fn system_font(
         .collect::<Vec<_>>();
     let id = db.query(&fontdb::Query {
         families: &families,
-        weight: match weight {
-            FontWeight::Normal => fontdb::Weight::NORMAL,
-            FontWeight::Bold => fontdb::Weight::BOLD,
-        },
+        weight: fontdb::Weight(weight.0.round().clamp(1.0, 1000.0) as u16),
         stretch: fontdb::Stretch::Normal,
         style: match style {
             FontStyle::Normal => fontdb::Style::Normal,
@@ -479,7 +478,7 @@ mod tests {
         for family in ["Helvetica", "Arial", "Times", "Times New Roman", "Courier", "Courier New"] {
             let font = system_font(
                 &[FontFamily::Named(family.to_owned())],
-                &FontWeight::Bold,
+                &FontWeight::BOLD,
                 &style,
             )
             .expect(family);
@@ -487,7 +486,7 @@ mod tests {
             assert!(font.covers('a'), "{family}");
         }
         for generic in [FontFamily::SansSerif, FontFamily::Serif, FontFamily::Monospace] {
-            assert!(system_font(&[generic], &FontWeight::Normal, &style).is_some());
+            assert!(system_font(&[generic], &FontWeight::NORMAL, &style).is_some());
         }
     }
 
@@ -505,12 +504,36 @@ mod tests {
 
     #[test]
     fn bundled_fonts_load() {
-        let regular = Font::bundled(&FontWeight::Normal);
-        let bold = Font::bundled(&FontWeight::Bold);
+        let regular = Font::bundled(&FontWeight::NORMAL);
+        let bold = Font::bundled(&FontWeight::BOLD);
         assert_eq!(regular.postscript_name(), "DejaVuSans");
         assert_eq!(bold.postscript_name(), "DejaVuSans-Bold");
         assert!(regular.covers('→'));
         assert!(regular.is_truetype());
+    }
+
+    #[test]
+    fn numeric_weights_pick_the_closer_face() {
+        use super::system_font;
+        use crate::style::properties::computed::FontStyle;
+        for (weight, name) in [
+            (100.0, "DejaVuSans"),
+            (400.0, "DejaVuSans"),
+            (500.0, "DejaVuSans"),
+            (600.0, "DejaVuSans-Bold"),
+            (700.0, "DejaVuSans-Bold"),
+            (900.0, "DejaVuSans-Bold"),
+        ] {
+            assert_eq!(Font::bundled(&FontWeight(weight)).postscript_name(), name, "{weight}");
+            // the installed faces are matched like the bundled ones
+            let installed = system_font(
+                &[FontFamily::Named("DejaVu Sans".into())],
+                &FontWeight(weight),
+                &FontStyle::Normal,
+            )
+            .unwrap();
+            assert_eq!(installed.postscript_name(), name, "{weight}");
+        }
     }
 }
 #[cfg(test)]

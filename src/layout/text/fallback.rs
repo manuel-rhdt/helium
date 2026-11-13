@@ -775,7 +775,7 @@ mod system {
     use crate::style::properties::computed::{FontStyle, FontWeight, Language};
     use fontconfig_sys::constants::{
         FC_CHARSET, FC_FAMILY, FC_FILE, FC_INDEX, FC_LANG, FC_SLANT, FC_SLANT_ITALIC, FC_SLANT_OBLIQUE, FC_SLANT_ROMAN,
-        FC_WEIGHT, FC_WEIGHT_BOLD, FC_WEIGHT_REGULAR,
+        FC_WEIGHT,
     };
     use fontconfig_sys::*;
     use std::ffi::{CStr, c_char};
@@ -810,6 +810,30 @@ mod system {
         }
     }
 
+    /// The fontconfig weight of an OpenType weight, interpolated between the values that
+    /// fontconfig defines (`FcWeightFromOpenType`).
+    fn fc_weight(weight: f32) -> i32 {
+        const TABLE: [(f32, f32); 13] = [
+            (0.0, 0.0),
+            (100.0, 0.0),
+            (200.0, 40.0),
+            (300.0, 50.0),
+            (350.0, 55.0),
+            (380.0, 75.0),
+            (400.0, 80.0),
+            (500.0, 100.0),
+            (600.0, 180.0),
+            (700.0, 200.0),
+            (800.0, 205.0),
+            (900.0, 210.0),
+            (1000.0, 215.0),
+        ];
+        let weight = weight.clamp(0.0, 1000.0);
+        let i = TABLE.iter().position(|&(ot, _)| ot >= weight).unwrap_or(TABLE.len() - 1).max(1);
+        let ((a, fa), (b, fb)) = (TABLE[i - 1], TABLE[i]);
+        (fa + (fb - fa) * (weight - a) / (b - a)).round() as i32
+    }
+
     /// The file and face index of the installed font that fontconfig considers the best match
     /// for the weight and style among the fonts that cover `ch`.
     pub fn font_file_for_char(
@@ -820,10 +844,7 @@ mod system {
     ) -> Option<(PathBuf, u32)> {
         // the language makes fontconfig prefer fonts for it (e.g. among the CJK fonts)
         let lang = lang.tag().and_then(|tag| std::ffi::CString::new(tag).ok());
-        let weight = match weight {
-            FontWeight::Normal => FC_WEIGHT_REGULAR,
-            FontWeight::Bold => FC_WEIGHT_BOLD,
-        };
+        let weight = fc_weight(weight.0);
         let slant = match style {
             FontStyle::Normal => FC_SLANT_ROMAN,
             FontStyle::Italic => FC_SLANT_ITALIC,
@@ -930,7 +951,7 @@ mod tests {
     fn primary(font_map: &mut FontMap, style: &ComputedValues) -> Arc<Font> {
         register_font(
             font_map,
-            system_font(&style.font.font_family, &FontWeight::Normal, &FontStyle::Normal).unwrap(),
+            system_font(&style.font.font_family, &FontWeight::NORMAL, &FontStyle::Normal).unwrap(),
         )
     }
 
@@ -1015,7 +1036,7 @@ mod tests {
     #[test]
     fn corrections_replace_wrong_metadata() {
         let load = |name: &str| {
-            system_font(&[named(name)], &FontWeight::Normal, &FontStyle::Normal).unwrap()
+            system_font(&[named(name)], &FontWeight::NORMAL, &FontStyle::Normal).unwrap()
         };
         // Noto Naskh Arabic claims "normal sans" in its PANOSE data
         let naskh = load("Noto Naskh Arabic");
@@ -1079,7 +1100,7 @@ mod tests {
     fn report_names_the_character_and_font() {
         let mut missing = MissingGlyphs::default();
         let style = style_with(vec![named("Lato"), named("Noto Serif")], "");
-        let font = Font::bundled(&FontWeight::Normal);
+        let font = Font::bundled(&FontWeight::NORMAL);
         missing.record('→', &font, &style, "see → there", 4);
         missing.record('→', &font, &style, "see → there", 4);
         let report = missing.report().unwrap();
@@ -1096,7 +1117,7 @@ mod tests {
         let mut resolver = FontResolver::default();
         let style = ComputedValues::default();
         let key = FallbackKey::new(&style);
-        let font = register_font(&mut font_map, Font::bundled(&FontWeight::Normal));
+        let font = register_font(&mut font_map, Font::bundled(&FontWeight::NORMAL));
         // DejaVu Sans has no CJK and U+0378 is unassigned.
         assert!(!font.covers('漢'));
         resolver.ensure_coverage(&style, &font, "a 漢 b \u{0378}", &mut font_map);
@@ -1269,7 +1290,7 @@ mod tests {
             }
 
     fn bold(mut style: ComputedValues) -> ComputedValues {
-        std::sync::Arc::make_mut(&mut style.font).font_weight = FontWeight::Bold;
+        std::sync::Arc::make_mut(&mut style.font).font_weight = FontWeight::BOLD;
         style
     }
 
@@ -1374,7 +1395,7 @@ mod tests {
         let mut resolver = FontResolver::default();
         let style = style_with(vec![named("TeX Gyre Termes")], "");
         let font = primary(&mut font_map, &style);
-        let dejavu = Font::bundled(&FontWeight::Normal);
+        let dejavu = Font::bundled(&FontWeight::NORMAL);
         let mark = ('\u{0300}'..='\u{036F}')
             .find(|mark| !font.covers(*mark) && dejavu.covers(*mark))
             .expect("DejaVu Sans has a combining mark that Termes lacks");
@@ -1485,7 +1506,7 @@ mod tests {
         let key = FallbackKey::new(&style);
         assert_eq!(resolver.class(&key, &font), Class::Serif);
         // a second answer comes from the cache, whatever primary font is asked about
-        assert_eq!(resolver.class(&key, &Font::bundled(&FontWeight::Normal)), Class::Serif);
+        assert_eq!(resolver.class(&key, &Font::bundled(&FontWeight::NORMAL)), Class::Serif);
         // a font without any classification is sans-serif
         let unknown = style_with(vec![named("TeX Gyre Heros")], "");
         let heros = primary(&mut font_map, &unknown);
@@ -1510,7 +1531,7 @@ mod tests {
         let mut load = |name: &str| {
             register_font(
                 &mut font_map,
-                system_font(&[named(name)], &FontWeight::Normal, &FontStyle::Normal).unwrap(),
+                system_font(&[named(name)], &FontWeight::NORMAL, &FontStyle::Normal).unwrap(),
             )
         };
         let (hebrew, arabic) = (load("Noto Sans Hebrew"), load("Noto Naskh Arabic"));
@@ -1552,7 +1573,7 @@ mod tests {
         let font = primary(&mut font_map, &style);
         let hebrew = register_font(
             &mut font_map,
-            system_font(&[named("Noto Sans Hebrew")], &FontWeight::Normal, &FontStyle::Normal).unwrap(),
+            system_font(&[named("Noto Sans Hebrew")], &FontWeight::NORMAL, &FontStyle::Normal).unwrap(),
         );
         assert!(font.add_fallback(&key, "א", Script::Hebrew, hebrew.clone()));
         assert!(!font.add_fallback(&key, "א", Script::Hebrew, hebrew.clone()));
@@ -1710,9 +1731,9 @@ mod tests {
         let mut font_map = FontMap::new();
         let mut resolver = FontResolver::default();
         let family = resolver
-            .family_font(named("DejaVu Sans"), &FontWeight::Normal, &FontStyle::Normal, &mut font_map)
+            .family_font(named("DejaVu Sans"), &FontWeight::NORMAL, &FontStyle::Normal, &mut font_map)
             .unwrap();
-        assert_eq!(family.postscript_name(), Font::bundled(&FontWeight::Normal).postscript_name());
+        assert_eq!(family.postscript_name(), Font::bundled(&FontWeight::NORMAL).postscript_name());
     }
 
     /// Every bundled face must be reachable as a fallback font: text in the right script,
@@ -1742,7 +1763,7 @@ mod tests {
         // The TeX Gyre families have the same characters, so they are fallbacks for text that
         // the primary font has no Latin letters for, through the generic family of the target
         // at the end of the list (all weights and styles)
-        let hebrew = system_font(&[named("Noto Sans Hebrew")], &FontWeight::Normal, &FontStyle::Normal).unwrap();
+        let hebrew = system_font(&[named("Noto Sans Hebrew")], &FontWeight::NORMAL, &FontStyle::Normal).unwrap();
         assert!(!hebrew.covers('a'));
         for generic in [FontFamily::SansSerif, FontFamily::Serif, FontFamily::Monospace] {
             for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] {
@@ -1759,8 +1780,8 @@ mod tests {
         // the math fonts are named in the font family; the other fonts for symbols come from
         // the broad fallback list
         for math in ["Latin Modern Math", "STIX Two Math"] {
-            let face = system_font(&[named(math)], &FontWeight::Normal, &FontStyle::Normal).unwrap();
-            let termes = system_font(&[named("TeX Gyre Termes")], &FontWeight::Normal, &FontStyle::Normal).unwrap();
+            let face = system_font(&[named(math)], &FontWeight::NORMAL, &FontStyle::Normal).unwrap();
+            let termes = system_font(&[named("TeX Gyre Termes")], &FontWeight::NORMAL, &FontStyle::Normal).unwrap();
             let ch = ('\u{2200}'..='\u{22FF}')
                 .find(|c| face.covers(*c) && !termes.covers(*c))
                 .unwrap();

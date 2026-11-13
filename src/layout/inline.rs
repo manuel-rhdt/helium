@@ -2060,7 +2060,7 @@ mod tests {
         use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
         let font = crate::layout::text::font::system_font(
             &[FontFamily::Named("TeX Gyre Termes".into())],
-            &FontWeight::Normal,
+            &FontWeight::NORMAL,
             &FontStyle::Normal,
         )
         .unwrap();
@@ -2090,7 +2090,7 @@ mod tests {
         use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
         crate::layout::text::font::system_font(
             &[FontFamily::Named(family.into())],
-            &FontWeight::Normal,
+            &FontWeight::NORMAL,
             &FontStyle::Normal,
         )
         .unwrap()
