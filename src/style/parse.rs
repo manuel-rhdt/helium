@@ -184,6 +184,10 @@ pub enum CounterStyle {
     UpperRoman,
     LowerAlpha,
     UpperAlpha,
+    /// ٠ ١ ٢ ٣ …
+    ArabicIndic,
+    /// The extended Arabic-Indic digits of Persian and Urdu: ۰ ۱ ۲ ۳ …
+    Persian,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -452,6 +456,8 @@ fn parse_content<'i>(
                             "lower-latin" => CounterStyle::LowerAlpha,
                             "upper-alpha" => CounterStyle::UpperAlpha,
                             "upper-latin" => CounterStyle::UpperAlpha,
+                            "arabic-indic" => CounterStyle::ArabicIndic,
+                            "persian" => CounterStyle::Persian,
                             // an unsupported style must not remove the whole margin box: fall
                             // back to decimal, which is what the CSS spec prescribes
                             _ => {

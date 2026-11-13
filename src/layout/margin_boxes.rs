@@ -99,11 +99,22 @@ fn format_counter(value: usize, style: CounterStyle) -> String {
         CounterStyle::UpperRoman if value > 0 => roman(value).to_uppercase(),
         CounterStyle::LowerAlpha if value > 0 => alphabetic(value),
         CounterStyle::UpperAlpha if value > 0 => alphabetic(value).to_uppercase(),
+        CounterStyle::ArabicIndic => digits(value, '\u{660}'),
+        CounterStyle::Persian => digits(value, '\u{6f0}'),
         CounterStyle::LowerRoman
         | CounterStyle::UpperRoman
         | CounterStyle::LowerAlpha
         | CounterStyle::UpperAlpha => value.to_string(),
     }
+}
+
+/// The decimal digits of `value` in a script whose zero is `zero`.
+fn digits(value: usize, zero: char) -> String {
+    value
+        .to_string()
+        .chars()
+        .map(|digit| char::from_u32(zero as u32 + digit as u32 - '0' as u32).unwrap_or(digit))
+        .collect()
 }
 
 fn content_text(content: &[ContentItem], page: usize, pages: usize) -> String {
@@ -274,6 +285,8 @@ mod test {
         // roman numerals and letters start at 1, so 0 falls back to decimal
         assert_eq!(format(CounterStyle::LowerRoman, 0), "0");
         assert_eq!(format(CounterStyle::LowerAlpha, 0), "0");
+        assert_eq!(format(CounterStyle::ArabicIndic, 1405), "١٤٠٥");
+        assert_eq!(format(CounterStyle::Persian, 90), "۹۰");
     }
 
     #[test]
