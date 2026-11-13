@@ -1365,7 +1365,16 @@ impl ComputedValue<FontSize> for super::computed::PixelLength {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
 pub enum WhiteSpace {
     Normal,
+    /// White space is collapsed like for `normal`, but lines do not wrap.
+    Nowrap,
     Pre,
+}
+
+impl WhiteSpace {
+    /// Whether text may be broken into lines at soft wrap opportunities.
+    pub fn wraps(self) -> bool {
+        matches!(self, WhiteSpace::Normal)
+    }
 }
 
 impl Default for WhiteSpace {
