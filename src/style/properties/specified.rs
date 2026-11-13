@@ -1746,15 +1746,66 @@ impl Default for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
+/// https://www.w3.org/TR/css-fonts-4/#font-weight-prop: a keyword or a number from 1 to 1000.
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum FontWeight {
     Normal,
     Bold,
+    /// One step heavier than the weight of the parent.
+    Bolder,
+    /// One step lighter than the weight of the parent.
+    Lighter,
+    Number(f32),
 }
 
 impl Default for FontWeight {
     fn default() -> FontWeight {
         FontWeight::Normal
+    }
+}
+
+impl<'i> PropertyValue<'i> for FontWeight {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        let token = input.next()?.clone();
+        match token {
+            Token::Ident(ident) => match_ignore_ascii_case! { &ident,
+                "normal" => Ok(FontWeight::Normal),
+                "bold" => Ok(FontWeight::Bold),
+                "bolder" => Ok(FontWeight::Bolder),
+                "lighter" => Ok(FontWeight::Lighter),
+                _ => Err(ParseError::unexpected_token()),
+            },
+            Token::Number { value, .. } if (1.0..=1000.0).contains(&value) => {
+                Ok(FontWeight::Number(value))
+            }
+            _ => Err(ParseError::unexpected_token()),
+        }
+    }
+}
+
+impl ComputedValue<FontWeight> for super::computed::FontWeight {
+    fn from_specified(weight: &FontWeight, style: &super::computed::ComputedValues) -> Self {
+        use super::computed::FontWeight as Computed;
+        let parent = style.font.font_weight.0;
+        match *weight {
+            FontWeight::Normal => Computed::NORMAL,
+            FontWeight::Bold => Computed::BOLD,
+            FontWeight::Number(value) => Computed(value),
+            // https://www.w3.org/TR/css-fonts-4/#relative-weights
+            FontWeight::Bolder => Computed(match parent {
+                w if w < 350.0 => 400.0,
+                w if w < 550.0 => 700.0,
+                _ => 900.0,
+            }),
+            FontWeight::Lighter => Computed(match parent {
+                w if w < 100.0 => w,
+                w if w < 550.0 => 100.0,
+                w if w < 750.0 => 400.0,
+                _ => 700.0,
+            }),
+        }
     }
 }
 

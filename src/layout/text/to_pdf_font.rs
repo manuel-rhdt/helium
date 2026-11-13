@@ -394,7 +394,7 @@ mod tests {
     use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
 
     fn load(family: &str) -> Font {
-        system_font(&[FontFamily::Named(family.into())], &FontWeight::Normal, &FontStyle::Normal)
+        system_font(&[FontFamily::Named(family.into())], &FontWeight::NORMAL, &FontStyle::Normal)
             .unwrap()
     }
 

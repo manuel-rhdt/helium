@@ -5,7 +5,7 @@ use super::specified::{
     self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue, MathFamily, MathOperatorForm,
 };
 pub use super::specified::{
-    BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle, FontWeight,
+    BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle,
     GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, PageBreak,
     Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
@@ -764,6 +764,30 @@ impl super::ComputedValue<specified::TrackList> for TrackList {
     }
 }
 
+/// The computed value of `font-weight`: a number from 1 to 1000.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct FontWeight(pub f32);
+
+impl FontWeight {
+    pub const NORMAL: FontWeight = FontWeight(400.0);
+    pub const BOLD: FontWeight = FontWeight(700.0);
+}
+
+impl Default for FontWeight {
+    fn default() -> Self {
+        FontWeight::NORMAL
+    }
+}
+
+// the weight is never NaN
+impl Eq for FontWeight {}
+
+impl std::hash::Hash for FontWeight {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Font {
     pub font_family: Vec<specified::FontFamily>,
@@ -1162,21 +1186,21 @@ mod css_wide_tests {
         let parent = child(&ComputedValues::default(), "font-weight: normal");
         // a user agent style makes the element bold, the author style undoes it
         let c = child(&parent, "font-weight: bold; font: inherit");
-        assert_eq!(c.font.font_weight, FontWeight::Normal);
+        assert_eq!(c.font.font_weight, FontWeight::NORMAL);
         let c = child(&parent, "font-weight: bold; font: initial");
-        assert_eq!(c.font.font_weight, FontWeight::Normal);
+        assert_eq!(c.font.font_weight, FontWeight::NORMAL);
         // later declarations still win
         let c = child(&parent, "font: inherit; font-weight: bold");
-        assert_eq!(c.font.font_weight, FontWeight::Bold);
+        assert_eq!(c.font.font_weight, FontWeight::BOLD);
     }
 
     #[test]
     fn initial_and_unset() {
         let parent = child(&ComputedValues::default(), "font-weight: bold; width: 10px");
-        assert_eq!(child(&parent, "").font.font_weight, FontWeight::Bold);
-        assert_eq!(child(&parent, "font-weight: initial").font.font_weight, FontWeight::Normal);
+        assert_eq!(child(&parent, "").font.font_weight, FontWeight::BOLD);
+        assert_eq!(child(&parent, "font-weight: initial").font.font_weight, FontWeight::NORMAL);
         // font-weight is inherited, width is not
-        assert_eq!(child(&parent, "font-weight: unset").font.font_weight, FontWeight::Bold);
+        assert_eq!(child(&parent, "font-weight: unset").font.font_weight, FontWeight::BOLD);
         assert!(matches!(child(&parent, "width: unset").position.width, GenericSize::Auto));
     }
 
@@ -1184,7 +1208,54 @@ mod css_wide_tests {
     fn later_keywords_win_and_unknown_properties_are_ignored() {
         let parent = child(&ComputedValues::default(), "font-weight: bold");
         let c = child(&parent, "font-weight: normal; font-weight: inherit");
-        assert_eq!(c.font.font_weight, FontWeight::Bold);
+        assert_eq!(c.font.font_weight, FontWeight::BOLD);
         child(&parent, "bogus: inherit");
+    }
+
+    fn weight(parent: &ComputedValues, css: &str) -> f32 {
+        child(parent, css).font.font_weight.0
+    }
+
+    #[test]
+    fn numeric_font_weights() {
+        let root = ComputedValues::default();
+        assert_eq!(weight(&root, "font-weight: 100"), 100.0);
+        assert_eq!(weight(&root, "font-weight: 650"), 650.0);
+        assert_eq!(weight(&root, "font-weight: 1"), 1.0);
+        assert_eq!(weight(&root, "font-weight: 1000"), 1000.0);
+        assert_eq!(weight(&root, "font-weight: 450.5"), 450.5);
+        assert_eq!(weight(&root, "font-weight: normal"), 400.0);
+        assert_eq!(weight(&root, "font-weight: bold"), 700.0);
+        // values outside of 1 to 1000 are invalid and the declaration is ignored
+        let parent = child(&root, "font-weight: 300");
+        assert_eq!(weight(&parent, "font-weight: 0"), 300.0);
+        assert_eq!(weight(&parent, "font-weight: 1001"), 300.0);
+        assert_eq!(weight(&parent, "font-weight: -100"), 300.0);
+        assert_eq!(weight(&parent, "font-weight: semibold"), 300.0);
+    }
+
+    #[test]
+    fn relative_font_weights() {
+        let root = ComputedValues::default();
+        let at = |w: &str| child(&root, &format!("font-weight: {w}"));
+        // https://www.w3.org/TR/css-fonts-4/#relative-weights
+        for (parent, bolder, lighter) in [
+            (100.0, 400.0, 100.0),
+            (300.0, 400.0, 100.0),
+            (400.0, 700.0, 100.0),
+            (500.0, 700.0, 100.0),
+            (600.0, 900.0, 400.0),
+            (700.0, 900.0, 400.0),
+            (800.0, 900.0, 700.0),
+            (900.0, 900.0, 700.0),
+        ] {
+            let p = at(&parent.to_string());
+            assert_eq!(weight(&p, "font-weight: bolder"), bolder, "bolder than {parent}");
+            assert_eq!(weight(&p, "font-weight: lighter"), lighter, "lighter than {parent}");
+        }
+        // the steps follow the inherited weight
+        let bold = at("bold");
+        let bolder = child(&bold, "font-weight: bolder");
+        assert_eq!(weight(&bolder, ""), 900.0);
     }
 }
