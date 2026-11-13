@@ -11,6 +11,7 @@ mod margin_boxes;
 mod mathml;
 pub mod normal_formatting;
 mod paginate;
+pub mod pages;
 pub(crate) mod paragraph;
 mod relative_positioning;
 mod taffy_layout;
@@ -209,7 +210,7 @@ pub fn layout(
     // get page style
     let mut style_builder = StyleBuilder::new(Default::default());
     for rule in flow_constructor.styles.rules_iter() {
-        if rule.page_selector() == Some(crate::style::parse::PageSelector::Any) {
+        if rule.page_selector() == Some(&crate::style::parse::PageSelector::any()) {
             for declaration in rule.properties.declarations() {
                 style_builder.add_declaration(declaration);
             }
@@ -217,6 +218,14 @@ pub fn layout(
     }
     let style = style_builder.build();
 
+    // Page margins cannot be negative: a negative margin would move the content, and with it
+    // the text, off the page where it is silently lost. Clamp instead of rendering a blank
+    // document.
+    let page_margin = |value: GenericSize, container_size: PixelLength| {
+        value
+            .absolute(Default::default(), container_size)
+            .max(PixelLength(0.0))
+    };
     let margin;
     let page_width;
     let page_height;
@@ -241,20 +250,37 @@ pub fn layout(
         }
         page_width = width;
         page_height = height;
-        // Page margins cannot be negative: a negative margin would move the content, and with it
-        // the text, off the page where it is silently lost. Clamp instead of rendering a blank
-        // document.
-        let page_margin = |value: GenericSize, container_size: PixelLength| {
-            value
-                .absolute(Default::default(), container_size)
-                .max(PixelLength(0.0))
-        };
         margin = EdgeValues {
             top: page_margin(style.position.margin_top, width),
             left: page_margin(style.position.margin_left, width),
             bottom: page_margin(style.position.margin_bottom, width),
             right: page_margin(style.position.margin_right, width),
         };
+    }
+
+    // The left and right margins of the kinds of pages (the inner and outer margins of a book)
+    let mut page_margins = pages::PageMargins {
+        base: (margin.left, margin.right),
+        ..Default::default()
+    };
+    if !crop {
+        page_margins.names = pages::selected_names(&flow_constructor.styles);
+        for page in pages::representative_pages(&page_margins.names) {
+            let mut style_builder = StyleBuilder::new(Default::default());
+            for rule in pages::matching_rules(&flow_constructor.styles, &page) {
+                for declaration in rule.properties.declarations() {
+                    style_builder.add_declaration(declaration);
+                }
+            }
+            let style = style_builder.build();
+            page_margins.pages.insert(
+                page,
+                (
+                    page_margin(style.position.margin_left, page_width),
+                    page_margin(style.position.margin_right, page_width),
+                ),
+            );
+        }
     }
 
     let margin_boxes = if crop {
@@ -265,6 +291,7 @@ pub fn layout(
 
     let mut layout_context = flow_constructor.layout_context();
     layout_context.insert(margin_boxes);
+    layout_context.insert(page_margins);
 
     // Record which layout entities are part of a hyperlink so that the clickable areas can be
     // computed when the line boxes are created.

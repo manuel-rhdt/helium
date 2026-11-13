@@ -102,13 +102,44 @@ pub enum GeneralizedSelector {
     Selectors(SelectorList<Selectors>),
 }
 
-/// The page pseudo-class of an `@page` rule.
+/// The pseudo-class of an `@page` selector.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum PageSelector {
-    Any,
+pub enum PagePseudo {
     First,
     Left,
     Right,
+}
+
+/// The selector of an `@page` rule: an optional page name (see the `page` property) and an
+/// optional pseudo-class.
+/// https://www.w3.org/TR/css-page-3/#page-selectors
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PageSelector {
+    pub name: Option<std::sync::Arc<str>>,
+    pub pseudo: Option<PagePseudo>,
+}
+
+impl PageSelector {
+    /// The selector of a plain `@page` rule.
+    pub fn any() -> Self {
+        Self::default()
+    }
+
+    pub fn pseudo(pseudo: PagePseudo) -> Self {
+        PageSelector { name: None, pseudo: Some(pseudo) }
+    }
+
+    /// The specificity: the page name counts most, then `:first`, then `:left` and `:right`.
+    /// https://www.w3.org/TR/css-page-3/#cascading-and-page-context
+    pub fn specificity(&self) -> u32 {
+        let name = if self.name.is_some() { 100 } else { 0 };
+        let pseudo = match self.pseudo {
+            None => 0,
+            Some(PagePseudo::First) => 10,
+            Some(PagePseudo::Left | PagePseudo::Right) => 1,
+        };
+        name + pseudo
+    }
 }
 
 /// The margin boxes that can hold headers and footers.
@@ -224,9 +255,9 @@ impl QualifiedRule {
     }
 
     /// The page pseudo-class if this is an `@page` rule.
-    pub fn page_selector(&self) -> Option<PageSelector> {
+    pub fn page_selector(&self) -> Option<&PageSelector> {
         match &self.selectors {
-            GeneralizedSelector::AtPage(selector) => Some(*selector),
+            GeneralizedSelector::AtPage(selector) => Some(selector),
             _ => None,
         }
     }
@@ -322,17 +353,28 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
                 BasicParseErrorKind::AtRuleInvalid,
             ));
         }
+        let invalid = || ParseError {
+            kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue),
+        };
+        let name = input
+            .try_parse(|input| input.expect_ident().map(|ident| ident.clone()))
+            .ok()
+            .map(|ident| std::sync::Arc::<str>::from(&*ident));
         if input.is_exhausted() {
-            return Ok(PageSelector::Any);
+            return Ok(PageSelector { name, pseudo: None });
         }
         input.expect_colon()?;
         let ident = input.expect_ident()?.clone();
-        Ok(match_ignore_ascii_case! { &ident,
-            "first" => PageSelector::First,
-            "left" => PageSelector::Left,
-            "right" => PageSelector::Right,
-            _ => return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) }),
-        })
+        let pseudo = match_ignore_ascii_case! { &ident,
+            "first" => PagePseudo::First,
+            "left" => PagePseudo::Left,
+            "right" => PagePseudo::Right,
+            _ => return Err(invalid()),
+        };
+        if !input.is_exhausted() {
+            return Err(invalid());
+        }
+        Ok(PageSelector { name, pseudo: Some(pseudo) })
     }
 
     fn parse_block<'t>(
