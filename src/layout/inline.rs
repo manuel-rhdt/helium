@@ -713,11 +713,20 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             .collect();
                     }
                     let run_start_advance = advance;
+                    // `white-space: nowrap` text has no soft wrap opportunities at all, except
+                    // behind a space at its end, which keeps the space from adding to the width
+                    // of a line that ends there.
+                    let wraps = computed_values
+                        .get(entity)
+                        .is_none_or(|style| style.text.white_space.wraps());
                     let mut other_breaks = break_opportunities_between_letters(&text_run.text);
                     for (pos, glyph_info) in &shaped {
                         let cluster = glyph_info.cluster as usize;
                         if other_breaks.peek() == Some(&cluster) {
                             other_breaks.next();
+                            if !wraps {
+                                continue;
+                            }
                             // Justification stretches the gaps next to CJK characters. Not at
                             // a change of the bidi level, where the gap would be between two
                             // pieces of the line (see `shape_piece`).
@@ -749,7 +758,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             other_breaks.next();
                         }
                         let cur_char = &text_run.text[glyph_info.cluster as usize..];
-                        if cur_char.starts_with(|chr: char| chr.is_whitespace()) {
+                        let ends_run = cur_char.trim_start().is_empty();
+                        if cur_char.starts_with(|chr: char| chr.is_whitespace())
+                            && (wraps || ends_run)
+                        {
                             let advance_before = advance;
                             advance += font.scale_to_px(pos.x_advance, text_run.font_size);
                             let advance_after = advance;
@@ -779,6 +791,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                     }
                     let hyphenation = match text_run.hyphens {
+                        _ if !wraps => Vec::new(),
                         crate::style::properties::specified::Hyphens::None => Vec::new(),
                         crate::style::properties::specified::Hyphens::Manual
                             if text_run.manual_hyphen_points.is_empty() =>
@@ -900,10 +913,16 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         glue_shrink: Px(0.0),
                         penalty: 0,
                     };
-                    if index > 0 && break_points.last().is_some_and(|last| last.advance_after != advance) {
+                    let wraps = computed_values
+                        .get(entity)
+                        .is_none_or(|style| style.text.white_space.wraps());
+                    if wraps
+                        && index > 0
+                        && break_points.last().is_some_and(|last| last.advance_after != advance)
+                    {
                         break_points.push(atom_break(ATOM_BREAK_BEFORE, advance));
                     }
-                    if index + 1 < elements.len() {
+                    if wraps && index + 1 < elements.len() {
                         break_points.push(atom_break(ATOM_BREAK_AFTER, advance));
                     }
                     push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
