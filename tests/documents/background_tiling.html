@@ -1,0 +1,30 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{size:A4;margin:10mm}
+body{margin:0}
+.b{width:300px;height:200px;margin:0 0 10px 0;border:2px solid #000}
+.dots {
+background:
+radial-gradient(circle at 50% 59%, #D2CAAB 3%, #364E27 4%, #364E27 11%, rgba(54,78,39,0) 12%, rgba(54,78,39,0)) 50px 0,
+radial-gradient(circle at 50% 41%, #364E27 3%, #D2CAAB 4%, #D2CAAB 11%, rgba(210,202,171,0) 12%, rgba(210,202,171,0)) 50px 0,
+radial-gradient(circle at 50% 59%, #D2CAAB 3%, #364E27 4%, #364E27 11%, rgba(54,78,39,0) 12%, rgba(54,78,39,0)) 0 50px,
+radial-gradient(circle at 50% 41%, #364E27 3%, #D2CAAB 4%, #D2CAAB 11%, rgba(210,202,171,0) 12%, rgba(210,202,171,0)) 0 50px,
+radial-gradient(circle at 100% 50%, #D2CAAB 16%, rgba(210,202,171,0) 17%),
+radial-gradient(circle at 0% 50%, #364E27 16%, rgba(54,78,39,0) 17%),
+radial-gradient(circle at 100% 50%, #D2CAAB 16%, rgba(210,202,171,0) 17%) 50px 50px,
+radial-gradient(circle at 0% 50%, #364E27 16%, rgba(54,78,39,0) 17%) 50px 50px;
+background-color:#63773F;
+background-size:100px 100px;
+}
+.target {
+  background:
+    repeating-radial-gradient(ellipse at 80% 50%, rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 15px, rgb(255 255 255 / 50%) 15px, rgb(255 255 255 / 50%) 30px) top left no-repeat,
+    repeating-radial-gradient(ellipse at 20% 50%, rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 10px, rgb(255 255 255 / 50%) 10px, rgb(255 255 255 / 50%) 20px) top left no-repeat yellow;
+  background-size: 200px 200px, 150px 150px;
+}
+.rep { background: linear-gradient(45deg,#f00,#00f) 10px 10px / 40px 30px repeat-x, linear-gradient(#0a0,#fff) right 5px bottom 5px / 60px 60px no-repeat, #eee; }
+.sp { background-image: linear-gradient(135deg,#f80,#80f); background-size: 70px 70px; background-repeat: space; }
+.rd { background-image: linear-gradient(135deg,#f80,#80f); background-size: 70px 70px; background-repeat: round; }
+.bl { background-color:#fd4; background-image: linear-gradient(90deg,#f00,#00f), linear-gradient(0deg,#0f0,#fff); background-size: 50px 50px, 100% 100%; background-blend-mode:multiply; }
+</style></head><body>
+<div class="b dots"></div><div class="b target"></div><div class="b rep"></div><div class="b sp"></div><div class="b rd"></div><div class="b bl"></div>
+</body></html>

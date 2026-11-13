@@ -560,12 +560,24 @@ pub enum Background {
     /// https://www.w3.org/TR/compositing-1/#background-blend-mode
     #[property]
     BackgroundBlendMode(CommaSeparated<BlendMode>),
-    /// Only the colour and the images of the shorthand are supported. It resets
-    /// `background-blend-mode`.
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-size
+    #[property]
+    BackgroundSize(CommaSeparated<super::background::SpecifiedSize>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-position
+    #[property]
+    BackgroundPosition(CommaSeparated<super::background::SpecifiedPosition>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-repeat
+    #[property]
+    BackgroundRepeat(CommaSeparated<super::background::Repeat>),
+    /// The shorthand supports the colour, the images with position, size and repeat; not
+    /// `background-origin`, `-clip` or `-attachment`. It resets `background-blend-mode`.
     #[property]
     #[shorthand("background-color", method = "color")]
     #[shorthand("background-image", method = "images")]
     #[shorthand("background-blend-mode", method = "blend_modes")]
+    #[shorthand("background-size", method = "sizes")]
+    #[shorthand("background-position", method = "positions")]
+    #[shorthand("background-repeat", method = "repeats")]
     Background(super::gradient::BackgroundShorthand),
 }
 

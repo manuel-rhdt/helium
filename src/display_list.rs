@@ -4,7 +4,8 @@ use crate::layout::components::{
 };
 use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{ComputedValues, PixelLength, RGBA};
-use crate::style::properties::gradient::{BoxSize, Image, Resolved};
+use crate::style::properties::background::resolve_layer;
+use crate::style::properties::gradient::{BoxSize, Image, Position as BackgroundPosition, Resolved};
 use crate::style::properties::specified::BlendMode;
 
 use specs::prelude::*;
@@ -194,7 +195,21 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
         .rev()
         .filter_map(|(index, image)| match image {
             Image::Gradient(gradient) => {
-                let gradient = gradient.with_current_color(current).resolve(area, paint)?;
+                fn cycle<T: Clone>(values: &[T], index: usize, default: T) -> T {
+                    if values.is_empty() { default } else { values[index % values.len()].clone() }
+                }
+                let background = &style.background;
+                let gradient = resolve_layer(
+                    &gradient.with_current_color(current),
+                    &cycle(&background.background_size, index, Default::default()),
+                    &cycle(&background.background_position, index, BackgroundPosition {
+                        x: Default::default(),
+                        y: Default::default(),
+                    }),
+                    cycle(&background.background_repeat, index, Default::default()),
+                    area,
+                    paint,
+                )?;
                 let blend = if modes.is_empty() { BlendMode::Normal } else { modes[index % modes.len()] };
                 Some(Layer { gradient, blend })
             }

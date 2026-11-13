@@ -220,7 +220,7 @@ pub fn write_pdf(
                         page_context.apply_operator("EMC")?;
                     }
                     DisplayItem::Gradient(resolved) => {
-                        gradient::paint(page_context, resolved, page_height)?
+                        gradient::paint(page_context, resolved, page_height, filter)?
                     }
                     DisplayItem::BlendGroup(group) => {
                         gradient::paint_blend_group(page_context, group, page_height, filter)?

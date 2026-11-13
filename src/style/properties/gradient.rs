@@ -17,6 +17,7 @@
 use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 use cssparser_color::Color;
 
+use super::background::{parse_position_and_size, LayerStyle, Repeat, SpecifiedPosition, SpecifiedSize};
 use super::computed::{ComputedValues, LengthPercentage, PixelLength, RGBA};
 use super::specified::{CommaSeparated, ComputedValue, PropertyValue, QuantityOrPercentage};
 use crate::style::parse::StyleParseError;
@@ -225,7 +226,7 @@ fn parse_angle<'i>(input: &mut Parser<'i>) -> ParseResult<f32> {
     }
 }
 
-fn parse_side<'i>(input: &mut Parser<'i>) -> ParseResult<Side> {
+pub(super) fn parse_side<'i>(input: &mut Parser<'i>) -> ParseResult<Side> {
     let ident = input.expect_ident()?.clone();
     match_ignore_ascii_case! { &ident,
         "left" => Ok(Side::Left),
@@ -256,7 +257,7 @@ fn parse_linear_direction<'i>(input: &mut Parser<'i>) -> ParseResult<LinearDirec
     }
 }
 
-fn parse_length_percentage<'i>(input: &mut Parser<'i>) -> ParseResult<QuantityOrPercentage> {
+pub(super) fn parse_length_percentage<'i>(input: &mut Parser<'i>) -> ParseResult<QuantityOrPercentage> {
     input
         .try_parse(QuantityOrPercentage::from_css_property_value)
         .map_err(|_| input.new_error_for_next_token())
@@ -472,6 +473,7 @@ fn parse_stop<'i>(
 pub struct BackgroundShorthand {
     color: Color,
     images: Vec<SpecifiedImage>,
+    layers: Vec<LayerStyle>,
 }
 
 impl BackgroundShorthand {
@@ -481,6 +483,18 @@ impl BackgroundShorthand {
 
     pub fn images(&self) -> CommaSeparated<SpecifiedImage> {
         CommaSeparated::new(self.images.clone())
+    }
+
+    pub fn sizes(&self) -> CommaSeparated<SpecifiedSize> {
+        CommaSeparated::new(self.layers.iter().map(|layer| layer.size).collect())
+    }
+
+    pub fn positions(&self) -> CommaSeparated<SpecifiedPosition> {
+        CommaSeparated::new(self.layers.iter().map(|layer| layer.position).collect())
+    }
+
+    pub fn repeats(&self) -> CommaSeparated<Repeat> {
+        CommaSeparated::new(self.layers.iter().map(|layer| layer.repeat).collect())
     }
 
     /// The shorthand resets `background-blend-mode` to its initial value.
@@ -495,10 +509,28 @@ impl<'i> PropertyValue<'i> for BackgroundShorthand {
     fn from_css_property_value(input: &mut Parser<'i>) -> ParseResult<Self> {
         let mut color = None;
         let mut images = vec![];
+        let mut layers = vec![];
         loop {
-            // the image and the colour of a layer can come in either order
+            // the image, position, repeat and colour of a layer can come in any order
             let mut image = None;
+            let mut layer = LayerStyle::default();
+            let (mut has_position, mut has_repeat) = (false, false);
             loop {
+                if !has_position {
+                    if let Ok((position, size)) = input.try_parse(parse_position_and_size) {
+                        layer.position = position;
+                        layer.size = size.unwrap_or_default();
+                        has_position = true;
+                        continue;
+                    }
+                }
+                if !has_repeat {
+                    if let Ok(repeat) = input.try_parse(Repeat::from_css_property_value) {
+                        layer.repeat = repeat;
+                        has_repeat = true;
+                        continue;
+                    }
+                }
                 if image.is_none() {
                     if let Ok(parsed) = input.try_parse(SpecifiedImage::from_css_property_value) {
                         image = Some(parsed);
@@ -513,10 +545,11 @@ impl<'i> PropertyValue<'i> for BackgroundShorthand {
                 }
                 break;
             }
-            if image.is_none() && color.is_none() {
+            if image.is_none() && color.is_none() && !has_position && !has_repeat {
                 return Err(input.new_error_for_next_token());
             }
             images.push(image.unwrap_or(Image::None));
+            layers.push(layer);
             if input.try_parse(|input| input.expect_comma()).is_err() {
                 break;
             }
@@ -531,6 +564,7 @@ impl<'i> PropertyValue<'i> for BackgroundShorthand {
         Ok(BackgroundShorthand {
             color: color.unwrap_or(Color::Rgba(cssparser_color::RgbaLegacy::new(0, 0, 0, 0.0))),
             images,
+            layers,
         })
     }
 }
@@ -653,6 +687,25 @@ pub struct Resolved {
     /// Offsets are increasing in `0..=1`; with `Linear` and `Radial` the colours outside are the
     /// ones of the first and last stop. There is at least one stop.
     pub stops: Vec<ResolvedStop>,
+    /// Whether the painting has to be clipped to `paint`, which is smaller than the clip that
+    /// the gradient is painted with (a tile that is not repeated).
+    pub clip: bool,
+    /// Set when the gradient is one tile that is repeated: `geometry` and `paint` are then
+    /// relative to the top left corner of the tile.
+    pub tiling: Option<Tiling>,
+}
+
+/// A gradient that is a tile that repeats, in pixels in the space of the page (y pointing
+/// down).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tiling {
+    /// The top left corner of one tile.
+    pub origin: (f32, f32),
+    pub size: (f32, f32),
+    /// The distance between the tiles, which is the size unless they are spaced out.
+    pub step: (f32, f32),
+    /// The box that is covered with tiles.
+    pub region: BoxSize,
 }
 
 /// More repeats than this are painted as the average colour.
@@ -768,7 +821,7 @@ impl ResolvedGradient {
             stops
         };
         let stops = clip_stops(stops);
-        Some(Resolved { paint, geometry, stops: with_premultiplied_steps(&stops) })
+        Some(Resolved { paint, geometry, stops: with_premultiplied_steps(&stops), clip: false, tiling: None })
     }
 }
 
