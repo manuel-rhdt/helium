@@ -279,3 +279,72 @@ fn absolute_position_makes_the_box_a_block() {
     assert!((f(background, "x") - (94.488 + 50.0)).abs() < 0.01);
     assert_eq!(f(background, "width"), 30.0);
 }
+
+/// There is a break opportunity in front of and behind a box without any white space next to it.
+#[test]
+fn adjacent_boxes_without_white_space_wrap() {
+    let boxes: String = (0..5)
+        .map(|_| boxed("#ff0000", "width: 100px; height: 20px", ""))
+        .collect();
+    let dump = dump(
+        "adjacent",
+        &format!(
+            r#"<style>body {{ margin: 0 }}</style><div style="width: 250px">{}</div>"#,
+            boxes
+        ),
+    );
+    let mut rows: Vec<(f64, f64)> = rects_with(&dump, RED)
+        .iter()
+        .map(|r| (f(r, "y"), f(r, "x")))
+        .collect();
+    rows.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(rows.len(), 5);
+    // two boxes of 100px fit into 250px: lines of 2, 2 and 1 boxes
+    let lines: Vec<f64> = rows.iter().map(|r| r.0).collect();
+    assert_eq!(lines[0], lines[1]);
+    assert!(lines[2] > lines[1] && lines[2] == lines[3]);
+    assert!(lines[4] > lines[3]);
+    // no gap between the boxes of a line
+    assert_eq!(rows[1].1 - rows[0].1, 100.0);
+    assert_eq!(rows[0].1, rows[2].1);
+}
+
+/// A box that is directly followed by text can end a line; the text continues on the next one.
+#[test]
+fn text_directly_behind_a_box_can_wrap_to_the_next_line() {
+    let dump = dump(
+        "box_then_text",
+        &format!(
+            r#"<style>body {{ margin: 0 }}</style><div style="width: 120px">{}tail</div>"#,
+            boxed("#ff0000", "width: 100px; height: 20px", "")
+        ),
+    );
+    // the text starts to the right of the box and moves back to the left edge with a line feed
+    let ops = dump["paint"]["text"][0]["ops"].as_array().unwrap();
+    let wrapped = ops.iter().any(|op| {
+        op["op"] == "newline"
+            && op["leading"].as_f64().unwrap_or(0.0) > 0.0
+            && op["x_offset"].as_f64().unwrap_or(0.0) < 0.0
+    });
+    assert!(wrapped, "{}", dump["paint"]);
+}
+
+/// A box directly after another box is not placed twice or dropped when the line breaks
+/// between them and white space follows.
+#[test]
+fn boxes_separated_by_white_space_are_not_duplicated() {
+    let dump = dump(
+        "separated",
+        &format!(
+            r#"<style>body {{ margin: 0 }}</style><div style="width: 150px">{} {} {}</div>"#,
+            boxed("#ff0000", "width: 100px; height: 20px", ""),
+            boxed("#ff0000", "width: 100px; height: 20px", ""),
+            boxed("#ff0000", "width: 100px; height: 20px", "")
+        ),
+    );
+    let boxes = rects_with(&dump, RED);
+    assert_eq!(boxes.len(), 3);
+    let mut ys: Vec<f64> = boxes.iter().map(|b| f(b, "y")).collect();
+    ys.dedup();
+    assert_eq!(ys.len(), 3, "each box is on its own line");
+}
