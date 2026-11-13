@@ -56,3 +56,24 @@ fn invalid_weights_are_ignored() {
     let html = "<body style=\"font-family: Helvetica; font-weight: bold\"><p style=\"font-weight: 1500\">a</p></body>";
     assert_eq!(base_fonts("invalid", html), ["TeXGyreHeros-Bold"]);
 }
+
+/// The font family of the root element is inherited by the body; the body has none of its own.
+#[test]
+fn the_font_family_of_the_root_element_reaches_the_body() {
+    let on_html = base_fonts(
+        "family_html",
+        "<style>html { font-family: Helvetica }</style><p>text</p>",
+    );
+    assert_eq!(on_html, ["TeXGyreHeros-Regular"]);
+    let on_body = base_fonts(
+        "family_body",
+        "<style>body { font-family: Helvetica }</style><p>text</p>",
+    );
+    assert_eq!(on_body, ["TeXGyreHeros-Regular"]);
+    // the root element's own value is overridden by the body's
+    let both = base_fonts(
+        "family_both",
+        "<style>html { font-family: monospace } body { font-family: Helvetica }</style><p>text</p>",
+    );
+    assert_eq!(both, ["TeXGyreHeros-Regular"]);
+}
