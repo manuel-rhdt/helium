@@ -345,22 +345,27 @@ impl InlineFormattingContext {
                 shrink: previous.shrink + f64::from(breakpoint.glue_shrink.0),
             });
         }
-        let sequence = super::paragraph::compute_paragraph_breakpoints(
-            &opportunities,
-            |from, to| {
-                let natural_width = breakpoints[to].advance_before
-                    - breakpoints[from].advance_after
-                    + breakpoints[to].hyphen_width;
-                let start_glue = glue_prefix[from + 1];
-                let end_glue = glue_prefix[to];
-                let glue = super::paragraph::GlueTotals {
-                    stretch: end_glue.stretch - start_glue.stretch,
-                    shrink: end_glue.shrink - start_glue.shrink,
-                };
-                Some((f64::from(natural_width.0), glue))
-            },
-            |from| f64::from((line_width - if from == 0 { indent } else { Px(0.0) }).0),
-        );
+        // Only justified text has glue to stretch. Optimal breaking would balance the lines of
+        // ragged text, which looks like short lines for no reason.
+        let metrics = |from: usize, to: usize| {
+            let natural_width = breakpoints[to].advance_before
+                - breakpoints[from].advance_after
+                + breakpoints[to].hyphen_width;
+            let start_glue = glue_prefix[from + 1];
+            let end_glue = glue_prefix[to];
+            let glue = super::paragraph::GlueTotals {
+                stretch: end_glue.stretch - start_glue.stretch,
+                shrink: end_glue.shrink - start_glue.shrink,
+            };
+            Some((f64::from(natural_width.0), glue))
+        };
+        let width_of =
+            |from: usize| f64::from((line_width - if from == 0 { indent } else { Px(0.0) }).0);
+        let sequence = if self.text_align == TextAlign::Justify {
+            super::paragraph::compute_paragraph_breakpoints(&opportunities, metrics, width_of)
+        } else {
+            super::paragraph::compute_greedy_breakpoints(&opportunities, metrics, width_of)
+        };
 
         let lines = sequence
             .windows(2)
