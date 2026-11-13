@@ -160,9 +160,7 @@ impl InlineFormattingContext {
     ) -> Vec<LinePiece> {
         let from_break = self.break_points[line.from_break];
         let to_break = self.break_points[line.to_break];
-        let position = |entity| self.elements.iter().position(|&e| e == entity);
-        let (Some(first), Some(last)) = (position(from_break.entity), position(to_break.entity))
-        else {
+        let Some((first, last)) = self.element_span(from_break, to_break) else {
             return vec![];
         };
         let mut pieces = Vec::new();
@@ -174,17 +172,17 @@ impl InlineFormattingContext {
                 .take_while(|run| run.element == element);
             match text_runs.get(entity) {
                 Some(text_run) => {
-                    let start = if element == first {
+                    let start = if entity == from_break.entity {
                         from_break.char_index
                     } else {
                         0
                     };
-                    let mut end = if element == last {
+                    let mut end = if entity == to_break.entity {
                         to_break.char_index
                     } else {
                         text_run.text.len()
                     };
-                    if element == last && to_break.space && start < end {
+                    if entity == to_break.entity && to_break.space && start < end {
                         end = start + text_run.text[start..end].trim_end().len();
                     }
                     if start >= end {
@@ -441,6 +439,23 @@ impl InlineFormattingContext {
             .collect()
     }
 
+    /// The indices into `elements` of the first and the last element that have a part on the
+    /// line between two break points, or `None` if there is none. A box is not on the line if
+    /// the line starts behind it or ends in front of it.
+    fn element_span(&self, from: BreakPoint, to: BreakPoint) -> Option<(usize, usize)> {
+        let position = |entity| self.elements.iter().position(|&e| e == entity);
+        let is_atom = |entity| self.atom_offsets.iter().any(|&(atom, _)| atom == entity);
+        let mut start = position(from.entity)?;
+        let mut end = position(to.entity)?;
+        if is_atom(from.entity) && from.char_index >= ATOM_BREAK_AFTER {
+            start += 1;
+        }
+        if is_atom(to.entity) && to.char_index == ATOM_BREAK_BEFORE {
+            end = end.checked_sub(1)?;
+        }
+        (start <= end).then_some((start, end))
+    }
+
     pub fn line_height(
         &self,
         from_index: usize,
@@ -451,18 +466,11 @@ impl InlineFormattingContext {
         let from = self.break_points[from_index];
         let to = self.break_points[to_index];
 
-        let start = self
-            .elements
-            .iter()
-            .position(|&elem| elem == from.entity)
-            .unwrap();
-        let end = self
-            .elements
-            .iter()
-            .position(|&elem| elem == to.entity)
-            .unwrap();
+        let span = self
+            .element_span(from, to)
+            .map_or(&self.elements[0..0], |(start, end)| &self.elements[start..=end]);
 
-        let (max_ascent, max_descent) = self.elements[start..=end]
+        let (max_ascent, max_descent) = span
             .iter()
             .map(|&ent| {
                 if let Some(text_run) = text_runs.get(ent) {
@@ -509,9 +517,12 @@ impl InlineFormattingContext {
                     return Px(0.0);
                 }
                 let element = position(bp.entity).unwrap_or(0);
+                // a break in front of a box does not include the box
                 atoms
                     .iter()
-                    .filter(|&&(atom, _)| atom <= element)
+                    .filter(|&&(atom, _)| {
+                        atom < element || (atom == element && bp.char_index > ATOM_BREAK_BEFORE)
+                    })
                     .fold(Px(0.0), |sum, &(_, width)| sum + width)
             })
             .collect();
@@ -545,6 +556,11 @@ impl Component for InlineFormattingContext {
 }
 
 pub struct FindPossibleLineBreaks;
+
+/// The `char_index` of the break point in front of an inline-level box.
+const ATOM_BREAK_BEFORE: usize = 0;
+/// The `char_index` of the break point behind an inline-level box.
+const ATOM_BREAK_AFTER: usize = 1;
 
 #[derive(Debug, Copy, Clone)]
 pub struct BreakPoint {
@@ -867,6 +883,29 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 {
                     // the width is only known once the box has been laid out
                     atom_offsets.push((entity, advance));
+                    // A line may break in front of and behind an inline-level box even if there
+                    // is no space next to it. The break in front is at the end of the previous
+                    // element if that already provides a break there.
+                    let atom_break = |char_index: usize, advance: Px| BreakPoint {
+                        entity,
+                        char_index,
+                        advance_before: advance,
+                        advance_after: advance,
+                        forced: false,
+                        space: false,
+                        inter_letter: false,
+                        hyphen: false,
+                        hyphen_width: Px(0.0),
+                        glue_stretch: Px(0.0),
+                        glue_shrink: Px(0.0),
+                        penalty: 0,
+                    };
+                    if index > 0 && break_points.last().is_some_and(|last| last.advance_after != advance) {
+                        break_points.push(atom_break(ATOM_BREAK_BEFORE, advance));
+                    }
+                    if index + 1 < elements.len() {
+                        break_points.push(atom_break(ATOM_BREAK_AFTER, advance));
+                    }
                     push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
                 } else {
                     push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
@@ -925,6 +964,22 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             break_points.sort_by_key(|break_point| {
                 (element_order(break_point.entity), break_point.char_index)
             });
+            // A break behind a box is redundant if a space follows it directly.
+            let is_atom = |entity: Entity| atom_offsets.iter().any(|&(atom, _)| atom == entity);
+            let mut index = 0;
+            while index + 1 < break_points.len() {
+                let point = break_points[index];
+                let next = break_points[index + 1];
+                if is_atom(point.entity)
+                    && point.char_index == ATOM_BREAK_AFTER
+                    && next.space
+                    && next.advance_before == point.advance_before
+                {
+                    break_points.remove(index);
+                } else {
+                    index += 1;
+                }
+            }
         }
     }
 }
