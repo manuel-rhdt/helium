@@ -3,7 +3,6 @@
 # removal. Run `cargo test --test wpt_reftest` to see why a test fails.
 
 css/CSS2/normal-flow/height-003.xht
-css/CSS2/normal-flow/max-height-002.xht
 css/CSS2/normal-flow/max-width-003.xht
 css/CSS2/normal-flow/min-width-003.xht
 css/CSS2/normal-flow/width-003.xht

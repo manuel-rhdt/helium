@@ -297,6 +297,8 @@ impl<'world> System<'world> for Paginator {
                 if !is_first {
                     fragment_deco.padding.top = PixelLength(0.0);
                     fragment_deco.border.top = PixelLength(0.0);
+                    fragment_deco.radius.top_left = Default::default();
+                    fragment_deco.radius.top_right = Default::default();
                     if let Some(edges) = &mut fragment_deco.collapsed {
                         edges.top.paint = false;
                         edges.left.extend_start = PixelLength(0.0);
@@ -306,6 +308,8 @@ impl<'world> System<'world> for Paginator {
                 if !is_last {
                     fragment_deco.padding.bottom = PixelLength(0.0);
                     fragment_deco.border.bottom = PixelLength(0.0);
+                    fragment_deco.radius.bottom_left = Default::default();
+                    fragment_deco.radius.bottom_right = Default::default();
                     if let Some(edges) = &mut fragment_deco.collapsed {
                         edges.bottom.paint = false;
                         edges.left.extend_end = PixelLength(0.0);
