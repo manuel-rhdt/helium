@@ -9,6 +9,8 @@ use lemon_pdf::object::{ByteString, IndirectReference, Name, TextString};
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::{DocumentContext, Page, Pt, Version};
 
+mod gradient;
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Error};
@@ -216,6 +218,9 @@ pub fn write_pdf(
                         };
                         page_context.fill_path_with_rule(rule)?;
                         page_context.apply_operator("EMC")?;
+                    }
+                    DisplayItem::Gradient(resolved) => {
+                        gradient::paint(page_context, resolved, page_height)?
                     }
                     DisplayItem::ClipPath { path, even_odd } => {
                         emit_path(page_context, path, page_height)?;

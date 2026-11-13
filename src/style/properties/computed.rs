@@ -891,12 +891,15 @@ impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
 #[derive(Debug, Clone)]
 pub struct Background {
     pub background_color: Color,
+    /// The images from top to bottom, painted above `background_color`.
+    pub background_image: Vec<super::gradient::ComputedImage>,
 }
 
 impl Default for Background {
     fn default() -> Self {
         Background {
             background_color: Color::Rgba(cssparser_color::RgbaLegacy::new(0, 0, 0, 0.0)),
+            background_image: Vec::new(),
         }
     }
 }
