@@ -6,19 +6,48 @@
 <!-- Long-document stress test: the full text of "Pride and Prejudice" by Jane Austen
      (Project Gutenberg eBook #1342, public domain), chapters I-LXI. -->
 <style>
-  body { font-family: serif; font-size: 11pt; line-height: 1.4; }
-  .title-page { text-align: center; padding-top: 220px; page-break-after: always; }
-  .title-page h1 { font-size: 36pt; margin-bottom: 12px; }
-  .title-page .author { font-size: 16pt; letter-spacing: 2px; }
-  @page { @bottom-center { font-family: serif; content: counter(page); font-size: 9pt; } }
-  @page :first { @bottom-center { content: none; } }
-  .toc { page-break-after: always; }
-  .toc h1 { text-align: center; font-size: 22pt; margin-bottom: 18px; }
-  .toc p.entry { text-indent: 0; text-align: center; margin-bottom: 2px; line-height: 1.2; }
-  .toc a { color: inherit; text-decoration: none; }
-  h2 { page-break-before: always; font-size: 16pt; text-align: center; margin-top: 0; margin-bottom: 18px; page-break-after: avoid; }
-  p { margin: 0; text-align: justify; text-indent: 1.5em; hyphens: auto; }
+  /* A trade-paperback page, 5.5 x 8.5 inch, set in Palatino (TeX Gyre Pagella): about 62
+     characters to the line at 10.5pt, which is the comfortable range for continuous reading. */
+  @page {
+    width: 5.5in; height: 8.5in;
+    margin: 0.8in 0.7in 0.95in 0.7in;
+    @top-center { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, serif; font-size: 7.5pt;
+      letter-spacing: 0.18em; text-transform: uppercase; color: #444; }
+    @bottom-center { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, serif; content: counter(page); font-size: 9pt; }
+  }
+  @page :left { @top-center { content: "Jane Austen"; } }
+  @page :right { @top-center { content: "Pride and Prejudice"; } }
+  @page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+  html { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, "Latin Modern Roman", serif; }
+  body { font-size: 10.5pt; line-height: 14.5pt; color: #111; margin: 0; orphans: 2; widows: 2; }
+
+  /* Body text: justified with hyphenation, indented paragraphs without space between them */
+  p { margin: 0; text-align: justify; text-indent: 1.3em; hyphens: auto; }
   h2 + p { text-indent: 0; }
+
+  /* Chapter openings start a recto-style page, sunk a third of the way down the page */
+  h2 { break-before: page; break-after: avoid; margin: 0 0 2.4em; padding-top: 1.5in;
+    font-size: 12pt; line-height: 16pt; font-weight: normal; text-align: center;
+    text-transform: uppercase; letter-spacing: 0.2em; }
+
+  /* Title page */
+  .title-page { text-align: center; padding-top: 2.2in; break-after: page; }
+  .title-page h1 { font-size: 30pt; line-height: 36pt; font-weight: normal; letter-spacing: 0.08em;
+    text-transform: uppercase; margin: 0 0 0.9em; }
+  .title-page .author { font-size: 12pt; letter-spacing: 0.3em; margin-top: 2.2em; }
+  .title-page h1 + .author { margin-top: 0; }
+
+  /* Contents */
+  .toc { break-after: page; }
+  .toc h1 { text-align: center; font-size: 12pt; font-weight: normal; text-transform: uppercase;
+    letter-spacing: 0.2em; margin: 0 0 2em; padding-top: 0.6in; }
+  .toc p.entry { display: inline-block; width: 32%; text-indent: 0; text-align: center; margin: 0; line-height: 17pt; font-size: 10pt; }
+  .toc a { color: inherit; text-decoration: none; }
+
+  /* Letters are signed in small capitals; the stray quotes are kerned into the margin */
+  .smcap { font-size: 0.86em; letter-spacing: 0.06em; text-transform: uppercase; }
+  .lftspc { margin-left: -0.04em; }
 </style>
 </head>
 <body>
@@ -54,8 +83,8 @@
   <p class="entry"><a href="#ch24">Chapter XXIV</a></p>
   <p class="entry"><a href="#ch25">Chapter XXV</a></p>
   <p class="entry"><a href="#ch26">Chapter XXVI</a></p>
-  <p class="entry"><a href="#ch27">Chapterxxvii</a></p>
-  <p class="entry"><a href="#ch28">Chapterxxviii</a></p>
+  <p class="entry"><a href="#ch27">Chapter XXVII</a></p>
+  <p class="entry"><a href="#ch28">Chapter XXVIII</a></p>
   <p class="entry"><a href="#ch29">Chapter XXIX</a></p>
   <p class="entry"><a href="#ch30">Chapter XXX</a></p>
   <p class="entry"><a href="#ch31">Chapter XXXI</a></p>
@@ -5084,7 +5113,7 @@ of the world, and not yet open to the mortifying conviction that
 handsome young men must have something to live on as well as the
 plain.”</p>
 
-<h2 id="ch27">Chapterxxvii.</h2>
+<h2 id="ch27">Chapter XXVII.</h2>
 
 <p>WITH no greater events than these in the Longbourn family, and otherwise
 diversified by little beyond the walks to Meryton, sometimes dirty and
@@ -5222,7 +5251,7 @@ we attempt to describe any particular scene, will we begin quarrelling
 about its relative situation. Let <i>our</i> first effusions be less
 insupportable than those of the generality of travellers.”</p>
 
-<h2 id="ch28">Chapterxxviii.</h2>
+<h2 id="ch28">Chapter XXVIII.</h2>
 
 <p>EVERY object in the next day’s journey was new and interesting to
 Elizabeth; and her spirits were in a state of enjoyment; for she had
