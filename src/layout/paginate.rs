@@ -269,6 +269,7 @@ impl<'world> System<'world> for Paginator {
                 _ => continue,
             };
             let visible = deco.background_color.alpha > 0
+                || deco.has_background_image
                 || deco.border.top > PixelLength(0.0)
                 || deco.border.bottom > PixelLength(0.0)
                 || deco.border.left > PixelLength(0.0)
@@ -336,7 +337,7 @@ impl<'world> System<'world> for Paginator {
                         &mut positions,
                     )
                     .with(fragment_deco, &mut decorations)
-                    .with(DecorationFragment, &mut fragments)
+                    .with(DecorationFragment(entity), &mut fragments)
                     .build();
             }
         }

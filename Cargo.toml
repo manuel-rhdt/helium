@@ -14,8 +14,8 @@ cssparser = "0.38"
 selectors = "0.41"
 specs = { version = "0.20", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
-lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
-lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git" }
+lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "soft-mask" }
+lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "soft-mask" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
 math-render = { git = "https://github.com/manuel-rhdt/mlayout" }
 parking_lot = "0.11"

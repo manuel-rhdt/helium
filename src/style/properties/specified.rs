@@ -554,10 +554,14 @@ pub enum Background {
     /// https://www.w3.org/TR/CSS22/text.html#white-space-prop
     #[property]
     BackgroundColor(Color),
-    /// Only the `<color>` form of the shorthand is supported.
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-image
     #[property]
-    #[shorthand("background-color", method = "clone")]
-    Background(Color),
+    BackgroundImage(CommaSeparated<super::gradient::SpecifiedImage>),
+    /// Only the colour and the images of the shorthand are supported.
+    #[property]
+    #[shorthand("background-color", method = "color")]
+    #[shorthand("background-image", method = "images")]
+    Background(super::gradient::BackgroundShorthand),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -1114,6 +1118,16 @@ pub struct CommaSeparated<T> {
     elements: Vec<T>,
 }
 
+impl<T> CommaSeparated<T> {
+    pub fn new(elements: Vec<T>) -> Self {
+        CommaSeparated { elements }
+    }
+
+    pub fn elements(&self) -> &[T] {
+        &self.elements
+    }
+}
+
 impl<'i, T: PropertyValue<'i>> PropertyValue<'i> for CommaSeparated<T> {
     type Error = T::Error;
 
@@ -1133,7 +1147,7 @@ impl<T: Clone> ComputedValue<CommaSeparated<T>> for Vec<T> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Quantity {
     pub value: super::CssFloat,
     pub unit: Unit,
@@ -1187,7 +1201,7 @@ impl<'i> PropertyValue<'i> for Percentage {
     }
 }
 
-#[derive(Debug, Copy, Clone, PropertyValue)]
+#[derive(Debug, Copy, Clone, PartialEq, PropertyValue)]
 pub enum QuantityOrPercentage {
     Quantity(Quantity),
     Percentage(Percentage),
