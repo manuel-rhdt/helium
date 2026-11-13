@@ -8,6 +8,48 @@ fn is_dotted_i_language(lang: &Language) -> bool {
     matches!(lang.primary(), Some("tr" | "az"))
 }
 
+/// The upper case of Greek text. Capital letters do not carry the accent (tonos) of the lower case
+/// letters, and diaeresis stays: `ό` becomes `Ο`, `ΐ` becomes `Ϊ`. The only exception is the
+/// word `ή` (or): `Ή` keeps the accent so that it differs from the article `Η`.
+/// https://www.w3.org/TR/css-text-3/#text-transform-property
+fn greek_upper(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut result = String::with_capacity(text.len());
+    for (i, &ch) in chars.iter().enumerate() {
+        let base = match ch {
+            'ά' | 'ὰ' | 'ᾶ' => Some('Α'),
+            'έ' | 'ὲ' => Some('Ε'),
+            'ή' | 'ὴ' | 'ῆ' => Some('Η'),
+            'ί' | 'ὶ' | 'ῖ' => Some('Ι'),
+            'ό' | 'ὸ' => Some('Ο'),
+            'ύ' | 'ὺ' | 'ῦ' => Some('Υ'),
+            'ώ' | 'ὼ' | 'ῶ' => Some('Ω'),
+            'ΐ' | 'ῒ' | 'ῗ' => Some('Ϊ'),
+            'ΰ' | 'ῢ' | 'ῧ' => Some('Ϋ'),
+            _ => None,
+        };
+        match (ch, base) {
+            // a single `ή` between non-letters
+            ('ή', _)
+                if !i.checked_sub(1).is_some_and(|j| chars[j].is_alphabetic())
+                    && !chars.get(i + 1).is_some_and(|c| c.is_alphabetic()) =>
+            {
+                result.push('Ή')
+            }
+            (_, Some(base)) => result.push(base),
+            // combining acute, grave, circumflex and breathing marks of a decomposed letter
+            ('\u{301}' | '\u{300}' | '\u{342}' | '\u{313}' | '\u{314}', _)
+                if i > 0 && is_greek_letter(chars[i - 1]) => {}
+            _ => result.extend(ch.to_uppercase()),
+        }
+    }
+    result
+}
+
+fn is_greek_letter(ch: char) -> bool {
+    matches!(ch, '\u{370}'..='\u{3ff}' | '\u{1f00}'..='\u{1fff}') || ch == '\u{308}'
+}
+
 fn upper(ch: char, turkic: bool) -> String {
     if turkic && ch == 'i' {
         "İ".to_string()
@@ -69,6 +111,9 @@ pub fn apply(
         }
         TextTransform::Uppercase => {
             *in_word = text.chars().next_back().is_some_and(is_word_character);
+            if lang.primary() == Some("el") {
+                return Some(greek_upper(text));
+            }
             Some(text.chars().map(|ch| upper(ch, turkic)).collect())
         }
         TextTransform::Lowercase => {
@@ -134,6 +179,17 @@ mod tests {
         let a = apply("f", TextTransform::Capitalize, &lang, &mut in_word).unwrap();
         let b = apply("oo bar", TextTransform::Capitalize, &lang, &mut in_word).unwrap();
         assert_eq!((a.as_str(), b.as_str()), ("F", "oo Bar"));
+    }
+
+    #[test]
+    fn greek_capitals_have_no_accent() {
+        assert_eq!(run("Η Φόνισσα, ώρα ΐ", TextTransform::Uppercase, "el"), "Η ΦΟΝΙΣΣΑ, ΩΡΑ Ϊ");
+        // the word `ή` keeps its accent: it is not the article
+        assert_eq!(run("ή όχι", TextTransform::Uppercase, "el"), "Ή ΟΧΙ");
+        // a decomposed letter loses its accent too, but keeps the diaeresis
+        assert_eq!(run("o\u{3bf}\u{301} \u{3b9}\u{308}\u{301}", TextTransform::Uppercase, "el"), "OΟ Ι\u{308}");
+        // other languages keep the accent of Greek letters
+        assert_eq!(run("ό", TextTransform::Uppercase, "en"), "Ό");
     }
 
     #[test]
