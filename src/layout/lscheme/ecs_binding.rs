@@ -190,6 +190,7 @@ fn value_to_decoration(v: &Value) -> Result<Decoration, RuntimeError> {
                 border_color,
                 collapsed: None,
                 radius: Default::default(),
+                has_background_image: false,
             })
         }
         _ => Err(RuntimeError::Message(format!(

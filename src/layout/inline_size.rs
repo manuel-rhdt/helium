@@ -56,6 +56,10 @@ pub fn decoration_colors(
     deco.border_color.bottom = get_color(position.border_bottom_color);
     deco.border_color.left = get_color(position.border_left_color);
     deco.border_color.right = get_color(position.border_right_color);
+    deco.has_background_image = background
+        .background_image
+        .iter()
+        .any(|image| !matches!(image, crate::style::properties::gradient::Image::None));
     deco.radius = crate::layout::components::CornerRadii {
         top_left: position.border_top_left_radius,
         top_right: position.border_top_right_radius,
