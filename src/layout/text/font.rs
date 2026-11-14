@@ -340,6 +340,12 @@ pub(crate) fn use_system_fonts() -> bool {
     USE_SYSTEM_FONTS.load(Ordering::Relaxed)
 }
 
+/// The font database for the text of SVG images: the same fonts as for the document.
+pub(crate) fn svg_font_database() -> Arc<fontdb::Database> {
+    static DATABASE: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
+    DATABASE.get_or_init(|| Arc::new(system_fonts().clone())).clone()
+}
+
 /// The fonts installed on the system (unless disabled, see `use_system_fonts`) and the fonts
 /// built into Helium, scanned once.
 fn system_fonts() -> &'static fontdb::Database {

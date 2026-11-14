@@ -593,7 +593,7 @@ impl Component for MathNode {
 /// style says otherwise.
 #[derive(Debug, Clone)]
 pub struct ImageBox {
-    pub image: std::sync::Arc<crate::image::RasterImage>,
+    pub image: std::sync::Arc<crate::image::LoadedImage>,
     /// The intrinsic size in pixels: the size of the image, or the size that the `width` and
     /// `height` attributes ask for.
     pub width: f32,
