@@ -408,7 +408,7 @@ fn layout_islands(
         let mut constructor = FlowConstructor::for_island(
             World::new(),
             base_dir.to_path_buf(),
-            std::mem::take(&mut styles),
+            std::mem::replace(&mut styles, crate::style::parse::Styles::empty()),
             fonts,
             (spec.node.clone(), spec.width, spec.height),
             std::mem::take(&mut islands),
