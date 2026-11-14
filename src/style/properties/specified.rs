@@ -506,6 +506,11 @@ pub enum Box {
     GridAutoRows(TrackList),
     #[property]
     GridAutoFlow(GridAutoFlow),
+    /// https://www.w3.org/TR/css-transforms-1/
+    #[property]
+    Transform(super::transform::Transform),
+    #[property]
+    TransformOrigin(super::transform::TransformOrigin),
     #[property]
     GridColumnStart(GridPlacement),
     #[property]

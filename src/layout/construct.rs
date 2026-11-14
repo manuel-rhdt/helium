@@ -386,7 +386,9 @@ impl Traversal<DomRef> for FlowConstructor {
             }
             self.inside_svg = Some(node.clone());
         }
-        self.entity_constructor.build_entity(node)
+        let scoped = node.clone();
+        self.entity_constructor.build_entity(node);
+        self.entity_constructor.record_transform_scope(&scoped);
     }
 
     fn postorder_traverse(&mut self, node: DomRef) {
@@ -712,6 +714,7 @@ impl EntityConstructor {
         world.insert(FontMap::new());
         world.insert(RootNode(None));
         world.insert(components::CanvasEntities::default());
+        world.insert(components::TransformScopes::default());
         EntityConstructor {
             world,
             font_match_cache: Default::default(),
@@ -722,6 +725,52 @@ impl EntityConstructor {
             base_dir,
             images: Default::default(),
             pending_svg: None,
+        }
+    }
+
+    /// Records the transform of the node, if it has one, and that the node is inside of the
+    /// transformed box that its parent is inside of.
+    fn record_transform_scope(&mut self, node: &DomRef) {
+        let Some(LayoutEntity(entity)) = node.layout_entity.get() else {
+            return;
+        };
+        let Some(style) = NodeData::style(node) else {
+            return;
+        };
+        let mut scopes = self.world.write_resource::<components::TransformScopes>();
+        let parent_scope = node
+            .parent()
+            .and_then(|parent| parent.layout_entity.get())
+            .and_then(|LayoutEntity(parent)| scopes.scope.get(&parent).copied());
+        // a transform of an inline box that is not replaced does nothing
+        let transformed = !style.box_.transform.0.is_empty()
+            && !matches!(style.box_.display, Display::Inline);
+        if transformed {
+            scopes.boxes.insert(
+                entity,
+                components::TransformBox {
+                    parent: parent_scope,
+                    transform: style.box_.transform.clone(),
+                    origin: style.box_.transform_origin,
+                    font_size: style.font.font_size,
+                },
+            );
+            scopes.scope.insert(entity, entity);
+        } else if let Some(scope) = parent_scope {
+            scopes.scope.insert(entity, scope);
+        }
+    }
+
+    /// The boxes in `elements` that were not made from a node (anonymous blocks) are in what the
+    /// box `container` is in.
+    fn inherit_transform_scope(&self, container: Entity, elements: &[BlockLevelElement]) {
+        let mut scopes = self.world.write_resource::<components::TransformScopes>();
+        let Some(scope) = scopes.scope.get(&container).copied() else {
+            return;
+        };
+        for element in elements {
+            let entity = element.entity();
+            scopes.scope.entry(entity).or_insert(scope);
         }
     }
 
@@ -1266,6 +1315,7 @@ impl EntityConstructor {
 
         block_level_elements.insert(0, BlockLevelElement::ContainerStart(entity));
         block_level_elements.push(BlockLevelElement::ContainerEnd(entity));
+        self.inherit_transform_scope(entity, &block_level_elements);
 
         block_formatting_contexts
             .insert(
