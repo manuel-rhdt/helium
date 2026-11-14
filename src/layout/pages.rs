@@ -7,6 +7,7 @@
 //! selects the first page of.
 //! https://www.w3.org/TR/css-page-3/#page-selectors
 
+use super::components::EdgeValues;
 use crate::style::parse::{PagePseudo, PageSelector, QualifiedRule, Styles};
 use crate::style::properties::computed::PixelLength;
 use std::collections::{HashMap, HashSet};
@@ -113,30 +114,88 @@ pub fn normalize(page: &PageContext, names: &HashSet<Arc<str>>) -> PageContext {
     }
 }
 
-/// The left and right margin of every kind of page. The layout is done for the content area
-/// of the plain `@page` rules; where the margins of a page differ, its content is moved
-/// sideways (for the inner and outer margins of a book, which have the same sum).
+/// The margins of every kind of page.
+///
+/// The layout is done for the content area of the plain `@page` rules (`base`). Where the
+/// left and right margins of a page differ, its content is moved sideways, which is exact for
+/// margins with the same sum (the inner and outer margins of a book). Where the content of a
+/// page *group* needs another width (a title page without margins), the boxes of the group
+/// are laid out at that width (see `taffy_layout::page_groups`). The top and bottom margins
+/// of a page are used by the paginator and the margin boxes.
 #[derive(Debug, Default, Clone)]
 pub struct PageMargins {
     /// Whether the pages are bound on the right (the document is set from right to left).
     pub rtl: bool,
-    /// The margins of the layout: `(left, right)`.
-    pub base: (PixelLength, PixelLength),
+    /// The margins of the layout.
+    pub base: EdgeValues<PixelLength>,
     pub names: HashSet<Arc<str>>,
-    pub pages: HashMap<PageContext, (PixelLength, PixelLength)>,
+    pub pages: HashMap<PageContext, EdgeValues<PixelLength>>,
 }
 
 impl PageMargins {
-    pub fn for_page(&self, page: &PageContext) -> (PixelLength, PixelLength) {
+    pub fn edges(&self, page: &PageContext) -> EdgeValues<PixelLength> {
         self.pages
             .get(&normalize(page, &self.names))
             .copied()
             .unwrap_or(self.base)
     }
 
+    /// The left and right margin of the page.
+    pub fn for_page(&self, page: &PageContext) -> (PixelLength, PixelLength) {
+        let edges = self.edges(page);
+        (edges.left, edges.right)
+    }
+
     /// How far the content of the page is moved to the right from where it was laid out.
     pub fn shift(&self, page: &PageContext) -> PixelLength {
-        self.for_page(page).0 - self.base.0
+        self.edges(page).left - self.base.left
+    }
+
+    /// The margins of a page whose index is not known, only whether it is the first page of
+    /// the document and what its name is. A left and a right page that have different top
+    /// and bottom margins cannot be told apart then, and the margins of the layout are used.
+    pub fn edges_of_page_start(
+        &self,
+        first: bool,
+        name: Option<Arc<str>>,
+        first_in_group: bool,
+    ) -> EdgeValues<PixelLength> {
+        let context = |index| PageContext {
+            index,
+            name: name.clone(),
+            first_in_group,
+            rtl: self.rtl,
+        };
+        if first {
+            return self.edges(&context(0));
+        }
+        let (left, right) = (self.edges(&context(1)), self.edges(&context(2)));
+        if left.top == right.top && left.bottom == right.bottom {
+            left
+        } else {
+            EdgeValues {
+                top: self.base.top,
+                bottom: self.base.bottom,
+                ..left
+            }
+        }
+    }
+
+    /// Whether the top or bottom margins of a left and a right page differ, or their widths
+    /// (the sum of the left and right margin), which the layout cannot honour.
+    pub fn left_right_conflicts(&self) -> bool {
+        self.pages.iter().any(|(page, edges)| {
+            let other = PageContext {
+                index: if page.index == 1 { 2 } else { 1 },
+                ..page.clone()
+            };
+            page.index != 0
+                && self.pages.get(&other).is_some_and(|other| {
+                    other.top != edges.top
+                        || other.bottom != edges.bottom
+                        || other.left + other.right != edges.left + edges.right
+                })
+        })
     }
 }
 
