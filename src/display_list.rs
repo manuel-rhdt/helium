@@ -533,6 +533,7 @@ impl DisplayList {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct PrintPage {
     pub display_list: DisplayList,
     pub width: PixelLength,
@@ -547,7 +548,14 @@ pub struct PrintPages {
     pub hyperlinks: Vec<Hyperlink>,
     /// The logical structure of the document (tagged PDF).
     pub structure: crate::tagging::StructureTree,
+    /// The content of the `foreignObject` elements of SVG images, laid out like small pages, by
+    /// the handle of the element.
+    pub islands: Vec<PrintPage>,
 }
+
+/// The content of the `foreignObject` elements, a resource of the world of the document.
+#[derive(Default)]
+pub struct IslandPages(pub Vec<PrintPage>);
 
 impl PrintPages {
     pub fn append_page(&mut self, page: PrintPage) {
@@ -1095,7 +1103,13 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         });
     }
 
+    let islands = if world.has_value::<IslandPages>() {
+        std::mem::take(&mut world.write_resource::<IslandPages>().0)
+    } else {
+        vec![]
+    };
     PrintPages {
+        islands,
         font_map: (*world.read_resource::<crate::layout::FontMap>()).clone(),
         pages: page_vec,
         hyperlinks: world.read_resource::<Hyperlinks>().0.clone(),

@@ -9,3 +9,6 @@
 - The CSS declarations that apply to an element are stored with the element in the document, so
   the parser has no CSS engine of its own to run on the tree. The code that builds the document
   decides what matches.
+- `foreignObject` is an element (`EId::ForeignObject`). The tree has a node for it
+  (`Node::Foreign(ForeignObject)`) with its rectangle and the handle that the builder of the XML
+  document gave to the element; the content is not read, the caller draws it.

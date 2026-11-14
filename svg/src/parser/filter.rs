@@ -814,6 +814,7 @@ fn convert_image_inner(
                         Node::Path(path) => path.id = Box::default(),
                         Node::Image(image) => image.id.clear(),
                         Node::Text(text) => text.id.clear(),
+                        Node::Foreign(foreign) => foreign.id.clear(),
                     }
                 }
             }

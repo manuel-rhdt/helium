@@ -39,6 +39,9 @@ pub struct SvgWriter {
     /// `<image>` that refers to it).
     images: HashMap<u64, Vec<(Arc<Vec<u8>>, Option<IndirectReference<ImageXObject>>)>>,
     warned: HashSet<&'static str>,
+    /// The content of the `foreignObject` elements, by their handle: a form that is as big as the
+    /// element, in points, with its origin at the bottom left corner.
+    islands: HashMap<u64, FormReference>,
 }
 
 fn matrix(t: Transform) -> Matrix {
@@ -150,7 +153,13 @@ impl SvgWriter {
             filter,
             images: HashMap::new(),
             warned: HashSet::new(),
+            islands: HashMap::new(),
         }
+    }
+
+    /// Tells the writer the form of the content of a `foreignObject`.
+    pub fn add_island(&mut self, handle: u64, form: FormReference) {
+        self.islands.insert(handle, form);
     }
 
     fn warn(&mut self, message: &'static str) {
@@ -333,7 +342,7 @@ impl SvgWriter {
                     any |= self.collect_clip(c, inner, t, rule)?;
                 }
                 Node::Text(text) => any |= self.collect_clip(c, text.flattened(), t, rule)?,
-                Node::Image(_) => {}
+                Node::Image(_) | Node::Foreign(_) => {}
             }
         }
         Ok(any)
@@ -345,7 +354,33 @@ impl SvgWriter {
             Node::Path(path) => self.draw_path(c, path, ctm),
             Node::Image(image) => self.draw_image(c, image, ctm),
             Node::Text(text) => self.draw_group(c, text.flattened(), ctm),
+            Node::Foreign(foreign) => self.draw_foreign(c, foreign),
         }
+    }
+
+    /// Draws the content of a `foreignObject`, clipped to its rectangle.
+    fn draw_foreign(&mut self, c: &mut PageContext<'_, '_, '_>, foreign: &usvg::ForeignObject) -> Result<()> {
+        let Some(&form) = self.islands.get(&foreign.handle()) else {
+            self.warn("the content of a foreignObject could not be laid out");
+            return Ok(());
+        };
+        let rect = foreign.rect();
+        c.save_graphics_state()?;
+        c.rect(
+            Pt(f64::from(rect.x())),
+            Pt(f64::from(rect.y())),
+            Pt(f64::from(rect.width())),
+            Pt(f64::from(rect.height())),
+        )?;
+        c.clip(FillRule::NonZero)?;
+        c.end_path()?;
+        // the form is in points with y up, from the bottom left corner; the SVG is in pixels
+        // with y down
+        let k = 1.0 / 0.75;
+        concat(c, Transform::from_row(k, 0.0, 0.0, -k, rect.x(), rect.y() + rect.height()))?;
+        let key = c.add_xobject(form);
+        c.draw_xobject(&key)?;
+        c.restore_graphics_state()
     }
 
     fn draw_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {

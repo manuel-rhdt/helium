@@ -71,6 +71,7 @@ fn parse<'input>(
         attrs: Vec::new(),
         links: HashMap::new(),
         circular_references: HashSet::new(),
+        handles: HashMap::new(),
     };
 
     // build a map of id -> node for resolve_href
@@ -191,6 +192,9 @@ fn parse_xml_node<'input>(
     }
 
     let node_id = parse_svg_element(node, parent_id, tag_name, ignore_ids, doc)?;
+    if let Some(handle) = node.handle() {
+        doc.handles.insert(node_id, handle);
+    }
     if tag_name == EId::Text {
         super::text::parse_svg_text_element(node, node_id, doc)?;
     } else if tag_name == EId::Use {

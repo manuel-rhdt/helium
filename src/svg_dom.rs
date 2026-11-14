@@ -13,6 +13,7 @@ use std::sync::Arc;
 use html5ever::{QualName, local_name, ns};
 use usvg::xml::{AttributeData, CssDeclaration, DocumentBuilder};
 
+use crate::layout::construct::IslandSpec;
 use crate::parser::ParsedData;
 use crate::style::parse::Styles;
 use crate::tree::{DomRef, TreeLinked};
@@ -35,6 +36,10 @@ pub fn is_outermost_svg(node: &DomRef) -> bool {
     while let Some(ancestor) = parent {
         if is_svg_element(&ancestor) {
             return false;
+        }
+        // HTML inside of a `<foreignObject>` starts a context of its own
+        if matches!(&ancestor.html_data, ParsedData::Element(element) if element.name.ns != ns!(svg)) {
+            return true;
         }
         parent = ancestor.parent();
     }
@@ -83,17 +88,18 @@ pub fn document(
     others: &[DomRef],
     styles: &Styles,
     inherited: &Inherited,
+    islands: &mut Vec<IslandSpec>,
 ) -> usvg::xml::Document<'static> {
     let mut builder = DocumentBuilder::new();
     let root = builder.root();
-    let id = add(&mut builder, root, svg, styles, Some(inherited));
+    let id = add(&mut builder, root, svg, styles, Some(inherited), islands);
     if let Some(id) = id {
         let (defined, referenced) = ids(svg, styles);
         if referenced.iter().any(|id| !defined.contains(id)) {
             let defs = builder.element(id, Some(SVG_NS), "defs", vec![], vec![], None);
             for other in others.iter().filter(|other| *other != svg) {
                 for child in TreeLinked::children(other) {
-                    add(&mut builder, defs, &child, styles, None);
+                    add(&mut builder, defs, &child, styles, None, islands);
                 }
             }
         }
@@ -101,14 +107,16 @@ pub fn document(
     builder.build()
 }
 
-/// Adds the node and what is below it. Elements that are not SVG elements (the contents of a
-/// `<foreignObject>`) are left out.
+/// Adds the node and what is below it. The content of a `<foreignObject>` is not SVG: it is
+/// left out, and the element gets a handle (the index of its entry in `islands`) with which the
+/// content is found again.
 fn add(
     builder: &mut DocumentBuilder,
     parent: usize,
     node: &DomRef,
     styles: &Styles,
     inherited: Option<&Inherited>,
+    islands: &mut Vec<IslandSpec>,
 ) -> Option<usize> {
     match &node.html_data {
         ParsedData::Text(text) => {
@@ -148,9 +156,16 @@ fn add(
                 }
             }
             let css = declarations(node, styles);
-            let id = builder.element(parent, Some(SVG_NS), &element.name.local, attributes, css, None);
-            for child in TreeLinked::children(node) {
-                add(builder, id, &child, styles, None);
+            let foreign = &*element.name.local == "foreignObject";
+            let handle = foreign.then(|| {
+                islands.push(IslandSpec { node: node.clone(), width: 0.0, height: 0.0 });
+                (islands.len() - 1) as u64
+            });
+            let id = builder.element(parent, Some(SVG_NS), &element.name.local, attributes, css, handle);
+            if !foreign {
+                for child in TreeLinked::children(node) {
+                    add(builder, id, &child, styles, None, islands);
+                }
             }
             Some(id)
         }
