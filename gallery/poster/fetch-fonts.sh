@@ -29,6 +29,7 @@ for family in \
   NotoSansDuployan \
   NotoSansEgyptianHieroglyphs \
   NotoSansElbasan \
+  NotoSansElymaic \
   NotoSansGlagolitic \
   NotoSansGothic \
   NotoSansGrantha \
@@ -85,6 +86,7 @@ for family in \
   NotoSansPauCinHau \
   NotoSansPhagsPa \
   NotoSansPhoenician \
+  NotoSansPsalterPahlavi \
   NotoSansRejang \
   NotoSansRunic \
   NotoSansSamaritan \
