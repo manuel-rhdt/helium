@@ -12,3 +12,8 @@
 - `foreignObject` is an element (`EId::ForeignObject`). The tree has a node for it
   (`Node::Foreign(ForeignObject)`) with its rectangle and the handle that the builder of the XML
   document gave to the element; the content is not read, the caller draws it.
+- Text is not shaped by `harfrust` and read with `skrifa`: the caller gives `Options` a
+  `TextShaper` (`text_shaper`), and the outlines and metrics of fonts are read with `ttf-parser`.
+  Without a shaper `text` elements are not drawn. Colour glyphs (COLR, SVG and bitmap glyphs),
+  variable fonts and `writer` (not a default feature any more) are gone with their code
+  (`text/colr.rs`, most of `text/cache.rs`).

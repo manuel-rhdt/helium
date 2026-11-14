@@ -39,7 +39,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **SVG** (`usvg` parses it): paths and basic shapes, fill and stroke (caps, joins, dashes), solid
   colors, linear and radial gradients including `spreadMethod`, patterns, clip paths, masks, group
   opacity, `mix-blend-mode`, nested transforms, `use` and `symbol`, embedded JPEG and PNG
-  images, text (drawn as outlines, with the fonts of the document). The same code draws the
+  images, text (shaped by HarfBuzz with the fonts of the document, drawn as outlines; no colour glyphs). The same code draws the
   `<svg>` elements of an HTML document: replaced boxes (sized by `width`/`height`, the
   `viewBox` or CSS) that read the DOM directly, so the style sheets of the document apply to
   their elements (all selectors, the cascade, the `style` attribute), `currentColor` and the font

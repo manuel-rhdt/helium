@@ -6,13 +6,12 @@ use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use fontdb::ID;
-use harfrust::ShapeOptions;
 use kurbo::{ParamCurve, ParamCurveArclen, ParamCurveDeriv};
 use strict_num::NonZeroPositiveF32;
 use tiny_skia_path::{NonZeroRect, Transform};
 use unicode_script::UnicodeScript;
 
-use super::cache::{FontCache, FontInstance, with_optical_sizing};
+use super::cache::{FontCache, with_optical_sizing};
 use crate::tree::{BBox, IsValidLength};
 use crate::{
     AlignmentBaseline, ApproxZeroUlps, BaselineShift, DominantBaseline, Fill, FillRule, Font,
@@ -1218,27 +1217,26 @@ fn form_glyph_clusters(glyphs: &[Glyph], text: &str, font_size: f32) -> GlyphClu
 #[inline(never)]
 fn resolve_font(
     id: ID,
-    variations: &[crate::FontVariation],
+    _variations: &[crate::FontVariation],
     fonts: &mut FontCache,
 ) -> Option<ResolvedFont> {
-    let font = &fonts.load(id)?.instance(variations.iter().copied()).font;
-    let metrics = font.metrics();
+    let loaded = fonts.load(id)?;
+    let face = loaded.face()?;
 
     // Reject fonts with an out-of-range unitsPerEm, like `ttf-parser` did.
-    if !(16..=16384).contains(&metrics.raw_units_per_em) {
+    let raw_units_per_em = face.units_per_em();
+    if !(16..=16384).contains(&raw_units_per_em) {
         return None;
     }
-    let units_per_em = NonZeroU16::new(metrics.raw_units_per_em)?;
+    let units_per_em = NonZeroU16::new(raw_units_per_em)?;
 
-    let line = metrics.h_line().unwrap_or_default();
-    let ascent = line.ascender.to_f32();
-    let descent = line.descender.to_f32();
+    let ascent = f32::from(face.ascender());
+    let descent = f32::from(face.descender());
 
-    let x_height = metrics
-        .x_height
-        .map(|x| x.to_f32())
-        .filter(|x| *x > 0.0)
-        .and_then(|x| u16::try_from(x.round() as i32).ok())
+    let x_height = face
+        .x_height()
+        .filter(|x| *x > 0)
+        .and_then(|x| u16::try_from(x).ok())
         .and_then(NonZeroU16::new);
     let x_height = match x_height {
         Some(height) => height,
@@ -1251,21 +1249,19 @@ fn resolve_font(
         }
     };
 
-    let style_metrics = font.style_metrics();
-
-    let line_through_position = match style_metrics.strike_through {
-        Some(metrics) => metrics.position.to_f32().round() as i16,
+    let line_through_position = match face.strikeout_metrics() {
+        Some(metrics) => metrics.position,
         None => x_height.get() as i16 / 2,
     };
 
-    let (underline_position, underline_thickness) = match style_metrics.underline {
+    let (underline_position, underline_thickness) = match face.underline_metrics() {
         Some(metrics) => {
-            let thickness = u16::try_from(metrics.thickness.to_f32().round() as i32)
+            let thickness = u16::try_from(metrics.thickness)
                 .ok()
                 .and_then(NonZeroU16::new)
                 .unwrap_or_else(|| NonZeroU16::new(units_per_em.get() / 12).unwrap());
 
-            (metrics.position.to_f32().round() as i16, thickness)
+            (metrics.position, thickness)
         }
         None => (
             -(units_per_em.get() as i16) / 9,
@@ -1274,12 +1270,12 @@ fn resolve_font(
     };
 
     // 0.2 and 0.4 are generic offsets used by some applications (Inkscape/librsvg).
-    let subscript_offset = match style_metrics.subscript {
-        Some(metrics) => metrics.y_offset.to_f32().round() as i16,
+    let subscript_offset = match face.subscript_metrics() {
+        Some(metrics) => metrics.y_offset,
         None => (units_per_em.get() as f32 / 0.2).round() as i16,
     };
-    let superscript_offset = match style_metrics.superscript {
-        Some(metrics) => metrics.y_offset.to_f32().round() as i16,
+    let superscript_offset = match face.superscript_metrics() {
+        Some(metrics) => metrics.y_offset,
         None => (units_per_em.get() as f32 / 0.4).round() as i16,
     };
 
@@ -1406,32 +1402,18 @@ fn shape_text_with_font(
     font: Arc<ResolvedFont>,
     small_caps: bool,
     apply_kerning: bool,
-    variations: impl IntoIterator<Item = crate::FontVariation>,
+    _variations: impl IntoIterator<Item = crate::FontVariation>,
     fonts: &mut FontCache,
 ) -> Option<Vec<Glyph>> {
-    use harfrust::{Buffer, Feature, ShapePlan, ShapePlanKey, ShaperFont, Tag};
-
-    let FontInstance {
-        font: hr_font,
-        plans,
-        ..
-    } = fonts.load(font.id)?.instance(variations);
+    let shaper = fonts.shaper.clone()?;
+    let loaded = fonts.load(font.id)?;
+    let (data, index) = (loaded.data.clone(), loaded.index);
 
     let bidi_info = unicode_bidi::BidiInfo::new(text, Some(unicode_bidi::Level::ltr()));
     let paragraph = &bidi_info.paragraphs[0];
     let line = paragraph.range.clone();
 
     let mut glyphs = Vec::new();
-
-    let shaper = ShaperFont::new(hr_font);
-
-    let mut features = Vec::new();
-    if small_caps {
-        features.push(Feature::new(Tag::new(b"smcp"), 1, ..));
-    }
-    if !apply_kerning {
-        features.push(Feature::new(Tag::new(b"kern"), 0, ..));
-    }
 
     let (levels, runs) = bidi_info.visual_runs(paragraph, line);
     for run in runs.iter() {
@@ -1441,69 +1423,30 @@ fn shape_text_with_font(
         }
 
         let ltr = levels[run.start].is_ltr();
-        let direction = if ltr {
-            harfrust::Direction::LeftToRight
-        } else {
-            harfrust::Direction::RightToLeft
-        };
+        let shaped = shaper.shape(font.id, &data, index, sub_text, !ltr, small_caps, apply_kerning)?;
 
-        let mut buffer = Buffer::new();
-        buffer.push_str(sub_text);
-        buffer.set_direction(direction);
+        for (i, glyph) in shaped.iter().enumerate() {
+            let start = glyph.cluster;
+            let idx = run.start + start;
 
-        // TODO: explicitly set language?
-        buffer.guess_segment_properties();
-
-        let key = ShapePlanKey::new(hr_font, buffer.script(), direction)
-            .language(buffer.language())
-            .features(&features);
-        let plan = match plans.iter().position(|plan| key.matches(plan)) {
-            Some(index) => &plans[index],
-            None => {
-                plans.push(ShapePlan::new(
-                    hr_font,
-                    direction,
-                    buffer.script(),
-                    buffer.language(),
-                    &features,
-                ));
-                plans.last()?
-            }
-        };
-
-        harfrust::shape(
-            &shaper,
-            &mut buffer,
-            ShapeOptions::new().features(&features).plan(Some(plan)),
-        )
-        .ok()?;
-
-        let positions = buffer.glyph_positions();
-        let infos = buffer.glyph_infos();
-
-        for i in 0..buffer.len() {
-            let pos = positions[i];
-            let info = infos[i];
-            let idx = run.start + info.cluster as usize;
-
-            let start = info.cluster as usize;
-
+            // The cluster ends where the next cluster in the logical order starts: the next
+            // glyph for left-to-right text, the previous one for right-to-left text.
             let end = if ltr {
                 i.checked_add(1)
             } else {
                 i.checked_sub(1)
             }
-            .and_then(|last| infos.get(last))
-            .map_or(sub_text.len(), |info| info.cluster as usize);
+            .and_then(|neighbor| shaped.get(neighbor))
+            .map_or(sub_text.len(), |glyph| glyph.cluster);
 
             glyphs.push(Glyph {
                 byte_idx: ByteIndex::new(idx),
                 cluster_len: end.checked_sub(start).unwrap_or(0), // TODO: can fail?
-                text: sub_text[start..end].to_string(),
-                id: GlyphId(info.glyph_id),
-                dx: pos.x_offset,
-                dy: pos.y_offset,
-                width: pos.x_advance,
+                text: sub_text[start..end.max(start)].to_string(),
+                id: GlyphId(glyph.glyph_id),
+                dx: glyph.x_offset,
+                dy: glyph.y_offset,
+                width: glyph.x_advance,
                 font: font.clone(),
             });
         }
