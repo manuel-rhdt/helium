@@ -1,6 +1,6 @@
 # Scripts poster (A3)
 
-`index.html` is an A3 poster of 144 writing systems, from Egyptian hieroglyphs and cuneiform to
+`index.html` is an A3 poster of 144 writing systems, set on white with ink-black type, hairline ruling and a single vermilion accent, from Egyptian hieroglyphs and cuneiform to
 scripts invented within living memory. Each tile shows the first characters of a script as Unicode
 encodes them, in the script's own font and direction. The header has a cartouche (a CSS border
 around the hieroglyphs of *Ra-ms-s*) and the Maya Long Count date 9.8.9.13.0 in Mayan numerals.
