@@ -262,7 +262,7 @@ pub enum DisplayItem {
     /// Paints an image into a rectangle.
     Image {
         rect: Rect,
-        image: std::sync::Arc<crate::image::RasterImage>,
+        image: std::sync::Arc<crate::image::LoadedImage>,
     },
     Color(RGBA),
     StrokeColor(RGBA),

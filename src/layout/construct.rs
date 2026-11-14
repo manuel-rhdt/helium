@@ -531,7 +531,7 @@ pub struct EntityConstructor {
     base_dir: PathBuf,
     /// The images that were loaded, by `src`, so that an image that is used often is embedded
     /// once. `None` for an image that could not be loaded.
-    images: HashMap<String, Option<Arc<crate::image::RasterImage>>>,
+    images: HashMap<String, Option<Arc<crate::image::LoadedImage>>>,
 }
 
 impl std::fmt::Debug for EntityConstructor {
@@ -783,7 +783,7 @@ impl EntityConstructor {
                 .and_then(|value| value.trim().parse::<f32>().ok())
                 .filter(|value| value.is_finite() && *value >= 0.0)
         };
-        let (natural_width, natural_height) = (image.width as f32, image.height as f32);
+        let (natural_width, natural_height) = image.size();
         let (width, height) = match (dimension(local_name!("width")), dimension(local_name!("height"))) {
             (Some(width), Some(height)) => (width, height),
             (Some(width), None) => (width, width * natural_height / natural_width),
