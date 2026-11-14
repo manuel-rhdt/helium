@@ -7,7 +7,7 @@ use cssparser::{CowRcStr, ParseError, Parser, Token, match_ignore_ascii_case};
 use cssparser_color::Color;
 use helium_derive::{ParseDeclaration, PropertyValue};
 
-use math_render::unicode_math::Family as MathFamily2;
+use formel::unicode_math::Family as MathFamily2;
 
 pub trait ParseDeclaration<'i> {
     type Error: 'i;
@@ -2251,13 +2251,13 @@ impl Default for MathOperatorForm {
     }
 }
 
-impl From<MathOperatorForm> for Option<math_render::host::Form> {
+impl From<MathOperatorForm> for Option<formel::host::Form> {
     fn from(other: MathOperatorForm) -> Self {
         match other {
             MathOperatorForm::Auto => None,
-            MathOperatorForm::Prefix => Some(math_render::host::Form::Prefix),
-            MathOperatorForm::Infix => Some(math_render::host::Form::Infix),
-            MathOperatorForm::Postfix => Some(math_render::host::Form::Postfix),
+            MathOperatorForm::Prefix => Some(formel::host::Form::Prefix),
+            MathOperatorForm::Infix => Some(formel::host::Form::Infix),
+            MathOperatorForm::Postfix => Some(formel::host::Form::Postfix),
         }
     }
 }
