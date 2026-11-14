@@ -1,15 +1,17 @@
 //! Loading the images of `<img>` elements.
 //!
-//! Only JPEG files are supported. They are not decoded: the PDF embeds the file as it is
-//! (`DCTDecode`), so the only thing needed to lay an image out is its size in pixels.
+//! JPEG files and PNG files are supported. Their pixels are not decoded: the PDF embeds the
+//! compressed data as it is (`DCTDecode` for JPEG, `FlateDecode` with a predictor for PNG), so
+//! the only thing needed to lay an image out is its size in pixels. That is why PNG files with an
+//! alpha channel (or interlacing) are not supported yet: they would have to be decoded.
 
 use std::path::Path;
 
 use lemon_pdf::image::Image;
 
-/// A JPEG file that is going to be embedded into the PDF.
+/// A JPEG or PNG file that is going to be embedded into the PDF.
 #[derive(Debug)]
-pub struct JpegImage {
+pub struct RasterImage {
     /// The complete file.
     pub data: Vec<u8>,
     /// The size in pixels, which is also the intrinsic size in CSS pixels.
@@ -17,17 +19,16 @@ pub struct JpegImage {
     pub height: u32,
 }
 
-impl JpegImage {
-    /// Checks that `data` is a JPEG file that can be embedded and reads its size.
-    pub fn from_bytes(data: Vec<u8>) -> Result<JpegImage, String> {
-        if data.starts_with(&[0x89, b'P', b'N', b'G']) {
-            return Err("PNG images are not supported yet, only JPEG".to_owned());
-        }
-        let image = Image::from_jpeg(data.clone()).map_err(|error| error.to_string())?;
+impl RasterImage {
+    /// Checks that `data` is a JPEG or PNG file that can be embedded and reads its size.
+    ///
+    /// The format is recognized by the signature of the file, not by its name or MIME type.
+    pub fn from_bytes(data: Vec<u8>) -> Result<RasterImage, String> {
+        let image = to_pdf_image(&data)?;
         if image.width() == 0 || image.height() == 0 {
             return Err("the image has no pixels".to_owned());
         }
-        Ok(JpegImage {
+        Ok(RasterImage {
             width: image.width(),
             height: image.height(),
             data,
@@ -36,7 +37,17 @@ impl JpegImage {
 
     /// The image as the PDF library embeds it.
     pub fn to_pdf_image(&self) -> Result<Image, String> {
-        Image::from_jpeg(self.data.clone()).map_err(|error| error.to_string())
+        to_pdf_image(&self.data)
+    }
+}
+
+fn to_pdf_image(data: &[u8]) -> Result<Image, String> {
+    if data.starts_with(&[0x89, b'P', b'N', b'G']) {
+        Image::from_png(data).map_err(|error| error.to_string())
+    } else if data.starts_with(&[0xFF, 0xD8]) {
+        Image::from_jpeg(data.to_vec()).map_err(|error| error.to_string())
+    } else {
+        Err("only JPEG and PNG images are supported".to_owned())
     }
 }
 
@@ -45,7 +56,7 @@ impl JpegImage {
 /// `src` is a `data:` URI with base64 data or the path of a file inside of `base_dir` (the
 /// directory of the document). Other files are not read, so that a document cannot embed
 /// arbitrary files of the machine that renders it, and nothing is fetched from the network.
-pub fn load(src: &str, base_dir: &Path) -> Result<JpegImage, String> {
+pub fn load(src: &str, base_dir: &Path) -> Result<RasterImage, String> {
     let src = src.trim();
     if src.is_empty() {
         return Err("the `src` attribute is empty".to_owned());
@@ -57,7 +68,7 @@ pub fn load(src: &str, base_dir: &Path) -> Result<JpegImage, String> {
         if !header.to_ascii_lowercase().ends_with(";base64") {
             return Err("only base64 data URIs are supported".to_owned());
         }
-        return JpegImage::from_bytes(decode_base64(payload)?);
+        return RasterImage::from_bytes(decode_base64(payload)?);
     }
     if let Some(colon) = src.find(':') {
         // a scheme (`https:`), not a directory with a colon in its name
@@ -90,7 +101,7 @@ pub fn load(src: &str, base_dir: &Path) -> Result<JpegImage, String> {
     }
     let data = std::fs::read(&canonical)
         .map_err(|error| format!("cannot read {}: {}", canonical.display(), error))?;
-    JpegImage::from_bytes(data)
+    RasterImage::from_bytes(data)
 }
 
 fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
@@ -174,9 +185,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_jpeg_data() {
-        assert!(JpegImage::from_bytes(b"not an image".to_vec()).is_err());
-        let error = JpegImage::from_bytes(vec![0x89, b'P', b'N', b'G', 0, 0]).unwrap_err();
+    fn rejects_other_data() {
+        let error = RasterImage::from_bytes(b"not an image".to_vec()).unwrap_err();
+        assert!(error.contains("JPEG and PNG"), "{}", error);
+        let error = RasterImage::from_bytes(vec![0x89, b'P', b'N', b'G', 0, 0]).unwrap_err();
         assert!(error.contains("PNG"), "{}", error);
     }
 
