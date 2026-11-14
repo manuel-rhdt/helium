@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boxes, backgrounds and layout</title>
+<meta name="description" content="A style sheet of what the page can be made of: linear, radial and conic gradients, blend modes, tiled patterns, rounded boxes, and a flexbox and grid dashboard.">
+<meta name="keywords" content="gradients, blend modes, tiling, flexbox, grid, border-radius">
+<style>
+  @page { size: A4; margin: 14mm 14mm 16mm;
+    @bottom-left { content: "Boxes, backgrounds and layout"; font: 7.5pt sans-serif; color: #7c8794; }
+    @bottom-right { content: counter(page); font: 7.5pt sans-serif; color: #7c8794; } }
+  html { font-family: sans-serif; font-size: 9pt; line-height: 1.45; color: #0f1c2e; }
+  body { margin: 0; }
+
+  .masthead { display: flex; align-items: center; gap: 16pt; padding: 16pt 20pt; border-radius: 14pt; background: linear-gradient(110deg, #0f1c2e 0%, #17394f 60%, #1f6f77 100%); color: #ffffff; }
+  .orb { width: 52pt; height: 52pt; border-radius: 50%; background: conic-gradient(from 20deg, #ff6b3d, #fad68c, #1f9ea0, #3f5fe0, #ff6b3d); }
+  .masthead h1 { margin: 0; font-size: 21pt; line-height: 1.1; letter-spacing: -0.2pt; }
+  .masthead p { margin: 4pt 0 0; color: #b9d4da; font-size: 9.5pt; }
+
+  h2 { break-after: avoid; display: flex; align-items: center; gap: 8pt; font-size: 8pt; letter-spacing: 2pt; text-transform: uppercase; color: #1f6f77; margin: 20pt 0 8pt; }
+  h2 b { display: inline-block; width: 16pt; height: 3pt; border-radius: 2pt; background: #ff6b3d; }
+
+  .row { display: flex; gap: 8pt; }
+  .sw { flex: 1; }
+  .sw .b { height: 52pt; border-radius: 8pt; }
+  .sw span { display: block; margin-top: 3pt; color: #55657a; font-size: 7.5pt; }
+  .sw span b { color: #0f1c2e; }
+
+  .g1 { background: linear-gradient(135deg, #0f1c2e, #1f9ea0 60%, #fad68c); }
+  .g2 { background: radial-gradient(circle at 30% 30%, #ffffff, #4aa3ff 40%, #0b1f4d); }
+  .g3 { background: conic-gradient(#ff6b3d, #fad68c, #1f9ea0, #ff6b3d); }
+  .g4 { background: repeating-linear-gradient(45deg, #fad68c 0 7pt, #0f1c2e 7pt 14pt); }
+  .g5 { background: repeating-radial-gradient(circle at center, #ffffff 0 5pt, #1f6f77 5pt 10pt); }
+  .g6 { background: linear-gradient(90deg, #ff6b3d 0 33%, #fad68c 33% 66%, #1f9ea0 66%); }
+
+  .blend { height: 52pt; border-radius: 8pt; background-color: #fad68c; background-image: linear-gradient(90deg, #ff3d5a, #3f5fe0); }
+  .m1 { background-blend-mode: multiply; } .m2 { background-blend-mode: screen; background-color: #0f1c2e; }
+  .m3 { background-blend-mode: difference; } .m4 { background-blend-mode: overlay; background-color: #1f9ea0; }
+
+  .pat { height: 62pt; border-radius: 8pt; border: 1pt solid #0f1c2e; }
+  .p1 { background: conic-gradient(#0f1c2e 25%, #f4efe1 0 50%, #0f1c2e 0 75%, #f4efe1 0) 0 0 / 16pt 16pt; }
+  .p2 { background-color: #f4efe1; background-image: radial-gradient(circle, #ff6b3d 0 2.2pt, transparent 2.6pt); background-size: 10pt 10pt; }
+  .p3 { background-color: #17394f; background-image: linear-gradient(#2d6a7c 1pt, transparent 1pt), linear-gradient(90deg, #2d6a7c 1pt, transparent 1pt); background-size: 10pt 10pt; }
+  .p4 { background-color: #1f9ea0; background-image: linear-gradient(135deg, #fad68c 25%, transparent 25%), linear-gradient(225deg, #fad68c 25%, transparent 25%); background-size: 14pt 14pt; }
+
+  .shapes { display: flex; align-items: flex-end; gap: 10pt; }
+  .shapes div { background: linear-gradient(160deg, #3f5fe0, #1f9ea0); height: 44pt; }
+  .s1 { width: 44pt; border-radius: 50%; }
+  .s2 { width: 88pt; border-radius: 22pt; }
+  .s3 { width: 44pt; border-radius: 22pt 22pt 0 22pt; }
+  .shapes .s4 { width: 44pt; border-radius: 0 22pt 0 22pt; background: linear-gradient(160deg, #ff6b3d, #fad68c); }
+  .s5 { width: 66pt; border-radius: 6pt; border: 3pt solid #0f1c2e; border-top-color: #ff6b3d; border-left-color: #fad68c; border-bottom-width: 7pt; }
+  .s6 { width: 44pt; border-radius: 8pt 30pt; border: 2pt solid #0f1c2e; }
+
+  .dash { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8pt; }
+  .card { border-radius: 10pt; padding: 11pt 13pt; background: #f1f4f7; }
+  .card.wide { grid-column: span 2; }
+  .card.dark { background: #0f1c2e; color: #ffffff; }
+  .card.warm { background: linear-gradient(135deg, #ff6b3d, #fad68c); color: #0f1c2e; }
+  .card .k { font-size: 7pt; letter-spacing: 1.6pt; text-transform: uppercase; color: #55657a; }
+  .dark .k { color: #9fc2ca; } .warm .k { color: #5b2a14; }
+  .card .n { font-size: 24pt; font-weight: bold; letter-spacing: -0.5pt; line-height: 1.1; margin: 3pt 0 1pt; }
+  .card .d { font-size: 8pt; color: #55657a; } .dark .d { color: #9fc2ca; } .warm .d { color: #5b2a14; }
+  .bars { display: flex; align-items: flex-end; gap: 4pt; height: 40pt; margin-top: 8pt; }
+  .bars i { flex: 1; border-radius: 2pt 2pt 0 0; background: linear-gradient(180deg, #1f9ea0, #17394f); }
+  .list { margin: 6pt 0 0; padding: 0; list-style-type: none; }
+  .list li { display: flex; justify-content: space-between; padding: 3.5pt 0; border-bottom: 0.5pt solid #d3dbe3; }
+  .list li:last-child { border-bottom: none; }
+  .tag { display: inline-block; padding: 1pt 7pt; border-radius: 99pt; background: #d6f1ef; color: #0e5d5f; font-size: 7pt; font-weight: bold; }
+  .tag.o { background: #ffe3d6; color: #a1370f; }
+
+  .cols { display: flex; gap: 16pt; }
+  .cols > div { flex: 1; }
+  .cols p { margin: 0 0 6pt; text-align: justify; hyphens: auto; font: 9.5pt/1.5 serif; }
+  .cols p + p { text-indent: 1.2em; }
+  .quote { border-left: 3pt solid #ff6b3d; padding: 2pt 0 2pt 12pt; margin: 0 0 10pt; font: italic 13pt/1.35 serif; color: #17394f; }
+  .quote small { display: block; margin-top: 4pt; font: 7.5pt sans-serif; letter-spacing: 1.4pt; text-transform: uppercase; font-style: normal; color: #55657a; }
+  ol, ul { margin: 0 0 6pt; padding-left: 16pt; font: 9.5pt/1.5 serif; }
+  .lists { display: flex; gap: 16pt; }
+  .lists > div { flex: 1; }
+  .lists h3 { margin: 0 0 2pt; font: bold 7.5pt sans-serif; letter-spacing: 1.4pt; text-transform: uppercase; color: #55657a; }
+
+  table.t { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  .t th { background: #0f1c2e; color: #ffffff; text-align: right; padding: 6pt 10pt; font-size: 7.5pt; letter-spacing: 1.2pt; text-transform: uppercase; }
+  .t th:first-child, .t td:first-child { text-align: left; }
+  .t td { text-align: right; padding: 5.5pt 10pt; border-bottom: 0.5pt solid #d3dbe3; }
+  .t tr:nth-child(even) td { background: #f1f4f7; }
+  .t td b { color: #0e5d5f; }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="orb"></div>
+  <div>
+    <h1>Boxes, backgrounds and layout</h1>
+    <p>Everything on this page is plain CSS: no images, no scripts.</p>
+  </div>
+</div>
+
+<h2><b></b>Gradients</h2>
+<div class="row">
+  <div class="sw"><div class="b g1"></div><span><b>linear</b> 135deg, three stops</span></div>
+  <div class="sw"><div class="b g2"></div><span><b>radial</b> circle at 30% 30%</span></div>
+  <div class="sw"><div class="b g3"></div><span><b>conic</b> colour wheel</span></div>
+  <div class="sw"><div class="b g4"></div><span><b>repeating</b> linear stripes</span></div>
+  <div class="sw"><div class="b g5"></div><span><b>repeating</b> radial rings</span></div>
+  <div class="sw"><div class="b g6"></div><span><b>hard stops</b> flag</span></div>
+</div>
+
+<h2><b></b>Blend modes</h2>
+<div class="row">
+  <div class="sw"><div class="blend m1"></div><span><b>multiply</b></span></div>
+  <div class="sw"><div class="blend m2"></div><span><b>screen</b></span></div>
+  <div class="sw"><div class="blend m3"></div><span><b>difference</b></span></div>
+  <div class="sw"><div class="blend m4"></div><span><b>overlay</b></span></div>
+</div>
+
+<h2><b></b>Tiled patterns</h2>
+<div class="row">
+  <div class="sw"><div class="pat p1"></div><span><b>checkerboard</b> conic tile</span></div>
+  <div class="sw"><div class="pat p2"></div><span><b>dots</b> radial tile</span></div>
+  <div class="sw"><div class="pat p3"></div><span><b>grid</b> two line gradients</span></div>
+  <div class="sw"><div class="pat p4"></div><span><b>zigzag</b> mirrored tiles</span></div>
+</div>
+
+<h2><b></b>Rounded boxes and borders</h2>
+<div class="shapes">
+  <div class="s1"></div><div class="s2"></div><div class="s3"></div><div class="s4"></div><div class="s5"></div><div class="s6"></div>
+</div>
+
+<div style="break-before: page"></div>
+<h2 style="margin-top:0"><b></b>Grid and flexbox</h2>
+<div class="dash">
+  <div class="card dark wide">
+    <div class="k">Orders this week</div>
+    <div class="n">12,480</div>
+    <div class="d">+18% against last week</div>
+    <div class="bars"><i style="height:35%"></i><i style="height:48%"></i><i style="height:42%"></i><i style="height:60%"></i><i style="height:55%"></i><i style="height:72%"></i><i style="height:66%"></i><i style="height:84%"></i><i style="height:78%"></i><i style="height:100%"></i></div>
+  </div>
+  <div class="card warm">
+    <div class="k">Average basket</div>
+    <div class="n">£38</div>
+    <div class="d">per order</div>
+  </div>
+  <div class="card">
+    <div class="k">Returning</div>
+    <div class="n">64%</div>
+    <div class="d">of all customers</div>
+  </div>
+  <div class="card wide">
+    <div class="k">Latest orders · sample data</div>
+    <ul class="list">
+      <li><span>#4821 · Whole-bean coffee, 1 kg</span><span class="tag">shipped</span></li>
+      <li><span>#4820 · Ceramic dripper</span><span class="tag">shipped</span></li>
+      <li><span>#4819 · Gift subscription</span><span class="tag o">packing</span></li>
+    </ul>
+  </div>
+</div>
+
+<h2><b></b>Text and lists</h2>
+<div class="cols">
+  <div>
+    <p>Typography is the art of making written language legible and appealing. A good page has a measure of about sixty-five characters, generous leading and margins that are wide enough to hold the page in a hand, and the text is justified with hyphenation so that the gaps between words stay even.</p>
+    <p>Helium sets this paragraph with automatic hyphenation and justification, the way it sets books and letters. The hyphenation dictionaries are built in and cover many languages.</p>
+  </div>
+  <div>
+    <div class="quote">“Make it work, make it right, then make it fast.”<small>Kent Beck</small></div>
+    <div class="lists">
+      <div><h3>Decimal</h3><ol><li>Draft</li><li>Review</li><li>Publish</li></ol></div>
+      <div><h3>Roman</h3><ol style="list-style-type: lower-roman"><li>Plan</li><li>Build</li><li>Ship</li></ol></div>
+      <div><h3>Letters</h3><ol style="list-style-type: upper-alpha"><li>Fast</li><li>Small</li><li>Correct</li></ol></div>
+    </div>
+  </div>
+</div>
+
+<h2><b></b>Tables</h2>
+<table class="t">
+  <tr><th>Region</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th></tr>
+  <tr><td>North</td><td>1,240</td><td>1,310</td><td>1,420</td><td>1,610</td></tr>
+  <tr><td>South</td><td>980</td><td>1,020</td><td>1,150</td><td>1,230</td></tr>
+  <tr><td>East</td><td>1,110</td><td>1,190</td><td>1,260</td><td>1,380</td></tr>
+  <tr><td><b>Total</b></td><td><b>3,330</b></td><td><b>3,520</b></td><td><b>3,830</b></td><td><b>4,220</b></td></tr>
+</table>
+<p style="font-size:7.5pt;color:#55657a;margin-top:4pt">Sample data, in thousands of pounds.</p>
+
+</body>
+</html>
