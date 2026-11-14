@@ -199,6 +199,23 @@ impl PageMargins {
     }
 }
 
+/// The style of every kind of page: the declarations of the `@page` rules that apply to it, of
+/// which the background is painted over the whole page.
+#[derive(Debug, Default, Clone)]
+pub struct PageStyles {
+    pub names: HashSet<Arc<str>>,
+    pub pages: HashMap<PageContext, Arc<crate::style::properties::computed::ComputedValues>>,
+}
+
+impl PageStyles {
+    pub fn style(
+        &self,
+        page: &PageContext,
+    ) -> Option<&Arc<crate::style::properties::computed::ComputedValues>> {
+        self.pages.get(&normalize(page, &self.names))
+    }
+}
+
 /// The pages of the document, in order. Written by the paginator.
 #[derive(Debug, Default, Clone)]
 pub struct Pages(pub Vec<PageContext>);

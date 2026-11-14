@@ -616,6 +616,14 @@ impl Component for PageGroupBox {
     type Storage = DenseVecStorage<Self>;
 }
 
+/// The root element and the body: the background of one of them is the background of the
+/// canvas, which is the background of every page.
+#[derive(Debug, Default, Copy, Clone)]
+pub struct CanvasEntities {
+    pub html: Option<Entity>,
+    pub body: Option<Entity>,
+}
+
 /// The laid out formula, stored on the `<math>` element.
 #[derive(Debug)]
 pub struct MathBox {

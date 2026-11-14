@@ -233,6 +233,7 @@ pub fn layout(
 
     // The left and right margins of the kinds of pages (the inner and outer margins of a book)
     let rtl = flow_constructor.is_rtl();
+    let mut page_styles = pages::PageStyles::default();
     let mut page_margins = pages::PageMargins {
         rtl,
         base: margin,
@@ -240,6 +241,7 @@ pub fn layout(
     };
     if !crop {
         page_margins.names = pages::selected_names(&flow_constructor.styles);
+        page_styles.names = page_margins.names.clone();
         for page in pages::representative_pages(&page_margins.names, rtl) {
             let mut style_builder = StyleBuilder::new(Default::default());
             for rule in pages::matching_rules(&flow_constructor.styles, &page) {
@@ -248,6 +250,9 @@ pub fn layout(
                 }
             }
             let style = style_builder.build();
+            page_styles
+                .pages
+                .insert(page.clone(), std::sync::Arc::new(style.clone()));
             page_margins.pages.insert(
                 page,
                 EdgeValues {
@@ -276,6 +281,7 @@ pub fn layout(
     let mut layout_context = flow_constructor.layout_context();
     layout_context.insert(margin_boxes);
     layout_context.insert(page_margins);
+    layout_context.insert(page_styles);
 
     // Record which layout entities are part of a hyperlink so that the clickable areas can be
     // computed when the line boxes are created.
