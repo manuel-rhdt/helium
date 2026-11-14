@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Boxes, backgrounds and layout</title>
-<meta name="description" content="A style sheet of what the page can be made of: linear, radial and conic gradients, blend modes, tiled patterns, rounded boxes, and a flexbox and grid dashboard, under a masthead that fills the width of a first page without margins.">
+<meta name="description" content="A style sheet of what the page can be made of: linear, radial and conic gradients, blend modes, tiled patterns, rounded boxes, SVG images, and a flexbox and grid dashboard, under a masthead that fills the width of a first page without margins.">
 <meta name="keywords" content="gradients, blend modes, tiling, flexbox, grid, border-radius">
 <style>
   @page { size: A4; margin: 14mm 14mm 16mm;
@@ -46,6 +46,7 @@
   .p3 { background-color: #17394f; background-image: linear-gradient(#2d6a7c 1pt, transparent 1pt), linear-gradient(90deg, #2d6a7c 1pt, transparent 1pt); background-size: 10pt 10pt; }
   .p4 { background-color: #1f9ea0; background-image: linear-gradient(135deg, #fad68c 25%, transparent 25%), linear-gradient(225deg, #fad68c 25%, transparent 25%); background-size: 14pt 14pt; }
 
+  .svgs img { display: block; width: 100%; }
   .shapes { display: flex; align-items: flex-end; gap: 10pt; }
   .shapes div { background: linear-gradient(160deg, #3f5fe0, #1f9ea0); height: 44pt; }
   .s1 { width: 44pt; border-radius: 50%; }
@@ -97,7 +98,7 @@
   <div class="orb"></div>
   <div>
     <h1>Boxes, backgrounds and layout</h1>
-    <p>Everything in this document is plain CSS: no images, no scripts.</p>
+    <p>Everything in this document is plain CSS, apart from a few SVG images.</p>
   </div>
 </div>
 
@@ -131,6 +132,14 @@
 <h2><b></b>Rounded boxes and borders</h2>
 <div class="shapes">
   <div class="s1"></div><div class="s2"></div><div class="s3"></div><div class="s4"></div><div class="s5"></div><div class="s6"></div>
+</div>
+
+<h2><b></b>SVG images</h2>
+<div class="row svgs">
+  <div class="sw"><img src="svg-gradient.svg" alt=""><span><b>clip path</b> and gradient</span></div>
+  <div class="sw"><img src="svg-mask.svg" alt=""><span><b>luminance mask</b></span></div>
+  <div class="sw"><img src="svg-pattern.svg" alt=""><span><b>pattern</b> and dashed stroke</span></div>
+  <div class="sw"><img src="svg-text.svg" alt=""><span><b>text</b> as outlines</span></div>
 </div>
 
 </div>

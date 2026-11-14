@@ -5,14 +5,14 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 
 | Directory | Shows |
 | --- | --- |
-| `invoice/` | gradient header card, flexbox and grid columns, a line-item table, badges |
+| `invoice/` | gradient header card with an SVG logo, flexbox and grid columns, a line-item table, badges |
 | `letter/` | letterhead, a different first page, running headers, hyphenated justified text |
 | `report/` | a cover card, linked contents, a JPEG figure, data table, a flexbox bar chart, code |
-| `math-notes/` | MathML: integrals, sums, matrices, theorem boxes, numbered equations |
+| `math-notes/` | MathML: integrals, sums, matrices, theorem boxes, numbered equations, an SVG plot |
 | `book/` | a trade paperback: facing pages, running heads, chapter openings |
 | `poetry/` | verse on small pages |
 | `scripts/` | one sentence in 30 languages and more than 20 scripts |
-| `design/` | gradients, blend modes, tiled patterns, rounded boxes, a dashboard |
+| `design/` | gradients, blend modes, tiled patterns, rounded boxes, SVG images (clip path, mask, pattern, text), a dashboard |
 
 ## Build locally
 
