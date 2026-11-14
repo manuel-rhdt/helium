@@ -33,7 +33,6 @@ fn example_documents_render_to_pdf() {
 
         let result = common::helium()
             .unwrap()
-            .args(["--layout-engine", "taffy"])
             .arg(input)
             .arg(&output)
             .output()
