@@ -1102,8 +1102,8 @@ impl EntityConstructor {
 
     // called on bottom-up traversal
     fn build_math_node<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
-        use math_render::host::{MathElement, NodeKind};
-        use math_render::unicode_math::StringExtMathml;
+        use formel::host::{MathElement, NodeKind};
+        use formel::unicode_math::StringExtMathml;
 
         let ParsedData::Element(element_data) = node.html_data() else {
             return;
