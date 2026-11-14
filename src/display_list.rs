@@ -1,9 +1,10 @@
 use crate::layout::components::{
-    Decoration, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
+    Decoration, DecorationFragment, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
     TransformMatrix, VectorGraphics, ZIndex,
 };
 use crate::layout::normal_formatting::Pages;
-use crate::style::properties::computed::{PixelLength, RGBA};
+use crate::style::properties::computed::{ComputedValues, PixelLength, RGBA};
+use crate::style::properties::gradient::{BoxSize, Image, Resolved};
 
 use specs::prelude::*;
 use std::ops::Deref;
@@ -158,6 +159,43 @@ fn resolve_radii(
     r
 }
 
+/// A closed path around `rect`.
+fn rect_path(rect: Rect) -> Vec<PathSegment> {
+    let p = |x: PixelLength, y: PixelLength| Point::new(x, y);
+    vec![
+        PathSegment::MoveTo(p(rect.x, rect.y)),
+        PathSegment::LineTo(p(rect.xmax(), rect.y)),
+        PathSegment::LineTo(p(rect.xmax(), rect.ymax())),
+        PathSegment::LineTo(p(rect.x, rect.ymax())),
+        PathSegment::Close,
+    ]
+}
+
+/// The gradients in the `background-image` of a style, in the order they are painted (the
+/// first image is on top, so it is painted last). `area` is the padding box, which positions and
+/// sizes the gradients, and `paint` the border box that they are painted into.
+fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<Resolved> {
+    use crate::style::properties::color::color_to_rgba;
+    let current = color_to_rgba(style.font.color);
+    let size = |rect: Rect| BoxSize {
+        x: rect.x.0,
+        y: rect.y.0,
+        width: rect.width.0,
+        height: rect.height.0,
+    };
+    let (area, paint) = (size(area), size(paint));
+    style
+        .background
+        .background_image
+        .iter()
+        .rev()
+        .filter_map(|image| match image {
+            Image::Gradient(gradient) => gradient.with_current_color(current).resolve(area, paint),
+            Image::None => None,
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
     LineString {
@@ -175,6 +213,8 @@ pub enum DisplayItem {
         path: Vec<PathSegment>,
         even_odd: bool,
     },
+    /// Paints a gradient over the current clip.
+    Gradient(Box<Resolved>),
     Color(RGBA),
     StrokeColor(RGBA),
     Text(Point, PixelLength, String, Glyphs),
@@ -234,6 +274,23 @@ impl DisplayList {
         self.append(DisplayItem::Pop, entity, z);
     }
 
+    /// Paints gradients, clipped to the (rounded) border box `clip`.
+    fn gradients(&mut self, gradients: &[Resolved], clip: &[PathSegment], entity: Entity, z: ZIndex) {
+        for gradient in gradients {
+            self.append(DisplayItem::Push, entity, z);
+            self.append(
+                DisplayItem::ClipPath {
+                    path: clip.to_vec(),
+                    even_odd: false,
+                },
+                entity,
+                z,
+            );
+            self.append(DisplayItem::Gradient(Box::new(gradient.clone())), entity, z);
+            self.append(DisplayItem::Pop, entity, z);
+        }
+    }
+
     /// Paints the background and borders of a box with rounded corners. `outer` are the radii
     /// of the border edge, the radii of the padding edge are derived from them.
     #[allow(clippy::too_many_arguments)]
@@ -244,6 +301,7 @@ impl DisplayList {
         border: EdgeValues<PixelLength>,
         border_color: EdgeValues<RGBA>,
         background_color: RGBA,
+        gradients: &[Resolved],
         entity: Entity,
         z: ZIndex,
     ) {
@@ -263,6 +321,7 @@ impl DisplayList {
             );
             self.append(DisplayItem::Pop, entity, z);
         }
+        self.gradients(gradients, &outer_path, entity, z);
 
         if border.top <= zero && border.bottom <= zero && border.left <= zero && border.right <= zero
         {
@@ -412,9 +471,14 @@ impl<'a> System<'a> for DisplayDecoration {
         ReadStorage<'a, Position>,
         ReadStorage<'a, Decoration>,
         ReadStorage<'a, crate::layout::components::Fragmented>,
+        ReadStorage<'a, ComputedValues>,
+        ReadStorage<'a, DecorationFragment>,
     );
 
-    fn run(&mut self, (entities, positions, decorations, fragmented): Self::SystemData) {
+    fn run(
+        &mut self,
+        (entities, positions, decorations, fragmented, styles, fragments): Self::SystemData,
+    ) {
         for (
             entity,
             &Position {
@@ -454,11 +518,25 @@ impl<'a> System<'a> for DisplayDecoration {
                 width: width + padding.left + padding.right + border.left + border.right,
                 height: height + padding.top + padding.bottom + border.top + border.bottom,
             };
+            // the images of a fragment of a box that is split across pages are those of the box
+            let style_entity = fragments.get(entity).map_or(entity, |fragment| fragment.0);
+            let gradients = styles
+                .get(style_entity)
+                .map(|style| {
+                    let padding_box = Rect {
+                        x: x - padding.left,
+                        y: y - padding.top,
+                        width: width + padding.left + padding.right,
+                        height: height + padding.top + padding.bottom,
+                    };
+                    background_gradients(style, padding_box, border_box)
+                })
+                .unwrap_or_default();
             if collapsed.is_none() && deco.radius.is_rounded() {
                 let outer = resolve_radii(&deco.radius, border_box.width, border_box.height);
                 if outer.iter().any(|&(rx, ry)| rx.0 > 0.0 && ry.0 > 0.0) {
                     self.display_list.rounded_decoration(
-                        border_box, outer, border, border_color, background_color, entity, z,
+                        border_box, outer, border, border_color, background_color, &gradients, entity, z,
                     );
                     continue;
                 }
@@ -480,6 +558,8 @@ impl<'a> System<'a> for DisplayDecoration {
                 );
                 self.display_list.append(DisplayItem::Pop, entity, z);
             }
+            self.display_list
+                .gradients(&gradients, &rect_path(border_box), entity, z);
 
             let xmin = x - padding.left - border.left;
             let xmax = x + width + padding.right + border.right;
