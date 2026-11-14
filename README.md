@@ -68,6 +68,10 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
   `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space`, `hyphens`,
   `direction`, `unicode-bidi`, `list-style-type`.
+- **Transforms:** `transform` (2D: `translate`, `scale`, `rotate`, `skew` and their axis forms,
+  `matrix`; applies to the box and everything inside of it) and `transform-origin`. A transform
+  does not change the layout, does not apply to non-replaced inline boxes, and a box that is
+  split over pages is transformed on its first page only.
 - **Backgrounds:** `background` and `background-color`, `-image` (linear, radial and conic
   gradients, also repeating), `-size`, `-position`, `-repeat`, `-blend-mode`.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
@@ -117,7 +121,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`, `@media`,
 `@supports`, `@import`, `!important`, `var()`, `calc()`, `overflow`, `float`, `position:
-relative`/`fixed`/`sticky`, `z-index`, `transform`, `opacity` and color alpha, `box-shadow`,
+relative`/`fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
 `outline`, border styles other than `solid`, `vertical-align`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `rem`/`vw`/`vh` and other units, scripting, and form
 interaction.

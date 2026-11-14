@@ -98,6 +98,23 @@ fn paint_items(
         match item {
             DisplayItem::Push => page_context.save_graphics_state()?,
             DisplayItem::Pop => page_context.restore_graphics_state()?,
+        &DisplayItem::Transform(matrix) => {
+            // the matrix is in pixels with y down, from the top left corner of the page: bring
+            // it to the points and the y axis of the PDF
+            use crate::style::properties::transform::multiply;
+            let h = page_height.0;
+            let to_pdf = [0.75, 0.0, 0.0, -0.75, 0.0, 0.75 * h];
+            let from_pdf = [1.0 / 0.75, 0.0, 0.0, -1.0 / 0.75, 0.0, h];
+            let m = multiply(multiply(to_pdf, matrix), from_pdf);
+            page_context.concatenate_matrix(
+                f64::from(m[0]),
+                f64::from(m[1]),
+                f64::from(m[2]),
+                f64::from(m[3]),
+                Pt(f64::from(m[4])),
+                Pt(f64::from(m[5])),
+            )?;
+        }
             DisplayItem::Translate(x, y) => {
                 let x = *x;
                 let y = -*y;
