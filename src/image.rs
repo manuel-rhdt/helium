@@ -53,6 +53,14 @@ impl LoadedImage {
     }
 }
 
+/// The shaper of the text of SVG images, shared by all of them so that it keeps the fonts it has
+/// loaded.
+fn shaper() -> std::sync::Arc<dyn usvg::TextShaper> {
+    static SHAPER: std::sync::OnceLock<std::sync::Arc<crate::svg_text::HarfbuzzShaper>> =
+        std::sync::OnceLock::new();
+    SHAPER.get_or_init(Default::default).clone()
+}
+
 /// The options for reading SVG: its own images are resolved under the same rules as the images
 /// of the document (files only inside of `base_dir`, and no network) and its text uses the fonts
 /// of the document.
@@ -61,6 +69,7 @@ fn svg_options(base_dir: &Path) -> usvg::Options<'static> {
     options.resources_dir = Some(base_dir.to_path_buf());
     options.fontdb = crate::layout::text::font::svg_font_database();
     options.font_family = "serif".to_owned();
+    options.text_shaper = Some(shaper());
     // the size of an SVG that has none, like the default object size of CSS
     options.default_size = usvg::Size::from_wh(300.0, 150.0).unwrap();
     options.image_href_resolver.resolve_string = {
