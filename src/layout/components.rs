@@ -571,10 +571,10 @@ pub struct TextList {
 
 /// A node of a MathML formula (an element inside, or including, `<math>`).
 ///
-/// The math layout system reads these as a [`math_render::host::MathTree`].
+/// The math layout system reads these as a [`formel::host::MathTree`].
 #[derive(Debug, Clone)]
 pub struct MathNode {
-    pub kind: math_render::host::NodeKind,
+    pub kind: formel::host::NodeKind,
     /// The rendered child elements.
     pub children: Vec<Entity>,
     /// The text of a token element (`mi`, `mn`, `mo`, `mtext`, `ms`) after text transforms.
@@ -613,7 +613,7 @@ pub struct MathBox {
         Entity,
         PixelLength,
         PixelLength,
-        math_render::host::NodeLayout,
+        formel::host::NodeLayout,
     )>,
 }
 
