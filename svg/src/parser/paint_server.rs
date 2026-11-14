@@ -585,6 +585,7 @@ fn uses_context_bbox(group: &Group) -> bool {
         Node::Image(image) => {
             matches!(&image.kind, ImageKind::SVG(tree) if uses_context_bbox(&tree.root))
         }
+        Node::Foreign(_) => false,
         Node::Text(text) => text
             .chunks
             .iter()
@@ -660,6 +661,7 @@ fn node_to_user_coordinates(
                 update_paint_servers(&mut tree.root, context_transform, context_bbox, None, cache);
             }
         }
+        Node::Foreign(_) => {}
         Node::Text(text) => {
             // By the SVG spec, `tspan` doesn't have a bbox and uses the parent `text` bbox.
             // Therefore we have to use text's bbox when converting tspan and flatted text

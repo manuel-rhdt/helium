@@ -28,6 +28,8 @@ pub struct Document<'input> {
     // Keyed by the element that uses a reference rather than the one that sets it, so that an
     // inherited reference stays valid outside the cycle it closes.
     circular_references: HashSet<(NodeId, AId)>,
+    /// The handles that the builder of the XML document attached to elements.
+    handles: HashMap<NodeId, crate::xml::Handle>,
 }
 
 impl<'input> Document<'input> {
@@ -405,6 +407,11 @@ impl<'a, 'input: 'a> SvgNode<'a, 'input> {
         }
     }
 
+    /// The handle that the builder of the XML document attached to the element.
+    pub fn handle(&self) -> Option<crate::xml::Handle> {
+        self.doc.handles.get(&self.id).copied()
+    }
+
     /// Returns node's text data.
     ///
     /// For text nodes returns its content. For elements returns the first child node text.
@@ -715,6 +722,7 @@ impl EId {
                 | EId::Rect
                 | EId::Text
                 | EId::Use
+                | EId::ForeignObject
         )
     }
 

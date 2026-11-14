@@ -278,6 +278,8 @@ pub fn layout(
         flow_constructor.resolve_margin_boxes()
     };
 
+    // the style sheets and the `foreignObject` elements of the SVG images, for their content
+    let (shared_styles, islands) = flow_constructor.take_shared();
     let mut layout_context = flow_constructor.layout_context();
     layout_context.insert(margin_boxes);
     layout_context.insert(page_margins);
@@ -376,5 +378,131 @@ pub fn layout(
     // pagination.
     resolve_hyperlink_destinations(&mut layout_context, &dom);
 
+    layout_islands(&mut layout_context, shared_styles, islands, stylesheet_base_dir)?;
+
     Ok(layout_context)
+}
+
+/// Lays out the content of the `foreignObject` elements of the SVG images, each as a page of the
+/// size of the element, and stores the pages in `main` (`display_list::IslandPages`).
+///
+/// The content of an element can contain SVG images with `foreignObject` elements of their own.
+/// They are added to the list and come after the element that has them.
+fn layout_islands(
+    main: &mut World,
+    mut styles: crate::style::parse::Styles,
+    mut islands: Vec<construct::IslandSpec>,
+    base_dir: &Path,
+) -> Result<(), String> {
+    let mut pages = vec![];
+    let mut index = 0;
+    while index < islands.len() {
+        let spec = islands[index].clone();
+        index += 1;
+        let size = (PixelLength(spec.width), PixelLength(spec.height));
+        if spec.width <= 0.0 || spec.height <= 0.0 {
+            pages.push(Default::default());
+            continue;
+        }
+        let fonts: FontMap = (*main.read_resource::<FontMap>()).clone();
+        let mut constructor = FlowConstructor::for_island(
+            World::new(),
+            base_dir.to_path_buf(),
+            std::mem::take(&mut styles),
+            fonts,
+            (spec.node.clone(), spec.width, spec.height),
+            std::mem::take(&mut islands),
+        );
+        constructor.construct_island();
+        let (back_styles, back_islands) = constructor.take_shared();
+        styles = back_styles;
+        islands = back_islands;
+        let mut world = constructor.layout_context();
+        run_island_passes(&mut world, size.0, size.1)?;
+        let mut printed = crate::display_list::generate_display_list(&mut world);
+        // the fonts that the content uses are embedded with the rest
+        {
+            let island_fonts = world.read_resource::<FontMap>();
+            let mut main_fonts = main.write_resource::<FontMap>();
+            for (name, font) in island_fonts.iter() {
+                main_fonts.entry(name.clone()).or_insert_with(|| font.clone());
+            }
+        }
+        // the first page is the visible one; what does not fit is cut off, like the content of
+        // a `foreignObject`
+        let mut page = if printed.pages.is_empty() {
+            Default::default()
+        } else {
+            printed.pages.swap_remove(0)
+        };
+        page.width = size.0;
+        page.height = size.1;
+        pages.push(page);
+    }
+    main.insert(crate::display_list::IslandPages(pages));
+    Ok(())
+}
+
+/// The layout of a document that is one block of a given size, like a page: no margins, no
+/// headers or footers, no links and no structure.
+fn run_island_passes(world: &mut World, width: PixelLength, height: PixelLength) -> Result<(), String> {
+    world.insert(margin_boxes::MarginBoxes::default());
+    world.insert(pages::PageMargins::default());
+    world.insert(pages::PageStyles::default());
+    world.insert(EntityHrefs::default());
+    world.insert(crate::tagging::StructureTree::default());
+    world.insert(Hyperlinks::default());
+    world.register::<components::IntrinsicSize>();
+    world.register::<components::ContainingBlock>();
+
+    let mut math_renderer = mathml::MathFormat {};
+    math_renderer.setup(world);
+    math_renderer.run_now(world);
+
+    let mut break_points_finder = inline::FindPossibleLineBreaks;
+    break_points_finder.run_now(world);
+
+    world.insert(TextList::default());
+    world.insert(components::AbsoluteGroups::default());
+    let margin = EdgeValues::default();
+    world.insert(components::PageGeometry { width, height, margin });
+    let RootNode(root_entity) = *world.read_resource();
+    let root_entity = root_entity.ok_or("the content of a foreignObject has no root")?;
+    taffy_layout::TaffyBlockLayout {
+        root_entity,
+        page_width: width,
+        page_height: height,
+        margin,
+    }
+    .run(world)?;
+
+    let mut paginator = paginate::Paginator { page_height: height };
+    paginator.setup(world);
+    paginator.run_now(world);
+
+    let mut place_inline_blocks = inline::PlaceInlineBlocks;
+    place_inline_blocks.setup(world);
+    place_inline_blocks.run_now(world);
+
+    let mut line_box_creator = inline::LineBoxCreator;
+    line_box_creator.setup(world);
+    line_box_creator.run_now(world);
+
+    let mut list_marker_creator = inline::ListMarkerCreator;
+    list_marker_creator.setup(world);
+    list_marker_creator.run_now(world);
+
+    RelativePositioningSystem.run_now(world);
+
+    let mut math_layout = mathml::LayoutMathGlyphs {};
+    math_layout.setup(world);
+    math_layout.run_now(world);
+
+    let mut pages_create = normal_formatting::PagesCreate {
+        page_width: width,
+        page_height: height,
+    };
+    pages_create.setup(world);
+    pages_create.run_now(world);
+    Ok(())
 }

@@ -4,6 +4,7 @@
 mod clippath;
 mod converter;
 mod filter;
+mod foreign;
 mod image;
 mod marker;
 mod mask;

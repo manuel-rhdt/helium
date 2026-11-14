@@ -581,6 +581,9 @@ fn convert_element_impl(
         EId::Image => {
             super::image::convert(node, state, cache, parent);
         }
+        EId::ForeignObject => {
+            super::foreign::convert(node, state, parent);
+        }
         EId::Text => {
             #[cfg(feature = "text")]
             {

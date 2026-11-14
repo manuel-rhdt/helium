@@ -39,6 +39,7 @@ pub enum EId {
     FeTile,
     FeTurbulence,
     Filter,
+    ForeignObject,
     G,
     Image,
     Line,
@@ -137,12 +138,19 @@ static ELEMENTS: Map<EId> = Map {
 
 impl EId {
     pub(crate) fn from_str(text: &str) -> Option<EId> {
+        // not in the generated table: this fork adds the element
+        if text == "foreignObject" {
+            return Some(EId::ForeignObject);
+        }
         ELEMENTS.get(text).cloned()
     }
 
     /// Returns the original string.
     #[inline(never)]
     pub fn to_str(self) -> &'static str {
+        if self == EId::ForeignObject {
+            return "foreignObject";
+        }
         ELEMENTS.key(&self)
     }
 }
