@@ -23,6 +23,7 @@ use std::time::Instant;
 pub mod default_cell_ext;
 pub mod display_list;
 pub mod dot;
+pub mod image;
 pub mod layout;
 pub mod node_data_ref;
 mod parser;

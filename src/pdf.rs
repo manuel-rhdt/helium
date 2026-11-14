@@ -121,6 +121,29 @@ pub fn write_pdf(
         }
     }
 
+    // Every image is embedded once, however often it is painted.
+    let mut images: HashMap<*const crate::image::JpegImage, IndirectReference<lemon_pdf::image::ImageXObject>> =
+        HashMap::new();
+    for page in &mut print_pages.pages {
+        for item in page.display_list.items() {
+            let DisplayItem::Image { image, .. } = item else {
+                continue;
+            };
+            let key = std::sync::Arc::as_ptr(image);
+            if images.contains_key(&key) {
+                continue;
+            }
+            match image.to_pdf_image().and_then(|pdf_image| {
+                context.write_image(pdf_image).map_err(|error| error.to_string())
+            }) {
+                Ok(reference) => {
+                    images.insert(key, reference);
+                }
+                Err(error) => log::warn!("cannot embed an image: {}", error),
+            }
+        }
+    }
+
     log::info!("Write {} pages.", print_pages.pages.len());
 
     for (page_index, mut print_page) in print_pages.pages.into_iter().enumerate() {
@@ -221,6 +244,22 @@ pub fn write_pdf(
                     }
                     DisplayItem::Gradient(resolved) => {
                         gradient::paint(page_context, resolved, page_height, filter)?
+                    }
+                    DisplayItem::Image { rect, image } => {
+                        let Some(&reference) = images.get(&std::sync::Arc::as_ptr(image)) else {
+                            continue;
+                        };
+                        let key = page_context.add_xobject(reference);
+                        page_context.push_operand(RawPdf("/Artifact".into()))?;
+                        page_context.apply_operator("BMC")?;
+                        page_context.draw_image(
+                            &key,
+                            Pt::from(rect.x),
+                            Pt::from(page_height - rect.y - rect.height),
+                            Pt::from(rect.width),
+                            Pt::from(rect.height),
+                        )?;
+                        page_context.apply_operator("EMC")?;
                     }
                     DisplayItem::BlendGroup(group) => {
                         gradient::paint_blend_group(page_context, group, page_height, filter)?

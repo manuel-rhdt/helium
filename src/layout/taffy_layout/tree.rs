@@ -13,14 +13,14 @@ use taffy::tree::{
 };
 use taffy::{
     CacheTree, LayoutBlockContainer, LayoutContainingBlock, LayoutFlexboxContainer,
-    LayoutGridContainer, LayoutPartialTree, ResolveOrZero, TraversePartialTree, TraverseTree,
+    LayoutGridContainer, LayoutPartialTree, MaybeResolve, ResolveOrZero, TraversePartialTree, TraverseTree,
     compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
     compute_hidden_layout, compute_leaf_layout, compute_oof_layout,
 };
 
 use crate::layout::absolute::shrink_to_fit;
 use crate::layout::components::{
-    BlockLevelElement, IntrinsicSize, TableCellSpan, TableColumns, TextRun,
+    BlockLevelElement, ImageBox, IntrinsicSize, TableCellSpan, TableColumns, TextRun,
 };
 use crate::layout::inline::InlineFormattingContext;
 use crate::layout::normal_formatting::BlockFormattingContext;
@@ -80,6 +80,7 @@ pub(super) struct HeliumTree<'a, 'w> {
     pub computed_values: &'a ReadStorage<'w, ComputedValues>,
     pub inline_ctxs: &'a mut WriteStorage<'w, InlineFormattingContext>,
     pub intrinsic_sizes: &'a mut WriteStorage<'w, IntrinsicSize>,
+    pub images: &'a ReadStorage<'w, ImageBox>,
     pub text_runs: &'a ReadStorage<'w, TextRun>,
     pub table_spans: &'a ReadStorage<'w, TableCellSpan>,
     /// The `<col>` and `<colgroup>` elements of each table, in column order.
@@ -265,10 +266,15 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         let Some(ifc) = self.inline_ctxs.get(entity) else {
             // A box with an intrinsic size (such as a `<math>` element) is sized like a replaced
             // element: an `auto` width is its intrinsic width instead of the container's width.
-            let replaced = self.intrinsic_sizes.get(entity).is_some();
+            let image = self.images.get(entity).map(|image| (image.width, image.height));
+            let replaced = image.is_some() || self.intrinsic_sizes.get(entity).is_some();
             let node = self.node_mut(id);
             node.content = Content::Replaced;
             node.style.item_is_replaced = replaced;
+            // An image keeps its proportions when only one of its sides is given.
+            if let Some((width, height)) = image.filter(|&(w, h)| w > 0.0 && h > 0.0) {
+                node.style.aspect_ratio = Some(width / height);
+            }
             return;
         };
         let absolutes = ifc.absolutes.clone();
@@ -544,14 +550,46 @@ impl HeliumTree<'_, '_> {
 
     fn compute_replaced_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
         let node = &self.nodes[usize::from(id)];
-        let intrinsic = self.intrinsic_sizes.get(node.entity).copied();
+        // An image is as big as the image, however often it was an inline-block atom before (which
+        // stores the size of its margin box as its `IntrinsicSize`).
+        let image = self.images.get(node.entity).map(|image| (image.width, image.height));
+        // An image without a given size is as big as its pixels, but within `min-` and
+        // `max-width` and `-height`, which then change the other side too (CSS 2.1 10.4: the
+        // size keeps its proportions).
+        let image = image.map(|(width, height)| {
+            let parent = inputs.parent_size;
+            let style = &node.style;
+            let resolve = |dimension: taffy::LengthPercentageAuto, basis: Option<f32>| {
+                dimension.maybe_resolve(basis, calc)
+            };
+            let min_width = resolve(style.min_size.width, parent.width).unwrap_or(0.0);
+            let max_width = resolve(style.max_size.width, parent.width).unwrap_or(f32::INFINITY);
+            let min_height = resolve(style.min_size.height, parent.height).unwrap_or(0.0);
+            let max_height = resolve(style.max_size.height, parent.height).unwrap_or(f32::INFINITY);
+            if width <= 0.0 || height <= 0.0 {
+                return (width, height);
+            }
+            let ratio = width / height;
+            let (mut w, mut h) = (width.clamp(min_width.min(max_width), max_width), height);
+            h = (w / ratio).clamp(min_height.min(max_height), max_height);
+            if (w / h - ratio).abs() > 1e-3 {
+                // the height was limited: the width follows
+                w = (h * ratio).clamp(min_width.min(max_width), max_width);
+            }
+            (w, h)
+        });
+        let intrinsic = if image.is_some() {
+            None
+        } else {
+            self.intrinsic_sizes.get(node.entity).copied()
+        };
         let mut output = compute_leaf_layout(inputs, &node.style, calc, |known, _available| Size {
-            width: known
-                .width
-                .unwrap_or(intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0)),
-            height: known
-                .height
-                .unwrap_or(intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0)),
+            width: known.width.unwrap_or(
+                image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),
+            ),
+            height: known.height.unwrap_or(
+                image.map_or_else(|| intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0), |i| i.1),
+            ),
         });
         if let Some(IntrinsicSize::SizeWithBaseline { baseline, .. }) = intrinsic {
             output.baselines = Baselines::from_first(Some(baseline.0));

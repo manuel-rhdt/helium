@@ -35,8 +35,8 @@ impl FlowConstructor {
     pub fn new(world: World, stylesheet_base_dir: PathBuf) -> Self {
         FlowConstructor {
             styles: Default::default(),
-            stylesheet_base_dir,
-            entity_constructor: EntityConstructor::new(world),
+            stylesheet_base_dir: stylesheet_base_dir.clone(),
+            entity_constructor: EntityConstructor::new(world, stylesheet_base_dir.clone()),
         }
     }
 
@@ -527,6 +527,11 @@ pub struct EntityConstructor {
     /// Whether the text before the next text node ends inside of a word, for
     /// `text-transform: capitalize`.
     in_word: bool,
+    /// The directory that the `src` of an `<img>` is relative to.
+    base_dir: PathBuf,
+    /// The images that were loaded, by `src`, so that an image that is used often is embedded
+    /// once. `None` for an image that could not be loaded.
+    images: HashMap<String, Option<Arc<crate::image::JpegImage>>>,
 }
 
 impl std::fmt::Debug for EntityConstructor {
@@ -536,7 +541,7 @@ impl std::fmt::Debug for EntityConstructor {
 }
 
 impl EntityConstructor {
-    pub fn new(mut world: World) -> Self {
+    pub fn new(mut world: World, base_dir: PathBuf) -> Self {
         world.register::<ComputedValues>();
         world.register::<InlineFormattingContext>();
         world.register::<BlockFormattingContext>();
@@ -545,6 +550,7 @@ impl EntityConstructor {
         world.register::<components::ListMarker>();
         world.register::<components::Decoration>();
         world.register::<MathNode>();
+        world.register::<components::ImageBox>();
         world.register::<components::TableCellSpan>();
         world.register::<components::TableColumns>();
         world.insert(FontMap::new());
@@ -556,6 +562,8 @@ impl EntityConstructor {
             in_math: false,
             trim_next_inline_whitespace: true,
             in_word: false,
+            base_dir,
+            images: Default::default(),
         }
     }
 
@@ -651,7 +659,21 @@ impl EntityConstructor {
                 let span = (style.box_.display == Display::TableCell)
                     .then(|| table_cell_span(element_data))
                     .flatten();
+                let is_image =
+                    element_data.name == QualName::new(None, ns!(html), local_name!("img"));
+                let image = is_image.then(|| self.image_of(element_data)).flatten();
+                let mut style = style;
+                if is_image && style.box_.display == Display::Inline {
+                    // an inline replaced element is placed on a line as a whole
+                    Arc::make_mut(&mut style.box_).display = Display::InlineBlock;
+                }
                 let entity = self.build_default_entity(style);
+                if let Some(image) = image {
+                    self.world
+                        .write_storage::<components::ImageBox>()
+                        .insert(entity.0, image)
+                        .unwrap();
+                }
                 if let Some(span) = span {
                     self.world
                         .write_storage::<components::TableCellSpan>()
@@ -724,6 +746,48 @@ impl EntityConstructor {
     }
 
     // called on top-down traversal
+    /// The image of an `<img>` element, with its intrinsic size. An image that cannot be loaded is
+    /// logged and leaves an empty box.
+    fn image_of(&mut self, element_data: &ElementData) -> Option<components::ImageBox> {
+        let attribute = |name| {
+            element_data
+                .attributes
+                .borrow()
+                .get(&QualName::new(None, ns!(), name))
+                .map(|attribute| attribute.value.to_string())
+        };
+        let src = attribute(local_name!("src"))?;
+        let image = self
+            .images
+            .entry(src.clone())
+            .or_insert_with(|| match crate::image::load(&src, &self.base_dir) {
+                Ok(image) => Some(Arc::new(image)),
+                Err(error) => {
+                    log::warn!("cannot load the image `{}`: {}", src, error);
+                    None
+                }
+            })
+            .clone()?;
+        // the `width` and `height` attributes are pixels (a percentage or a unit is not valid)
+        let dimension = |name| {
+            attribute(name)
+                .and_then(|value| value.trim().parse::<f32>().ok())
+                .filter(|value| value.is_finite() && *value >= 0.0)
+        };
+        let (natural_width, natural_height) = (image.width as f32, image.height as f32);
+        let (width, height) = match (dimension(local_name!("width")), dimension(local_name!("height"))) {
+            (Some(width), Some(height)) => (width, height),
+            (Some(width), None) => (width, width * natural_height / natural_width),
+            (None, Some(height)) => (height * natural_width / natural_height, height),
+            (None, None) => (natural_width, natural_height),
+        };
+        Some(components::ImageBox {
+            image,
+            width,
+            height,
+        })
+    }
+
     fn build_default_entity(&mut self, style: ComputedValues) -> LayoutEntity {
         self.world.create_entity().with(style).build().into()
     }
@@ -804,6 +868,13 @@ impl EntityConstructor {
 
         if self.in_math {
             self.build_math_node(node);
+            return;
+        }
+
+        // An image has no content: it stays a leaf box, which is as big as the image.
+        if let LayoutEntity(entity) = node.layout_entity().unwrap()
+            && self.world.read_storage::<components::ImageBox>().contains(entity)
+        {
             return;
         }
 
