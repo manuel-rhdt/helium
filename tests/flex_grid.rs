@@ -1,4 +1,4 @@
-//! Flexbox and grid layout, which only the Taffy layout engine supports.
+//! Flexbox and grid layout.
 
 mod common;
 
@@ -12,7 +12,6 @@ fn run(name: &str, html: &str, args: &[&str]) -> Output {
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
     common::helium()
         .unwrap()
-        .args(["--layout-engine", "taffy"])
         .args(args)
         .arg(&input)
         .arg(

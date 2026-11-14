@@ -913,7 +913,7 @@ impl<'t> TagRecorder<'t> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{self, LayoutEngine};
+    use crate::layout;
     use crate::style::device::Device;
     use crate::style::properties::computed::PixelLength;
 
@@ -927,7 +927,6 @@ mod tests {
             dom,
             device,
             false,
-            LayoutEngine::Taffy,
             std::path::Path::new("."),
         )
         .unwrap();
