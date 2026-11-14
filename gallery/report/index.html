@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A university report</title>
+<meta name="description" content="A gradient cover card, linked contents, a figure from a JPEG file, a data table, a chart built from flexbox and gradients, code and a reference list.">
+<meta name="keywords" content="images, gradients, links, flexbox, tables">
+<style>
+  @page { size: A4; margin: 26mm 24mm 24mm;
+    @top-left { content: "Escape times and the boundary of the Mandelbrot set"; font: 8.5pt sans-serif; color: #7b8190; }
+    @top-right { content: "MAT 301"; font: 8.5pt sans-serif; letter-spacing: 1.5pt; color: #7b8190; }
+    @bottom-center { content: counter(page); font: 9pt sans-serif; color: #7b8190; }
+  }
+  @page :first { @top-left { content: ""; } @top-right { content: ""; } @bottom-center { content: ""; } }
+
+  html { font-family: serif; font-size: 11pt; line-height: 1.5; color: #1c2030; hyphens: auto; }
+  body { margin: 0; }
+
+  .cover { height: 236mm; box-sizing: border-box; padding: 24mm 20mm 18mm; border-radius: 16pt; display: flex; flex-direction: column; color: #ffffff; background: linear-gradient(160deg, #0b1030 0%, #1d2a78 48%, #14899b 100%); page-break-after: always; }
+  .cover .course { font: 10pt sans-serif; letter-spacing: 4pt; text-transform: uppercase; color: #bfd0ff; }
+  .cover h1 { font-family: sans-serif; font-size: 40pt; line-height: 1.08; letter-spacing: -0.5pt; margin: 34mm 0 10mm; }
+  .cover .rule { width: 42mm; height: 3pt; background: linear-gradient(90deg, #ffd166, #ef8f3a); margin-bottom: 9mm; }
+  .cover .sub { font-size: 16pt; line-height: 1.35; color: #dbe5ff; max-width: 120mm; font-style: italic; }
+  .cover .spacer { flex: 1; }
+  .cover .who { display: flex; gap: 14mm; font-family: sans-serif; font-size: 10pt; line-height: 1.6; }
+  .cover .who b { display: block; font-size: 7.5pt; letter-spacing: 2pt; text-transform: uppercase; color: #9bb2f0; font-weight: normal; }
+
+  h2 { break-after: avoid; font-family: sans-serif; font-size: 14pt; color: #1d2a78; margin: 20pt 0 8pt; padding-bottom: 4pt; border-bottom: 1.5pt solid #1d2a78; }
+  h3 { font-family: sans-serif; font-size: 10.5pt; margin: 14pt 0 4pt; }
+  p { margin: 0 0 8pt; text-align: justify; }
+  a { color: #1d2a78; }
+
+  .abstract { background: #eef1fb; border-left: 3pt solid #1d2a78; border-radius: 0 6pt 6pt 0; padding: 10pt 14pt 4pt; margin: 0 0 6pt; }
+  .abstract .h { font: bold 8.5pt sans-serif; letter-spacing: 1.5pt; text-transform: uppercase; color: #1d2a78; margin-bottom: 4pt; }
+
+  .toc { margin: 0; padding: 0; list-style-type: none; font-family: sans-serif; font-size: 10pt; }
+  .toc li { padding: 3pt 0; border-bottom: 0.5pt solid #dfe2ec; }
+  .toc a { text-decoration: none; }
+
+  pre { font-family: monospace; font-size: 8.3pt; line-height: 1.45; background: #14182b; color: #e6e9f7; padding: 10pt 12pt; border-radius: 6pt; margin: 8pt 0 12pt; }
+  ol.steps li { margin-bottom: 3pt; }
+
+  figure { margin: 12pt 0 0; break-inside: avoid; }
+  figure img { display: block; width: 84%; margin: 0 auto; border-radius: 6pt; }
+  figcaption { font: 9pt/1.4 sans-serif; color: #4a5063; margin: 6pt 8% 0; }
+  figcaption b { color: #1d2a78; }
+
+  table.data { break-inside: avoid; width: 100%; border-collapse: collapse; font: 9.5pt sans-serif; margin: 6pt 0 4pt; }
+  .data th { text-align: right; font-size: 8pt; letter-spacing: 1pt; text-transform: uppercase; padding: 5pt 8pt; background: #1d2a78; color: #ffffff; }
+  .data th:first-child, .data td:first-child { text-align: left; }
+  .data td { text-align: right; padding: 5pt 8pt; border-bottom: 0.5pt solid #dfe2ec; }
+  .data tr:nth-child(even) td { background: #f5f6fb; }
+  .cap { font: 9pt/1.4 sans-serif; color: #4a5063; margin: 4pt 0 12pt; }
+
+  .chart { display: flex; align-items: flex-end; gap: 10pt; height: 92pt; padding: 10pt 14pt 0; border-bottom: 1pt solid #1c2030; border-left: 1pt solid #1c2030; margin: 10pt 0 0 24pt; }
+  .chart div { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+  .chart i { display: block; width: 100%; background: linear-gradient(180deg, #14899b, #1d2a78); border-radius: 3pt 3pt 0 0; }
+  .chart span { font: 8pt sans-serif; color: #4a5063; margin-bottom: 2pt; }
+  .labels { display: flex; gap: 10pt; padding: 3pt 14pt 0; margin-left: 24pt; font: 8pt sans-serif; color: #4a5063; }
+  .labels span { flex: 1; text-align: center; }
+
+  ol.refs { font-size: 9.5pt; padding-left: 18pt; }
+  ol.refs li { margin-bottom: 4pt; text-align: left; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="course">MAT 301 · Dynamical systems</div>
+  <h1>Escape times and the boundary of the Mandelbrot set</h1>
+  <div class="rule"></div>
+  <div class="sub">How many iterations does it take to leave the unit disc, and what does the answer tell us about the shape of the set?</div>
+  <div class="spacer"></div>
+  <div class="who">
+    <div><b>Author</b>Jonas Berg<br>Student no. 2031847</div>
+    <div><b>Supervisor</b>Prof. Aiko Tanaka</div>
+    <div><b>Submitted</b>14 November 2026</div>
+  </div>
+</div>
+
+<div class="abstract">
+  <div class="h">Abstract</div>
+  <p>We compute smoothed escape times for the quadratic map <math><msub><mi>z</mi><mrow><mi>n</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msubsup><mi>z</mi><mi>n</mi><mn>2</mn></msubsup><mo>+</mo><mi>c</mi></math> on a grid of 1500 × 900 points and use them to colour the plane. The cost grows linearly with the iteration limit, while the visible detail along the boundary saturates once the limit exceeds a few hundred. We describe the algorithm, report timings, and discuss why the boundary resists every attempt at a simple description.</p>
+</div>
+
+<h2 style="margin-top:20pt">Contents</h2>
+<ol class="toc">
+  <li><a href="#intro">1 &nbsp; Introduction</a></li>
+  <li><a href="#method">2 &nbsp; Method</a></li>
+  <li><a href="#results">3 &nbsp; Results</a></li>
+  <li><a href="#discussion">4 &nbsp; Discussion</a></li>
+  <li><a href="#refs">References</a></li>
+</ol>
+
+
+<h2 id="intro">1 &nbsp;Introduction</h2>
+<p>For each complex number <math><mi>c</mi></math> we iterate the map above from <math><msub><mi>z</mi><mn>0</mn></msub><mo>=</mo><mn>0</mn></math>. The Mandelbrot set <math><mi mathvariant="script">M</mi></math> consists of those <math><mi>c</mi></math> for which the orbit stays bounded. A classical argument shows that once <math><mo>|</mo><msub><mi>z</mi><mi>n</mi></msub><mo>|</mo><mo>&gt;</mo><mn>2</mn></math> the orbit escapes to infinity, so the number of steps needed to cross this radius is a natural measure of how close <math><mi>c</mi></math> is to the set. Plotting this number produces the familiar bands that accumulate around the boundary, shown in Figure 1.</p>
+
+<figure>
+  <img src="mandelbrot.jpg" alt="The Mandelbrot set: a black region surrounded by bands of colour">
+  <figcaption><b>Figure 1.</b> Smoothed escape times on the window −2.2 ≤ Re <i>c</i> ≤ 0.9. Points inside the set are drawn in dark blue; the colours run from indigo through teal to gold as the escape time falls.</figcaption>
+</figure>
+
+<h2 id="method">2 &nbsp;Method</h2>
+<p>The program evaluates the map for every pixel in lock-step. To avoid the visible banding of integer escape times, the last iteration count is corrected by the logarithm of the final modulus (the “smooth” colouring). The algorithm is short enough to list in full:</p>
+<pre>for each pixel c in the grid:
+    z, n = 0, 0
+    while |z| &lt;= 20 and n &lt; limit:
+        z = z*z + c
+        n = n + 1
+    if n == limit:  colour = inside
+    else:           t = n + 1 - log2(log|z|);  colour = palette(t)</pre>
+<ol class="steps">
+  <li>Choose the window and the resolution; here 1500 × 900 pixels.</li>
+  <li>Run the loop above with the iteration limit set to 300.</li>
+  <li>Map <math><mi>t</mi></math> through a piecewise-linear palette of five colours.</li>
+  <li>Repeat with limits from 50 to 1600 to measure the running time.</li>
+</ol>
+
+<h2 id="results">3 &nbsp;Results</h2>
+<p>Table 1 lists the running times on a single core. Doubling the limit doubles the time almost exactly, as Figure 2 shows, because the points inside the set always use every allowed iteration and dominate the total.</p>
+
+<table class="data">
+  <tr><th>Iteration limit</th><th>Time (ms)</th><th>Pixels at limit</th><th>Share</th></tr>
+  <tr><td>50</td><td>12</td><td>214 880</td><td>15.9 %</td></tr>
+  <tr><td>100</td><td>19</td><td>204 310</td><td>15.1 %</td></tr>
+  <tr><td>200</td><td>35</td><td>199 702</td><td>14.8 %</td></tr>
+  <tr><td>400</td><td>68</td><td>197 245</td><td>14.6 %</td></tr>
+  <tr><td>800</td><td>131</td><td>196 120</td><td>14.5 %</td></tr>
+  <tr><td>1600</td><td>262</td><td>195 530</td><td>14.5 %</td></tr>
+</table>
+<p class="cap"><b>Table 1.</b> Time and number of points that never escape, for each iteration limit.</p>
+
+<div class="chart">
+  <div><span>12</span><i style="height:4.5pt"></i></div>
+  <div><span>19</span><i style="height:6pt"></i></div>
+  <div><span>35</span><i style="height:11pt"></i></div>
+  <div><span>68</span><i style="height:22pt"></i></div>
+  <div><span>131</span><i style="height:42pt"></i></div>
+  <div><span>262</span><i style="height:84pt"></i></div>
+</div>
+<div class="labels"><span>50</span><span>100</span><span>200</span><span>400</span><span>800</span><span>1600</span></div>
+<p class="cap" style="margin-top:8pt"><b>Figure 2.</b> Running time in milliseconds against the iteration limit.</p>
+
+<h2 id="discussion">4 &nbsp;Discussion</h2>
+<p>The last column of Table 1 decreases only slowly: about one point in seven of the window never escapes, no matter how long we wait. Points that are merely slow to escape are the ones that give the boundary its detail, and the colour bands in Figure 1 show where they accumulate. Raising the limit beyond a few hundred changes few pixels at this resolution; it would matter only under deep magnification, where the structure of the boundary reappears at every scale.</p>
+<p>This self-similarity is what makes the set both attractive and hard: its boundary has Hausdorff dimension two, yet it has zero area, so no finite picture can be exact. We have therefore treated the figures as visualisations of escape times, not as claims about the set itself.</p>
+
+<h2 id="refs">References</h2>
+<ol class="refs">
+  <li>B. Mandelbrot, “Fractal aspects of the iteration of <i>z</i> ↦ λ<i>z</i>(1−<i>z</i>) for complex λ and <i>z</i>”, <i>Annals of the New York Academy of Sciences</i> 357 (1980), 249–259.</li>
+  <li>A. Douady and J. H. Hubbard, “Étude dynamique des polynômes complexes”, <i>Publications Mathématiques d’Orsay</i> (1984–85).</li>
+  <li>H.-O. Peitgen and P. H. Richter, <i>The Beauty of Fractals</i>, Springer, 1986.</li>
+</ol>
+
+</body>
+</html>

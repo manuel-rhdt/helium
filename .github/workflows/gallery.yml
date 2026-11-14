@@ -1,0 +1,61 @@
+name: Gallery
+
+# Renders the documents in gallery/ to PDF on every push, and publishes them (with thumbnails)
+# to GitHub Pages when the push is to master. On other branches the rendered site is only
+# uploaded as a workflow artifact, which still catches documents that stop rendering.
+#
+# One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: gallery-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Install stable toolchain
+      uses: dtolnay/rust-toolchain@stable
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+    # fontconfig: Helium's default features. Noto: only the document that sets text in many
+    # scripts uses installed fonts; the others use the fonts built into Helium.
+    # poppler-utils: thumbnails and page counts.
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libfontconfig1-dev poppler-utils fonts-noto-core fonts-noto-cjk
+    - name: Build
+      run: cargo build --release --locked
+    - name: Render the gallery
+      run: python3 gallery/build.py --helium target/release/helium --out _site
+    - uses: actions/upload-artifact@v4
+      with:
+        name: gallery
+        path: _site
+    - name: Upload the site for Pages
+      if: github.ref == 'refs/heads/master'
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: _site
+
+  deploy:
+    if: github.ref == 'refs/heads/master'
+    needs: render
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - id: deployment
+      uses: actions/deploy-pages@v4

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>An invoice</title>
+<meta name="description" content="A gradient header card, flexbox columns, a line-item table with spanning cells and right-aligned figures, rounded badges, and bank details in the footer.">
+<meta name="keywords" content="gradients, flexbox, tables, border-radius">
+<style>
+  @page {
+    size: A4;
+    margin: 14mm 15mm 18mm;
+    @bottom-left { content: "Lumen Studio Ltd. · Registered in England No. 09876543 · VAT GB 123 4567 89"; font: 7.5pt sans-serif; color: #8b93a1; }
+    @bottom-right { content: "Invoice 2026-0148"; font: 7.5pt sans-serif; color: #8b93a1; }
+  }
+  html { font-family: sans-serif; font-size: 9.5pt; line-height: 1.45; color: #1d2433; }
+  body { margin: 0; }
+
+  .card { background: linear-gradient(115deg, #0f4c5c 0%, #1f6f8b 55%, #5a4fcf 100%); border-radius: 14pt; color: #ffffff; padding: 20pt 26pt; display: flex; justify-content: space-between; align-items: flex-start; }
+  .logo { display: flex; align-items: center; gap: 11pt; }
+  .mark { width: 30pt; height: 30pt; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff6d6 0%, #ffd166 45%, #ef8f3a 100%); }
+  .logo .name { font-size: 17pt; font-weight: bold; letter-spacing: 0.4pt; line-height: 1.1; }
+  .logo .sub { font-size: 7.5pt; letter-spacing: 2.5pt; text-transform: uppercase; color: #cfe3ea; }
+  .title { text-align: right; }
+  .title .word { font-size: 27pt; font-weight: bold; letter-spacing: 6pt; line-height: 1; }
+  .title .no { margin-top: 7pt; font-size: 9.5pt; color: #cfe3ea; }
+
+  .parties { display: flex; gap: 20pt; margin: 16pt 0 12pt; }
+  .parties > div { flex: 1; }
+  .label { font-size: 7.5pt; letter-spacing: 1.6pt; text-transform: uppercase; color: #8b93a1; margin-bottom: 5pt; }
+  .parties .who { font-weight: bold; font-size: 11pt; margin-bottom: 2pt; }
+  .dates dl { margin: 0; display: grid; grid-template-columns: auto 1fr; column-gap: 14pt; row-gap: 3pt; }
+  .dates dt { color: #8b93a1; }
+  .dates dd { margin: 0; text-align: right; font-weight: bold; }
+
+  .badge { display: inline-block; padding: 2.5pt 9pt; border-radius: 99pt; background: #fff1d6; color: #9a5b00; font-size: 7.5pt; letter-spacing: 1.2pt; text-transform: uppercase; font-weight: bold; }
+
+  table.items { width: 100%; border-collapse: collapse; margin-top: 4pt; }
+  .items th { text-align: left; font-size: 7.5pt; letter-spacing: 1.4pt; text-transform: uppercase; color: #8b93a1; padding: 5pt 8pt; border-bottom: 1.5pt solid #1d2433; }
+  .items td { padding: 5.5pt 8pt; border-bottom: 0.5pt solid #e3e7ee; vertical-align: top; }
+  .items .n, .items th.n { text-align: right; }
+  .items td small { display: block; color: #8b93a1; font-size: 8pt; margin-top: 1pt; }
+  .items tr.sum td { border-bottom: none; padding: 4pt 8pt; }
+  .items tr.sum td.k { text-align: right; color: #5b6475; }
+  .items tr.total td { padding-top: 8pt; border-top: 1.5pt solid #1d2433; font-size: 12.5pt; font-weight: bold; }
+  .items tr.total td.v { color: #0f4c5c; }
+
+  .notes { display: flex; gap: 20pt; margin-top: 20pt; }
+  .notes > div { flex: 1; background: #f3f5f9; border-radius: 9pt; padding: 12pt 14pt; }
+  .notes p { margin: 0 0 4pt; }
+  .notes .k { color: #8b93a1; display: inline-block; width: 58pt; }
+  .thanks { margin-top: 18pt; text-align: center; font-size: 12pt; font-weight: bold; color: #0f4c5c; }
+  .thanks span { display: block; margin-top: 3pt; font-weight: normal; font-size: 8.5pt; color: #8b93a1; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo">
+    <div class="mark"></div>
+    <div>
+      <div class="name">Lumen Studio</div>
+      <div class="sub">Design &amp; Strategy</div>
+    </div>
+  </div>
+  <div class="title">
+    <div class="word">INVOICE</div>
+    <div class="no">No. 2026-0148</div>
+  </div>
+</div>
+
+<div class="parties">
+  <div>
+    <div class="label">From</div>
+    <div class="who">Lumen Studio Ltd.</div>
+    7 Foundry Row<br>Manchester M4 6HZ<br>billing@lumen.example
+  </div>
+  <div>
+    <div class="label">Billed to</div>
+    <div class="who">Brightwater Coffee Roasters</div>
+    Attn. Priya Raman<br>22 Harbour Street<br>Liverpool L3 4BL
+  </div>
+  <div class="dates">
+    <div class="label">Details</div>
+    <dl>
+      <dt>Issued</dt><dd>14 Nov 2026</dd>
+      <dt>Due</dt><dd>14 Dec 2026</dd>
+      <dt>Project</dt><dd>Rebrand 2026</dd>
+      <dt>Status</dt><dd><span class="badge">Awaiting payment</span></dd>
+    </dl>
+  </div>
+</div>
+
+<table class="items">
+  <tr><th>Description</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Amount</th></tr>
+  <tr><td>Brand identity<small>Logo suite, colour palette, typography, guidelines (PDF)</small></td><td class="n">1</td><td class="n">£2,400.00</td><td class="n">£2,400.00</td></tr>
+  <tr><td>Packaging design<small>Three bag formats, print-ready artwork</small></td><td class="n">3</td><td class="n">£650.00</td><td class="n">£1,950.00</td></tr>
+  <tr><td>Website design<small>Six page templates, responsive layouts, design system</small></td><td class="n">1</td><td class="n">£3,800.00</td><td class="n">£3,800.00</td></tr>
+  <tr><td>Photography<small>Half-day studio shoot, retouching of 24 images</small></td><td class="n">2</td><td class="n">£480.00</td><td class="n">£960.00</td></tr>
+  <tr><td>Copywriting<small>Product descriptions, 60 words each</small></td><td class="n">12</td><td class="n">£45.00</td><td class="n">£540.00</td></tr>
+  <tr><td>Project management<small>Hours</small></td><td class="n">20</td><td class="n">£60.00</td><td class="n">£1,200.00</td></tr>
+  <tr class="sum"><td colspan="3" class="k">Subtotal</td><td class="n">£10,850.00</td></tr>
+  <tr class="sum"><td colspan="3" class="k">Loyalty discount (5%)</td><td class="n">−£542.50</td></tr>
+  <tr class="sum"><td colspan="3" class="k">VAT (20%)</td><td class="n">£2,061.50</td></tr>
+  <tr class="total"><td colspan="3" class="k">Total due</td><td class="n v">£12,369.00</td></tr>
+</table>
+
+<div class="notes">
+  <div>
+    <div class="label">Payment</div>
+    <p><span class="k">Bank</span>Northern Union Bank</p>
+    <p><span class="k">Account</span>Lumen Studio Ltd.</p>
+    <p><span class="k">Sort code</span>20-45-77</p>
+    <p><span class="k">Account no.</span>83019246</p>
+    <p><span class="k">Reference</span>2026-0148</p>
+  </div>
+  <div>
+    <div class="label">Terms</div>
+    <p>Payment is due within 30 days of the invoice date. Late payments carry interest at 4% above the Bank of England base rate.</p>
+    <p>Source files and usage rights transfer on receipt of full payment.</p>
+  </div>
+</div>
+
+<div class="thanks">Thank you for working with us.<span>Questions about this invoice? billing@lumen.example</span></div>
+
+</body>
+</html>
