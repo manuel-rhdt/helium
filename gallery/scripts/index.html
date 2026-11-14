@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Many scripts, one sentence</title>
+<meta name="gallery-fonts" content="system">
+<meta name="description" content="Article 1 of the Universal Declaration of Human Rights in thirty-one languages and more than twenty scripts: shaping, right-to-left text, stacked marks, line breaking without spaces and per-script font fallback.">
+<meta name="keywords" content="Unicode, bidi, shaping, font fallback, CJK, Indic scripts">
+<style>
+  @page { size: A4; margin: 22mm 20mm 22mm;
+    @bottom-left { content: "Universal Declaration of Human Rights, Article 1"; font: 8pt sans-serif; color: #8a8f98; }
+    @bottom-right { content: counter(page); font: 8pt sans-serif; color: #8a8f98; } }
+  html { font-family: serif; font-size: 11pt; line-height: 1.55; color: #1f2230; }
+  body { margin: 0; }
+
+  .hero { padding: 22pt 26pt; border-radius: 14pt; color: #fff; background: linear-gradient(120deg, #3b1d6e 0%, #8a2f6f 45%, #d9603b 100%); margin-bottom: 14pt; }
+  .hero .k { font: 8pt sans-serif; letter-spacing: 3pt; text-transform: uppercase; color: #f3d3e6; }
+  .hero h1 { font: bold 25pt/1.15 sans-serif; margin: 6pt 0 8pt; }
+  .hero p { margin: 0; font-size: 11pt; color: #fbeaf3; max-width: 130mm; }
+  .quote { font-size: 13pt; font-style: italic; text-align: center; margin: 16pt 10mm 4pt; color: #3b1d6e; }
+  .quote small { display: block; margin-top: 3pt; font: 8pt sans-serif; letter-spacing: 1.5pt; text-transform: uppercase; font-style: normal; color: #8a8f98; }
+
+  h2 { font: bold 8.5pt sans-serif; letter-spacing: 2.2pt; text-transform: uppercase; color: #8a2f6f; margin: 18pt 0 7pt; padding-bottom: 3pt; border-bottom: 0.75pt solid #e1d3e0; break-after: avoid; }
+  .grid { width: 100%; border-collapse: separate; border-spacing: 8pt; margin: -8pt; table-layout: auto; }
+  .grid td { width: 50%; }
+  .grid td.gap { background: none; border: none; padding: 0; }
+  .grid td.card { background: #f7f4f8; border-radius: 8pt; padding: 8pt 11pt 9pt; border-left: 2.5pt solid #8a2f6f; }
+  .meta { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3pt; }
+  .meta b { font-size: 11pt; }
+  .meta span { font: 7.5pt sans-serif; letter-spacing: 1.2pt; text-transform: uppercase; color: #8a8f98; }
+  .card p { margin: 0; font-size: 10pt; line-height: 1.6; }
+  .card p[dir=rtl] { text-align: right; }
+  .mixed { margin-top: 18pt; padding: 10pt 14pt; border-radius: 8pt; background: #fdf3ee; border-left: 2.5pt solid #d9603b; font-size: 10.5pt; }
+  .mixed b { display: block; font: bold 8pt sans-serif; letter-spacing: 1.6pt; text-transform: uppercase; color: #d9603b; margin-bottom: 3pt; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="k">Typesetting every script</div>
+  <h1>One sentence, thirty-one languages</h1>
+  <p>Each card below sets the same sentence in its own language and script. Helium shapes the text with HarfBuzz, orders mixed directions with the Unicode bidi algorithm, breaks lines where the script allows, and picks fonts per script.</p>
+</div>
+<div class="quote">“All human beings are born free and equal in dignity and rights.”<small>Article 1 · Universal Declaration of Human Rights</small></div>
+
+<h2>Europe</h2>
+<table class="grid">
+<tr><td class="card"><div class="meta"><b lang="en" dir="ltr">English</b><span>Latin</span></div><p lang="en" dir="ltr">All human beings are born free and equal in dignity and rights. They are endowed with reason and conscience and should act towards one another in a spirit of brotherhood.</p></td><td class="card"><div class="meta"><b lang="de" dir="ltr">Deutsch</b><span>Latin</span></div><p lang="de" dir="ltr">Alle Menschen sind frei und gleich an Würde und Rechten geboren. Sie sind mit Vernunft und Gewissen begabt und sollen einander im Geist der Brüderlichkeit begegnen.</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="fr" dir="ltr">Français</b><span>Latin</span></div><p lang="fr" dir="ltr">Tous les êtres humains naissent libres et égaux en dignité et en droits. Ils sont doués de raison et de conscience et doivent agir les uns envers les autres dans un esprit de fraternité.</p></td><td class="card"><div class="meta"><b lang="el" dir="ltr">Ελληνικά</b><span>Greek</span></div><p lang="el" dir="ltr">Όλοι οι άνθρωποι γεννιούνται ελεύθεροι και ίσοι στην αξιοπρέπεια και τα δικαιώματα. Είναι προικισμένοι με λογική και συνείδηση, και οφείλουν να συμπεριφέρονται μεταξύ τους με πνεύμα αδελφοσύνης.</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="ru" dir="ltr">Русский</b><span>Cyrillic</span></div><p lang="ru" dir="ltr">Все люди рождаются свободными и равными в своём достоинстве и правах. Они наделены разумом и совестью и должны поступать в отношении друг друга в духе братства.</p></td><td class="card"><div class="meta"><b lang="hy" dir="ltr">Հայերեն</b><span>Armenian</span></div><p lang="hy" dir="ltr">Բոլոր մարդիկ ծնվում են ազատ և հավասար իրենց արժանապատվությամբ և իրավունքներով։ Նրանք օժտված են բանականությամբ և խղճով և պետք է միմյանց նկատմամբ վարվեն եղբայրության ոգով։</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="ka" dir="ltr">ქართული</b><span>Georgian</span></div><p lang="ka" dir="ltr">ყველა ადამიანი იბადება თავისუფალი და თანასწორი თავისი ღირსებითა და უფლებებით. მათ მინიჭებული აქვთ გონება და სინდისი და უნდა ექცეოდნენ ერთმანეთს ძმობის სულისკვეთებით.</p></td><td class="gap"></td></tr>
+</table>
+<h2>Right to left</h2>
+<table class="grid">
+<tr><td class="card"><div class="meta"><b lang="ar" dir="ltr">العربية</b><span>Arabic</span></div><p lang="ar" dir="rtl">يولد جميع الناس أحرارًا متساوين في الكرامة والحقوق. وقد وهبوا عقلًا وضميرًا وعليهم أن يعامل بعضهم بعضًا بروح الإخاء.</p></td><td class="card"><div class="meta"><b lang="he" dir="ltr">עברית</b><span>Hebrew</span></div><p lang="he" dir="rtl">כל בני האדם נולדו בני חורין ושווים בערכם ובזכויותיהם. כולם חוננו בתבונה ובמצפון, והם צריכים לנהוג איש ברעהו ברוח של אחווה.</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="syr" dir="ltr">ܣܘܪܝܝܐ</b><span>Syriac</span></div><p lang="syr" dir="rtl">ܐܒܘܢ ܕܒܫܡܝܐ ܢܬܩܕܫ ܫܡܟ ܬܐܬܐ ܡܠܟܘܬܟ ܢܗܘܐ ܨܒܝܢܟ ܐܝܟܢܐ ܕܒܫܡܝܐ ܐܦ ܒܐܪܥܐ</p></td><td class="card"><div class="meta"><b lang="dv" dir="ltr">ދިވެހި</b><span>Thaana</span></div><p lang="dv" dir="rtl">ހުރިހާ އިންސާނުން މިނިވަންކަމާއި ޙައްޤުތަކުގައި އެއްވަރަށް އުފަންވެފައެވެ.</p></td></tr>
+</table>
+<h2>India</h2>
+<table class="grid">
+<tr><td class="card"><div class="meta"><b lang="hi" dir="ltr">हिन्दी</b><span>Devanagari</span></div><p lang="hi" dir="ltr">सभी मनुष्यों को गौरव और अधिकारों के मामले में जन्मजात स्वतन्त्रता और समानता प्राप्त है। उन्हें बुद्धि और अन्तरात्मा की देन प्राप्त है और परस्पर उन्हें भाईचारे के भाव से बर्ताव करना चाहिए।</p></td><td class="card"><div class="meta"><b lang="bn" dir="ltr">বাংলা</b><span>Bengali</span></div><p lang="bn" dir="ltr">সমস্ত মানুষ স্বাধীনভাবে সমান মর্যাদা এবং অধিকার নিয়ে জন্মগ্রহণ করে। তাঁদের বিবেক এবং বুদ্ধি আছে; সুতরাং সকলেরই একে অপরের প্রতি ভ্রাতৃত্বসুলভ মনোভাব নিয়ে আচরণ করা উচিত।</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="pa" dir="ltr">ਪੰਜਾਬੀ</b><span>Gurmukhi</span></div><p lang="pa" dir="ltr">ਸਾਰੇ ਮਨੁੱਖ ਜਨਮ ਤੋਂ ਆਜ਼ਾਦ ਹਨ ਅਤੇ ਮਾਣ ਅਤੇ ਅਧਿਕਾਰਾਂ ਵਿੱਚ ਬਰਾਬਰ ਹਨ। ਉਹਨਾਂ ਨੂੰ ਬੁੱਧੀ ਅਤੇ ਜ਼ਮੀਰ ਦੀ ਦਾਤ ਮਿਲੀ ਹੈ ਅਤੇ ਉਹਨਾਂ ਨੂੰ ਭਾਈਚਾਰੇ ਦੀ ਭਾਵਨਾ ਨਾਲ ਇੱਕ ਦੂਜੇ ਨਾਲ ਵਿਹਾਰ ਕਰਨਾ ਚਾਹੀਦਾ ਹੈ।</p></td><td class="card"><div class="meta"><b lang="gu" dir="ltr">ગુજરાતી</b><span>Gujarati</span></div><p lang="gu" dir="ltr">બધા માણસો જન્મથી સ્વતંત્ર અને ગૌરવ તથા અધિકારોની દૃષ્ટિએ સમાન છે. તેમને વિચારશક્તિ અને અંતઃકરણ મળેલાં છે અને તેમણે એકબીજા પ્રત્યે ભાઈચારાની ભાવનાથી વર્તવું જોઈએ.</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="or" dir="ltr">ଓଡ଼ିଆ</b><span>Odia</span></div><p lang="or" dir="ltr">ସମସ୍ତ ମନୁଷ୍ୟ ଜନ୍ମକାଳରୁ ସ୍ୱାଧୀନ ଏବଂ ମର୍ଯ୍ୟାଦା ଓ ଅଧିକାରରେ ସମାନ । ସେମାନଙ୍କ ଠାରେ ବୁଦ୍ଧି ଓ ବିବେକ ନିହିତ ଅଛି ଏବଂ ସେମାନେ ପରସ୍ପର ପ୍ରତି ଭ୍ରାତୃଭାବ ପୋଷଣ କରି ବ୍ୟବହାର କରିବା ଉଚିତ ।</p></td><td class="card"><div class="meta"><b lang="ta" dir="ltr">தமிழ்</b><span>Tamil</span></div><p lang="ta" dir="ltr">மனிதப் பிறவியினர் சகலரும் சுதந்திரமாகவே பிறக்கின்றனர்; அவர்கள் மதிப்பிலும், உரிமைகளிலும் சமமானவர்கள். அவர்கள் பகுத்தறிவும் மனச்சாட்சியும் நிரம்பப் பெற்றவர்கள். அவர்கள் ஒருவருடன் ஒருவர் சகோதர உணர்வுடன் நடந்துகொள்ள வேண்டும்.</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="te" dir="ltr">తెలుగు</b><span>Telugu</span></div><p lang="te" dir="ltr">ప్రతిపత్తిలోను, హక్కులలోను జన్మతః మానవులంతా సమానులే. వారికి వివేకము, అంతఃచేతన ఉన్నాయి. కాబట్టి వారు పరస్పరం సోదరభావంతో మెలగాలి.</p></td><td class="card"><div class="meta"><b lang="kn" dir="ltr">ಕನ್ನಡ</b><span>Kannada</span></div><p lang="kn" dir="ltr">ಎಲ್ಲಾ ಮಾನವರೂ ಸ್ವತಂತ್ರರಾಗಿಯೇ ಜನಿಸಿದ್ದಾರೆ. ಹಾಗೂ ಘನತೆ ಮತ್ತು ಹಕ್ಕುಗಳಲ್ಲಿ ಸಮಾನರಾಗಿದ್ದಾರೆ. ವಿವೇಕ ಮತ್ತು ಅಂತಃಕರಣಗಳನ್ನು ಪಡೆದಿರುವ ಅವರು ಪರಸ್ಪರ ಸಹೋದರ ಭಾವದಿಂದ ವರ್ತಿಸಬೇಕು.</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="ml" dir="ltr">മലയാളം</b><span>Malayalam</span></div><p lang="ml" dir="ltr">മനുഷ്യരെല്ലാവരും തുല്യാവകാശങ്ങളും അന്തസ്സും ഉള്ളവരായി സ്വതന്ത്രരായിട്ടാണ് ജനിക്കുന്നത്. അവര്‍ക്കു വിവേകബുദ്ധിയും മനസ്സാക്ഷിയുമുണ്ട്. അവര്‍ അന്യോന്യം സഹോദരഭാവത്തോടെ പെരുമാറണം.</p></td><td class="card"><div class="meta"><b lang="si" dir="ltr">සිංහල</b><span>Sinhala</span></div><p lang="si" dir="ltr">සියලු මනුෂ්‍යයෝ නිදහසේ උපත ලබා ඇත. ගරුත්වයෙන් හා අයිතිවාසිකම්වලින් ඔවුහු සමාන වෙති. යුක්තිය හා හෘදය සාක්ෂිය ඇති ඔවුන් අනොන්‍ය වශයෙන් සහෝදරත්ව හැඟීමෙන් ක්‍රියා කළ යුතුය.</p></td></tr>
+</table>
+<h2>South-East Asia</h2>
+<table class="grid">
+<tr><td class="card"><div class="meta"><b lang="th" dir="ltr">ไทย</b><span>Thai</span></div><p lang="th" dir="ltr">มนุษย์ทั้งหลายเกิดมามีอิสระและเสมอภาคกันในศักดิ์ศรีและสิทธิ ต่างมีเหตุผลและมโนธรรม และควรปฏิบัติต่อกันด้วยจิตวิญญาณแห่งภราดรภาพ</p></td><td class="card"><div class="meta"><b lang="lo" dir="ltr">ລາວ</b><span>Lao</span></div><p lang="lo" dir="ltr">ມະນຸດທຸກຄົນເກີດມາມີສິດເສລີພາບ ແລະ ເທົ່າທຽມກັນໃນດ້ານກຽດສັກສີ ແລະ ສິດທິ. ທຸກຄົນມີເຫດຜົນ ແລະ ມະໂນທຳ ແລະ ຄວນປະຕິບັດຕໍ່ກັນດ້ວຍຈິດໃຈແຫ່ງພາດຕະພາບ.</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="my" dir="ltr">မြန်မာ</b><span>Burmese</span></div><p lang="my" dir="ltr">လူသားအားလုံးတို့သည် တစ်ဦးချင်းလွတ်လပ်၍ ဂုဏ်သိက္ခာနှင့် အခွင့်အရေးတို့၌ တန်းတူညီမျှကြသည်။ ထိုသူတို့တွင် ဆင်ခြင်တုံတရားနှင့် ကိုယ်ကျင့်တရားရှိကြ၍ ညီအစ်ကိုမောင်နှမစိတ်ဓာတ်ဖြင့် အချင်းချင်း ဆက်ဆံသင့်သည်။</p></td><td class="card"><div class="meta"><b lang="km" dir="ltr">ខ្មែរ</b><span>Khmer</span></div><p lang="km" dir="ltr">មនុស្សទាំងអស់កើតមកមានសេរីភាព និងសមភាពក្នុងសេចក្តីថ្លៃថ្នូរ និងសិទ្ធិ។ មនុស្សគ្រប់រូបសុទ្ធតែមានវិចារណញ្ញាណ និងសតិសម្បជញ្ញៈ ហើយត្រូវប្រព្រឹត្តចំពោះគ្នាទៅវិញទៅមកក្នុងស្មារតីនៃភាតរភាព។</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="bo" dir="ltr">བོད་ཡིག</b><span>Tibetan</span></div><p lang="bo" dir="ltr">སྐྱེ་བོ་མིའི་རིགས་རྒྱུད་ཡོངས་ལ་སྐྱེས་ཙམ་ཉིད་ནས་ཆེ་མཐོང་དང་ཐོབ་ཐང་ལ་དབང་བའི་རང་དབང་དང་འདྲ་མཉམ་ཡོད།</p></td><td class="gap"></td></tr>
+</table>
+<h2>East Asia</h2>
+<table class="grid">
+<tr><td class="card"><div class="meta"><b lang="ja" dir="ltr">日本語</b><span>Kanji and kana</span></div><p lang="ja" dir="ltr">すべての人間は、生まれながらにして自由であり、かつ、尊厳と権利とについて平等である。人間は、理性と良心とを授けられており、互いに同胞の精神をもって行動しなければならない。</p></td><td class="card"><div class="meta"><b lang="ko" dir="ltr">한국어</b><span>Hangul</span></div><p lang="ko" dir="ltr">모든 인간은 태어날 때부터 자유로우며 그 존엄과 권리에 있어 평등하다. 인간은 천부적으로 이성과 양심을 부여받았으며 서로 형제애의 정신으로 행동하여야 한다.</p></td></tr>
+<tr><td class="card"><div class="meta"><b lang="zh-Hans" dir="ltr">简体中文</b><span>Han (simplified)</span></div><p lang="zh-Hans" dir="ltr">人人生而自由,在尊严和权利上一律平等。他们赋有理性和良心,并应以兄弟关系的精神相对待。</p></td><td class="card"><div class="meta"><b lang="zh-Hant" dir="ltr">繁體中文</b><span>Han (traditional)</span></div><p lang="zh-Hant" dir="ltr">人人生而自由，在尊嚴和權利上一律平等。他們賦有理性和良心，並應以兄弟關係的精神相對待。</p></td></tr>
+</table>
+<h2>Africa</h2>
+<table class="grid">
+<tr><td class="card"><div class="meta"><b lang="am" dir="ltr">አማርኛ</b><span>Ethiopic</span></div><p lang="am" dir="ltr">የሰው ልጅ ሁሉ ሲወለድ ነጻና በክብርና በመብትም እኩል ነው። የተፈጥሮ ማመዛዘንና ኅሊና ስላለው አንዱ ሌላውን በወንድማማችነት መንፈስ መመልከት ይገባዋል።</p></td><td class="gap"></td></tr>
+</table>
+
+<div class="mixed">
+  <b>Mixed directions</b>
+  <p lang="en" dir="ltr" style="margin:0">The word שלום (shalom) and the word سلام (salām) both mean “peace”; the Hebrew year תשפ״ו is 2025/26, written 5786 in digits. Phone: +49 30 1234567; price: $12.50 (≈ 11,80 €).</p>
+</div>
+
+</body>
+</html>

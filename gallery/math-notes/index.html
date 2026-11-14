@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mathematical notes</title>
+<meta name="description" content="Lecture notes with display and inline MathML: integrals, sums, matrices, theorem and proof boxes and numbered equations, typeset with the font's OpenType MATH table.">
+<meta name="keywords" content="MathML, OpenType MATH, tables, counters">
+<style>
+  @page {
+    size: A4;
+    margin: 23mm 24mm 21mm;
+    @top-left { content: "Gaussian integrals and their relatives"; font: italic 9pt serif; color: #7a7f88; }
+    @top-right { content: "Lecture notes"; font: 8pt sans-serif; letter-spacing: 1.5pt; text-transform: uppercase; color: #7a7f88; }
+    @bottom-center { content: counter(page); font: 9pt serif; color: #7a7f88; }
+  }
+  @page :first { margin-top: 20mm; @top-left { content: ""; } @top-right { content: ""; } }
+
+  html { font-family: serif; font-size: 11pt; line-height: 1.5; color: #1b1d22; hyphens: auto; }
+  body { margin: 0; }
+
+  .title { text-align: center; margin-bottom: 22pt; padding-bottom: 14pt; border-bottom: 0.75pt solid #1b1d22; }
+  .title .kicker { font-family: sans-serif; font-size: 8.5pt; letter-spacing: 3pt; text-transform: uppercase; color: #9b2c2c; margin-bottom: 8pt; }
+  .title h1 { margin: 0; font-size: 25pt; line-height: 1.15; font-weight: normal; }
+  .title .by { margin-top: 8pt; font-style: italic; color: #4a4f58; }
+
+  h2 { break-after: avoid; font-family: sans-serif; font-size: 11.5pt; letter-spacing: 0.3pt; margin: 17pt 0 6pt; color: #9b2c2c; }
+  h2 span { display: inline-block; width: 22pt; }
+  p { margin: 0 0 8pt; text-align: justify; }
+
+  .eq { display: flex; align-items: center; margin: 4pt 0; }
+  .eq math { flex: 1; }
+  .eq .no { width: 36pt; text-align: right; color: #5b6068; font-size: 10pt; }
+
+  .box { margin: 12pt 0; padding: 9pt 14pt 7pt; border-radius: 6pt; break-inside: avoid; }
+  .box.thm { background: #f5eeee; border-left: 3pt solid #9b2c2c; }
+  .box.def { background: #eef1f6; border-left: 3pt solid #2c4a9b; }
+  .box .h { font-family: sans-serif; font-weight: bold; font-size: 9pt; letter-spacing: 1.2pt; text-transform: uppercase; margin-bottom: 3pt; }
+  .thm .h { color: #9b2c2c; } .def .h { color: #2c4a9b; }
+  .box p { margin-bottom: 4pt; text-align: left; }
+
+  .proof { margin: 6pt 0 12pt; padding-left: 14pt; border-left: 0.75pt solid #c3c6cc; }
+  .proof .h { font-style: italic; }
+  .qed { text-align: right; }
+
+  table.vals { border-collapse: collapse; margin: 10pt auto; font-size: 10pt; }
+  .vals th math { text-transform: none; }
+  .vals th { white-space: nowrap; font-family: sans-serif; font-size: 8pt; letter-spacing: 1pt; text-transform: uppercase; color: #5b6068; padding: 4pt 16pt; border-bottom: 1pt solid #1b1d22; }
+  .vals td { padding: 3pt 16pt; text-align: center; border-bottom: 0.5pt solid #d8dadf; }
+  math { font-size: 11.5pt; }
+  .note { font-size: 9pt; color: #4a4f58; border-top: 0.5pt solid #c3c6cc; margin-top: 12pt; padding-top: 6pt; }
+</style>
+</head>
+<body>
+
+<div class="title">
+  <div class="kicker">Analysis · Lecture 4</div>
+  <h1>Gaussian integrals and their relatives</h1>
+  <div class="by">From <math><msup><mi>e</mi><mrow><mo>−</mo><msup><mi>x</mi><mn>2</mn></msup></mrow></msup></math> to Stirling’s formula</div>
+</div>
+
+<h2><span>1</span>The basic integral</h2>
+<p>The function <math><mi>f</mi><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo>=</mo><msup><mi>e</mi><mrow><mo>−</mo><msup><mi>x</mi><mn>2</mn></msup></mrow></msup></math> has no elementary antiderivative, yet its integral over the whole line can be found exactly. The trick, due to Poisson, is to square the integral and pass to polar coordinates.</p>
+
+<div class="box thm">
+  <div class="h">Theorem 1</div>
+  <p>The Gaussian integral has the value</p>
+  <div class="eq"><math display="block"><munderover><mo>∫</mo><mrow><mo>−</mo><mi mathvariant="normal">∞</mi></mrow><mi mathvariant="normal">∞</mi></munderover><msup><mi>e</mi><mrow><mo>−</mo><msup><mi>x</mi><mn>2</mn></msup></mrow></msup><mspace width="0.2em"/><mi mathvariant="normal">d</mi><mi>x</mi><mo>=</mo><msqrt><mi>π</mi></msqrt><mo>.</mo></math><span class="no">(1)</span></div>
+</div>
+
+<div class="proof">
+  <p><span class="h">Proof.</span> Write <math><mi>I</mi></math> for the integral. Then <math><msup><mi>I</mi><mn>2</mn></msup></math> is a double integral over the plane, and in polar coordinates <math><mo stretchy="false">(</mo><mi>r</mi><mo>,</mo><mi>θ</mi><mo stretchy="false">)</mo></math> the factor <math><mi>r</mi></math> from the Jacobian makes the radial integral elementary:</p>
+  <div class="eq"><math display="block"><msup><mi>I</mi><mn>2</mn></msup><mo>=</mo><munderover><mo>∫</mo><mrow><mo>−</mo><mi mathvariant="normal">∞</mi></mrow><mi mathvariant="normal">∞</mi></munderover><munderover><mo>∫</mo><mrow><mo>−</mo><mi mathvariant="normal">∞</mi></mrow><mi mathvariant="normal">∞</mi></munderover><msup><mi>e</mi><mrow><mo>−</mo><mo stretchy="false">(</mo><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><msup><mi>y</mi><mn>2</mn></msup><mo stretchy="false">)</mo></mrow></msup><mspace width="0.2em"/><mi mathvariant="normal">d</mi><mi>x</mi><mspace width="0.15em"/><mi mathvariant="normal">d</mi><mi>y</mi><mo>=</mo><munderover><mo>∫</mo><mn>0</mn><mrow><mn>2</mn><mi>π</mi></mrow></munderover><munderover><mo>∫</mo><mn>0</mn><mi mathvariant="normal">∞</mi></munderover><msup><mi>e</mi><mrow><mo>−</mo><msup><mi>r</mi><mn>2</mn></msup></mrow></msup><mspace width="0.2em"/><mi>r</mi><mspace width="0.2em"/><mi mathvariant="normal">d</mi><mi>r</mi><mspace width="0.15em"/><mi mathvariant="normal">d</mi><mi>θ</mi><mo>=</mo><mn>2</mn><mi>π</mi><mo>·</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mo>=</mo><mi>π</mi><mo>.</mo></math><span class="no">(2)</span></div>
+  <p>Since the integrand is positive, <math><mi>I</mi><mo>=</mo><msqrt><mi>π</mi></msqrt></math>.</p>
+  <p class="qed"><math><mo>∎</mo></math></p>
+</div>
+
+<h2><span>2</span>Completing the square</h2>
+<p>With a scale <math><mi>a</mi><mo>&gt;</mo><mn>0</mn></math> and a shift <math><mi>b</mi></math>, completing the square in the exponent reduces the general case to (1):</p>
+<div class="eq"><math display="block"><munderover><mo>∫</mo><mrow><mo>−</mo><mi mathvariant="normal">∞</mi></mrow><mi mathvariant="normal">∞</mi></munderover><msup><mi>e</mi><mrow><mo>−</mo><mi>a</mi><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mi>b</mi><mi>x</mi></mrow></msup><mspace width="0.2em"/><mi mathvariant="normal">d</mi><mi>x</mi><mo>=</mo><msqrt><mfrac><mi>π</mi><mi>a</mi></mfrac></msqrt><mspace width="0.2em"/><msup><mi>e</mi><mfrac><msup><mi>b</mi><mn>2</mn></msup><mrow><mn>4</mn><mi>a</mi></mrow></mfrac></msup><mo>.</mo></math><span class="no">(3)</span></div>
+<p>Differentiating (3) with respect to <math><mi>b</mi></math> at <math><mi>b</mi><mo>=</mo><mn>0</mn></math> gives all the even moments. With <math><mi>a</mi><mo>=</mo><mfrac><mn>1</mn><mrow><mn>2</mn><msup><mi>σ</mi><mn>2</mn></msup></mrow></mfrac></math> one obtains the normal density, whose normalisation is exactly Theorem 1:</p>
+<div class="eq"><math display="block"><mi>φ</mi><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo>=</mo><mfrac><mn>1</mn><mrow><mi>σ</mi><msqrt><mrow><mn>2</mn><mi>π</mi></mrow></msqrt></mrow></mfrac><mspace width="0.2em"/><msup><mi>e</mi><mrow><mo>−</mo><mfrac><msup><mrow><mo stretchy="false">(</mo><mi>x</mi><mo>−</mo><mi>μ</mi><mo stretchy="false">)</mo></mrow><mn>2</mn></msup><mrow><mn>2</mn><msup><mi>σ</mi><mn>2</mn></msup></mrow></mfrac></mrow></msup><mo>.</mo></math><span class="no">(4)</span></div>
+
+<h2><span>3</span>The Gamma function</h2>
+<div class="box def">
+  <div class="h">Definition</div>
+  <p>For <math><mi>z</mi><mo>&gt;</mo><mn>0</mn></math> the Gamma function is <math><mi mathvariant="normal">Γ</mi><mo stretchy="false">(</mo><mi>z</mi><mo stretchy="false">)</mo><mo>=</mo><msubsup><mo>∫</mo><mn>0</mn><mi mathvariant="normal">∞</mi></msubsup><msup><mi>t</mi><mrow><mi>z</mi><mo>−</mo><mn>1</mn></mrow></msup><msup><mi>e</mi><mrow><mo>−</mo><mi>t</mi></mrow></msup><mspace width="0.2em"/><mi mathvariant="normal">d</mi><mi>t</mi></math>.</p>
+</div>
+<p>Integration by parts gives <math><mi mathvariant="normal">Γ</mi><mo stretchy="false">(</mo><mi>z</mi><mo>+</mo><mn>1</mn><mo stretchy="false">)</mo><mo>=</mo><mi>z</mi><mspace width="0.15em"/><mi mathvariant="normal">Γ</mi><mo stretchy="false">(</mo><mi>z</mi><mo stretchy="false">)</mo></math>, so <math><mi mathvariant="normal">Γ</mi><mo stretchy="false">(</mo><mi>n</mi><mo>+</mo><mn>1</mn><mo stretchy="false">)</mo><mo>=</mo><mi>n</mi><mo>!</mo></math>. Substituting <math><mi>t</mi><mo>=</mo><msup><mi>x</mi><mn>2</mn></msup></math> in (1) shows the surprising value at one half, and the growth of <math><mi>n</mi><mo>!</mo></math> is described by Stirling’s formula:</p>
+<div class="eq"><math display="block"><mi mathvariant="normal">Γ</mi><mo stretchy="false">(</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mo stretchy="false">)</mo><mo>=</mo><msqrt><mi>π</mi></msqrt><mo>,</mo><mspace width="2em"/><mi>n</mi><mo>!</mo><mo>∼</mo><msqrt><mrow><mn>2</mn><mi>π</mi><mi>n</mi></mrow></msqrt><msup><mrow><mo>(</mo><mfrac><mi>n</mi><mi>e</mi></mfrac><mo>)</mo></mrow><mi>n</mi></msup><mspace width="0.5em"/><mrow><mo stretchy="false">(</mo><mi>n</mi><mo>→</mo><mi mathvariant="normal">∞</mi><mo stretchy="false">)</mo></mrow><mo>.</mo></math><span class="no">(5)</span></div>
+
+<table class="vals">
+  <tr><th><math><mi>n</mi></math></th><th><math><mi>n</mi><mo>!</mo></math></th><th>Stirling</th><th>relative error</th></tr>
+  <tr><td>1</td><td>1</td><td>0.9221</td><td>7.8 %</td></tr>
+  <tr><td>5</td><td>120</td><td>118.02</td><td>1.7 %</td></tr>
+  <tr><td>10</td><td>3 628 800</td><td>3 598 696</td><td>0.83 %</td></tr>
+</table>
+
+<h2><span>4</span>Sums</h2>
+<p>The same circle of ideas produces some famous series. Parseval’s identity applied to the Fourier series of <math><mi>x</mi></math> on <math><mo stretchy="false">(</mo><mrow><mo>−</mo><mi>π</mi></mrow><mo>,</mo><mi>π</mi><mo stretchy="false">)</mo></math> gives the Basel sum, and Euler found its product form:</p>
+<div class="eq"><math display="block"><munderover><mo>∑</mo><mrow><mi>n</mi><mo>=</mo><mn>1</mn></mrow><mi mathvariant="normal">∞</mi></munderover><mfrac><mn>1</mn><msup><mi>n</mi><mn>2</mn></msup></mfrac><mo>=</mo><mfrac><msup><mi>π</mi><mn>2</mn></msup><mn>6</mn></mfrac><mo>=</mo><munder><mo>∏</mo><mi>p</mi></munder><msup><mrow><mo>(</mo><mn>1</mn><mo>−</mo><mfrac><mn>1</mn><msup><mi>p</mi><mn>2</mn></msup></mfrac><mo>)</mo></mrow><mrow><mo>−</mo><mn>1</mn></mrow></msup><mo>.</mo></math><span class="no">(6)</span></div>
+
+<h2><span>5</span>A matrix example</h2>
+<p>For the symmetric matrix <math><mi>A</mi></math> below, the Gaussian integral over <math><msup><mi mathvariant="double-struck">R</mi><mn>2</mn></msup></math> generalises (1) to <math><msup><mi>π</mi><mrow><mn>2</mn><mo>/</mo><mn>2</mn></mrow></msup><mo>/</mo><msqrt><mrow><mo>det</mo><mi>A</mi></mrow></msqrt></math>:</p>
+<div class="eq"><math display="block"><mi>A</mi><mo>=</mo><mrow><mo>(</mo><mtable><mtr><mtd><mn>2</mn></mtd><mtd><mn>1</mn></mtd></mtr><mtr><mtd><mn>1</mn></mtd><mtd><mn>3</mn></mtd></mtr></mtable><mo>)</mo></mrow><mo>,</mo><mspace width="1.5em"/><mo>det</mo><mi>A</mi><mo>=</mo><mn>5</mn><mo>,</mo><mspace width="1.5em"/><munder><mo>∫</mo><msup><mi mathvariant="double-struck">R</mi><mn>2</mn></msup></munder><msup><mi>e</mi><mrow><mo>−</mo><msup><mi mathvariant="bold">x</mi><mi>T</mi></msup><mi>A</mi><mi mathvariant="bold">x</mi></mrow></msup><mspace width="0.2em"/><msup><mi mathvariant="normal">d</mi><mn>2</mn></msup><mi mathvariant="bold">x</mi><mo>=</mo><mfrac><mi>π</mi><msqrt><mn>5</mn></msqrt></mfrac><mo>.</mo></math><span class="no">(7)</span></div>
+
+<h2><span>6</span>The Fourier transform</h2>
+<p>Finally, the Gaussian is its own Fourier transform, up to scale. With the convention below, the function <math><mi>g</mi><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo>=</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>π</mi><msup><mi>x</mi><mn>2</mn></msup></mrow></msup></math> is a fixed point of the transform, which is why it minimises the product of the widths of a function and of its spectrum:</p>
+<div class="eq"><math display="block"><mover><mi>g</mi><mo>^</mo></mover><mo stretchy="false">(</mo><mi>ξ</mi><mo stretchy="false">)</mo><mo>=</mo><munderover><mo>∫</mo><mrow><mo>−</mo><mi mathvariant="normal">∞</mi></mrow><mi mathvariant="normal">∞</mi></munderover><mi>g</mi><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mspace width="0.2em"/><msup><mi>e</mi><mrow><mo>−</mo><mn>2</mn><mi>π</mi><mi>i</mi><mi>x</mi><mi>ξ</mi></mrow></msup><mspace width="0.2em"/><mi mathvariant="normal">d</mi><mi>x</mi><mo>=</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>π</mi><msup><mi>ξ</mi><mn>2</mn></msup></mrow></msup><mo>.</mo></math><span class="no">(8)</span></div>
+<p>The proof is a single application of (3) with <math><mi>a</mi><mo>=</mo><mi>π</mi></math> and <math><mi>b</mi><mo>=</mo><mrow><mo>−</mo><mn>2</mn><mi>π</mi><mi>i</mi><mi>ξ</mi></mrow></math>: the exponent <math><msup><mi>b</mi><mn>2</mn></msup><mo>/</mo><mn>4</mn><mi>a</mi></math> equals <math><mrow><mo>−</mo><mi>π</mi></mrow><msup><mi>ξ</mi><mn>2</mn></msup></math>, and the prefactor <math><msqrt><mrow><mi>π</mi><mo>/</mo><mi>a</mi></mrow></msqrt></math> is 1.</p>
+
+<p class="note">The formulas in these notes are plain MathML elements inside the HTML source. Helium lays them out with the font’s OpenType <i>MATH</i> table; the text of every formula can be selected and copied from the PDF.</p>
+
+</body>
+</html>

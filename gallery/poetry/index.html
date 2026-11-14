@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A small book of poems</title>
+<meta name="description" content="Verse set on small pages: centred blocks of left-aligned lines, hanging indents, italic titles, letter-spaced capitals and a plain folio. Poems by Shelley, Blake, Dickinson and Rossetti.">
+<meta name="keywords" content="typography, small page size, links, italics">
+<style>
+  @page { size: 5in 7.5in; margin: 18mm 18mm 18mm;
+    @bottom-center { content: counter(page); font: italic 9pt serif; color: #6b6258; } }
+  @page :first { @bottom-center { content: ""; } }
+
+  html { font-family: serif; color: #231f1a; font-size: 11.5pt; line-height: 1.55; }
+  body { margin: 0; text-align: center; }
+
+  .cover { padding-top: 6mm; break-after: page; }
+  .cover .kicker { font: 7.5pt sans-serif; letter-spacing: 4pt; text-transform: uppercase; color: #9a4d2e; }
+  .cover h1 { font-weight: normal; font-style: italic; font-size: 34pt; line-height: 1.1; margin: 8mm 0 4mm; }
+  .cover .rule { width: 18mm; height: 0; border-top: 1pt solid #9a4d2e; margin: 0 auto 8mm; }
+  .cover .sub { color: #6b6258; font-size: 12pt; }
+  .cover ol { list-style-type: none; padding: 0; margin: 12mm 0 0; font-size: 12pt; }
+  .cover li { margin-bottom: 7pt; }
+  .cover li a { color: inherit; text-decoration: none; }
+  .cover li i { color: #6b6258; font-size: 10.5pt; }
+
+  .poem-page { break-before: page; padding-top: 10mm; }
+  h2 { font-weight: normal; font-style: italic; font-size: 22pt; line-height: 1.15; margin: 6mm 0 2mm; }
+  .by { font: 7.5pt sans-serif; letter-spacing: 2.5pt; text-transform: uppercase; color: #6b6258; }
+  .orn { color: #9a4d2e; letter-spacing: 4pt; margin: 4mm 0 5mm; }
+  .poem { text-align: left; font-size: 11.5pt; line-height: 1.5; padding-left: 12mm; }
+  .st { margin-bottom: 11pt; }
+  .st span { display: block; padding-left: 1.4em; text-indent: -1.4em; padding-left: 1.4em; }
+  .st span.i { margin-left: 1.2em; }
+  .small .poem { font-size: 10.6pt; line-height: 1.42; padding-left: 5mm; }
+
+  .small .st { margin-bottom: 8pt; }
+  .tyger { padding-top: 3mm; }
+  .tyger .poem { padding-left: 13mm; font-size: 9.8pt; line-height: 1.3; }
+  .small.tyger .st { margin-bottom: 4pt; }
+  .tyger h2 { margin-top: 4mm; }
+  .tyger .orn { margin: 2mm 0 3mm; }
+  .colophon { margin-top: 12mm; font-size: 9pt; color: #6b6258; font-style: italic; }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <div class="kicker">An anthology</div>
+  <h1>A small book<br>of poems</h1>
+  <div class="rule"></div>
+  <div class="sub">Four poems, set to be read</div>
+  <ol>
+    <li><a href="#p1">Ozymandias</a><br><i>Percy Bysshe Shelley</i></li>
+    <li><a href="#p2">The Tyger</a><br><i>William Blake</i></li>
+    <li><a href="#p3">“Hope” is the thing with feathers</a><br><i>Emily Dickinson</i></li>
+    <li><a href="#p4">Remember</a><br><i>Christina Rossetti</i></li>
+  </ol>
+</section>
+
+<section class="poem-page small" id="p1">
+  <h2>Ozymandias</h2>
+  <div class="by">Percy Bysshe Shelley · 1818</div>
+  <div class="orn">· · ·</div>
+  <div class="poem">
+<div class="st"><span>I met a traveller from an antique land,</span><span>Who said—“Two vast and trunkless legs of stone</span><span>Stand in the desert. . . . Near them, on the sand,</span><span>Half sunk a shattered visage lies, whose frown,</span><span>And wrinkled lip, and sneer of cold command,</span><span>Tell that its sculptor well those passions read</span><span>Which yet survive, stamped on these lifeless things,</span><span>The hand that mocked them, and the heart that fed;</span><span>And on the pedestal, these words appear:</span><span>My name is Ozymandias, King of Kings;</span><span>Look on my Works, ye Mighty, and despair!</span><span>Nothing beside remains. Round the decay</span><span>Of that colossal Wreck, boundless and bare</span><span>The lone and level sands stretch far away.”</span></div>
+  </div>
+</section>
+<section class="poem-page small tyger" id="p2">
+  <h2>The Tyger</h2>
+  <div class="by">William Blake · 1794</div>
+  <div class="orn">· · ·</div>
+  <div class="poem">
+<div class="st"><span>Tyger Tyger, burning bright,</span><span>In the forests of the night;</span><span>What immortal hand or eye,</span><span>Could frame thy fearful symmetry?</span></div>
+<div class="st"><span>In what distant deeps or skies.</span><span>Burnt the fire of thine eyes?</span><span>On what wings dare he aspire?</span><span>What the hand, dare seize the fire?</span></div>
+<div class="st"><span>And what shoulder, &amp; what art,</span><span>Could twist the sinews of thy heart?</span><span>And when thy heart began to beat,</span><span>What dread hand? &amp; what dread feet?</span></div>
+<div class="st"><span>What the hammer? what the chain,</span><span>In what furnace was thy brain?</span><span>What the anvil? what dread grasp,</span><span>Dare its deadly terrors clasp!</span></div>
+<div class="st"><span>When the stars threw down their spears</span><span>And water’d heaven with their tears:</span><span>Did he smile his work to see?</span><span>Did he who made the Lamb make thee?</span></div>
+<div class="st"><span>Tyger Tyger burning bright,</span><span>In the forests of the night:</span><span>What immortal hand or eye,</span><span>Dare frame thy fearful symmetry?</span></div>
+  </div>
+</section>
+<section class="poem-page " id="p3">
+  <h2>“Hope” is the thing with feathers</h2>
+  <div class="by">Emily Dickinson · c. 1861</div>
+  <div class="orn">· · ·</div>
+  <div class="poem">
+<div class="st"><span>“Hope” is the thing with feathers—</span><span>That perches in the soul—</span><span>And sings the tune without the words—</span><span>And never stops—at all—</span></div>
+<div class="st"><span>And sweetest—in the Gale—is heard—</span><span>And sore must be the storm—</span><span>That could abash the little Bird</span><span>That kept so many warm—</span></div>
+<div class="st"><span>I’ve heard it in the chillest land—</span><span>And on the strangest Sea—</span><span>Yet—never—in Extremity,</span><span>It asked a crumb—of me.</span></div>
+  </div>
+</section>
+<section class="poem-page small" id="p4">
+  <h2>Remember</h2>
+  <div class="by">Christina Rossetti · 1862</div>
+  <div class="orn">· · ·</div>
+  <div class="poem">
+<div class="st"><span>Remember me when I am gone away,</span><span>Gone far away into the silent land;</span><span>When you can no more hold me by the hand,</span><span>Nor I half turn to go yet turning stay.</span><span>Remember me when no more day by day</span><span>You tell me of our future that you plann’d:</span><span>Only remember me; you understand</span><span>It will be late to counsel then or pray.</span></div>
+<div class="st"><span>Yet if you should forget me for a while</span><span>And afterwards remember, do not grieve:</span><span>For if the darkness and corruption leave</span><span>A vestige of the thoughts that once I had,</span><span>Better by far you should forget and smile</span><span>Than that you should remember and be sad.</span></div>
+  </div>
+</section>
+
+<div class="colophon">Texts in the public domain.</div>
+</body>
+</html>

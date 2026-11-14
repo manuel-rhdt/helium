@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A business letter</title>
+<meta name="description" content="Letterhead, address block, justified hyphenated text, a different first page and running headers on the pages that follow.">
+<meta name="keywords" content="@page, margin boxes, flexbox, hyphenation">
+<style>
+  @page {
+    size: A4;
+    margin: 28mm 24mm 26mm 26mm;
+    @top-left { content: "Harrow & Finch Architects"; font: 8pt sans-serif; letter-spacing: 1.5pt; text-transform: uppercase; color: #8a8f98; }
+    @top-right { content: "Ms. Elena Alvarez · 14 November 2026"; font: 8pt sans-serif; color: #8a8f98; }
+    @bottom-center { content: "Page " counter(page) " of " counter(pages); font: 8pt sans-serif; color: #8a8f98; }
+  }
+  @page :first {
+    margin-top: 18mm;
+    @top-left { content: ""; }
+    @top-right { content: ""; }
+    @bottom-center { content: ""; }
+  }
+
+  html { font-family: serif; font-size: 11pt; line-height: 1.45; color: #20232a; hyphens: auto; }
+  body { margin: 0; }
+
+  .letterhead { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 12pt; border-bottom: 2pt solid #1f4e5f; margin-bottom: 30pt; }
+  .brand { font-family: sans-serif; }
+  .brand .name { font-size: 20pt; font-weight: bold; letter-spacing: 0.5pt; color: #1f4e5f; line-height: 1.1; }
+  .brand .tag { font-size: 8pt; letter-spacing: 3pt; text-transform: uppercase; color: #8a8f98; margin-top: 4pt; }
+  .contact { font-family: sans-serif; font-size: 8.5pt; line-height: 1.5; text-align: right; color: #4a505a; }
+
+  .meta { display: flex; justify-content: space-between; margin-bottom: 26pt; }
+  .meta .to { line-height: 1.4; }
+  .meta .date { font-family: sans-serif; font-size: 9.5pt; color: #4a505a; text-align: right; }
+  .meta .date b { display: block; font-size: 8pt; letter-spacing: 1.5pt; text-transform: uppercase; color: #8a8f98; font-weight: normal; }
+
+  .subject { font-family: sans-serif; font-weight: bold; font-size: 11.5pt; color: #1f4e5f; margin: 0 0 14pt; }
+  p { margin: 0 0 9pt; text-align: justify; }
+  .salutation, .closing { text-align: left; }
+
+  blockquote { margin: 12pt 0 14pt; padding: 8pt 14pt; background: #eef3f5; border-left: 3pt solid #1f4e5f; font-style: italic; text-align: left; }
+
+  table.schedule { width: 100%; border-collapse: collapse; margin: 8pt 0 16pt; font-family: sans-serif; font-size: 9.5pt; }
+  .schedule th { text-align: left; font-size: 8pt; letter-spacing: 1pt; text-transform: uppercase; color: #8a8f98; padding: 4pt 6pt; border-bottom: 1pt solid #1f4e5f; }
+  .schedule td { padding: 5pt 6pt; border-bottom: 0.5pt solid #d5dade; hyphens: manual; }
+  .schedule td:last-child, .schedule th:last-child { text-align: right; }
+
+  .signature { margin-top: 30pt; }
+  .signature .sig { font-style: italic; font-size: 20pt; color: #1f4e5f; margin-bottom: 2pt; }
+  .signature .who { font-family: sans-serif; font-size: 9.5pt; line-height: 1.4; }
+  .signature .who b { display: block; }
+  .encl { margin-top: 22pt; font-family: sans-serif; font-size: 8.5pt; color: #4a505a; }
+</style>
+</head>
+<body>
+
+<div class="letterhead">
+  <div class="brand">
+    <div class="name">Harrow &amp; Finch</div>
+    <div class="tag">Architects</div>
+  </div>
+  <div class="contact">
+    14 Quayside Wharf, Bristol BS1 4RB<br>
+    +44 117 555 0142 · studio@harrowfinch.example<br>
+    harrowfinch.example
+  </div>
+</div>
+
+<div class="meta">
+  <div class="to">
+    Ms. Elena Alvarez<br>
+    Mill Cottage, Church Lane<br>
+    Upper Harrowmere<br>
+    Somerset BA3 5QT
+  </div>
+  <div class="date"><b>Date</b>14 November 2026<br><b style="margin-top:6pt">Our reference</b>HF/2026/0417</div>
+</div>
+
+<p class="subject">Mill Cottage: planning application and next steps</p>
+
+<p class="salutation">Dear Ms. Alvarez,</p>
+
+<p>Thank you for taking the time to walk us through the cottage last week. It is rare to meet a building that has been altered so many times and still keeps a clear character, and we would like to help you keep it that way while making the house work for a family of four. This letter sets out how we propose to proceed, what we need from you, and what you can expect to happen in the coming months.</p>
+
+<p>Having surveyed the property, we recommend a single, carefully proportioned extension on the north side, replacing the 1970s lean-to. The existing stone wall of the kitchen can stay as it is; the new volume then steps back from it by about four hundred millimetres, so that the old and new construction read as two distinct and honest things. We believe this approach is also the most likely to meet the requirements of the conservation officer, who told us on the telephone that he would, in his words:</p>
+
+<blockquote>“…much rather see a good contemporary addition that admits what it is than a pastiche that pretends to have always been there.”</blockquote>
+
+<p>The programme below assumes that the planning authority takes the full eight weeks to reach its decision. Should it be quicker, we shall of course bring the later stages forward, and we will tell you as soon as we know.</p>
+
+<table class="schedule">
+  <tr><th>Stage</th><th>What happens</th><th>Target date</th></tr>
+  <tr><td>1 · Survey and brief</td><td>Measured survey, structural inspection, written brief</td><td>Completed</td></tr>
+  <tr><td>2 · Concept design</td><td>Two options, model, outline cost plan</td><td>12 December 2026</td></tr>
+  <tr><td>3 · Planning</td><td>Application, heritage statement, consultation</td><td>30 January 2027</td></tr>
+  <tr><td>4 · Technical design</td><td>Building regulations, structural calculations, tender</td><td>April 2027</td></tr>
+  <tr><td>5 · Construction</td><td>Site start, monthly progress meetings</td><td>From June 2027</td></tr>
+</table>
+
+<p>To keep to this timetable, we would be grateful if you could let us have the following by the end of the month: the deeds of the property, including the plan that shows the boundary on the northern side; the name of your structural engineer, should you already have one; and a short note on how you use the house during an ordinary week. The last point sounds modest, but in our experience it is the single most useful piece of information we receive.</p>
+
+<p>Our fee for stages two and three is unchanged from the proposal of 3 October. We shall invoice on completion of each stage, and nothing is payable for the survey, which is included in the proposal. If anything in this letter is unclear, or if you would like to talk through the options before we begin drawing, please call me directly on the number above. I should be delighted to come out to the cottage once more.</p>
+
+<p class="closing">With kind regards,</p>
+
+<div class="signature">
+  <div class="sig">Margaret Finch</div>
+  <div class="who"><b>Margaret Finch RIBA</b>Partner, Harrow &amp; Finch Architects</div>
+</div>
+
+<div class="encl">Enclosures: proposal of 3 October 2026 (copy) · survey summary · terms of appointment</div>
+
+</body>
+</html>
