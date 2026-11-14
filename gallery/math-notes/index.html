@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Mathematical notes</title>
-<meta name="description" content="Lecture notes with display and inline MathML: integrals, sums, matrices, theorem and proof boxes and numbered equations, typeset with the font's OpenType MATH table.">
+<meta name="description" content="Lecture notes with display and inline MathML: integrals, sums, matrices, theorem and proof boxes and numbered equations and an SVG plot, typeset with the font's OpenType MATH table.">
 <meta name="keywords" content="MathML, OpenType MATH, tables, counters">
 <style>
   @page {
@@ -47,6 +47,9 @@
   .vals th { white-space: nowrap; font-family: sans-serif; font-size: 8pt; letter-spacing: 1pt; text-transform: uppercase; color: #5b6068; padding: 4pt 16pt; border-bottom: 1pt solid #1b1d22; }
   .vals td { padding: 3pt 16pt; text-align: center; border-bottom: 0.5pt solid #d8dadf; }
   math { font-size: 11.5pt; }
+  figure { margin: 10pt 0 6pt; break-inside: avoid; }
+  figure img { display: block; width: 78%; margin: 0 auto; }
+  figcaption { margin-top: 3pt; font-size: 9pt; color: #4a4f58; text-align: center; }
   .note { font-size: 9pt; color: #4a4f58; border-top: 0.5pt solid #c3c6cc; margin-top: 12pt; padding-top: 6pt; }
 </style>
 </head>
@@ -94,6 +97,11 @@
   <tr><td>5</td><td>120</td><td>118.02</td><td>1.7 %</td></tr>
   <tr><td>10</td><td>3 628 800</td><td>3 598 696</td><td>0.83 %</td></tr>
 </table>
+
+<figure>
+  <img src="gaussians.svg" alt="Normal densities for sigma 0.5, 1 and 2 on the interval from minus four to four, with the area within one standard deviation shaded">
+  <figcaption><b>Figure 1.</b> The density (4) of Section 2 with <math><mi>μ</mi><mo>=</mo><mn>0</mn></math> for three widths. The shaded area under <math><mi>σ</mi><mo>=</mo><mn>1</mn></math> is the probability of lying within one standard deviation, about 68.3 %.</figcaption>
+</figure>
 
 <h2><span>4</span>Sums</h2>
 <p>The same circle of ideas produces some famous series. Parseval’s identity applied to the Fourier series of <math><mi>x</mi></math> on <math><mo stretchy="false">(</mo><mrow><mo>−</mo><mi>π</mi></mrow><mo>,</mo><mi>π</mi><mo stretchy="false">)</mo></math> gives the Basel sum, and Euler found its product form:</p>

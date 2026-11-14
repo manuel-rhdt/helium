@@ -122,8 +122,13 @@ pub fn write_pdf(
     }
 
     // Every image is embedded once, however often it is painted.
-    let mut images: HashMap<*const crate::image::RasterImage, IndirectReference<lemon_pdf::image::ImageXObject>> =
-        HashMap::new();
+    enum Embedded {
+        Raster(IndirectReference<lemon_pdf::image::ImageXObject>),
+        /// An SVG image as a form, with its size.
+        Svg(lemon_pdf::form::FormReference, f32, f32),
+    }
+    let mut images: HashMap<*const crate::image::LoadedImage, Embedded> = HashMap::new();
+    let mut svg_writer = crate::svg::SvgWriter::new(if no_filter { None } else { Some(StreamFilter::Deflate) });
     for page in &mut print_pages.pages {
         for item in page.display_list.items() {
             let DisplayItem::Image { image, .. } = item else {
@@ -133,11 +138,21 @@ pub fn write_pdf(
             if images.contains_key(&key) {
                 continue;
             }
-            match image.to_pdf_image().and_then(|pdf_image| {
-                context.write_image(pdf_image).map_err(|error| error.to_string())
-            }) {
-                Ok(reference) => {
-                    images.insert(key, reference);
+            let embedded = match &**image {
+                crate::image::LoadedImage::Raster(raster) => raster
+                    .to_pdf_image()
+                    .and_then(|pdf_image| {
+                        context.write_image(pdf_image).map_err(|error| error.to_string())
+                    })
+                    .map(Embedded::Raster),
+                crate::image::LoadedImage::Svg(svg) => svg_writer
+                    .write(&mut context, &svg.tree)
+                    .map(|form| Embedded::Svg(form, svg.tree.size().width(), svg.tree.size().height()))
+                    .map_err(|error| error.to_string()),
+            };
+            match embedded {
+                Ok(embedded) => {
+                    images.insert(key, embedded);
                 }
                 Err(error) => log::warn!("cannot embed an image: {}", error),
             }
@@ -246,19 +261,54 @@ pub fn write_pdf(
                         gradient::paint(page_context, resolved, page_height, filter)?
                     }
                     DisplayItem::Image { rect, image } => {
-                        let Some(&reference) = images.get(&std::sync::Arc::as_ptr(image)) else {
+                        let Some(embedded) = images.get(&std::sync::Arc::as_ptr(image)) else {
                             continue;
                         };
-                        let key = page_context.add_xobject(reference);
                         page_context.push_operand(RawPdf("/Artifact".into()))?;
                         page_context.apply_operator("BMC")?;
-                        page_context.draw_image(
-                            &key,
-                            Pt::from(rect.x),
-                            Pt::from(page_height - rect.y - rect.height),
-                            Pt::from(rect.width),
-                            Pt::from(rect.height),
-                        )?;
+                        match *embedded {
+                            Embedded::Raster(reference) => {
+                                let key = page_context.add_xobject(reference);
+                                page_context.draw_image(
+                                    &key,
+                                    Pt::from(rect.x),
+                                    Pt::from(page_height - rect.y - rect.height),
+                                    Pt::from(rect.width),
+                                    Pt::from(rect.height),
+                                )?;
+                            }
+                            Embedded::Svg(form, width, height) => {
+                                // like `object-fit: contain`: the SVG keeps its proportions
+                                // and is centered in the box
+                                let (box_w, box_h) = (rect.width.0, rect.height.0);
+                                let scale = (box_w / width).min(box_h / height);
+                                // layout is in pixels, the PDF in points
+                                let x = Pt::from(rect.x + PixelLength((box_w - width * scale) / 2.0));
+                                let y = Pt::from(page_height - rect.y - PixelLength((box_h - height * scale) / 2.0));
+                                let scale = f64::from(Pt::from(PixelLength(scale)).0);
+                                let key = page_context.add_xobject(form);
+                                page_context.save_graphics_state()?;
+                                page_context.rect(
+                                    Pt::from(rect.x),
+                                    Pt::from(page_height - rect.y - rect.height),
+                                    Pt::from(rect.width),
+                                    Pt::from(rect.height),
+                                )?;
+                                page_context.clip(lemon_pdf::graphics_state::FillRule::NonZero)?;
+                                page_context.end_path()?;
+                                // SVG has y pointing down
+                                page_context.concatenate_matrix(
+                                    scale,
+                                    0.0,
+                                    0.0,
+                                    -scale,
+                                    x,
+                                    y,
+                                )?;
+                                page_context.draw_xobject(&key)?;
+                                page_context.restore_graphics_state()?;
+                            }
+                        }
                         page_context.apply_operator("EMC")?;
                     }
                     DisplayItem::BlendGroup(group) => {

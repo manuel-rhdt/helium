@@ -1,13 +1,81 @@
 //! Loading the images of `<img>` elements.
 //!
+//! SVG images are parsed into a `usvg` tree that `crate::svg` draws as vector graphics.
+//!
 //! JPEG files and PNG files are supported. Their pixels are not decoded: the PDF embeds the
 //! compressed data as it is (`DCTDecode` for JPEG, `FlateDecode` with a predictor for PNG), so
 //! the only thing needed to lay an image out is its size in pixels. That is why PNG files with an
 //! alpha channel (or interlacing) are not supported yet: they would have to be decoded.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lemon_pdf::image::Image;
+
+/// An image that is going to be painted into the PDF: a raster image that is embedded as it is,
+/// or a vector image that is drawn.
+#[derive(Debug)]
+pub enum LoadedImage {
+    Raster(RasterImage),
+    Svg(SvgImage),
+}
+
+/// An SVG image.
+pub struct SvgImage {
+    pub tree: usvg::Tree,
+}
+
+impl std::fmt::Debug for SvgImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SvgImage").field("size", &self.tree.size()).finish()
+    }
+}
+
+impl LoadedImage {
+    /// The intrinsic size in CSS pixels.
+    pub fn size(&self) -> (f32, f32) {
+        match self {
+            LoadedImage::Raster(image) => (image.width as f32, image.height as f32),
+            LoadedImage::Svg(image) => (image.tree.size().width(), image.tree.size().height()),
+        }
+    }
+
+    /// Reads an image file. The format is recognized by the contents: PNG and JPEG by their
+    /// signatures, and everything that looks like XML is read as SVG.
+    pub fn from_bytes(data: Vec<u8>, base_dir: &Path) -> Result<LoadedImage, String> {
+        if data.starts_with(&[0x89, b'P', b'N', b'G']) || data.starts_with(&[0xFF, 0xD8]) {
+            return RasterImage::from_bytes(data).map(LoadedImage::Raster);
+        }
+        let text = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&data);
+        if text.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'<') {
+            return parse_svg(&data, base_dir).map(|tree| LoadedImage::Svg(SvgImage { tree }));
+        }
+        Err("only JPEG, PNG and SVG images are supported".to_owned())
+    }
+}
+
+/// Parses an SVG file. Its own images and fonts are resolved under the same rules as the images
+/// of the document: files only inside of `base_dir`, and no network.
+fn parse_svg(data: &[u8], base_dir: &Path) -> Result<usvg::Tree, String> {
+    let mut options = usvg::Options::default();
+    options.resources_dir = Some(base_dir.to_path_buf());
+    options.fontdb = crate::layout::text::font::svg_font_database();
+    options.font_family = "serif".to_owned();
+    options.image_href_resolver.resolve_string = {
+        let default = usvg::ImageHrefResolver::default_string_resolver();
+        let base_dir = base_dir.to_path_buf();
+        Box::new(move |href, options| match resolve_path(href, &base_dir) {
+            Ok(path) => default(&path.to_string_lossy(), options),
+            Err(error) => {
+                log::warn!("SVG: cannot load the image `{}`: {}", href, error);
+                None
+            }
+        })
+    };
+    // `usvg` is meant for untrusted files, but a panic must not take the document down
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| usvg::Tree::from_data(data, &options)))
+        .map_err(|_| "the SVG image could not be processed".to_owned())?
+        .map_err(|error| format!("invalid SVG image: {}", error))
+}
 
 /// A JPEG or PNG file that is going to be embedded into the PDF.
 #[derive(Debug)]
@@ -56,7 +124,7 @@ fn to_pdf_image(data: &[u8]) -> Result<Image, String> {
 /// `src` is a `data:` URI with base64 data or the path of a file inside of `base_dir` (the
 /// directory of the document). Other files are not read, so that a document cannot embed
 /// arbitrary files of the machine that renders it, and nothing is fetched from the network.
-pub fn load(src: &str, base_dir: &Path) -> Result<RasterImage, String> {
+pub fn load(src: &str, base_dir: &Path) -> Result<LoadedImage, String> {
     let src = src.trim();
     if src.is_empty() {
         return Err("the `src` attribute is empty".to_owned());
@@ -65,11 +133,23 @@ pub fn load(src: &str, base_dir: &Path) -> Result<RasterImage, String> {
         let (header, payload) = rest
             .split_once(',')
             .ok_or_else(|| "a data URI needs a comma before its data".to_owned())?;
-        if !header.to_ascii_lowercase().ends_with(";base64") {
-            return Err("only base64 data URIs are supported".to_owned());
-        }
-        return RasterImage::from_bytes(decode_base64(payload)?);
+        let data = if header.to_ascii_lowercase().ends_with(";base64") {
+            decode_base64(payload)?
+        } else {
+            // text, mostly SVG: percent-encoded
+            percent_decode_bytes(payload)?
+        };
+        return LoadedImage::from_bytes(data, base_dir);
     }
+    let path = resolve_path(src, base_dir)?;
+    let data = std::fs::read(&path)
+        .map_err(|error| format!("cannot read {}: {}", path.display(), error))?;
+    LoadedImage::from_bytes(data, base_dir)
+}
+
+/// The file that a relative URL refers to, if it is inside of `base_dir`.
+fn resolve_path(src: &str, base_dir: &Path) -> Result<PathBuf, String> {
+    let src = src.trim();
     if let Some(colon) = src.find(':') {
         // a scheme (`https:`), not a directory with a colon in its name
         if src[..colon]
@@ -99,9 +179,7 @@ pub fn load(src: &str, base_dir: &Path) -> Result<RasterImage, String> {
             full.display()
         ));
     }
-    let data = std::fs::read(&canonical)
-        .map_err(|error| format!("cannot read {}: {}", canonical.display(), error))?;
-    RasterImage::from_bytes(data)
+    Ok(canonical)
 }
 
 fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
@@ -110,6 +188,10 @@ fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> 
 }
 
 fn percent_decode(text: &str) -> Result<String, String> {
+    String::from_utf8(percent_decode_bytes(text)?).map_err(|_| format!("`{}` is not valid UTF-8", text))
+}
+
+fn percent_decode_bytes(text: &str) -> Result<Vec<u8>, String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -127,7 +209,7 @@ fn percent_decode(text: &str) -> Result<String, String> {
             i += 1;
         }
     }
-    String::from_utf8(out).map_err(|_| format!("`{}` is not valid UTF-8", text))
+    Ok(out)
 }
 
 /// Decodes standard base64. Whitespace is ignored and the padding is optional, as in the
@@ -198,7 +280,7 @@ mod tests {
         assert!(load("https://example.com/a.jpg", dir).unwrap_err().contains("not supported"));
         assert!(load("file:///etc/passwd", dir).unwrap_err().contains("not supported"));
         assert!(load("", dir).is_err());
-        assert!(load("data:image/png,abc", dir).unwrap_err().contains("base64"));
+        assert!(load("data:image/png,abc", dir).unwrap_err().contains("JPEG, PNG and SVG"));
         assert!(load("../../etc/passwd", dir).is_err());
     }
 }
