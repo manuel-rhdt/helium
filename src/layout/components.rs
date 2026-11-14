@@ -589,6 +589,21 @@ impl Component for MathNode {
     type Storage = DenseVecStorage<Self>;
 }
 
+/// The image of an `<img>` element: a replaced box that is as big as the image, unless its
+/// style says otherwise.
+#[derive(Debug, Clone)]
+pub struct ImageBox {
+    pub image: std::sync::Arc<crate::image::JpegImage>,
+    /// The intrinsic size in pixels: the size of the image, or the size that the `width` and
+    /// `height` attributes ask for.
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Component for ImageBox {
+    type Storage = DenseVecStorage<Self>;
+}
+
 /// The laid out formula, stored on the `<math>` element.
 #[derive(Debug)]
 pub struct MathBox {
