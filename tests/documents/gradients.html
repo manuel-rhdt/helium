@@ -1,0 +1,24 @@
+<!DOCTYPE html><html><head><title>Gradients</title><style>
+body{margin:20px;font-family:sans-serif;font-size:10px}
+.row{display:flex;flex-wrap:wrap;gap:12px}
+.c{width:170px}
+.b{width:170px;height:90px;margin-bottom:3px}
+</style></head><body>
+<div class="row">
+<div class="c"><div class="b" style="background:linear-gradient(#0f1c2e,#1f9ea0,#fad68c,#ff6b3d)"></div>linear to bottom</div>
+<div class="c"><div class="b" style="background:linear-gradient(to right,#c00,#00c)"></div>to right</div>
+<div class="c"><div class="b" style="background:linear-gradient(45deg,#fc0,#f06 50%,#306)"></div>45deg</div>
+<div class="c"><div class="b" style="background:linear-gradient(to top right,#0a0,#fff 50%,#a00)"></div>to top right</div>
+<div class="c"><div class="b" style="background:linear-gradient(90deg,#e33 0 33%,#fb0 33% 66%,#27c 66%)"></div>hard stops</div>
+<div class="c"><div class="b" style="background:repeating-linear-gradient(45deg,#fc0 0 10px,#333 10px 20px)"></div>repeating stripes</div>
+<div class="c"><div class="b" style="background:radial-gradient(#fff,#f60,#306)"></div>radial ellipse</div>
+<div class="c"><div class="b" style="background:radial-gradient(circle at 30% 30%,#fff,#38f 40%,#012)"></div>circle at 30% 30%</div>
+<div class="c"><div class="b" style="background:radial-gradient(circle closest-side,#fc0,#c00 99%,#000)"></div>closest-side</div>
+<div class="c"><div class="b" style="background:repeating-radial-gradient(circle at center,#fff 0 6px,#058 6px 12px)"></div>repeating radial</div>
+<div class="c"><div class="b" style="background:conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)"></div>conic</div>
+<div class="c"><div class="b" style="background:conic-gradient(from 45deg at 30% 60%,#e33 0 25%,#fb0 0 50%,#2a5 0 75%,#27c 0)"></div>conic hard stops</div>
+<div class="c"><div class="b" style="background:linear-gradient(135deg,#fa0,#f06);border-radius:14px;border:4px solid #123"></div>rounded + border</div>
+<div class="c"><div class="b" style="background:#fed linear-gradient(#f00,#00f) ;opacity:1"></div>colour + gradient</div>
+<div class="c"><div class="b" style="background:linear-gradient(rgba(255,0,0,.5),rgba(255,0,0,.5)),#fff"></div>constant alpha</div>
+<div class="c"><div class="b" style="background:linear-gradient(to right,#06c,transparent),#ffe9a8"></div>fade to transparent</div>
+</div></body></html>

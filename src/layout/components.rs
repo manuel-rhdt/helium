@@ -290,12 +290,13 @@ impl Component for Fragmented {
     type Storage = NullStorage<Self>;
 }
 
-/// The part of the decoration of a [`Fragmented`] box that is on one page.
-#[derive(Debug, Default, Copy, Clone)]
-pub struct DecorationFragment;
+/// The part of the decoration of a [`Fragmented`] box that is on one page. It holds the box it
+/// is a part of, whose style gives the images of the background.
+#[derive(Debug, Copy, Clone)]
+pub struct DecorationFragment(pub Entity);
 
 impl Component for DecorationFragment {
-    type Storage = NullStorage<Self>;
+    type Storage = DenseVecStorage<Self>;
 }
 
 /// Contains information needed to draw the background and outline of an element.
@@ -312,6 +313,8 @@ pub struct Decoration {
     pub collapsed: Option<EdgeValues<CollapsedEdge>>,
     /// The radii of the corners of the border edge (`border-radius`).
     pub radius: CornerRadii,
+    /// Whether the box has a background image, which the style of the box describes.
+    pub has_background_image: bool,
 }
 
 /// The radius of each corner of a box, as computed. Percentages are resolved against the width
@@ -365,6 +368,7 @@ impl Default for Decoration {
             background_color: RGBA::transparent(),
             collapsed: None,
             radius: Default::default(),
+            has_background_image: false,
         }
     }
 }
