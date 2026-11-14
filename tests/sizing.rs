@@ -1,5 +1,5 @@
-//! `box-sizing`, `min-width`, `max-width`, `min-height` and `max-height`, which only the Taffy
-//! layout engine supports. `data-expected-width` and `data-expected-height` are border box sizes.
+//! `box-sizing`, `min-width`, `max-width`, `min-height` and `max-height`.
+//! `data-expected-width` and `data-expected-height` are border box sizes.
 
 mod common;
 
@@ -12,7 +12,7 @@ fn run(name: &str, html: &str) -> Output {
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
     common::helium()
         .unwrap()
-        .args(["--layout-engine", "taffy", "--check-layout"])
+        .args(["--check-layout"])
         .arg(&input)
         .arg(dir.join("wpt-pdfs").join(format!("sizing__{}.pdf", name)))
         .output()

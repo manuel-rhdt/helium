@@ -57,13 +57,6 @@ struct Options {
     /// document against the computed layout and exit with an error if any expectation fails.
     #[structopt(long = "check-layout")]
     check_layout: bool,
-    /// The engine that lays out the boxes: `taffy` or `scheme`
-    #[structopt(
-        long = "layout-engine",
-        env = "HELIUM_LAYOUT_ENGINE",
-        default_value = "taffy"
-    )]
-    layout_engine: layout::LayoutEngine,
     /// Use only the fonts built into Helium, not the fonts installed on the system, so that the
     /// output does not depend on the machine. Also enabled by setting the environment variable
     /// `HELIUM_NO_SYSTEM_FONTS` (to anything but `0`).
@@ -80,7 +73,7 @@ struct Options {
 #[derive(Debug, From)]
 pub enum Error {
     Io(std::io::Error),
-    Layout(layout::lscheme::RuntimeError),
+    Layout(String),
 }
 
 fn main() -> Result<(), Error> {
@@ -122,7 +115,7 @@ fn main() -> Result<(), Error> {
     };
     let before_layout = Instant::now();
     let mut layout_context =
-        layout::layout(dom.clone(), device, opt.crop, opt.layout_engine, &input_dir)?;
+        layout::layout(dom.clone(), device, opt.crop, &input_dir)?;
     info!("TIMED: layout {:?}", before_layout.elapsed());
 
     if let Some(report) =
@@ -131,8 +124,6 @@ fn main() -> Result<(), Error> {
     {
         eprintln!("{}", report);
     }
-
-    // repl(&mut layout_context);
 
     if let Some(path) = &opt.dump_layout {
         let json = layout::dump::dump_layout(&dom, &layout_context);
