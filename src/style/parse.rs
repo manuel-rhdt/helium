@@ -53,6 +53,12 @@ impl Default for Styles {
 }
 
 impl Styles {
+    /// Style sheets without any rule, not even the ones of the user agent. Cheap, unlike
+    /// `default()`, which parses the user agent style sheet.
+    pub fn empty() -> Self {
+        Styles { rules: vec![], user_agent_rules: 0 }
+    }
+
     pub fn parse_css(&mut self, input: &str) {
         let mut parser = Parser::new(input);
         let mut top_level = TopLevelParser::default();

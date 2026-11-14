@@ -6,3 +6,4 @@ book
 poetry
 scripts
 design
+figures
