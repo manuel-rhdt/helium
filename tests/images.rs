@@ -248,16 +248,48 @@ fn the_file_type_is_not_taken_from_the_name() {
 }
 
 #[test]
-fn png_files_that_need_decoding_are_empty_boxes() {
-    for (name, src, message) in [
-        ("alpha", "alpha.png", "alpha channel"),
-        ("interlaced", "interlaced.png", "interlaced"),
-    ] {
-        let r = render(name, &format!("{PAGE}<p>a<img src=\"{src}\">b</p>"));
-        assert!(r.log.contains(message), "{}: {}", name, r.log);
-        assert_eq!(count(&r.pdf, "/Subtype /Image"), 0, "{}", name);
-        assert_close(r.images[0][2], 0.0);
+fn png_files_with_alpha_become_soft_masks() {
+    let r = render(
+        "png_alpha",
+        &format!(
+            "{PAGE}<img src=\"alpha.png\"><img src=\"gray_alpha.png\"><img src=\"alpha16.png\">\
+             <img src=\"palette_alpha.png\">"
+        ),
+    );
+    assert_eq!(r.images.len(), 4, "{}", r.log);
+    for image in &r.images {
+        assert_close(image[2], 30.0);
+        assert_close(image[3], 15.0);
     }
+    // the pixels are decoded: no PNG predictor, an image and a soft mask for each
+    assert_eq!(count(&r.pdf, "/Predictor"), 0, "{}", r.log);
+    assert_eq!(count(&r.pdf, "/SMask"), 4, "{}", r.log);
+    assert_eq!(count(&r.pdf, "/Subtype /Image"), 8);
+}
+
+#[test]
+fn interlaced_png_files_are_decoded() {
+    let r = render("png_interlaced", &format!("{PAGE}<img src=\"interlaced.png\">"));
+    assert_eq!(r.images.len(), 1, "{}", r.log);
+    assert_close(r.images[0][2], 30.0);
+    assert_eq!(count(&r.pdf, "/Subtype /Image"), 1, "{}", r.log);
+    assert_eq!(count(&r.pdf, "/Predictor"), 0);
+    assert_eq!(count(&r.pdf, "/SMask"), 0);
+}
+
+#[test]
+fn a_png_that_is_damaged_is_an_empty_box() {
+    // the data of the file stops in the middle
+    let mut file = std::fs::read(fixtures().join("alpha.png")).unwrap();
+    file.truncate(file.len() - 30);
+    let encoded = encode_base64(&file);
+    let r = render(
+        "png_damaged",
+        &format!("{PAGE}<p>a<img src=\"data:image/png;base64,{encoded}\">b</p>"),
+    );
+    assert!(r.log.contains("PNG"), "{}", r.log);
+    assert_eq!(count(&r.pdf, "/Subtype /Image"), 0);
+    assert_close(r.images[0][2], 0.0);
 }
 
 #[test]
