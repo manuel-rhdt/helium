@@ -416,6 +416,11 @@ th {
   text-align: center;
 }
 
+/* An image is a replaced box on the line; its baseline is its bottom margin edge. */
+img {
+  display: inline-block;
+}
+
 math {
   font-family: "STIX Two Math", "Latin Modern Math";
   -helium-math-variant: normal;

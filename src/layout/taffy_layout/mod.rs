@@ -22,7 +22,7 @@ use taffy::style::AvailableSpace;
 use taffy::tree::NodeId;
 
 use crate::layout::components::{
-    AbsoluteGroup, AbsoluteGroups, BlockLevelElement, Decoration, EdgeValues, IntrinsicSize,
+    AbsoluteGroup, AbsoluteGroups, BlockLevelElement, Decoration, EdgeValues, ImageBox, IntrinsicSize,
     Position, TableCellSpan, TableColumns, TextList, TextRun, ZIndex,
 };
 use crate::layout::inline::InlineFormattingContext;
@@ -48,6 +48,7 @@ impl TaffyBlockLayout {
         world.register::<Position>();
         world.register::<Decoration>();
         world.register::<IntrinsicSize>();
+        world.register::<ImageBox>();
         world.register::<BlockFormattingContext>();
         world.register::<InlineFormattingContext>();
         world.register::<TextRun>();
@@ -63,6 +64,7 @@ impl TaffyBlockLayout {
         let block_ctxs = world.read_storage::<BlockFormattingContext>();
         let mut inline_ctxs = world.write_storage::<InlineFormattingContext>();
         let mut intrinsic_sizes = world.write_storage::<IntrinsicSize>();
+        let images = world.read_storage::<ImageBox>();
         let text_runs = world.read_storage::<TextRun>();
         let table_spans = world.read_storage::<TableCellSpan>();
         let table_columns = world.read_storage::<TableColumns>();
@@ -77,6 +79,7 @@ impl TaffyBlockLayout {
             computed_values: &computed_values,
             inline_ctxs: &mut inline_ctxs,
             intrinsic_sizes: &mut intrinsic_sizes,
+            images: &images,
             text_runs: &text_runs,
             table_spans: &table_spans,
             table_columns: &table_columns,

@@ -41,7 +41,7 @@ impl Node {
     /// world and manipulate it somehow.
     pub fn construct(&self) -> World {
         let world = World::new();
-        let mut constructor = EntityConstructor::new(world);
+        let mut constructor = EntityConstructor::new(world, std::path::PathBuf::from("."));
         construct_recursive(self, &mut constructor);
         constructor.world
     }

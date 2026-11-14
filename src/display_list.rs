@@ -1,3 +1,4 @@
+use crate::layout::components::ImageBox;
 use crate::layout::components::{
     Decoration, DecorationFragment, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
     TransformMatrix, VectorGraphics, ZIndex,
@@ -258,6 +259,11 @@ pub enum DisplayItem {
     Gradient(Box<Resolved>),
     /// Paints background layers that have a blend mode.
     BlendGroup(Box<BlendGroup>),
+    /// Paints an image into a rectangle.
+    Image {
+        rect: Rect,
+        image: std::sync::Arc<crate::image::JpegImage>,
+    },
     Color(RGBA),
     StrokeColor(RGBA),
     Text(Point, PixelLength, String, Glyphs),
@@ -826,6 +832,41 @@ fn resolve_embeds(
     }
 }
 
+/// Paints the images of `<img>` elements, into their content boxes.
+pub struct DisplayImages {
+    pub display_list: DisplayList,
+    pub bitset: specs::BitSet,
+}
+
+impl<'a> System<'a> for DisplayImages {
+    type SystemData = (
+        Entities<'a>,
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, ImageBox>,
+    );
+
+    fn run(&mut self, (entities, positions, images): Self::SystemData) {
+        for (entity, pos, image, _) in (&entities, &positions, &images, &self.bitset).join() {
+            if pos.width.0 <= 0.0 || pos.height.0 <= 0.0 {
+                continue;
+            }
+            self.display_list.append(
+                DisplayItem::Image {
+                    rect: Rect {
+                        x: pos.x,
+                        y: pos.y,
+                        width: pos.width,
+                        height: pos.height,
+                    },
+                    image: image.image.clone(),
+                },
+                entity,
+                pos.z,
+            );
+        }
+    }
+}
+
 pub struct DisplayVectorGraphics {
     pub display_list: DisplayList,
     pub bitset: specs::BitSet,
@@ -923,6 +964,7 @@ impl<'a> System<'a> for ContentRectCalculator {
 pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
     <DisplayText as System>::SystemData::setup(world);
     <DisplayVectorGraphics as System>::SystemData::setup(world);
+    <DisplayImages as System>::SystemData::setup(world);
 
     let pages = world.read_resource::<Option<Pages>>();
     let pages = pages.as_ref().unwrap();
@@ -947,8 +989,14 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         };
         graphics_builder.run_now(world);
 
-        let display_list = graphics_builder.display_list;
-        let bitset = graphics_builder.bitset;
+        let mut image_builder = DisplayImages {
+            display_list: graphics_builder.display_list,
+            bitset: graphics_builder.bitset,
+        };
+        image_builder.run_now(world);
+
+        let display_list = image_builder.display_list;
+        let bitset = image_builder.bitset;
 
         let mut text_builder = DisplayText {
             display_list,
