@@ -1,12 +1,12 @@
 # Scripts (A2 print)
 
-`index.html` is an A2 print of 53 writing systems, each set in a real text. Next to every specimen
+`index.html` is a two-page A2 print of 53 writing systems, each set in a real text. Next to every specimen
 stands the name of its script, small and vertical, and nothing else.
 
-- **Article 1 of the Universal Declaration of Human Rights** for the 41 scripts that have a
+- **The opening of the Universal Declaration of Human Rights** (Article 1 and the start of Article 2; a few translations in the corpus begin at Article 2) for the 41 scripts that have a
   translation in the [UDHR in Unicode](https://www.unicode.org/udhr/) corpus (from Latin and Greek
   to Tibetan, Cherokee, Vai, Adlam, Javanese and Grantha). The texts come from the MIT-licensed `udhr`
-  npm package. Each text is cut after as many lines as the tile holds. Mongolian is set in vertical
+  npm package. Each text is cut after as many lines as the tile holds. Tiles are ordered from page 1 to page 2. Mongolian is set in vertical
   columns.
 - **Inscriptions and words** for the historic scripts, transcribed from published editions:
   an Akkadian phrase in cuneiform (*šum-ma a-wi-lum*, the first words of the Code of Hammurabi),
