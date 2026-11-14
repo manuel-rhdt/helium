@@ -459,12 +459,27 @@ impl HeliumTree<'_, '_> {
         let intrinsic_sizes = &*self.intrinsic_sizes;
         let text_indent = self.computed_values.get(entity).map(|s| s.text.text_indent);
         let run_mode = inputs.run_mode;
+        // Taffy gives the measure function a known size of the border box (`known`) but the
+        // available space of the content box, so the lines must not be broken for `known`
+        // itself: a cell that a grid track makes 16px wider than its content would otherwise
+        // be measured with fewer lines than it gets when it is laid out for real.
+        let horizontal_extras = {
+            let parent_width = inputs.parent_size.width;
+            let style = &node.style;
+            (style.padding.resolve_or_zero(parent_width, calc)
+                + style.border.resolve_or_zero(parent_width, calc))
+            .horizontal_axis_sum()
+        };
 
         // (first baseline, last baseline) relative to the top of the content box
         let mut baselines = None;
         let mut output = compute_leaf_layout(inputs, &node.style, calc, |known, available| {
             let Some(ifc) = ifc else {
                 return Size::ZERO;
+            };
+            let known = Size {
+                width: known.width.map(|width| (width - horizontal_extras).max(0.0)),
+                height: known.height,
             };
             // Percentages of `text-indent` refer to the width of the box, which is not known
             // when the box is sized by its contents.
