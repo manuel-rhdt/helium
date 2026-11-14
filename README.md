@@ -28,12 +28,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `details`, and form controls (`input` shows its `value`; controls are static).
 - **Images:** `<img>` with JPEG, PNG and SVG files, from a path inside the directory of the
   document or a `data:` URI. The format is recognized by the contents of the file. JPEG files
-  (gray, RGB, CMYK, baseline and progressive) and PNG files (gray, RGB and palette, 1 to 16
-  bits, with a transparent color or a single transparent palette entry) are embedded without
-  being decoded. PNG files with an alpha channel or with interlacing, and partially
-  transparent palettes, are not supported yet and leave an empty box. SVG files are drawn as
-  vector graphics (see below). Sizes follow the `width`/`height` attributes and properties and
-  the proportions of the image; an image in a box of another shape is scaled to fit and centered.
+  (gray, RGB, CMYK, baseline and progressive) and PNG files without alpha channel and
+  interlacing (gray, RGB and palette, 1 to 16 bits, also with a transparent color or a single
+  transparent palette entry) are embedded without being decoded. All other PNG files (alpha
+  channel, interlaced, partially transparent palettes) are decoded, with 16 bit samples reduced
+  to 8 bits and the alpha channel written as a soft mask. Gamma and color profiles of PNG files
+  are ignored. SVG files are drawn as vector graphics (see below). Sizes follow the
+  `width`/`height` attributes and properties and the proportions of the image; an image in a box
+  of another shape is scaled to fit and centered.
 - **SVG** (`usvg` parses it): paths and basic shapes, fill and stroke (caps, joins, dashes), solid
   colors, linear and radial gradients including `spreadMethod`, patterns, clip paths, masks, group
   opacity, `mix-blend-mode`, nested transforms, `use` and `symbol`, embedded JPEG and PNG
@@ -103,7 +105,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 ## Not supported
 
-Other image formats (GIF, WebP, ...), PNG with alpha, inline `<svg>`, `url()` backgrounds, `@font-face`, `@media`,
+Other image formats (GIF, WebP, ...), inline `<svg>`, `url()` backgrounds, `@font-face`, `@media`,
 `@supports`, `@import`, `!important`, `var()`, `calc()`, `overflow`, `float`, `position:
 relative`/`fixed`/`sticky`, `z-index`, `transform`, `opacity` and color alpha, `box-shadow`,
 `outline`, border styles other than `solid`, `vertical-align`, `word-break`/`overflow-wrap`,
