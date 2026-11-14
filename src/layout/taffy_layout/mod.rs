@@ -382,7 +382,7 @@ impl<'a> Writer<'a, '_> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — the same cases as the Scheme block layout tests in lscheme/scheme_layout.rs
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

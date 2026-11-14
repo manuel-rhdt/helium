@@ -17,13 +17,10 @@ helium_derive = { path = "./helium_derive" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "tiling-patterns" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "tiling-patterns" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
-math-render = { git = "https://github.com/manuel-rhdt/mlayout" }
+formel = "0.1.0"
 parking_lot = "0.11"
 thiserror = "^1"
 env_logger = "0.8"
-pest = "2.8.0"
-pest_derive = "2.8.0"
-rustyline = "16"
 cssparser-color = "0.6"
 precomputed-hash = "0.1"
 imbl = "7"
@@ -58,7 +55,7 @@ flate2 = "1"
 [build-dependencies]
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
 
-# Make every crate in the graph (e.g. math-render) use the same harfbuzz_rs,
+# Make every crate in the graph (e.g. formel) use the same harfbuzz_rs,
 # since only one package may link to native harfbuzz.
 [patch.crates-io]
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main" }
