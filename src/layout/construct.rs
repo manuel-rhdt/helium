@@ -52,8 +52,13 @@ pub struct FlowConstructor {
 
 impl FlowConstructor {
     pub fn new(world: World, stylesheet_base_dir: PathBuf) -> Self {
+        Self::with_styles(world, stylesheet_base_dir, Default::default())
+    }
+
+    /// A constructor that uses the given style sheets (which include the ones of the user agent).
+    fn with_styles(world: World, stylesheet_base_dir: PathBuf, styles: Styles) -> Self {
         FlowConstructor {
-            styles: Default::default(),
+            styles,
             stylesheet_base_dir: stylesheet_base_dir.clone(),
             entity_constructor: EntityConstructor::new(world, stylesheet_base_dir.clone()),
             inside_svg: None,
@@ -73,8 +78,7 @@ impl FlowConstructor {
         island: (DomRef, f32, f32),
         islands: Vec<IslandSpec>,
     ) -> Self {
-        let mut constructor = FlowConstructor::new(world, stylesheet_base_dir);
-        constructor.styles = styles;
+        let mut constructor = FlowConstructor::with_styles(world, stylesheet_base_dir, styles);
         *constructor.entity_constructor.world.write_resource::<FontMap>() = fonts;
         constructor.island_root = Some(island);
         constructor.islands = islands;
@@ -83,7 +87,7 @@ impl FlowConstructor {
 
     /// Takes the style sheets and the `foreignObject` elements out of the constructor.
     pub fn take_shared(&mut self) -> (Styles, Vec<IslandSpec>) {
-        (std::mem::take(&mut self.styles), std::mem::take(&mut self.islands))
+        (std::mem::replace(&mut self.styles, Styles::empty()), std::mem::take(&mut self.islands))
     }
 
     /// The image of an `<svg>` element: its contents are drawn as vector graphics.
