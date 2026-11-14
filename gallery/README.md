@@ -12,6 +12,7 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 | `book/` | a trade paperback: facing pages, running heads, chapter openings |
 | `poetry/` | verse on small pages |
 | `scripts/` | one sentence in 30 languages and more than 20 scripts |
+| `figures/` | a one-page figure sheet: inline SVG with the CSS of the page, MathML labels and equation cards inside of the figures (`foreignObject`), an icon sprite, patterns, markers, gradients |
 | `design/` | gradients, blend modes, tiled patterns, rounded boxes, SVG images (clip path, mask, pattern, text), a dashboard |
 
 ## Build locally
