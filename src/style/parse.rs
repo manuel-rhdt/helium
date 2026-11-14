@@ -38,13 +38,16 @@ impl From<SelectorParseErrorKind> for StyleParseError {
 #[derive(Debug)]
 pub struct Styles {
     rules: Vec<QualifiedRule>,
+    /// The number of rules at the start of `rules` that come from the user agent style sheet.
+    user_agent_rules: usize,
 }
 
 impl Default for Styles {
     fn default() -> Self {
         let ua_style = include_str!("../../resources/user-agent.css");
-        let mut styles = Styles { rules: vec![] };
+        let mut styles = Styles { rules: vec![], user_agent_rules: 0 };
         styles.parse_css(ua_style);
+        styles.user_agent_rules = styles.rules.len();
         styles
     }
 }
@@ -93,6 +96,11 @@ impl Styles {
 
     pub fn rules_iter(&self) -> impl DoubleEndedIterator<Item = &QualifiedRule> {
         self.rules.iter()
+    }
+
+    /// The rules of the document, without the ones of the user agent style sheet.
+    pub fn author_rules_iter(&self) -> impl DoubleEndedIterator<Item = &QualifiedRule> {
+        self.rules[self.user_agent_rules.min(self.rules.len())..].iter()
     }
 }
 
@@ -267,9 +275,19 @@ impl QualifiedRule {
     }
 }
 
+/// A declaration as it is written: the name of the property and the text of its value. Every
+/// declaration is kept, also those of properties that are not known, for the CSS of the SVG
+/// elements, which Helium does not interpret itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawDeclaration {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(Debug, Default)]
 pub struct PropertyDeclarationBlock {
     declarations: Vec<PropertyDeclaration<'static>>,
+    raw: Vec<RawDeclaration>,
 }
 
 impl PropertyDeclarationBlock {
@@ -285,17 +303,26 @@ impl PropertyDeclarationBlock {
 
     /// Parses a declaration list up to the end of the input.
     fn parse_declarations(input: &mut Parser) -> Self {
-        let mut declaration_parser = StyleDeclarationParser {};
+        let mut declaration_parser = StyleDeclarationParser::default();
         let mut block = Self::new();
         for declaration in RuleBodyParser::new(input, &mut declaration_parser) {
             match declaration {
                 Ok(declaration) => block.declarations.push(declaration),
                 Err((error, text, _location)) => {
-                    warn!("Error while parsing declaration {:?}: {:?}", text, error)
+                    // the properties of SVG elements are for the SVG parser
+                    if !is_svg_property(text) {
+                        warn!("Error while parsing declaration {:?}: {:?}", text, error)
+                    }
                 }
             }
         }
+        block.raw = declaration_parser.raw;
         block
+    }
+
+    /// The declarations as they are written.
+    pub fn raw_declarations(&self) -> &[RawDeclaration] {
+        &self.raw
     }
 
     pub fn declarations(&self) -> impl Iterator<Item = &PropertyDeclaration<'_>> {
@@ -781,7 +808,25 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
     }
 }
 
-struct StyleDeclarationParser {}
+/// Whether the text of a declaration is about a property that only SVG elements have.
+fn is_svg_property(declaration: &str) -> bool {
+    const PROPERTIES: &[&str] = &[
+        "alignment-baseline", "baseline-shift", "clip-path", "clip-rule", "color-interpolation",
+        "color-interpolation-filters", "dominant-baseline", "fill", "fill-opacity", "fill-rule",
+        "filter", "flood-color", "flood-opacity", "lighting-color", "marker", "marker-end",
+        "marker-mid", "marker-start", "mask", "mask-type", "mix-blend-mode", "paint-order",
+        "shape-rendering", "stop-color", "stop-opacity", "stroke", "stroke-dasharray",
+        "stroke-dashoffset", "stroke-linecap", "stroke-linejoin", "stroke-miterlimit",
+        "stroke-opacity", "stroke-width", "text-anchor", "text-rendering", "vector-effect",
+    ];
+    let name = declaration.split(':').next().unwrap_or("").trim().to_ascii_lowercase();
+    PROPERTIES.contains(&name.as_str())
+}
+
+#[derive(Default)]
+struct StyleDeclarationParser {
+    raw: Vec<RawDeclaration>,
+}
 
 impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
     type Declaration = PropertyDeclaration<'static>;
@@ -793,6 +838,15 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
         input: &mut Parser<'i>,
         _declaration_start: &ParserState,
     ) -> Result<Self::Declaration, ParseError<Self::Error>> {
+        // keep the text of the value, whether Helium knows the property or not
+        let state = input.state();
+        let start = input.position();
+        while input.next_including_whitespace_and_comments().is_ok() {}
+        self.raw.push(RawDeclaration {
+            name: name.to_string(),
+            value: input.slice_from(start).trim().to_owned(),
+        });
+        input.reset(&state);
         parse_property(name, input)
     }
 }

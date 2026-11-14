@@ -29,6 +29,10 @@ pub struct FlowConstructor {
     pub(crate) styles: Styles,
     stylesheet_base_dir: PathBuf,
     entity_constructor: EntityConstructor,
+    /// The `<svg>` element whose contents are being traversed: they are not laid out.
+    inside_svg: Option<DomRef>,
+    /// The outermost `<svg>` elements of the document, found when the first one is needed.
+    svg_roots: Option<Vec<DomRef>>,
 }
 
 impl FlowConstructor {
@@ -37,6 +41,48 @@ impl FlowConstructor {
             styles: Default::default(),
             stylesheet_base_dir: stylesheet_base_dir.clone(),
             entity_constructor: EntityConstructor::new(world, stylesheet_base_dir.clone()),
+            inside_svg: None,
+            svg_roots: None,
+        }
+    }
+
+    /// The image of an `<svg>` element: its contents are drawn as vector graphics.
+    fn svg_image(
+        &mut self,
+        node: &DomRef,
+        style: &ComputedValues,
+    ) -> Option<crate::image::LoadedImage> {
+        let roots = self
+            .svg_roots
+            .get_or_insert_with(|| crate::svg_dom::svg_roots(node))
+            .clone();
+        let family = style
+            .font
+            .font_family
+            .iter()
+            .map(|family| match family {
+                crate::style::properties::specified::FontFamily::SansSerif => "sans-serif".to_owned(),
+                crate::style::properties::specified::FontFamily::Serif => "serif".to_owned(),
+                crate::style::properties::specified::FontFamily::Monospace => "monospace".to_owned(),
+                crate::style::properties::specified::FontFamily::Named(name) => {
+                    format!("\"{}\"", name.replace('"', ""))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let color = color_to_rgba(style.font.color);
+        let inherited = crate::svg_dom::Inherited {
+            color: Some(format!("rgb({}, {}, {})", color.red, color.green, color.blue)),
+            font_family: Some(family),
+            font_size: Some(format!("{}px", style.font.font_size.0)),
+        };
+        let document = crate::svg_dom::document(node, &roots, &self.styles, &inherited);
+        match crate::image::svg_from_dom(&document, &self.stylesheet_base_dir, style.font.font_size.0) {
+            Ok(image) => Some(image),
+            Err(error) => {
+                log::warn!("cannot draw an <svg> element: {}", error);
+                None
+            }
         }
     }
 
@@ -174,6 +220,10 @@ impl Traversal<DomRef> for StylesheetReader<'_> {
 
 impl Traversal<DomRef> for FlowConstructor {
     fn preorder_traverse(&mut self, node: DomRef) {
+        if self.inside_svg.is_some() {
+            // the elements of an `<svg>` are drawn by the SVG code, not laid out
+            return;
+        }
         // TODO: Selector matching, Cascade
         match &node.clone().into_element_ref() {
             Some(element_ref) => {
@@ -238,10 +288,24 @@ impl Traversal<DomRef> for FlowConstructor {
             }
         }
 
+        if crate::svg_dom::is_outermost_svg(&node) {
+            if let Some(style) = NodeData::style(&node) {
+                if style.box_.display != Display::None {
+                    self.entity_constructor.pending_svg = self.svg_image(&node, &style);
+                }
+            }
+            self.inside_svg = Some(node.clone());
+        }
         self.entity_constructor.build_entity(node)
     }
 
     fn postorder_traverse(&mut self, node: DomRef) {
+        if let Some(svg) = &self.inside_svg {
+            if *svg != node {
+                return;
+            }
+            self.inside_svg = None;
+        }
         match node.html_data() {
             ParsedData::Element(_) => self.entity_constructor.build_formatting_context(&node),
             _ => {}
@@ -532,6 +596,8 @@ pub struct EntityConstructor {
     /// The images that were loaded, by `src`, so that an image that is used often is embedded
     /// once. `None` for an image that could not be loaded.
     images: HashMap<String, Option<Arc<crate::image::LoadedImage>>>,
+    /// The image of the `<svg>` element that is built next.
+    pending_svg: Option<crate::image::LoadedImage>,
 }
 
 impl std::fmt::Debug for EntityConstructor {
@@ -565,6 +631,7 @@ impl EntityConstructor {
             in_word: false,
             base_dir,
             images: Default::default(),
+            pending_svg: None,
         }
     }
 
@@ -660,9 +727,20 @@ impl EntityConstructor {
                 let span = (style.box_.display == Display::TableCell)
                     .then(|| table_cell_span(element_data))
                     .flatten();
-                let is_image =
-                    element_data.name == QualName::new(None, ns!(html), local_name!("img"));
-                let image = is_image.then(|| self.image_of(element_data)).flatten();
+                let svg = self.pending_svg.take();
+                let is_image = svg.is_some()
+                    || element_data.name == QualName::new(None, ns!(html), local_name!("img"));
+                let image = match svg {
+                    Some(svg) => {
+                        let (width, height) = svg.size();
+                        Some(components::ImageBox {
+                            image: Arc::new(svg),
+                            width,
+                            height,
+                        })
+                    }
+                    None => is_image.then(|| self.image_of(element_data)).flatten(),
+                };
                 let mut style = style;
                 if is_image && style.box_.display == Display::Inline {
                     // an inline replaced element is placed on a line as a whole
