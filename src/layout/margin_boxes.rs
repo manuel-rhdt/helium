@@ -10,7 +10,11 @@
 use super::FontMap;
 use super::components::{PageGeometry, Paragraph, Position, TextOperator, ZIndex};
 use super::inline::shape_piece;
-use crate::style::parse::{ContentItem, CounterName, CounterStyle, MarginBoxKind, PageSelector};
+use super::pages::{PageContext, PageMargins, Pages, normalize};
+use crate::style::parse::{ContentItem, CounterName, CounterStyle, MarginBoxKind};
+use std::collections::{HashMap, HashSet};
+use unicode_bidi::{BidiInfo, Level};
+use std::sync::Arc;
 use crate::style::properties::computed::{PixelLength as Px, RGBA, TextAlign};
 use specs::{Entities, Read, ReadExpect, System, WriteStorage};
 
@@ -26,41 +30,23 @@ pub struct ResolvedMarginBox {
     pub text_align: TextAlign,
 }
 
-/// The margin boxes for the three kinds of pages: the first page, other left pages and other
-/// right pages.
+/// The margin boxes of the kinds of pages that the `@page` rules tell apart.
 #[derive(Debug, Clone, Default)]
 pub struct MarginBoxes {
-    pub first: Vec<ResolvedMarginBox>,
-    pub left: Vec<ResolvedMarginBox>,
-    pub right: Vec<ResolvedMarginBox>,
+    pub names: HashSet<Arc<str>>,
+    pub pages: HashMap<PageContext, Vec<ResolvedMarginBox>>,
 }
 
 impl MarginBoxes {
     /// Whether the document has any headers or footers at all.
     pub fn is_empty(&self) -> bool {
-        self.first.is_empty() && self.left.is_empty() && self.right.is_empty()
+        self.pages.values().all(|boxes| boxes.is_empty())
     }
 
-    /// The margin boxes of the page with the given index. The first page is a right page, so the
-    /// pages alternate between right and left (for left-to-right text).
-    fn for_page(&self, index: usize) -> &[ResolvedMarginBox] {
-        if index == 0 {
-            &self.first
-        } else if index % 2 == 1 {
-            &self.left
-        } else {
-            &self.right
-        }
-    }
-}
-
-/// Whether an `@page` rule with the selector applies to the first/left/right kind of page.
-pub fn selector_matches(selector: PageSelector, first: bool, left: bool) -> bool {
-    match selector {
-        PageSelector::Any => true,
-        PageSelector::First => first,
-        PageSelector::Left => left,
-        PageSelector::Right => !left,
+    fn for_page(&self, page: &PageContext) -> &[ResolvedMarginBox] {
+        self.pages
+            .get(&normalize(page, &self.names))
+            .map_or(&[], Vec::as_slice)
     }
 }
 
@@ -114,11 +100,22 @@ fn format_counter(value: usize, style: CounterStyle) -> String {
         CounterStyle::UpperRoman if value > 0 => roman(value).to_uppercase(),
         CounterStyle::LowerAlpha if value > 0 => alphabetic(value),
         CounterStyle::UpperAlpha if value > 0 => alphabetic(value).to_uppercase(),
+        CounterStyle::ArabicIndic => digits(value, '\u{660}'),
+        CounterStyle::Persian => digits(value, '\u{6f0}'),
         CounterStyle::LowerRoman
         | CounterStyle::UpperRoman
         | CounterStyle::LowerAlpha
         | CounterStyle::UpperAlpha => value.to_string(),
     }
+}
+
+/// The decimal digits of `value` in a script whose zero is `zero`.
+fn digits(value: usize, zero: char) -> String {
+    value
+        .to_string()
+        .chars()
+        .map(|digit| char::from_u32(zero as u32 + digit as u32 - '0' as u32).unwrap_or(digit))
+        .collect()
 }
 
 fn content_text(content: &[ContentItem], page: usize, pages: usize) -> String {
@@ -140,6 +137,8 @@ impl<'a> System<'a> for MarginBoxPaint {
         Entities<'a>,
         Read<'a, MarginBoxes>,
         Read<'a, FontMap>,
+        Read<'a, Pages>,
+        Read<'a, PageMargins>,
         ReadExpect<'a, PageGeometry>,
         WriteStorage<'a, Position>,
         WriteStorage<'a, Paragraph>,
@@ -147,7 +146,7 @@ impl<'a> System<'a> for MarginBoxPaint {
 
     fn run(
         &mut self,
-        (entities, margin_boxes, font_map, geometry, mut positions, mut paragraphs): Self::SystemData,
+        (entities, margin_boxes, font_map, pages, page_margins, geometry, mut positions, mut paragraphs): Self::SystemData,
     ) {
         use specs::Join;
 
@@ -160,10 +159,22 @@ impl<'a> System<'a> for MarginBoxPaint {
             .max()
             .unwrap_or(0);
 
-        let area_left = geometry.margin.left;
-        let area_width = geometry.width - geometry.margin.left - geometry.margin.right;
         for page in 0..num_pages {
-            for margin_box in margin_boxes.for_page(page) {
+            let context = pages.0.get(page).cloned().unwrap_or(PageContext {
+                index: page,
+                name: None,
+                first_in_group: false,
+                rtl: page_margins.rtl,
+            });
+            // the margins of the page: the inner and outer margins of a book differ
+            let (margin_left, margin_right) = if page_margins.pages.is_empty() {
+                (geometry.margin.left, geometry.margin.right)
+            } else {
+                page_margins.for_page(&context)
+            };
+            let area_left = margin_left;
+            let area_width = geometry.width - margin_left - margin_right;
+            for margin_box in margin_boxes.for_page(&context) {
                 let text = content_text(&margin_box.content, page + 1, num_pages);
                 if text.is_empty() {
                     continue;
@@ -174,21 +185,33 @@ impl<'a> System<'a> for MarginBoxPaint {
                     TextOperator::SetColor(margin_box.color),
                 ];
                 ops.insert(0, TextOperator::BeginArtifact);
-                let width =
-                    shape_piece(
+                // The text is reordered by the bidirectional algorithm: right-to-left runs are
+                // shaped right-to-left, and the runs are drawn in visual order.
+                let info = BidiInfo::new(
                     &text,
-                    font,
-                    &margin_box.fallback,
-                    None,
-                    margin_box.font_size,
-                    Px(0.0),
-                    &[],
-                    false,
-                    &mut ops,
+                    Some(if page_margins.rtl { Level::rtl() } else { Level::ltr() }),
                 );
+                let mut width = Px(0.0);
+                for paragraph in &info.paragraphs {
+                    let (levels, runs) = info.visual_runs(paragraph, paragraph.range.clone());
+                    for run in runs {
+                        let run_rtl = levels[run.start].is_rtl();
+                        width += shape_piece(
+                            &text[run],
+                            font,
+                            &margin_box.fallback,
+                            None,
+                            margin_box.font_size,
+                            Px(0.0),
+                            &[],
+                            run_rtl,
+                            &mut ops,
+                        );
+                    }
+                }
                 ops.push(TextOperator::EndMarkedContent);
 
-                let x = match margin_box.text_align.resolve(false) {
+                let x = match margin_box.text_align.resolve(page_margins.rtl) {
                     TextAlign::Center => area_left + (area_width - width) / 2.0,
                     TextAlign::Right => area_left + area_width - width,
                     TextAlign::Left | TextAlign::Justify | TextAlign::Start | TextAlign::End => {
@@ -243,7 +266,7 @@ impl<'a> System<'a> for MarginBoxPaint {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::style::parse::Styles;
+    use crate::style::parse::{PagePseudo, PageSelector, Styles};
 
     #[test]
     fn counters_are_formatted() {
@@ -275,6 +298,8 @@ mod test {
         // roman numerals and letters start at 1, so 0 falls back to decimal
         assert_eq!(format(CounterStyle::LowerRoman, 0), "0");
         assert_eq!(format(CounterStyle::LowerAlpha, 0), "0");
+        assert_eq!(format(CounterStyle::ArabicIndic, 1405), "١٤٠٥");
+        assert_eq!(format(CounterStyle::Persian, 90), "۹۰");
     }
 
     #[test]
@@ -317,7 +342,10 @@ mod test {
             "@page :first { @top-left { content: \"Hi\" counter(page, upper-roman); color: red } @bogus { } }",
         );
         let rule = styles.rules_iter().last().unwrap();
-        assert_eq!(rule.page_selector(), Some(PageSelector::First));
+        assert_eq!(
+            rule.page_selector(),
+            Some(&PageSelector::pseudo(PagePseudo::First))
+        );
         assert_eq!(rule.margin_boxes.len(), 1);
         let margin_box = &rule.margin_boxes[0];
         assert_eq!(margin_box.kind, MarginBoxKind::TopLeft);

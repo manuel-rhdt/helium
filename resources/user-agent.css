@@ -56,9 +56,12 @@ embed[hidden] {
   display: inline;
 }
 
+html {
+  font-family: sans-serif;
+}
+
 html,
 body {
-  font-family: sans-serif;
   display: block;
 }
 

@@ -1,6 +1,7 @@
 use super::components::{self, BlockLevelElement, LayoutEntity, MathNode, Position, RootNode};
 use super::inline::InlineFormattingContext;
-use super::margin_boxes::{self, MarginBoxes, ResolvedMarginBox};
+use super::margin_boxes::{MarginBoxes, ResolvedMarginBox};
+use super::pages::{self, PageContext};
 use super::normal_formatting::BlockFormattingContext;
 use super::{FontMap, text::Font};
 use crate::parser::{ElementData, ParsedData};
@@ -39,21 +40,25 @@ impl FlowConstructor {
         }
     }
 
+    /// Whether the document is set from right to left: the `direction` of the root element.
+    pub fn is_rtl(&self) -> bool {
+        let RootNode(root) = *self.entity_constructor.world.read_resource::<RootNode>();
+        let styles = self.entity_constructor.world.read_storage::<ComputedValues>();
+        root.and_then(|root| styles.get(root))
+            .is_some_and(|style| style.text.direction == crate::style::properties::specified::Direction::Rtl)
+    }
+
     /// Resolves the styles and fonts of the margin boxes (headers and footers) of the document.
     pub fn resolve_margin_boxes(&mut self) -> MarginBoxes {
-        let mut resolve = |first: bool, left: bool| {
+        let names = pages::selected_names(&self.styles);
+        let rtl = self.is_rtl();
+        let mut resolve = |page: &PageContext| {
             let mut resolved = vec![];
             for kind in MarginBoxKind::ALL {
                 let mut style_builder = StyleBuilder::new(Default::default());
                 let mut content = None;
                 let mut text_align = None;
-                for rule in self.styles.rules_iter() {
-                    let Some(selector) = rule.page_selector() else {
-                        continue;
-                    };
-                    if !margin_boxes::selector_matches(selector, first, left) {
-                        continue;
-                    }
+                for rule in pages::matching_rules(&self.styles, page) {
                     for margin_box in rule.margin_boxes.iter().filter(|b| b.kind == kind) {
                         for declaration in margin_box.properties.declarations() {
                             if let PropertyDeclaration::Text(Text::TextAlign(align)) = declaration {
@@ -102,12 +107,14 @@ impl FlowConstructor {
             }
             resolved
         };
-        // the first page is a right page
-        MarginBoxes {
-            first: resolve(true, false),
-            left: resolve(false, true),
-            right: resolve(false, false),
+        let mut boxes = MarginBoxes {
+            pages: HashMap::new(),
+            names: names.clone(),
+        };
+        for page in pages::representative_pages(&names, rtl) {
+            boxes.pages.insert(page.clone(), resolve(&page));
         }
+        boxes
     }
 
     /// The world with the constructed boxes. It contains the characters that could not be
@@ -153,10 +160,20 @@ impl FlowConstructor {
     }
 }
 
+/// Reads the style sheets of the document before any style is computed: the rules of a `<style>`
+/// element in the head apply to the root element, which comes before it.
+pub struct StylesheetReader<'a>(pub &'a mut FlowConstructor);
+
+impl Traversal<DomRef> for StylesheetReader<'_> {
+    fn preorder_traverse(&mut self, node: DomRef) {
+        self.0.read_stylesheet(&node);
+    }
+
+    fn postorder_traverse(&mut self, _node: DomRef) {}
+}
+
 impl Traversal<DomRef> for FlowConstructor {
     fn preorder_traverse(&mut self, node: DomRef) {
-        self.read_stylesheet(&node);
-
         // TODO: Selector matching, Cascade
         match &node.clone().into_element_ref() {
             Some(element_ref) => {

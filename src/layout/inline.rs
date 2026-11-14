@@ -127,11 +127,13 @@ impl InlineFormattingContext {
     }
 
     /// The extra space after every space on a justified line (all but the last line of a
-    /// paragraph with `text-align: justify`), given the width of the line box.
+    /// paragraph and the lines that end at a forced break, with `text-align: justify`), given
+    /// the width of the line box.
     pub fn word_spacing(&self, line_num: usize, line_width: Px) -> Px {
         let line = &self.lines[line_num];
         let num_spaces = self.space_count(line.from_break, line.to_break);
-        let is_last_line = line_num == self.lines.len() - 1;
+        let is_last_line =
+            line_num == self.lines.len() - 1 || self.break_points[line.to_break].forced;
         if !is_last_line && self.text_align == TextAlign::Justify && num_spaces > 0 {
             (line_width - self.content_width(line.from_break, line.to_break)) / num_spaces as f32
         } else {
@@ -160,9 +162,7 @@ impl InlineFormattingContext {
     ) -> Vec<LinePiece> {
         let from_break = self.break_points[line.from_break];
         let to_break = self.break_points[line.to_break];
-        let position = |entity| self.elements.iter().position(|&e| e == entity);
-        let (Some(first), Some(last)) = (position(from_break.entity), position(to_break.entity))
-        else {
+        let Some((first, last)) = self.element_span(from_break, to_break) else {
             return vec![];
         };
         let mut pieces = Vec::new();
@@ -174,17 +174,17 @@ impl InlineFormattingContext {
                 .take_while(|run| run.element == element);
             match text_runs.get(entity) {
                 Some(text_run) => {
-                    let start = if element == first {
+                    let start = if entity == from_break.entity {
                         from_break.char_index
                     } else {
                         0
                     };
-                    let mut end = if element == last {
+                    let mut end = if entity == to_break.entity {
                         to_break.char_index
                     } else {
                         text_run.text.len()
                     };
-                    if element == last && to_break.space && start < end {
+                    if entity == to_break.entity && to_break.space && start < end {
                         end = start + text_run.text[start..end].trim_end().len();
                     }
                     if start >= end {
@@ -345,22 +345,27 @@ impl InlineFormattingContext {
                 shrink: previous.shrink + f64::from(breakpoint.glue_shrink.0),
             });
         }
-        let sequence = super::paragraph::compute_paragraph_breakpoints(
-            &opportunities,
-            |from, to| {
-                let natural_width = breakpoints[to].advance_before
-                    - breakpoints[from].advance_after
-                    + breakpoints[to].hyphen_width;
-                let start_glue = glue_prefix[from + 1];
-                let end_glue = glue_prefix[to];
-                let glue = super::paragraph::GlueTotals {
-                    stretch: end_glue.stretch - start_glue.stretch,
-                    shrink: end_glue.shrink - start_glue.shrink,
-                };
-                Some((f64::from(natural_width.0), glue))
-            },
-            |from| f64::from((line_width - if from == 0 { indent } else { Px(0.0) }).0),
-        );
+        // Only justified text has glue to stretch. Optimal breaking would balance the lines of
+        // ragged text, which looks like short lines for no reason.
+        let metrics = |from: usize, to: usize| {
+            let natural_width = breakpoints[to].advance_before
+                - breakpoints[from].advance_after
+                + breakpoints[to].hyphen_width;
+            let start_glue = glue_prefix[from + 1];
+            let end_glue = glue_prefix[to];
+            let glue = super::paragraph::GlueTotals {
+                stretch: end_glue.stretch - start_glue.stretch,
+                shrink: end_glue.shrink - start_glue.shrink,
+            };
+            Some((f64::from(natural_width.0), glue))
+        };
+        let width_of =
+            |from: usize| f64::from((line_width - if from == 0 { indent } else { Px(0.0) }).0);
+        let sequence = if self.text_align == TextAlign::Justify {
+            super::paragraph::compute_paragraph_breakpoints(&opportunities, metrics, width_of)
+        } else {
+            super::paragraph::compute_greedy_breakpoints(&opportunities, metrics, width_of)
+        };
 
         let lines = sequence
             .windows(2)
@@ -436,6 +441,23 @@ impl InlineFormattingContext {
             .collect()
     }
 
+    /// The indices into `elements` of the first and the last element that have a part on the
+    /// line between two break points, or `None` if there is none. A box is not on the line if
+    /// the line starts behind it or ends in front of it.
+    fn element_span(&self, from: BreakPoint, to: BreakPoint) -> Option<(usize, usize)> {
+        let position = |entity| self.elements.iter().position(|&e| e == entity);
+        let is_atom = |entity| self.atom_offsets.iter().any(|&(atom, _)| atom == entity);
+        let mut start = position(from.entity)?;
+        let mut end = position(to.entity)?;
+        if is_atom(from.entity) && from.char_index >= ATOM_BREAK_AFTER {
+            start += 1;
+        }
+        if is_atom(to.entity) && to.char_index == ATOM_BREAK_BEFORE {
+            end = end.checked_sub(1)?;
+        }
+        (start <= end).then_some((start, end))
+    }
+
     pub fn line_height(
         &self,
         from_index: usize,
@@ -446,18 +468,11 @@ impl InlineFormattingContext {
         let from = self.break_points[from_index];
         let to = self.break_points[to_index];
 
-        let start = self
-            .elements
-            .iter()
-            .position(|&elem| elem == from.entity)
-            .unwrap();
-        let end = self
-            .elements
-            .iter()
-            .position(|&elem| elem == to.entity)
-            .unwrap();
+        let span = self
+            .element_span(from, to)
+            .map_or(&self.elements[0..0], |(start, end)| &self.elements[start..=end]);
 
-        let (max_ascent, max_descent) = self.elements[start..=end]
+        let (max_ascent, max_descent) = span
             .iter()
             .map(|&ent| {
                 if let Some(text_run) = text_runs.get(ent) {
@@ -504,9 +519,12 @@ impl InlineFormattingContext {
                     return Px(0.0);
                 }
                 let element = position(bp.entity).unwrap_or(0);
+                // a break in front of a box does not include the box
                 atoms
                     .iter()
-                    .filter(|&&(atom, _)| atom <= element)
+                    .filter(|&&(atom, _)| {
+                        atom < element || (atom == element && bp.char_index > ATOM_BREAK_BEFORE)
+                    })
                     .fold(Px(0.0), |sum, &(_, width)| sum + width)
             })
             .collect();
@@ -540,6 +558,11 @@ impl Component for InlineFormattingContext {
 }
 
 pub struct FindPossibleLineBreaks;
+
+/// The `char_index` of the break point in front of an inline-level box.
+const ATOM_BREAK_BEFORE: usize = 0;
+/// The `char_index` of the break point behind an inline-level box.
+const ATOM_BREAK_AFTER: usize = 1;
 
 #[derive(Debug, Copy, Clone)]
 pub struct BreakPoint {
@@ -692,11 +715,20 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             .collect();
                     }
                     let run_start_advance = advance;
+                    // `white-space: nowrap` text has no soft wrap opportunities at all, except
+                    // behind a space at its end, which keeps the space from adding to the width
+                    // of a line that ends there.
+                    let wraps = computed_values
+                        .get(entity)
+                        .is_none_or(|style| style.text.white_space.wraps());
                     let mut other_breaks = break_opportunities_between_letters(&text_run.text);
                     for (pos, glyph_info) in &shaped {
                         let cluster = glyph_info.cluster as usize;
                         if other_breaks.peek() == Some(&cluster) {
                             other_breaks.next();
+                            if !wraps {
+                                continue;
+                            }
                             // Justification stretches the gaps next to CJK characters. Not at
                             // a change of the bidi level, where the gap would be between two
                             // pieces of the line (see `shape_piece`).
@@ -728,7 +760,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             other_breaks.next();
                         }
                         let cur_char = &text_run.text[glyph_info.cluster as usize..];
-                        if cur_char.starts_with(|chr: char| chr.is_whitespace()) {
+                        let ends_run = cur_char.trim_start().is_empty();
+                        if cur_char.starts_with(|chr: char| chr.is_whitespace())
+                            && (wraps || ends_run)
+                        {
                             let advance_before = advance;
                             advance += font.scale_to_px(pos.x_advance, text_run.font_size);
                             let advance_after = advance;
@@ -758,6 +793,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                     }
                     let hyphenation = match text_run.hyphens {
+                        _ if !wraps => Vec::new(),
                         crate::style::properties::specified::Hyphens::None => Vec::new(),
                         crate::style::properties::specified::Hyphens::Manual
                             if text_run.manual_hyphen_points.is_empty() =>
@@ -778,9 +814,9 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 Some(dictionary) => word_ranges(&text_run.text)
                                     .into_iter()
                                     .flat_map(|(word_start, word_end)| {
-                                        dictionary
-                                            .hyphenate(&text_run.text[word_start..word_end])
-                                            .breaks
+                                        let word = &text_run.text[word_start..word_end];
+                                        let breaks = dictionary.hyphenate(word).breaks;
+                                        limit_hyphenation_chars(word, breaks)
                                             .into_iter()
                                             .map(move |offset| word_start + offset)
                                     })
@@ -862,6 +898,35 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 {
                     // the width is only known once the box has been laid out
                     atom_offsets.push((entity, advance));
+                    // A line may break in front of and behind an inline-level box even if there
+                    // is no space next to it. The break in front is at the end of the previous
+                    // element if that already provides a break there.
+                    let atom_break = |char_index: usize, advance: Px| BreakPoint {
+                        entity,
+                        char_index,
+                        advance_before: advance,
+                        advance_after: advance,
+                        forced: false,
+                        space: false,
+                        inter_letter: false,
+                        hyphen: false,
+                        hyphen_width: Px(0.0),
+                        glue_stretch: Px(0.0),
+                        glue_shrink: Px(0.0),
+                        penalty: 0,
+                    };
+                    let wraps = computed_values
+                        .get(entity)
+                        .is_none_or(|style| style.text.white_space.wraps());
+                    if wraps
+                        && index > 0
+                        && break_points.last().is_some_and(|last| last.advance_after != advance)
+                    {
+                        break_points.push(atom_break(ATOM_BREAK_BEFORE, advance));
+                    }
+                    if wraps && index + 1 < elements.len() {
+                        break_points.push(atom_break(ATOM_BREAK_AFTER, advance));
+                    }
                     push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
                 } else {
                     push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
@@ -920,6 +985,22 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             break_points.sort_by_key(|break_point| {
                 (element_order(break_point.entity), break_point.char_index)
             });
+            // A break behind a box is redundant if a space follows it directly.
+            let is_atom = |entity: Entity| atom_offsets.iter().any(|&(atom, _)| atom == entity);
+            let mut index = 0;
+            while index + 1 < break_points.len() {
+                let point = break_points[index];
+                let next = break_points[index + 1];
+                if is_atom(point.entity)
+                    && point.char_index == ATOM_BREAK_AFTER
+                    && next.space
+                    && next.advance_before == point.advance_before
+                {
+                    break_points.remove(index);
+                } else {
+                    index += 1;
+                }
+            }
         }
     }
 }
@@ -979,6 +1060,29 @@ impl HyphenationDictionaries {
             })
             .as_ref()
     }
+}
+
+/// The shortest word that is hyphenated, and the fewest characters in front of and after the
+/// hyphen: the default of `hyphenate-limit-chars`, which is `auto` (5 2 2) in browsers. Words
+/// are not broken after a single letter, which looks as bad as it reads.
+/// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
+const HYPHENATE_MIN_WORD: usize = 5;
+const HYPHENATE_MIN_BEFORE: usize = 2;
+const HYPHENATE_MIN_AFTER: usize = 2;
+
+/// The hyphenation points of `word` (byte offsets) that leave enough characters on both sides.
+fn limit_hyphenation_chars(word: &str, breaks: Vec<usize>) -> Vec<usize> {
+    let length = word.chars().count();
+    if length < HYPHENATE_MIN_WORD {
+        return Vec::new();
+    }
+    breaks
+        .into_iter()
+        .filter(|&offset| {
+            let before = word[..offset].chars().count();
+            before >= HYPHENATE_MIN_BEFORE && length - before >= HYPHENATE_MIN_AFTER
+        })
+        .collect()
 }
 
 /// The language of the hyphenation dictionaries for text in `lang`.
@@ -2060,7 +2164,7 @@ mod tests {
         use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
         let font = crate::layout::text::font::system_font(
             &[FontFamily::Named("TeX Gyre Termes".into())],
-            &FontWeight::Normal,
+            &FontWeight::NORMAL,
             &FontStyle::Normal,
         )
         .unwrap();
@@ -2090,7 +2194,7 @@ mod tests {
         use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
         crate::layout::text::font::system_font(
             &[FontFamily::Named(family.into())],
-            &FontWeight::Normal,
+            &FontWeight::NORMAL,
             &FontStyle::Normal,
         )
         .unwrap()
@@ -2277,6 +2381,16 @@ mod tests {
             .collect();
         let expected = [font.hb_font.get_nominal_glyph('ב').unwrap(), font.hb_font.get_nominal_glyph('א').unwrap()];
         assert_eq!(glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn hyphenation_leaves_two_characters_on_both_sides() {
+        // a-ka-de-mi-a: no break after the first or in front of the last letter
+        assert_eq!(limit_hyphenation_chars("akademia", vec![1, 3, 5, 7]), vec![3, 5]);
+        // short words are not hyphenated at all
+        assert_eq!(limit_hyphenation_chars("akme", vec![2]), Vec::<usize>::new());
+        // the counts are in characters, not bytes: ά is two bytes
+        assert_eq!(limit_hyphenation_chars("άκρας", vec![2, 4]), vec![4]);
     }
 
     #[test]

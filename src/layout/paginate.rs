@@ -2,9 +2,23 @@ use super::components::{
     AbsoluteGroups, BlockLevelElement, Decoration, DecorationFragment, EdgeValues, Fragmented,
     Position, TextList,
 };
-use crate::style::properties::computed::{ComputedValues, Display, PageBreak, PixelLength};
-use specs::{Entities, Entity, Read, ReadStorage, System, WriteStorage};
-use std::collections::HashSet;
+use super::inline::InlineFormattingContext;
+use super::pages::{PageContext, PageMargins, Pages};
+use crate::style::properties::computed::{ComputedValues, Display, PixelLength};
+use specs::{Entities, Entity, Join, Read, ReadStorage, System, Write, WriteStorage};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+/// The cost of a page break at a place where a break should be avoided (`break-inside: avoid`
+/// or `break-before`/`break-after: avoid`). It is larger than the cost of any page that is
+/// merely not full, so a break is only avoided if the content fits otherwise, but finite so
+/// that content that does not fit on a page is broken anyway.
+const AVOID_BREAK_COST: f64 = 1e12;
+/// The cost of a page that ends at a forced break; it outweighs all other costs.
+const FORCED_BREAK_COST: f64 = -1e15;
+/// The cost of a page that has fewer lines of a paragraph at its end than `orphans` or at its
+/// start than `widows`. Violating these is preferred to violating an `avoid` value.
+const ORPHANS_WIDOWS_COST: f64 = 1e11;
 
 pub struct Paginator {
     pub page_height: PixelLength,
@@ -17,12 +31,64 @@ impl Paginator {
     }
 }
 
+/// A break between two lines of a paragraph.
+#[derive(Debug, Copy, Clone)]
+struct BreakInLines {
+    /// The block with the lines.
+    block: Entity,
+    /// The number of lines in front of the break.
+    before: usize,
+    total: usize,
+    orphans: usize,
+    widows: usize,
+}
+
 #[derive(Debug, Copy, Clone)]
 struct PageBreakOpportunity {
     before_index: usize,
     forced: bool,
+    /// The break is discouraged by `break-before`, `break-after` or `break-inside`.
+    avoid: bool,
+    /// Set for breaks inside a paragraph.
+    in_lines: Option<BreakInLines>,
     advance_before: PixelLength,
     advance_after: PixelLength,
+}
+
+impl PageBreakOpportunity {
+    fn start(advance: PixelLength) -> Self {
+        PageBreakOpportunity {
+            before_index: 0,
+            forced: false,
+            avoid: false,
+            in_lines: None,
+            advance_before: advance,
+            advance_after: advance,
+        }
+    }
+}
+
+/// Whether the page between two breaks has too few lines of a paragraph at its start or end.
+fn violates_orphans_or_widows(from: &PageBreakOpportunity, to: &PageBreakOpportunity) -> bool {
+    if let Some(end) = to.in_lines {
+        let start = from
+            .in_lines
+            .filter(|start| start.block == end.block)
+            .map_or(0, |start| start.before);
+        if end.before - start < end.orphans {
+            return true;
+        }
+    }
+    if let Some(start) = from.in_lines {
+        let end = to
+            .in_lines
+            .filter(|end| end.block == start.block)
+            .map_or(start.total, |end| end.before);
+        if end - start.before < start.widows {
+            return true;
+        }
+    }
+    false
 }
 
 impl<'world> System<'world> for Paginator {
@@ -30,11 +96,14 @@ impl<'world> System<'world> for Paginator {
         Entities<'world>,
         Read<'world, TextList>,
         Read<'world, AbsoluteGroups>,
+        Read<'world, PageMargins>,
+        Write<'world, Pages>,
         WriteStorage<'world, Position>,
         WriteStorage<'world, Decoration>,
         WriteStorage<'world, Fragmented>,
         WriteStorage<'world, DecorationFragment>,
         ReadStorage<'world, ComputedValues>,
+        ReadStorage<'world, InlineFormattingContext>,
     );
     fn run(
         &mut self,
@@ -42,23 +111,95 @@ impl<'world> System<'world> for Paginator {
             entities,
             text_list,
             absolute_groups,
+            page_margins,
+            mut pages,
             mut positions,
             mut decorations,
             mut fragmented,
             mut fragments,
             computed_values,
+            inline_contexts,
         ): Self::SystemData,
     ) {
-        let mut break_points = vec![PageBreakOpportunity {
-            before_index: 0,
-            forced: false,
-            advance_before: PixelLength(0.0),
-            advance_after: PixelLength(0.0),
-        }];
+        let mut break_points = vec![PageBreakOpportunity::start(PixelLength(0.0))];
 
-        let mut force_next_page_break = false;
+        // the paragraph, number and count of the lines in the text list
+        let mut line_info: HashMap<Entity, (Entity, usize, usize)> = HashMap::new();
+        for (owner, context) in (&entities, &inline_contexts).join() {
+            for (number, line) in context.lines.iter().enumerate() {
+                line_info.insert(line.entity, (owner, number, context.lines.len()));
+            }
+        }
+
+        // The name of the page that an element is printed on (the `page` property), if the
+        // element has a style. Lines have the page name of their paragraph.
+        let page_name = |elem: BlockLevelElement| {
+            let entity = elem.entity();
+            computed_values
+                .get(entity)
+                .or_else(|| {
+                    line_info
+                        .get(&entity)
+                        .and_then(|&(owner, ..)| computed_values.get(owner))
+                })
+                .map(|style| style.page.page.0.clone())
+        };
+
+        // The values of `break-after` of the boxes that end in front of the element at `index`
+        // of the text list and of `break-before` of those that start there. They are the boxes
+        // that end or start right at the break: a break value of a first or last child
+        // propagates to its parent.
+        // https://www.w3.org/TR/css-break-3/#break-propagation
+        let list = &text_list.list;
+        let break_values = |index: usize| -> (bool, bool) {
+            let (mut forced, mut avoid) = (false, false);
+            let mut add = |value: crate::style::properties::computed::Break| {
+                forced |= value.is_forced();
+                avoid |= value.is_avoid();
+            };
+            let mut at = index;
+            while at > 0 {
+                at -= 1;
+                match list[at] {
+                    BlockLevelElement::ContainerEnd(entity) => {
+                        if let Some(style) = computed_values.get(entity) {
+                            add(style.page.break_after);
+                        }
+                    }
+                    BlockLevelElement::Leaf(entity) => {
+                        if let Some(style) = computed_values.get(entity) {
+                            add(style.page.break_after);
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            let mut at = index;
+            while at < list.len() {
+                match list[at] {
+                    BlockLevelElement::ContainerStart(entity) => {
+                        if let Some(style) = computed_values.get(entity) {
+                            add(style.page.break_before);
+                        }
+                    }
+                    BlockLevelElement::Leaf(entity) => {
+                        if let Some(style) = computed_values.get(entity) {
+                            add(style.page.break_before);
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+                at += 1;
+            }
+            (forced, avoid && !forced)
+        };
+
         // > 0 inside of boxes that are not broken across pages
         let mut unbreakable_depth = 0usize;
+        // > 0 inside of boxes with `break-inside: avoid`
+        let mut avoid_inside_depth = 0usize;
         // For every table that is open at the current element: the bottom border edge of the
         // lowest cell seen so far. A table may only break between two rows if no cell spans
         // across them (`rowspan`).
@@ -73,8 +214,7 @@ impl<'world> System<'world> for Paginator {
                 d.is_flex_or_grid() || matches!(d, Display::TableRow | Display::TableCell)
             });
             let is_table = display.is_some_and(|d| d.is_table());
-            let page_break_before = style.map(|s| s.page.page_break_before).unwrap_or_default();
-            let page_break_after = style.map(|s| s.page.page_break_after).unwrap_or_default();
+            let avoids_inside = style.is_some_and(|s| s.page.break_inside.is_avoid());
 
             let previous_elem = text_list.list[index - 1];
 
@@ -88,7 +228,32 @@ impl<'world> System<'world> for Paginator {
                             .last()
                             .is_none_or(|&cells_bottom| cells_bottom.0 <= pos.y.0 + 0.01) =>
                 {
-                    let forced = force_next_page_break || page_break_before == PageBreak::Always;
+                    let (mut forced, avoid_between) = break_values(index);
+                    // a change of the page name forces a page break
+                    if let (Some(before), Some(after)) = (page_name(previous_elem), page_name(elem))
+                    {
+                        forced |= before != after;
+                    }
+                    let in_lines = match (previous_elem, elem) {
+                        (BlockLevelElement::Leaf(a), BlockLevelElement::Leaf(b)) => {
+                            match (line_info.get(&a), line_info.get(&b)) {
+                                (Some(&(block, number, total)), Some(&(other, next, _)))
+                                    if block == other && next == number + 1 =>
+                                {
+                                    let page = computed_values.get(block).map(|s| &s.page);
+                                    Some(BreakInLines {
+                                        block,
+                                        before: next,
+                                        total,
+                                        orphans: page.map_or(2, |p| p.orphans),
+                                        widows: page.map_or(2, |p| p.widows),
+                                    })
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
                     // After a forced break the margins after the break are kept, so the next
                     // page starts where the content in front of the break ends. After an
                     // unforced break they are truncated.
@@ -110,17 +275,20 @@ impl<'world> System<'world> for Paginator {
                     break_points.push(PageBreakOpportunity {
                         before_index: index,
                         forced,
+                        avoid: !forced && (avoid_between || avoid_inside_depth > 0),
+                        in_lines,
                         advance_before: pos.y,
                         advance_after,
                     });
-                    force_next_page_break = false;
                 }
                 _ => {}
             }
 
             match elem {
                 BlockLevelElement::ContainerStart(_) => {
-                    force_next_page_break = false;
+                    if avoids_inside {
+                        avoid_inside_depth += 1;
+                    }
                     if is_monolithic {
                         unbreakable_depth += 1;
                     }
@@ -132,6 +300,9 @@ impl<'world> System<'world> for Paginator {
                 BlockLevelElement::Absolute(_) => {}
                 BlockLevelElement::ContainerEnd(entity) | BlockLevelElement::Leaf(entity) => {
                     let is_end = matches!(elem, BlockLevelElement::ContainerEnd(_));
+                    if avoids_inside && is_end {
+                        avoid_inside_depth = avoid_inside_depth.saturating_sub(1);
+                    }
                     if is_monolithic && is_end {
                         unbreakable_depth = unbreakable_depth.saturating_sub(1);
                     }
@@ -150,9 +321,6 @@ impl<'world> System<'world> for Paginator {
                             }
                         }
                     }
-                    if page_break_after == PageBreak::Always && unbreakable_depth == 0 {
-                        force_next_page_break = true;
-                    }
                 }
             }
         }
@@ -166,15 +334,15 @@ impl<'world> System<'world> for Paginator {
 
         break_points.push(PageBreakOpportunity {
             before_index: text_list.list.len(),
-            forced: false,
-            advance_before: content_height,
-            advance_after: content_height,
+            ..PageBreakOpportunity::start(content_height)
         });
 
         let last_break_point = break_points.len() - 1;
         let optimal_sequence =
             super::paragraph::compute_breakpoints(break_points.len(), &mut |from, to| {
-                let height = break_points[to].advance_after - break_points[from].advance_before;
+                // a page starts where the content before the break ends (`advance_after`), which keeps
+                // the margin and padding that follow a forced break
+                let height = break_points[to].advance_after - break_points[from].advance_after;
 
                 if height > self.content_height() {
                     if to == from + 1 {
@@ -186,14 +354,23 @@ impl<'world> System<'world> for Paginator {
                         f64::INFINITY
                     }
                 } else {
-                    if break_points[to].forced {
-                        return f64::NEG_INFINITY;
-                    }
-                    if to == last_break_point {
+                    // A forced break is always taken, but how the page in front of it is
+                    // filled still matters for the widows of its last paragraph.
+                    let mut cost = if break_points[to].forced {
+                        FORCED_BREAK_COST
+                    } else if to == last_break_point {
                         // the last page is allowed to be partially filled
-                        return 0.0;
+                        0.0
+                    } else {
+                        (self.content_height().0 as f64 - height.0 as f64).powi(3)
+                    };
+                    if break_points[to].avoid {
+                        cost += AVOID_BREAK_COST;
                     }
-                    (self.content_height().0 as f64 - height.0 as f64).powi(3)
+                    if violates_orphans_or_widows(&break_points[from], &break_points[to]) {
+                        cost += ORPHANS_WIDOWS_COST;
+                    }
+                    cost
                 }
             });
 
@@ -204,6 +381,55 @@ impl<'world> System<'world> for Paginator {
         let mut next_break = optimal_sequence_iter.next();
 
         let mut current_page = 0;
+        // the pages in the document, and how far the content of a page is moved sideways
+        // because of the left and right margins of the page
+        // The name of a page is the name of its first box: the first leaf at or after the element
+        // that starts the page, with the boxes that are open around it.
+        let first_leaf = |open: &[Entity], index: usize| {
+            let mut around = open.to_vec();
+            for &elem in &text_list.list[index..] {
+                match elem {
+                    BlockLevelElement::ContainerStart(entity) => around.push(entity),
+                    BlockLevelElement::Leaf(_) => return Some((around, elem)),
+                    _ => return None,
+                }
+            }
+            None
+        };
+        // The box that the name of a page comes from: the outermost of the boxes around the first
+        // element on the page that have that name. A page group is a run of pages of one such box.
+        let page_start = |open: &[Entity], index: usize| -> (Option<Arc<str>>, Option<Entity>) {
+            let Some((around, leaf)) = first_leaf(open, index) else {
+                return (None, None);
+            };
+            let Some(name) = page_name(leaf).flatten() else {
+                return (None, None);
+            };
+            let own = line_info.get(&leaf.entity()).map_or(leaf.entity(), |info| info.0);
+            let mut source = own;
+            for &entity in around.iter().rev() {
+                let named = computed_values
+                    .get(entity)
+                    .is_some_and(|style| style.page.page.0.as_ref() == Some(&name));
+                if !named {
+                    break;
+                }
+                source = entity;
+            }
+            (Some(name), Some(source))
+        };
+        let mut open_containers: Vec<Entity> = vec![];
+        let (first_name, first_source) = page_start(&open_containers, 0);
+        let first_page = PageContext {
+            index: 0,
+            name: first_name,
+            first_in_group: true,
+            rtl: page_margins.rtl,
+        };
+        let mut group_source = first_source;
+        let mut x_offset = page_margins.shift(&first_page);
+        let mut x_offsets = vec![x_offset];
+        pages.0 = vec![first_page];
         let mut y_offset = self.margin.top;
         // the vertical offset that was applied to the contents of every page
         let mut page_offsets = vec![y_offset];
@@ -223,6 +449,19 @@ impl<'world> System<'world> for Paginator {
                     ..
                 }) if before_index == index => {
                     current_page += 1;
+                    let (name, source) = page_start(&open_containers, index);
+                    // a page starts a page group if the name comes from another box than on
+                    // the page before
+                    let page = PageContext {
+                        index: current_page,
+                        first_in_group: source.is_some() && source != group_source,
+                        name,
+                        rtl: page_margins.rtl,
+                    };
+                    group_source = source;
+                    x_offset = page_margins.shift(&page);
+                    x_offsets.push(x_offset);
+                    pages.0.push(page);
                     y_offset = self.margin.top - advance_after;
                     page_offsets.push(y_offset);
                     next_break = optimal_sequence_iter.next();
@@ -231,10 +470,18 @@ impl<'world> System<'world> for Paginator {
             };
 
             page_of_index.push(current_page);
+            match elem {
+                BlockLevelElement::ContainerStart(entity) => open_containers.push(entity),
+                BlockLevelElement::ContainerEnd(_) => {
+                    open_containers.pop();
+                }
+                _ => {}
+            }
 
             if processed_entities.insert(elem.entity()) {
-                if let Some(Position { page, y, .. }) = positions.get_mut(elem.entity()) {
+                if let Some(Position { page, x, y, .. }) = positions.get_mut(elem.entity()) {
                     *page = current_page;
+                    *x = *x + x_offset;
                     *y = *y + y_offset;
                 }
             }
@@ -357,9 +604,59 @@ impl<'world> System<'world> for Paginator {
             for &entity in &group.entities {
                 if let Some(pos) = positions.get_mut(entity) {
                     pos.page = page;
+                    pos.x += x_offsets[page];
                     pos.y += offset;
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use specs::{Builder, World, WorldExt};
+
+    fn break_in(block: Entity, before: usize, total: usize) -> PageBreakOpportunity {
+        PageBreakOpportunity {
+            in_lines: Some(BreakInLines {
+                block,
+                before,
+                total,
+                orphans: 2,
+                widows: 2,
+            }),
+            ..PageBreakOpportunity::start(PixelLength(0.0))
+        }
+    }
+
+    #[test]
+    fn orphans_and_widows_count_the_lines_on_the_page() {
+        let mut world = World::new();
+        let block = world.create_entity().build();
+        let start = PageBreakOpportunity::start(PixelLength(0.0));
+        // a ten-line paragraph broken after 1, 2, 8 and 9 lines
+        assert!(violates_orphans_or_widows(&start, &break_in(block, 1, 10)));
+        assert!(!violates_orphans_or_widows(&start, &break_in(block, 2, 10)));
+        assert!(!violates_orphans_or_widows(&break_in(block, 8, 10), &start));
+        assert!(violates_orphans_or_widows(&break_in(block, 9, 10), &start));
+    }
+
+    #[test]
+    fn a_page_in_the_middle_of_a_paragraph_counts_its_own_lines() {
+        let mut world = World::new();
+        let block = world.create_entity().build();
+        // lines 4 to 5 of 12 are on the page: too few for both orphans and widows
+        let from = break_in(block, 3, 12);
+        assert!(!violates_orphans_or_widows(&from, &break_in(block, 5, 12)));
+        assert!(violates_orphans_or_widows(&from, &break_in(block, 4, 12)));
+    }
+
+    #[test]
+    fn breaks_in_other_blocks_do_not_interact() {
+        let mut world = World::new();
+        let (a, b) = (world.create_entity().build(), world.create_entity().build());
+        // the page ends after the second line of b; the lines of a at its start are all there
+        assert!(!violates_orphans_or_widows(&break_in(a, 8, 10), &break_in(b, 2, 5)));
     }
 }
