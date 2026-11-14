@@ -235,7 +235,7 @@ pub fn layout(
     let rtl = flow_constructor.is_rtl();
     let mut page_margins = pages::PageMargins {
         rtl,
-        base: (margin.left, margin.right),
+        base: margin,
         ..Default::default()
     };
     if !crop {
@@ -250,12 +250,21 @@ pub fn layout(
             let style = style_builder.build();
             page_margins.pages.insert(
                 page,
-                (
-                    page_margin(style.position.margin_left, page_width),
-                    page_margin(style.position.margin_right, page_width),
-                ),
+                EdgeValues {
+                    top: page_margin(style.position.margin_top, page_width),
+                    left: page_margin(style.position.margin_left, page_width),
+                    bottom: page_margin(style.position.margin_bottom, page_width),
+                    right: page_margin(style.position.margin_right, page_width),
+                },
             );
         }
+    }
+
+    if page_margins.left_right_conflicts() {
+        log::warn!(
+            "the top and bottom margins and the width of left and right pages differ: only the \
+             left and right margins with the same sum are supported for them"
+        );
     }
 
     let margin_boxes = if crop {
@@ -312,10 +321,7 @@ pub fn layout(
     .run(&mut layout_context)?;
     info!("TIMED: block layout {:?}", time_before.elapsed());
 
-    let mut paginator = paginate::Paginator {
-        page_height,
-        margin,
-    };
+    let mut paginator = paginate::Paginator { page_height };
     paginator.setup(&mut layout_context);
 
     time_before = Instant::now();

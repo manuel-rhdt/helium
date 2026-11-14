@@ -1,6 +1,6 @@
 use super::components::{
     AbsoluteGroups, BlockLevelElement, Decoration, DecorationFragment, EdgeValues, Fragmented,
-    Position, TextList,
+    PageGroupBox, Position, TextList,
 };
 use super::inline::InlineFormattingContext;
 use super::pages::{PageContext, PageMargins, Pages};
@@ -22,13 +22,6 @@ const ORPHANS_WIDOWS_COST: f64 = 1e11;
 
 pub struct Paginator {
     pub page_height: PixelLength,
-    pub margin: EdgeValues<PixelLength>,
-}
-
-impl Paginator {
-    fn content_height(&self) -> PixelLength {
-        self.page_height - self.margin.top - self.margin.bottom
-    }
 }
 
 /// A break between two lines of a paragraph.
@@ -102,6 +95,7 @@ impl<'world> System<'world> for Paginator {
         WriteStorage<'world, Decoration>,
         WriteStorage<'world, Fragmented>,
         WriteStorage<'world, DecorationFragment>,
+        ReadStorage<'world, PageGroupBox>,
         ReadStorage<'world, ComputedValues>,
         ReadStorage<'world, InlineFormattingContext>,
     );
@@ -117,6 +111,7 @@ impl<'world> System<'world> for Paginator {
             mut decorations,
             mut fragmented,
             mut fragments,
+            group_boxes,
             computed_values,
             inline_contexts,
         ): Self::SystemData,
@@ -143,6 +138,7 @@ impl<'world> System<'world> for Paginator {
                         .and_then(|&(owner, ..)| computed_values.get(owner))
                 })
                 .map(|style| style.page.page.0.clone())
+                .or_else(|| group_boxes.get(entity).map(|group| group.name.clone()))
         };
 
         // The values of `break-after` of the boxes that end in front of the element at `index`
@@ -337,6 +333,38 @@ impl<'world> System<'world> for Paginator {
             ..PageBreakOpportunity::start(content_height)
         });
 
+        // The margins of the page that starts at every break point, which give the height that is
+        // available to the content of the page. The first page of the document and the first
+        // page of a page group can have other margins than the pages that follow them.
+        let leaf_name = |elem: BlockLevelElement| page_name(elem).flatten();
+        let name_after = |index: usize| {
+            text_list.list[index.min(text_list.list.len())..]
+                .iter()
+                .find(|elem| matches!(elem, BlockLevelElement::Leaf(_)))
+                .and_then(|&elem| leaf_name(elem))
+        };
+        let name_before = |index: usize| {
+            text_list.list[..index.min(text_list.list.len())]
+                .iter()
+                .rev()
+                .find(|elem| matches!(elem, BlockLevelElement::Leaf(_)))
+                .and_then(|&elem| leaf_name(elem))
+        };
+        let page_start_edges: Vec<EdgeValues<PixelLength>> = break_points
+            .iter()
+            .enumerate()
+            .map(|(number, point)| {
+                let name = name_after(point.before_index);
+                let first_in_group = name.is_some()
+                    && (number == 0 || (point.forced && name_before(point.before_index) != name));
+                page_margins.edges_of_page_start(number == 0, name, first_in_group)
+            })
+            .collect();
+        let content_heights: Vec<PixelLength> = page_start_edges
+            .iter()
+            .map(|edges| self.page_height - edges.top - edges.bottom)
+            .collect();
+
         let last_break_point = break_points.len() - 1;
         let optimal_sequence =
             super::paragraph::compute_breakpoints(break_points.len(), &mut |from, to| {
@@ -344,7 +372,8 @@ impl<'world> System<'world> for Paginator {
                 // the margin and padding that follow a forced break
                 let height = break_points[to].advance_after - break_points[from].advance_after;
 
-                if height > self.content_height() {
+                let content_height = content_heights[from];
+                if height > content_height {
                     if to == from + 1 {
                         // There is no break opportunity in between: an unbreakable box that is
                         // taller than a page gets a page of its own and overflows it, so that
@@ -362,7 +391,7 @@ impl<'world> System<'world> for Paginator {
                         // the last page is allowed to be partially filled
                         0.0
                     } else {
-                        (self.content_height().0 as f64 - height.0 as f64).powi(3)
+                        (content_height.0 as f64 - height.0 as f64).powi(3)
                     };
                     if break_points[to].avoid {
                         cost += AVOID_BREAK_COST;
@@ -427,12 +456,31 @@ impl<'world> System<'world> for Paginator {
             rtl: page_margins.rtl,
         };
         let mut group_source = first_source;
-        let mut x_offset = page_margins.shift(&first_page);
+        // The content of a page group that was laid out for the margins of its page is not moved.
+        let shift = |page: &PageContext, open: &[Entity], index: usize| {
+            let in_group_box = open.iter().any(|&entity| group_boxes.contains(entity))
+                || text_list.list[index..]
+                    .iter()
+                    .map_while(|elem| match elem {
+                        BlockLevelElement::ContainerStart(entity) => Some(*entity),
+                        _ => None,
+                    })
+                    .any(|entity| group_boxes.contains(entity));
+            if in_group_box {
+                PixelLength(0.0)
+            } else {
+                page_margins.shift(page)
+            }
+        };
+        let mut x_offset = shift(&first_page, &[], 0);
         let mut x_offsets = vec![x_offset];
         pages.0 = vec![first_page];
-        let mut y_offset = self.margin.top;
-        // the vertical offset that was applied to the contents of every page
+        let first_edges = page_margins.edges(&pages.0[0]);
+        let mut y_offset = first_edges.top;
+        // the vertical offset that was applied to the contents of every page, and the top and
+        // the bottom of its content area
         let mut page_offsets = vec![y_offset];
+        let mut page_areas = vec![(first_edges.top, self.page_height - first_edges.bottom)];
 
         // we keep track of which entities we already processed
         let mut processed_entities = HashSet::new();
@@ -459,11 +507,13 @@ impl<'world> System<'world> for Paginator {
                         rtl: page_margins.rtl,
                     };
                     group_source = source;
-                    x_offset = page_margins.shift(&page);
+                    x_offset = shift(&page, &open_containers, index);
                     x_offsets.push(x_offset);
                     pages.0.push(page);
-                    y_offset = self.margin.top - advance_after;
+                    let edges = page_margins.edges(&pages.0[current_page]);
+                    y_offset = edges.top - advance_after;
                     page_offsets.push(y_offset);
+                    page_areas.push((edges.top, self.page_height - edges.bottom));
                     next_break = optimal_sequence_iter.next();
                 }
                 _ => {}
@@ -505,8 +555,6 @@ impl<'world> System<'world> for Paginator {
                 _ => {}
             }
         }
-        let page_top = self.margin.top;
-        let page_bottom = self.margin.top + self.content_height();
         for (entity, first_page, last_page) in to_split {
             let (pos, deco) = match (
                 positions.get(entity).copied(),
@@ -534,12 +582,12 @@ impl<'world> System<'world> for Paginator {
                 let top = if is_first {
                     top_edge + page_offsets[page]
                 } else {
-                    page_top
+                    page_areas[page].0
                 };
                 let bottom = if is_last {
                     bottom_edge + page_offsets[page]
                 } else {
-                    page_bottom
+                    page_areas[page].1
                 };
                 let mut fragment_deco = deco;
                 if !is_first {

@@ -166,12 +166,10 @@ impl<'a> System<'a> for MarginBoxPaint {
                 first_in_group: false,
                 rtl: page_margins.rtl,
             });
-            // the margins of the page: the inner and outer margins of a book differ
-            let (margin_left, margin_right) = if page_margins.pages.is_empty() {
-                (geometry.margin.left, geometry.margin.right)
-            } else {
-                page_margins.for_page(&context)
-            };
+            // the margins of the page: the inner and outer margins of a book differ, and the
+            // first page of a document or of a page group can have other margins
+            let edges = page_margins.edges(&context);
+            let (margin_left, margin_right) = (edges.left, edges.right);
             let area_left = margin_left;
             let area_width = geometry.width - margin_left - margin_right;
             for margin_box in margin_boxes.for_page(&context) {
@@ -224,14 +222,13 @@ impl<'a> System<'a> for MarginBoxPaint {
                 let height = ascent + descent;
                 let (margin_top, margin_height) = match margin_box.kind {
                     MarginBoxKind::TopLeft | MarginBoxKind::TopCenter | MarginBoxKind::TopRight => {
-                        (Px(0.0), geometry.margin.top)
+                        (Px(0.0), edges.top)
                     }
                     MarginBoxKind::BottomLeft
                     | MarginBoxKind::BottomCenter
-                    | MarginBoxKind::BottomRight => (
-                        geometry.height - geometry.margin.bottom,
-                        geometry.margin.bottom,
-                    ),
+                    | MarginBoxKind::BottomRight => {
+                        (geometry.height - edges.bottom, edges.bottom)
+                    }
                 };
                 let y = margin_top + (margin_height - height) / 2.0;
 

@@ -10,6 +10,7 @@
 //! paginator and the [`AbsoluteGroups`].
 
 mod collapse;
+mod page_groups;
 mod style;
 mod table;
 mod tree;
@@ -49,12 +50,16 @@ impl TaffyBlockLayout {
         world.register::<Decoration>();
         world.register::<IntrinsicSize>();
         world.register::<ImageBox>();
+        world.register::<crate::layout::components::PageGroupBox>();
         world.register::<BlockFormattingContext>();
         world.register::<InlineFormattingContext>();
         world.register::<TextRun>();
         world.register::<TableCellSpan>();
         world.register::<TableColumns>();
         world.entry::<TextList>().or_insert_with(Default::default);
+        world
+            .entry::<crate::layout::pages::PageMargins>()
+            .or_insert_with(Default::default);
         world
             .entry::<AbsoluteGroups>()
             .or_insert_with(Default::default);
@@ -65,6 +70,8 @@ impl TaffyBlockLayout {
         let mut inline_ctxs = world.write_storage::<InlineFormattingContext>();
         let mut intrinsic_sizes = world.write_storage::<IntrinsicSize>();
         let images = world.read_storage::<ImageBox>();
+        let page_margins = world.read_resource::<crate::layout::pages::PageMargins>();
+        let mut group_boxes = world.write_storage::<crate::layout::components::PageGroupBox>();
         let text_runs = world.read_storage::<TextRun>();
         let table_spans = world.read_storage::<TableCellSpan>();
         let table_columns = world.read_storage::<TableColumns>();
@@ -86,6 +93,13 @@ impl TaffyBlockLayout {
             fallback_line_width: content_width.max(0.0),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
+        page_groups::wrap_page_groups(
+            &mut tree,
+            root,
+            &page_margins,
+            &entities,
+            &mut group_boxes,
+        );
         // The initial containing block is the content area of the first page.
         taffy::compute_root_layout(
             &mut tree,
