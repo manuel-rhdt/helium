@@ -636,6 +636,8 @@ fn write_elements(parent: &Group, is_clip_path: bool, opt: &WriteOptions, xml: &
 
 fn write_element(node: &Node, is_clip_path: bool, opt: &WriteOptions, xml: &mut XmlWriter) {
     match node {
+        // the content is not SVG, and not part of the tree
+        Node::Foreign(_) => {}
         Node::Path(p) => {
             write_path(p, is_clip_path, Transform::default(), None, opt, xml);
         }

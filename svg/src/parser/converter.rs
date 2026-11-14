@@ -63,10 +63,11 @@ impl<'a> Cache<'a> {
     pub(crate) fn new(
         svg_doc: &'a svgtree::Document<'a>,
         #[cfg(feature = "text")] fontdb: Arc<Database>,
+        #[cfg(feature = "text")] shaper: Option<Arc<dyn crate::TextShaper>>,
     ) -> Self {
         Self {
             #[cfg(feature = "text")]
-            fonts: crate::text::cache::FontCache::new(fontdb),
+            fonts: crate::text::cache::FontCache::new(fontdb, shaper),
 
             clip_paths: HashMap::new(),
             masks: HashMap::new(),
@@ -336,6 +337,8 @@ pub(crate) fn convert_doc(svg_doc: &svgtree::Document, opt: &Options) -> Result<
         svg_doc,
         #[cfg(feature = "text")]
         opt.fontdb.clone(),
+        #[cfg(feature = "text")]
+        opt.text_shaper.clone(),
     );
 
     // The root transform wraps the viewBox mapping, so its origin is resolved
@@ -580,6 +583,9 @@ fn convert_element_impl(
         }
         EId::Image => {
             super::image::convert(node, state, cache, parent);
+        }
+        EId::ForeignObject => {
+            super::foreign::convert(node, state, parent);
         }
         EId::Text => {
             #[cfg(feature = "text")]

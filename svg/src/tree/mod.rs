@@ -910,6 +910,57 @@ pub enum Node {
     Path(Box<Path>),
     Image(Box<Image>),
     Text(Box<Text>),
+    /// A `foreignObject`: a rectangle with content that is not SVG, which the caller draws.
+    Foreign(Box<ForeignObject>),
+}
+
+/// A `foreignObject` element: a rectangle in which something else than SVG is drawn.
+///
+/// This is an addition of this fork. The element is not drawn by `usvg`: it records where it is
+/// (with all the transformations, clip paths and masks of the groups around it applied by whoever
+/// draws the tree) and the handle that the builder of the XML document attached to the
+/// element, with which the caller finds the content again.
+#[derive(Clone, Debug)]
+pub struct ForeignObject {
+    pub(crate) id: String,
+    pub(crate) handle: crate::xml::Handle,
+    pub(crate) rect: NonZeroRect,
+    pub(crate) abs_transform: Transform,
+    pub(crate) abs_bounding_box: NonZeroRect,
+}
+
+impl ForeignObject {
+    /// Element's ID.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The handle of the element, as given to the XML document.
+    pub fn handle(&self) -> crate::xml::Handle {
+        self.handle
+    }
+
+    /// The rectangle of the element in its own coordinates.
+    pub fn rect(&self) -> NonZeroRect {
+        self.rect
+    }
+
+    /// Element's absolute transform.
+    pub fn abs_transform(&self) -> Transform {
+        self.abs_transform
+    }
+
+    /// The bounding box in object coordinates.
+    pub fn bounding_box(&self) -> Rect {
+        self.rect.to_rect()
+    }
+
+    /// The bounding box in canvas coordinates.
+    pub fn abs_bounding_box(&self) -> Rect {
+        self.abs_bounding_box.to_rect()
+    }
+
+    pub(crate) fn subroots(&self, _f: &mut dyn FnMut(&Group)) {}
 }
 
 impl Node {
@@ -920,6 +971,7 @@ impl Node {
             Node::Path(e) => &e.id,
             Node::Image(e) => e.id.as_str(),
             Node::Text(e) => e.id.as_str(),
+            Node::Foreign(e) => e.id.as_str(),
         }
     }
 
@@ -932,6 +984,7 @@ impl Node {
             Node::Path(path) => path.abs_transform(),
             Node::Image(image) => image.abs_transform(),
             Node::Text(text) => text.abs_transform(),
+            Node::Foreign(foreign) => foreign.abs_transform(),
         }
     }
 
@@ -942,6 +995,7 @@ impl Node {
             Node::Path(path) => path.bounding_box(),
             Node::Image(image) => Some(image.bounding_box()),
             Node::Text(text) => Some(text.bounding_box()),
+            Node::Foreign(foreign) => Some(foreign.bounding_box()),
         }
     }
 
@@ -952,6 +1006,7 @@ impl Node {
             Node::Path(path) => path.abs_bounding_box(),
             Node::Image(image) => Some(image.abs_bounding_box()),
             Node::Text(text) => Some(text.abs_bounding_box()),
+            Node::Foreign(foreign) => Some(foreign.abs_bounding_box()),
         }
     }
 
@@ -963,6 +1018,7 @@ impl Node {
             // Image cannot be stroked.
             Node::Image(image) => Some(image.bounding_box()),
             Node::Text(text) => Some(text.stroke_bounding_box()),
+            Node::Foreign(foreign) => Some(foreign.bounding_box()),
         }
     }
 
@@ -974,6 +1030,7 @@ impl Node {
             // Image cannot be stroked.
             Node::Image(image) => Some(image.abs_bounding_box()),
             Node::Text(text) => Some(text.abs_stroke_bounding_box()),
+            Node::Foreign(foreign) => Some(foreign.abs_bounding_box()),
         }
     }
 
@@ -990,6 +1047,7 @@ impl Node {
             Node::Path(path) => path.abs_bounding_box()?.to_non_zero_rect(),
             Node::Image(image) => image.abs_bounding_box().to_non_zero_rect(),
             Node::Text(text) => text.abs_bounding_box().to_non_zero_rect(),
+            Node::Foreign(foreign) => Some(foreign.abs_bounding_box),
         }
     }
 
@@ -1031,6 +1089,7 @@ impl Node {
             Node::Path(path) => path.subroots(&mut f),
             Node::Image(image) => image.subroots(&mut f),
             Node::Text(text) => text.subroots(&mut f),
+            Node::Foreign(foreign) => foreign.subroots(&mut f),
         }
     }
 }
@@ -1827,6 +1886,7 @@ fn loop_over_paint_servers(parent: &Group, f: &mut dyn FnMut(&Paint)) {
             Node::Image(_) => {}
             // Flattened text would be used instead.
             Node::Text(_) => {}
+            Node::Foreign(_) => {}
         }
 
         node.subroots(|subroot| loop_over_paint_servers(subroot, f));

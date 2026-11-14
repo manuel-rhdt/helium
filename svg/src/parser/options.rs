@@ -98,6 +98,12 @@ pub struct Options<'a> {
     /// be the same as this one.
     #[cfg(feature = "text")]
     pub fontdb: Arc<fontdb::Database>,
+
+    /// Shapes text. Without a shaper, `text` elements are not drawn.
+    ///
+    /// Default: `None`
+    #[cfg(feature = "text")]
+    pub text_shaper: Option<Arc<dyn crate::TextShaper>>,
     /// A CSS stylesheet that should be injected into the SVG. Can be used to overwrite
     /// certain attributes.
     pub style_sheet: Option<String>,
@@ -125,6 +131,8 @@ impl Default for Options<'_> {
             font_resolver: FontResolver::default(),
             #[cfg(feature = "text")]
             fontdb: Arc::new(fontdb::Database::new()),
+            #[cfg(feature = "text")]
+            text_shaper: None,
             style_sheet: None,
             max_depth: DEFAULT_MAX_DEPTH,
         }

@@ -75,67 +75,7 @@ pub(crate) fn flatten(text: &mut Text, fonts: &mut FontCache) -> Option<(Group, 
         );
 
         for glyph in &span.positioned_glyphs {
-            // A (best-effort conversion of a) COLR glyph.
-            if let Some(tree) = fonts.colr(glyph.font, glyph.id, variations.clone()) {
-                let mut group = Group {
-                    transform: glyph.colr_transform(),
-                    ..Group::empty()
-                };
-                // TODO: Probably need to update abs_transform of children? Same
-                // for SVG and bitmap glyphs.
-                group.children.push(Node::Group(Box::new(tree.root)));
-
-                new_children.push(Node::Group(Box::new(group)));
-            }
-            // An SVG glyph. Will return the usvg node containing the glyph descriptions.
-            else if let Some(node) = fonts.svg(glyph.font, glyph.id) {
-                push_outline_paths(
-                    span,
-                    &mut span_builder,
-                    &mut new_children,
-                    rendering_mode,
-                    abs_transform,
-                );
-
-                let mut group = Group {
-                    transform: glyph.svg_transform(),
-                    ..Group::empty()
-                };
-                group.children.push(node);
-
-                new_children.push(Node::Group(Box::new(group)));
-            }
-            // A bitmap glyph.
-            else if let Some(img) = fonts.raster(glyph.font, glyph.id) {
-                push_outline_paths(
-                    span,
-                    &mut span_builder,
-                    &mut new_children,
-                    rendering_mode,
-                    abs_transform,
-                );
-
-                let transform = if img.is_sbix {
-                    glyph.sbix_transform(
-                        img.x as f32,
-                        img.y as f32,
-                        img.bearing_x,
-                        img.bearing_y,
-                        img.pixels_per_em as f32,
-                        img.image.size.height(),
-                    )
-                } else {
-                    glyph.cbdt_transform(img.x as f32, img.y as f32, img.pixels_per_em as f32)
-                };
-
-                let mut group = Group {
-                    transform,
-                    ..Group::empty()
-                };
-                group.children.push(Node::Image(Box::new(img.image)));
-
-                new_children.push(Node::Group(Box::new(group)));
-            } else {
+            {
                 let outline = fonts.outline(glyph.font, glyph.id, variations.clone());
 
                 if let Some(outline) = outline.and_then(|p| p.transform(glyph.outline_transform()))

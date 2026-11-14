@@ -195,3 +195,21 @@ fn an_svg_without_a_size_is_as_big_as_its_contents() {
     assert_close(r.svgs[0][2], 7.5);
     assert_close(r.svgs[0][3], 7.5);
 }
+
+#[test]
+fn text_is_shaped_with_the_fonts_of_the_document() {
+    // Arabic: right-to-left, joined letters that need the glyphs of the bundled Noto font
+    let r = render(
+        "text",
+        &format!(
+            "{PAGE}<svg width=\"200\" height=\"60\">\
+               <text x=\"100\" y=\"40\" font-size=\"30\" text-anchor=\"middle\">مرحبا</text>\
+             </svg>"
+        ),
+    );
+    assert_eq!(r.svgs.len(), 1, "{}", r.log);
+    // drawn as outlines: curves and no font
+    assert!(count(&r.pdf, " c ") > 10, "{}", r.pdf);
+    assert_eq!(count(&r.pdf, "/Font <<"), 0);
+    assert!(!r.log.contains("SVG:"), "{}", r.log);
+}
