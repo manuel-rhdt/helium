@@ -206,7 +206,7 @@ pub struct Attribute<'input> {
     /// Attribute's name.
     pub name: AId,
     /// Attribute's value.
-    pub value: roxmltree::StringStorage<'input>,
+    pub value: crate::xml::StringStorage<'input>,
     /// Attribute's importance
     pub important: bool,
 }

@@ -14,13 +14,12 @@ const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 const XML_NAMESPACE_NS: &str = "http://www.w3.org/XML/1998/namespace";
 
 impl<'input> Document<'input> {
-    /// Parses a [`Document`] from a [`roxmltree::Document`].
+    /// Parses a [`Document`] from a [`crate::xml::Document`].
     pub fn parse_tree(
-        xml: &roxmltree::Document<'input>,
-        injected_stylesheet: Option<&'input str>,
+        xml: &crate::xml::Document<'input>,
         max_depth: u32,
     ) -> Result<Document<'input>, Error> {
-        parse(xml, injected_stylesheet, max_depth)
+        parse(xml, max_depth)
     }
 
     pub(crate) fn append(&mut self, parent_id: NodeId, kind: NodeKind) -> NodeId {
@@ -52,7 +51,7 @@ impl<'input> Document<'input> {
     fn append_attribute(
         &mut self,
         name: AId,
-        value: roxmltree::StringStorage<'input>,
+        value: crate::xml::StringStorage<'input>,
         important: bool,
     ) {
         self.attrs.push(Attribute {
@@ -64,8 +63,7 @@ impl<'input> Document<'input> {
 }
 
 fn parse<'input>(
-    xml: &roxmltree::Document<'input>,
-    injected_stylesheet: Option<&'input str>,
+    xml: &crate::xml::Document<'input>,
     max_depth: u32,
 ) -> Result<Document<'input>, Error> {
     let mut doc = Document {
@@ -91,14 +89,10 @@ fn parse<'input>(
         kind: NodeKind::Root,
     });
 
-    let style_texts = style_texts(xml);
-    let style_sheet = resolve_css(&style_texts, injected_stylesheet);
-
     parse_xml_node_children(
         xml.root(),
         xml.root(),
         doc.root().id,
-        &style_sheet,
         false,
         0,
         max_depth,
@@ -129,7 +123,7 @@ fn parse<'input>(
     Ok(doc)
 }
 
-pub(crate) fn parse_tag_name(node: roxmltree::Node) -> Option<EId> {
+pub(crate) fn parse_tag_name(node: crate::xml::Node) -> Option<EId> {
     if !node.is_element() {
         return None;
     }
@@ -142,22 +136,20 @@ pub(crate) fn parse_tag_name(node: roxmltree::Node) -> Option<EId> {
 }
 
 fn parse_xml_node_children<'input>(
-    parent: roxmltree::Node<'_, 'input>,
-    origin: roxmltree::Node,
+    parent: crate::xml::Node<'_, 'input>,
+    origin: crate::xml::Node,
     parent_id: NodeId,
-    style_sheet: &simplecss::StyleSheet,
     ignore_ids: bool,
     depth: u32,
     max_depth: u32,
     doc: &mut Document<'input>,
-    id_map: &HashMap<&str, roxmltree::Node<'_, 'input>>,
+    id_map: &HashMap<&str, crate::xml::Node<'_, 'input>>,
 ) -> Result<(), Error> {
     for node in parent.children() {
         parse_xml_node(
             node,
             origin,
             parent_id,
-            style_sheet,
             ignore_ids,
             depth,
             max_depth,
@@ -170,15 +162,14 @@ fn parse_xml_node_children<'input>(
 }
 
 fn parse_xml_node<'input>(
-    node: roxmltree::Node<'_, 'input>,
-    origin: roxmltree::Node,
+    node: crate::xml::Node<'_, 'input>,
+    origin: crate::xml::Node,
     parent_id: NodeId,
-    style_sheet: &simplecss::StyleSheet,
     ignore_ids: bool,
     depth: u32,
     max_depth: u32,
     doc: &mut Document<'input>,
-    id_map: &HashMap<&str, roxmltree::Node<'_, 'input>>,
+    id_map: &HashMap<&str, crate::xml::Node<'_, 'input>>,
 ) -> Result<(), Error> {
     if depth > max_depth {
         return Err(Error::NodesLimitReached);
@@ -199,15 +190,14 @@ fn parse_xml_node<'input>(
         tag_name = EId::G;
     }
 
-    let node_id = parse_svg_element(node, parent_id, tag_name, style_sheet, ignore_ids, doc)?;
+    let node_id = parse_svg_element(node, parent_id, tag_name, ignore_ids, doc)?;
     if tag_name == EId::Text {
-        super::text::parse_svg_text_element(node, node_id, style_sheet, doc)?;
+        super::text::parse_svg_text_element(node, node_id, doc)?;
     } else if tag_name == EId::Use {
         parse_svg_use_element(
             node,
             origin,
             node_id,
-            style_sheet,
             depth + 1,
             max_depth,
             doc,
@@ -218,7 +208,6 @@ fn parse_xml_node<'input>(
             node,
             origin,
             node_id,
-            style_sheet,
             ignore_ids,
             depth + 1,
             max_depth,
@@ -231,10 +220,9 @@ fn parse_xml_node<'input>(
 }
 
 pub(crate) fn parse_svg_element<'input>(
-    xml_node: roxmltree::Node<'_, 'input>,
+    xml_node: crate::xml::Node<'_, 'input>,
     parent_id: NodeId,
     tag_name: EId,
-    style_sheet: &simplecss::StyleSheet,
     ignore_ids: bool,
     doc: &mut Document<'input>,
 ) -> Result<NodeId, Error> {
@@ -305,7 +293,7 @@ pub(crate) fn parse_svg_element<'input>(
         }
     }
 
-    let mut insert_attribute = |aid, value: roxmltree::StringStorage<'input>, important: bool| {
+    let mut insert_attribute = |aid, value: crate::xml::StringStorage<'input>, important: bool| {
         // Check that attribute already exists.
         let idx = doc.attrs[attrs_start_idx..]
             .iter_mut()
@@ -348,29 +336,29 @@ pub(crate) fn parse_svg_element<'input>(
     };
 
     // Apply CSS.
-    for rule in &style_sheet.rules {
-        if rule.selector.matches(&XmlNode(xml_node)) {
-            for declaration in &rule.declarations {
-                write_declaration(
-                    declaration,
-                    roxmltree::StringStorage::new_owned,
-                    &mut insert_attribute,
-                );
-            }
-        }
+    for declaration in xml_node.css_declarations() {
+        write_declaration(
+            &Declaration {
+                name: &declaration.name,
+                value: &declaration.value,
+                important: declaration.important,
+            },
+            crate::xml::StringStorage::new_owned,
+            &mut insert_attribute,
+        );
     }
 
     // Split a `style` attribute.
     if let Some(style) = xml_node.attribute_node("style") {
         match style.value_storage() {
-            roxmltree::StringStorage::Borrowed(value) => write_declarations(
+            crate::xml::StringStorage::Borrowed(value) => write_declarations(
                 value,
-                roxmltree::StringStorage::Borrowed,
+                crate::xml::StringStorage::Borrowed,
                 &mut insert_attribute,
             ),
-            roxmltree::StringStorage::Owned(_) => write_declarations(
+            crate::xml::StringStorage::Owned(_) => write_declarations(
                 style.value(),
-                roxmltree::StringStorage::new_owned,
+                crate::xml::StringStorage::new_owned,
                 &mut insert_attribute,
             ),
         }
@@ -393,8 +381,8 @@ pub(crate) fn parse_svg_element<'input>(
 
 fn write_declarations<'a, 'input>(
     text: &'a str,
-    storage: fn(&'a str) -> roxmltree::StringStorage<'input>,
-    insert: &mut impl FnMut(AId, roxmltree::StringStorage<'input>, bool),
+    storage: fn(&'a str) -> crate::xml::StringStorage<'input>,
+    insert: &mut impl FnMut(AId, crate::xml::StringStorage<'input>, bool),
 ) {
     for declaration in simplecss::DeclarationTokenizer::from(text) {
         write_declaration(&declaration, storage, insert);
@@ -403,8 +391,8 @@ fn write_declarations<'a, 'input>(
 
 fn write_declaration<'a, 'input>(
     declaration: &Declaration<'a>,
-    storage: fn(&'a str) -> roxmltree::StringStorage<'input>,
-    insert: &mut impl FnMut(AId, roxmltree::StringStorage<'input>, bool),
+    storage: fn(&'a str) -> crate::xml::StringStorage<'input>,
+    insert: &mut impl FnMut(AId, crate::xml::StringStorage<'input>, bool),
 ) {
     // TODO: perform XML attribute normalization
     let imp = declaration.important;
@@ -431,7 +419,7 @@ fn write_declaration<'a, 'input>(
                 (AId::FontVariantEastAsian, "normal"),
                 (AId::FontVariantPosition, "normal"),
             ] {
-                insert(aid, roxmltree::StringStorage::Borrowed(value), imp);
+                insert(aid, crate::xml::StringStorage::Borrowed(value), imp);
             }
 
             // Then, we set the properties that have been declared.
@@ -468,7 +456,7 @@ fn append_attribute<'input>(
     parent_id: NodeId,
     tag_name: EId,
     aid: AId,
-    value: roxmltree::StringStorage<'input>,
+    value: crate::xml::StringStorage<'input>,
     important: bool,
     doc: &mut Document<'input>,
 ) -> bool {
@@ -586,17 +574,17 @@ fn resolve_inherit(parent_id: NodeId, aid: AId, doc: &mut Document) -> bool {
         _ => return false,
     };
 
-    doc.append_attribute(aid, roxmltree::StringStorage::Borrowed(value), false);
+    doc.append_attribute(aid, crate::xml::StringStorage::Borrowed(value), false);
     true
 }
 
 fn resolve_href<'a, 'input: 'a>(
-    node: roxmltree::Node<'a, 'input>,
-    id_map: &HashMap<&str, roxmltree::Node<'a, 'input>>,
-) -> Option<roxmltree::Node<'a, 'input>> {
+    node: crate::xml::Node<'a, 'input>,
+    id_map: &HashMap<&str, crate::xml::Node<'a, 'input>>,
+) -> Option<crate::xml::Node<'a, 'input>> {
     // See the comment in `parse_svg_element` about `href` precedence.
     //
-    // Note: `roxmltree::Node::attribute("href")` matches by local name only and
+    // Note: `crate::xml::Node::attribute("href")` matches by local name only and
     // would return whichever `href`/`xlink:href` comes first, so we have to
     // filter by namespace explicitly.
     let link_value = node
@@ -614,14 +602,13 @@ fn resolve_href<'a, 'input: 'a>(
 }
 
 fn parse_svg_use_element<'input>(
-    node: roxmltree::Node<'_, 'input>,
-    origin: roxmltree::Node,
+    node: crate::xml::Node<'_, 'input>,
+    origin: crate::xml::Node,
     parent_id: NodeId,
-    style_sheet: &simplecss::StyleSheet,
     depth: u32,
     max_depth: u32,
     doc: &mut Document<'input>,
-    id_map: &HashMap<&str, roxmltree::Node<'_, 'input>>,
+    id_map: &HashMap<&str, crate::xml::Node<'_, 'input>>,
 ) -> Result<(), Error> {
     let link = match resolve_href(node, id_map) {
         Some(v) => v,
@@ -684,80 +671,12 @@ fn parse_svg_use_element<'input>(
         link,
         node,
         parent_id,
-        style_sheet,
         true,
         depth + 1,
         max_depth,
         doc,
         id_map,
     )
-}
-
-/// The child text content of each CSS `style` element.
-fn style_texts(xml: &roxmltree::Document) -> Vec<String> {
-    xml.descendants()
-        .filter(|n| n.has_tag_name("style"))
-        .filter(|n| {
-            n.attribute("type")
-                .is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("text/css"))
-        })
-        .map(|n| {
-            n.children()
-                .filter(|c| c.is_text())
-                .filter_map(|c| c.text())
-                .collect()
-        })
-        .collect()
-}
-
-fn resolve_css<'a>(
-    style_texts: &'a [String],
-    style_sheet: Option<&'a str>,
-) -> simplecss::StyleSheet<'a> {
-    let mut sheet = simplecss::StyleSheet::new();
-
-    // Injected style sheets do not override internal ones (we mimic the logic of rsvg-convert),
-    // so we need to parse it first.
-    if let Some(style_sheet) = style_sheet {
-        sheet.parse_more(style_sheet);
-    }
-
-    for text in style_texts {
-        sheet.parse_more(text);
-    }
-
-    sheet
-}
-
-struct XmlNode<'a, 'input: 'a>(roxmltree::Node<'a, 'input>);
-
-impl simplecss::Element for XmlNode<'_, '_> {
-    fn parent_element(&self) -> Option<Self> {
-        self.0.parent_element().map(XmlNode)
-    }
-
-    fn prev_sibling_element(&self) -> Option<Self> {
-        self.0.prev_sibling_element().map(XmlNode)
-    }
-
-    fn has_local_name(&self, local_name: &str) -> bool {
-        self.0.tag_name().name() == local_name
-    }
-
-    fn attribute_matches(&self, local_name: &str, operator: simplecss::AttributeOperator) -> bool {
-        match self.0.attribute(local_name) {
-            Some(value) => operator.matches(value),
-            None => false,
-        }
-    }
-
-    fn pseudo_class_matches(&self, class: simplecss::PseudoClass) -> bool {
-        match class {
-            simplecss::PseudoClass::FirstChild => self.prev_sibling_element().is_none(),
-            // TODO: lang
-            _ => false, // Since we are querying a static SVG we can ignore other pseudo-classes.
-        }
-    }
 }
 
 fn find_circular_references(doc: &Document) -> HashSet<(NodeId, AId)> {

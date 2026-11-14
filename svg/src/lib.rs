@@ -52,6 +52,7 @@ and can focus just on the rendering part.
 #![warn(missing_copy_implementations)]
 
 mod parser;
+pub mod xml;
 #[cfg(feature = "text")]
 mod text;
 mod tree;
