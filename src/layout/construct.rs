@@ -531,7 +531,7 @@ pub struct EntityConstructor {
     base_dir: PathBuf,
     /// The images that were loaded, by `src`, so that an image that is used often is embedded
     /// once. `None` for an image that could not be loaded.
-    images: HashMap<String, Option<Arc<crate::image::JpegImage>>>,
+    images: HashMap<String, Option<Arc<crate::image::RasterImage>>>,
 }
 
 impl std::fmt::Debug for EntityConstructor {
