@@ -1,0 +1,1006 @@
+// Copyright 2021 the Resvg Authors
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+use std::collections::{HashMap, HashSet};
+
+use roxmltree::Error;
+use simplecss::Declaration;
+use svgtypes::FontShorthand;
+
+use super::{AId, Attribute, Document, EId, NodeData, NodeId, NodeKind, ShortRange, SvgNode};
+
+const SVG_NS: &str = "http://www.w3.org/2000/svg";
+const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+const XML_NAMESPACE_NS: &str = "http://www.w3.org/XML/1998/namespace";
+
+impl<'input> Document<'input> {
+    /// Parses a [`Document`] from a [`roxmltree::Document`].
+    pub fn parse_tree(
+        xml: &roxmltree::Document<'input>,
+        injected_stylesheet: Option<&'input str>,
+        max_depth: u32,
+    ) -> Result<Document<'input>, Error> {
+        parse(xml, injected_stylesheet, max_depth)
+    }
+
+    pub(crate) fn append(&mut self, parent_id: NodeId, kind: NodeKind) -> NodeId {
+        let new_child_id = NodeId::from(self.nodes.len());
+        self.nodes.push(NodeData {
+            parent: Some(parent_id),
+            next_sibling: None,
+            children: None,
+            kind,
+        });
+
+        let last_child_id = self.nodes[parent_id.get_usize()].children.map(|(_, id)| id);
+
+        if let Some(id) = last_child_id {
+            self.nodes[id.get_usize()].next_sibling = Some(new_child_id);
+        }
+
+        self.nodes[parent_id.get_usize()].children = Some(
+            if let Some((first_child_id, _)) = self.nodes[parent_id.get_usize()].children {
+                (first_child_id, new_child_id)
+            } else {
+                (new_child_id, new_child_id)
+            },
+        );
+
+        new_child_id
+    }
+
+    fn append_attribute(
+        &mut self,
+        name: AId,
+        value: roxmltree::StringStorage<'input>,
+        important: bool,
+    ) {
+        self.attrs.push(Attribute {
+            name,
+            value,
+            important,
+        });
+    }
+}
+
+fn parse<'input>(
+    xml: &roxmltree::Document<'input>,
+    injected_stylesheet: Option<&'input str>,
+    max_depth: u32,
+) -> Result<Document<'input>, Error> {
+    let mut doc = Document {
+        nodes: Vec::new(),
+        attrs: Vec::new(),
+        links: HashMap::new(),
+        circular_references: HashSet::new(),
+    };
+
+    // build a map of id -> node for resolve_href
+    let mut id_map = HashMap::new();
+    for node in xml.descendants() {
+        if let Some(id) = node.attribute("id") {
+            id_map.entry(id).or_insert(node);
+        }
+    }
+
+    // Add a root node.
+    doc.nodes.push(NodeData {
+        parent: None,
+        next_sibling: None,
+        children: None,
+        kind: NodeKind::Root,
+    });
+
+    let style_texts = style_texts(xml);
+    let style_sheet = resolve_css(&style_texts, injected_stylesheet);
+
+    parse_xml_node_children(
+        xml.root(),
+        xml.root(),
+        doc.root().id,
+        &style_sheet,
+        false,
+        0,
+        max_depth,
+        &mut doc,
+        &id_map,
+    )?;
+
+    // Check that the root element is `svg`.
+    match doc.root().first_element_child() {
+        Some(child) => {
+            if child.tag_name() != Some(EId::Svg) {
+                return Err(roxmltree::Error::NoRootNode);
+            }
+        }
+        None => return Err(roxmltree::Error::NoRootNode),
+    }
+
+    let mut links = HashMap::new();
+    for node in doc.descendants() {
+        if let Some(id) = node.attribute::<&str>(AId::Id) {
+            links.insert(id.to_string(), node.id);
+        }
+    }
+    doc.links = links;
+
+    doc.circular_references = find_circular_references(&doc);
+
+    Ok(doc)
+}
+
+pub(crate) fn parse_tag_name(node: roxmltree::Node) -> Option<EId> {
+    if !node.is_element() {
+        return None;
+    }
+
+    if !matches!(node.tag_name().namespace(), None | Some(SVG_NS)) {
+        return None;
+    }
+
+    EId::from_str(node.tag_name().name())
+}
+
+fn parse_xml_node_children<'input>(
+    parent: roxmltree::Node<'_, 'input>,
+    origin: roxmltree::Node,
+    parent_id: NodeId,
+    style_sheet: &simplecss::StyleSheet,
+    ignore_ids: bool,
+    depth: u32,
+    max_depth: u32,
+    doc: &mut Document<'input>,
+    id_map: &HashMap<&str, roxmltree::Node<'_, 'input>>,
+) -> Result<(), Error> {
+    for node in parent.children() {
+        parse_xml_node(
+            node,
+            origin,
+            parent_id,
+            style_sheet,
+            ignore_ids,
+            depth,
+            max_depth,
+            doc,
+            id_map,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn parse_xml_node<'input>(
+    node: roxmltree::Node<'_, 'input>,
+    origin: roxmltree::Node,
+    parent_id: NodeId,
+    style_sheet: &simplecss::StyleSheet,
+    ignore_ids: bool,
+    depth: u32,
+    max_depth: u32,
+    doc: &mut Document<'input>,
+    id_map: &HashMap<&str, roxmltree::Node<'_, 'input>>,
+) -> Result<(), Error> {
+    if depth > max_depth {
+        return Err(Error::NodesLimitReached);
+    }
+
+    let mut tag_name = match parse_tag_name(node) {
+        Some(id) => id,
+        None => return Ok(()),
+    };
+
+    if tag_name == EId::Style {
+        return Ok(());
+    }
+
+    // TODO: remove?
+    // Treat links as groups.
+    if tag_name == EId::A {
+        tag_name = EId::G;
+    }
+
+    let node_id = parse_svg_element(node, parent_id, tag_name, style_sheet, ignore_ids, doc)?;
+    if tag_name == EId::Text {
+        super::text::parse_svg_text_element(node, node_id, style_sheet, doc)?;
+    } else if tag_name == EId::Use {
+        parse_svg_use_element(
+            node,
+            origin,
+            node_id,
+            style_sheet,
+            depth + 1,
+            max_depth,
+            doc,
+            id_map,
+        )?;
+    } else {
+        parse_xml_node_children(
+            node,
+            origin,
+            node_id,
+            style_sheet,
+            ignore_ids,
+            depth + 1,
+            max_depth,
+            doc,
+            id_map,
+        )?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn parse_svg_element<'input>(
+    xml_node: roxmltree::Node<'_, 'input>,
+    parent_id: NodeId,
+    tag_name: EId,
+    style_sheet: &simplecss::StyleSheet,
+    ignore_ids: bool,
+    doc: &mut Document<'input>,
+) -> Result<NodeId, Error> {
+    let attrs_start_idx = doc.attrs.len();
+    let mut href_idx: Option<usize> = None;
+
+    // Copy presentational attributes first.
+    for attr in xml_node.attributes() {
+        match attr.namespace() {
+            None | Some(SVG_NS) | Some(XLINK_NS) | Some(XML_NAMESPACE_NS) => {}
+            _ => continue,
+        }
+
+        let aid = match AId::from_str(attr.name()) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        // During a `use` resolving, all `id` attributes must be ignored.
+        // Otherwise we will get elements with duplicated id's.
+        if ignore_ids && aid == AId::Id {
+            continue;
+        }
+
+        // For some reason those properties are allowed only inside a `style` attribute and CSS.
+        if matches!(aid, AId::MixBlendMode | AId::Isolation | AId::FontKerning) {
+            continue;
+        } else if aid == AId::ImageRendering
+            && matches!(
+                attr.value(),
+                "smooth" | "high-quality" | "crisp-edges" | "pixelated"
+            )
+        {
+            continue;
+        }
+
+        // SVG 2: when both `href` and `xlink:href` are present, the unprefixed
+        // `href` takes precedence and the XLink one must be ignored, regardless
+        // of their order in the source document.
+        // https://www.w3.org/TR/SVG2/linking.html#XLinkRefAttrs
+        if aid == AId::Href {
+            let is_unprefixed = attr.namespace().is_none();
+            let is_xlink = attr.namespace() == Some(XLINK_NS);
+            if !is_unprefixed && !is_xlink {
+                continue;
+            }
+
+            if let Some(idx) = href_idx {
+                // An `href` was already stored. Only an unprefixed `href` is
+                // allowed to override it; an `xlink:href` is ignored.
+                if is_unprefixed {
+                    doc.attrs[idx].value = attr.value_storage().clone();
+                }
+                continue;
+            }
+        }
+
+        let added = append_attribute(
+            parent_id,
+            tag_name,
+            aid,
+            attr.value_storage().clone(),
+            false,
+            doc,
+        );
+        if added && aid == AId::Href {
+            href_idx = Some(doc.attrs.len() - 1);
+        }
+    }
+
+    let mut insert_attribute = |aid, value: roxmltree::StringStorage<'input>, important: bool| {
+        // Check that attribute already exists.
+        let idx = doc.attrs[attrs_start_idx..]
+            .iter_mut()
+            .position(|a| a.name == aid);
+
+        // Append an attribute as usual.
+        let added = append_attribute(parent_id, tag_name, aid, value, important, doc);
+
+        // Check that attribute was actually added, because it could be skipped.
+        if added {
+            if let Some(idx) = idx {
+                let last_idx = doc.attrs.len() - 1;
+                let existing_idx = attrs_start_idx + idx;
+
+                // See https://developer.mozilla.org/en-US/docs/Web/CSS/important
+                // When a declaration is important, the order of precedence is reversed.
+                // Declarations marked as important in the user-agent style sheets override
+                // all important declarations in the user style sheets. Similarly, all important
+                // declarations in the user style sheets override all important declarations in the
+                // author's style sheets. Finally, all important declarations take precedence over
+                // all animations.
+                //
+                // Which means:
+                // 1) Existing is not important, new is not important -> swap
+                // 2) Existing is important, new is not important -> don't swap
+                // 3) Existing is not important, new is important -> swap
+                // 4) Existing is important, new is important -> don't swap (since the order
+                // is reversed, so existing important attributes take precedence over new
+                // important attributes)
+                let has_precedence = !doc.attrs[existing_idx].important;
+
+                if has_precedence {
+                    doc.attrs.swap(existing_idx, last_idx);
+                }
+
+                // Remove last.
+                doc.attrs.pop();
+            }
+        }
+    };
+
+    // Apply CSS.
+    for rule in &style_sheet.rules {
+        if rule.selector.matches(&XmlNode(xml_node)) {
+            for declaration in &rule.declarations {
+                write_declaration(
+                    declaration,
+                    roxmltree::StringStorage::new_owned,
+                    &mut insert_attribute,
+                );
+            }
+        }
+    }
+
+    // Split a `style` attribute.
+    if let Some(style) = xml_node.attribute_node("style") {
+        match style.value_storage() {
+            roxmltree::StringStorage::Borrowed(value) => write_declarations(
+                value,
+                roxmltree::StringStorage::Borrowed,
+                &mut insert_attribute,
+            ),
+            roxmltree::StringStorage::Owned(_) => write_declarations(
+                style.value(),
+                roxmltree::StringStorage::new_owned,
+                &mut insert_attribute,
+            ),
+        }
+    }
+
+    if doc.nodes.len() > 1_000_000 {
+        return Err(Error::NodesLimitReached);
+    }
+
+    let node_id = doc.append(
+        parent_id,
+        NodeKind::Element {
+            tag_name,
+            attributes: ShortRange::new(attrs_start_idx as u32, doc.attrs.len() as u32),
+        },
+    );
+
+    Ok(node_id)
+}
+
+fn write_declarations<'a, 'input>(
+    text: &'a str,
+    storage: fn(&'a str) -> roxmltree::StringStorage<'input>,
+    insert: &mut impl FnMut(AId, roxmltree::StringStorage<'input>, bool),
+) {
+    for declaration in simplecss::DeclarationTokenizer::from(text) {
+        write_declaration(&declaration, storage, insert);
+    }
+}
+
+fn write_declaration<'a, 'input>(
+    declaration: &Declaration<'a>,
+    storage: fn(&'a str) -> roxmltree::StringStorage<'input>,
+    insert: &mut impl FnMut(AId, roxmltree::StringStorage<'input>, bool),
+) {
+    // TODO: perform XML attribute normalization
+    let imp = declaration.important;
+    let val = declaration.value;
+
+    if declaration.name == "marker" {
+        insert(AId::MarkerStart, storage(val), imp);
+        insert(AId::MarkerMid, storage(val), imp);
+        insert(AId::MarkerEnd, storage(val), imp);
+    } else if declaration.name == "font" {
+        if let Ok(shorthand) = FontShorthand::from_str(val) {
+            // First we need to reset all values to their default.
+            for (aid, value) in [
+                (AId::FontStyle, "normal"),
+                (AId::FontVariant, "normal"),
+                (AId::FontWeight, "normal"),
+                (AId::FontStretch, "normal"),
+                (AId::LineHeight, "normal"),
+                (AId::FontSizeAdjust, "none"),
+                (AId::FontKerning, "auto"),
+                (AId::FontVariantCaps, "normal"),
+                (AId::FontVariantLigatures, "normal"),
+                (AId::FontVariantNumeric, "normal"),
+                (AId::FontVariantEastAsian, "normal"),
+                (AId::FontVariantPosition, "normal"),
+            ] {
+                insert(aid, roxmltree::StringStorage::Borrowed(value), imp);
+            }
+
+            // Then, we set the properties that have been declared.
+            if let Some(s) = shorthand.font_stretch {
+                insert(AId::FontStretch, storage(s), imp);
+            }
+            if let Some(s) = shorthand.font_weight {
+                insert(AId::FontWeight, storage(s), imp);
+            }
+            if let Some(s) = shorthand.font_variant {
+                insert(AId::FontVariant, storage(s), imp);
+            }
+            if let Some(s) = shorthand.font_style {
+                insert(AId::FontStyle, storage(s), imp);
+            }
+            insert(AId::FontSize, storage(shorthand.font_size), imp);
+            insert(AId::FontFamily, storage(shorthand.font_family), imp);
+        } else {
+            log::warn!(
+                "Failed to parse {} value: '{}'",
+                AId::Font,
+                declaration.value
+            );
+        }
+    } else if let Some(aid) = AId::from_str(declaration.name) {
+        // Parse only the presentation attributes.
+        if aid.is_presentation() {
+            insert(aid, storage(val), imp);
+        }
+    }
+}
+
+fn append_attribute<'input>(
+    parent_id: NodeId,
+    tag_name: EId,
+    aid: AId,
+    value: roxmltree::StringStorage<'input>,
+    important: bool,
+    doc: &mut Document<'input>,
+) -> bool {
+    match aid {
+        // The `style` attribute will be split into attributes, so we don't need it.
+        AId::Style |
+        // No need to copy a `class` attribute since CSS were already resolved.
+        AId::Class => return false,
+        _ => {}
+    }
+
+    // Ignore `xlink:href` on `tspan` (which was originally `tref` or `a`),
+    // because we will convert `tref` into `tspan` anyway.
+    if tag_name == EId::Tspan && aid == AId::Href {
+        return false;
+    }
+
+    if aid.allows_inherit_value() && &*value == "inherit" {
+        return resolve_inherit(parent_id, aid, doc);
+    }
+
+    doc.append_attribute(aid, value, important);
+    true
+}
+
+fn resolve_inherit(parent_id: NodeId, aid: AId, doc: &mut Document) -> bool {
+    if aid.is_inheritable() {
+        // Inheritable attributes can inherit a value from an any ancestor.
+        let node_id = doc
+            .get(parent_id)
+            .ancestors()
+            .find(|n| n.has_attribute(aid))
+            .map(|n| n.id);
+        if let Some(node_id) = node_id {
+            if let Some(attr) = doc
+                .get(node_id)
+                .attributes()
+                .iter()
+                .find(|a| a.name == aid)
+                .cloned()
+            {
+                doc.attrs.push(Attribute {
+                    name: aid,
+                    value: attr.value,
+                    important: attr.important,
+                });
+
+                return true;
+            }
+        }
+    } else {
+        // Non-inheritable attributes can inherit a value only from a direct parent.
+        if let Some(attr) = doc
+            .get(parent_id)
+            .attributes()
+            .iter()
+            .find(|a| a.name == aid)
+            .cloned()
+        {
+            doc.attrs.push(Attribute {
+                name: aid,
+                value: attr.value,
+                important: attr.important,
+            });
+
+            return true;
+        }
+    }
+
+    // Fallback to a default value if possible.
+    let value = match aid {
+        AId::ImageRendering | AId::ShapeRendering | AId::TextRendering => "auto",
+
+        AId::ClipPath
+        | AId::Filter
+        | AId::MarkerEnd
+        | AId::MarkerMid
+        | AId::MarkerStart
+        | AId::Mask
+        | AId::Stroke
+        | AId::StrokeDasharray
+        | AId::TextDecoration => "none",
+
+        AId::FontStretch
+        | AId::FontStyle
+        | AId::FontVariant
+        | AId::FontWeight
+        | AId::LetterSpacing
+        | AId::WordSpacing => "normal",
+
+        AId::Fill | AId::FloodColor | AId::StopColor => "black",
+
+        AId::FillOpacity
+        | AId::FloodOpacity
+        | AId::Opacity
+        | AId::StopOpacity
+        | AId::StrokeOpacity => "1",
+
+        AId::ClipRule | AId::FillRule => "nonzero",
+
+        AId::BaselineShift => "baseline",
+        AId::ColorInterpolationFilters => "linearRGB",
+        AId::Direction => "ltr",
+        AId::Display => "inline",
+        AId::FontSize => "medium",
+        AId::Overflow => "visible",
+        AId::StrokeDashoffset => "0",
+        AId::StrokeLinecap => "butt",
+        AId::StrokeLinejoin => "miter",
+        AId::StrokeMiterlimit => "4",
+        AId::StrokeWidth => "1",
+        AId::TextAnchor => "start",
+        AId::Visibility => "visible",
+        AId::WritingMode => "lr-tb",
+        _ => return false,
+    };
+
+    doc.append_attribute(aid, roxmltree::StringStorage::Borrowed(value), false);
+    true
+}
+
+fn resolve_href<'a, 'input: 'a>(
+    node: roxmltree::Node<'a, 'input>,
+    id_map: &HashMap<&str, roxmltree::Node<'a, 'input>>,
+) -> Option<roxmltree::Node<'a, 'input>> {
+    // See the comment in `parse_svg_element` about `href` precedence.
+    //
+    // Note: `roxmltree::Node::attribute("href")` matches by local name only and
+    // would return whichever `href`/`xlink:href` comes first, so we have to
+    // filter by namespace explicitly.
+    let link_value = node
+        .attributes()
+        .find(|a| a.name() == "href" && a.namespace().is_none())
+        .or_else(|| {
+            node.attributes()
+                .find(|a| a.name() == "href" && a.namespace() == Some(XLINK_NS))
+        })
+        .map(|a| a.value())?;
+
+    let link_id = svgtypes::IRI::from_str(link_value).ok()?.0;
+
+    id_map.get(link_id).copied()
+}
+
+fn parse_svg_use_element<'input>(
+    node: roxmltree::Node<'_, 'input>,
+    origin: roxmltree::Node,
+    parent_id: NodeId,
+    style_sheet: &simplecss::StyleSheet,
+    depth: u32,
+    max_depth: u32,
+    doc: &mut Document<'input>,
+    id_map: &HashMap<&str, roxmltree::Node<'_, 'input>>,
+) -> Result<(), Error> {
+    let link = match resolve_href(node, id_map) {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+
+    if link == node || link == origin {
+        log::warn!(
+            "Recursive 'use' detected. '{}' will be skipped.",
+            node.attribute((SVG_NS, "id")).unwrap_or_default()
+        );
+        return Ok(());
+    }
+
+    // Make sure we're linked to an SVG element.
+    if parse_tag_name(link).is_none() {
+        return Ok(());
+    }
+
+    // Check that none of the linked node's children reference current `use` node
+    // via other `use` node.
+    //
+    // Example:
+    // <g id="g1">
+    //     <use xlink:href="#use1" id="use2"/>
+    // </g>
+    // <use xlink:href="#g1" id="use1"/>
+    //
+    // `use2` should be removed.
+    //
+    // Also, child should not reference its parent:
+    // <g id="g1">
+    //     <use xlink:href="#g1" id="use1"/>
+    // </g>
+    //
+    // `use1` should be removed.
+    let mut is_recursive = false;
+    for link_child in link
+        .descendants()
+        .skip(1)
+        .filter(|n| n.has_tag_name((SVG_NS, "use")))
+    {
+        if let Some(link2) = resolve_href(link_child, id_map) {
+            if link2 == node || link2 == link {
+                is_recursive = true;
+                break;
+            }
+        }
+    }
+
+    if is_recursive {
+        log::warn!(
+            "Recursive 'use' detected. '{}' will be skipped.",
+            node.attribute((SVG_NS, "id")).unwrap_or_default()
+        );
+        return Ok(());
+    }
+
+    parse_xml_node(
+        link,
+        node,
+        parent_id,
+        style_sheet,
+        true,
+        depth + 1,
+        max_depth,
+        doc,
+        id_map,
+    )
+}
+
+/// The child text content of each CSS `style` element.
+fn style_texts(xml: &roxmltree::Document) -> Vec<String> {
+    xml.descendants()
+        .filter(|n| n.has_tag_name("style"))
+        .filter(|n| {
+            n.attribute("type")
+                .is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("text/css"))
+        })
+        .map(|n| {
+            n.children()
+                .filter(|c| c.is_text())
+                .filter_map(|c| c.text())
+                .collect()
+        })
+        .collect()
+}
+
+fn resolve_css<'a>(
+    style_texts: &'a [String],
+    style_sheet: Option<&'a str>,
+) -> simplecss::StyleSheet<'a> {
+    let mut sheet = simplecss::StyleSheet::new();
+
+    // Injected style sheets do not override internal ones (we mimic the logic of rsvg-convert),
+    // so we need to parse it first.
+    if let Some(style_sheet) = style_sheet {
+        sheet.parse_more(style_sheet);
+    }
+
+    for text in style_texts {
+        sheet.parse_more(text);
+    }
+
+    sheet
+}
+
+struct XmlNode<'a, 'input: 'a>(roxmltree::Node<'a, 'input>);
+
+impl simplecss::Element for XmlNode<'_, '_> {
+    fn parent_element(&self) -> Option<Self> {
+        self.0.parent_element().map(XmlNode)
+    }
+
+    fn prev_sibling_element(&self) -> Option<Self> {
+        self.0.prev_sibling_element().map(XmlNode)
+    }
+
+    fn has_local_name(&self, local_name: &str) -> bool {
+        self.0.tag_name().name() == local_name
+    }
+
+    fn attribute_matches(&self, local_name: &str, operator: simplecss::AttributeOperator) -> bool {
+        match self.0.attribute(local_name) {
+            Some(value) => operator.matches(value),
+            None => false,
+        }
+    }
+
+    fn pseudo_class_matches(&self, class: simplecss::PseudoClass) -> bool {
+        match class {
+            simplecss::PseudoClass::FirstChild => self.prev_sibling_element().is_none(),
+            // TODO: lang
+            _ => false, // Since we are querying a static SVG we can ignore other pseudo-classes.
+        }
+    }
+}
+
+fn find_circular_references(doc: &Document) -> HashSet<(NodeId, AId)> {
+    let mut search = CycleSearch::default();
+    for node in doc.descendants().filter(|n| is_resource(*n)) {
+        search.visit(node);
+    }
+
+    search.circular_references
+}
+
+#[derive(PartialEq)]
+enum Visit {
+    InProgress,
+    Done,
+}
+
+#[derive(Default)]
+struct CycleSearch {
+    visits: HashMap<NodeId, Visit>,
+    templates: HashMap<NodeId, NodeId>,
+    chain: Vec<NodeId>,
+    circular_references: HashSet<(NodeId, AId)>,
+}
+
+impl CycleSearch {
+    fn visit(&mut self, node: SvgNode) {
+        let node = self.with_content(node);
+        if self.visits.contains_key(&node.id) {
+            return;
+        }
+
+        self.visits.insert(node.id, Visit::InProgress);
+        let mut stack = vec![(node.id, references(node).into_iter())];
+        while let Some((node_id, references_left)) = stack.last_mut() {
+            match references_left.next() {
+                Some((user, aid, target)) => {
+                    let content = self.with_content(target);
+                    match self.visits.get(&content.id) {
+                        Some(Visit::InProgress) => {
+                            log::warn!(
+                                "Circular reference to '{}' via '{}' ignored.",
+                                target.element_id(),
+                                aid
+                            );
+                            self.circular_references.insert((user.id, aid));
+                        }
+                        Some(Visit::Done) => {}
+                        None => {
+                            self.visits.insert(content.id, Visit::InProgress);
+                            stack.push((content.id, references(content).into_iter()));
+                        }
+                    }
+                }
+                None => {
+                    self.visits.insert(*node_id, Visit::Done);
+                    stack.pop();
+                }
+            }
+        }
+    }
+
+    /// Returns the first element in the `xlink:href` chain of a pattern or filter that has
+    /// children, since its children are used instead. Elements sharing a template are resolved to
+    /// the same element, so its content is only walked once, and results are cached along the
+    /// chain.
+    fn with_content<'a, 'input: 'a>(&mut self, node: SvgNode<'a, 'input>) -> SvgNode<'a, 'input> {
+        if !matches!(node.tag_name(), Some(EId::Pattern | EId::Filter)) {
+            return node;
+        }
+
+        let mut current = node;
+        let content = loop {
+            if let Some(id) = self.templates.get(&current.id) {
+                break node.document().get(*id);
+            }
+
+            if current.has_children() {
+                break current;
+            }
+
+            // Resolves to `node` until the chain is done, which also ends an `xlink:href` cycle.
+            self.templates.insert(current.id, node.id);
+            self.chain.push(current.id);
+            match current.node_attribute(AId::Href) {
+                Some(link) if link.tag_name() == node.tag_name() => current = link,
+                _ => break node,
+            }
+        };
+
+        for id in self.chain.drain(..) {
+            self.templates.insert(id, content.id);
+        }
+
+        content
+    }
+}
+
+type Reference<'a, 'input> = (SvgNode<'a, 'input>, AId, SvgNode<'a, 'input>);
+
+/// Returns the references that are followed when rendering `node`,
+/// as `(element that uses the reference, attribute, referenced element)`.
+fn references<'a, 'input: 'a>(node: SvgNode<'a, 'input>) -> Vec<Reference<'a, 'input>> {
+    let mut references = Vec::new();
+    match node.tag_name() {
+        // Masks, filters, paint servers and markers are ignored inside clip paths.
+        Some(EId::ClipPath) => {
+            push_link(node, AId::ClipPath, EId::ClipPath, &mut references);
+            for_each_content_descendant(node, &mut |child| {
+                push_link(child, AId::ClipPath, EId::ClipPath, &mut references)
+            });
+        }
+        Some(EId::Mask) => {
+            push_link(node, AId::Mask, EId::Mask, &mut references);
+            for_each_content_descendant(node, &mut |child| push_references(child, &mut references));
+        }
+        Some(EId::Pattern) => {
+            for_each_content_descendant(node, &mut |child| push_references(child, &mut references));
+        }
+        Some(EId::Filter) => {
+            for child in node.descendants() {
+                if child.tag_name() == Some(EId::FeImage) {
+                    if let Some(link) = child.node_attribute(AId::Href) {
+                        if link.tag_name().is_some_and(|tag| {
+                            tag.is_graphic() || matches!(tag, EId::G | EId::Switch | EId::Svg)
+                        }) {
+                            references.push((child, AId::Href, link));
+                        }
+                    }
+                }
+            }
+        }
+        Some(EId::Marker) => {
+            for_each_content_descendant(node, &mut |child| push_references(child, &mut references));
+        }
+        // An element referenced by `feImage`.
+        _ => {
+            push_references(node, &mut references);
+            for_each_content_descendant(node, &mut |child| push_references(child, &mut references));
+        }
+    }
+
+    references
+}
+
+/// Calls `f` for each descendant of `node`, skipping nested resources and other definitions.
+/// Those are only rendered where they are referenced, and resources are visited on their own.
+fn for_each_content_descendant<'a, 'input: 'a>(
+    node: SvgNode<'a, 'input>,
+    f: &mut impl FnMut(SvgNode<'a, 'input>),
+) {
+    for child in node.children() {
+        // A `use` stores a copy of the `symbol` it references as its child.
+        let is_definition = is_resource(child)
+            || child.tag_name() == Some(EId::Defs)
+            || (child.tag_name() == Some(EId::Symbol) && node.tag_name() != Some(EId::Use));
+        if !is_definition {
+            f(child);
+            for_each_content_descendant(child, f);
+        }
+    }
+}
+
+fn is_resource(node: SvgNode) -> bool {
+    matches!(
+        node.tag_name(),
+        Some(EId::ClipPath | EId::Mask | EId::Pattern | EId::Filter | EId::Marker)
+    )
+}
+
+fn push_references<'a, 'input: 'a>(
+    node: SvgNode<'a, 'input>,
+    references: &mut Vec<Reference<'a, 'input>>,
+) {
+    if !node.is_element() {
+        return;
+    }
+
+    push_link(node, AId::ClipPath, EId::ClipPath, references);
+    push_link(node, AId::Mask, EId::Mask, references);
+
+    if let Some(value) = node.attribute::<&str>(AId::Filter) {
+        for filter in svgtypes::FilterValueListParser::from(value).flatten() {
+            if let svgtypes::FilterValue::Url(id) = filter {
+                if let Some(link) = node.document().element_by_id(id) {
+                    if link.tag_name() == Some(EId::Filter) {
+                        references.push((node, AId::Filter, link));
+                    }
+                }
+            }
+        }
+    }
+
+    // Paint and markers are inherited, so they have to be resolved like during conversion.
+    for aid in [AId::Fill, AId::Stroke] {
+        if let Some(value) = node.find_attribute::<&str>(aid) {
+            if let Ok(svgtypes::Paint::FuncIRI(id, _)) = svgtypes::Paint::from_str(value) {
+                if let Some(link) = node.document().element_by_id(id) {
+                    if link.tag_name() == Some(EId::Pattern) {
+                        references.push((node, aid, link));
+                    }
+                }
+            }
+        }
+    }
+
+    let is_shape = matches!(
+        node.tag_name(),
+        Some(
+            EId::Rect
+                | EId::Circle
+                | EId::Ellipse
+                | EId::Line
+                | EId::Polyline
+                | EId::Polygon
+                | EId::Path
+        )
+    );
+    // Markers are never drawn inside a clip path.
+    if is_shape
+        && !node
+            .ancestors()
+            .any(|n| n.tag_name() == Some(EId::ClipPath))
+    {
+        for aid in [AId::MarkerStart, AId::MarkerMid, AId::MarkerEnd] {
+            if let Some(link) = node.find_attribute::<SvgNode>(aid) {
+                if link.tag_name() == Some(EId::Marker) {
+                    references.push((node, aid, link));
+                }
+            }
+        }
+    }
+}
+
+fn push_link<'a, 'input: 'a>(
+    node: SvgNode<'a, 'input>,
+    aid: AId,
+    tag_name: EId,
+    references: &mut Vec<Reference<'a, 'input>>,
+) {
+    if let Some(link) = node.node_attribute(aid) {
+        if link.tag_name() == Some(tag_name) {
+            references.push((node, aid, link));
+        }
+    }
+}
