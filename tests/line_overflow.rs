@@ -53,3 +53,19 @@ fn inline_block_text_does_not_cross_the_right_edge() {
 "#,
     );
 }
+
+/// Thai has no spaces between words. The line breaker finds the words with a dictionary, so a
+/// sentence wraps inside its box instead of forming one line that sticks out of it.
+#[test]
+fn thai_text_wraps_inside_its_box() {
+    check_layout(
+        "thai",
+        r#"<!DOCTYPE html>
+<style>
+  body { margin: 0; font-size: 16px; }
+  div { width: 120px; line-height: 20px; background: #fc6; }
+</style>
+<div lang="th" data-expected-height="100">ภาษาไทยเป็นภาษาที่ไม่มีช่องว่างระหว่างคำและต้องใช้พจนานุกรมในการตัดคำ</div>
+"#,
+    );
+}
