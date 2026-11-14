@@ -34,6 +34,49 @@ const ADJACENT_FITNESS_DEMERITS: f64 = 3_000.0;
 const DOUBLE_HYPHEN_DEMERITS: f64 = 10_000.0;
 const FINAL_HYPHEN_DEMERITS: f64 = 5_000.0;
 
+/// Fills every line as far as it fits, like browsers do for text that is not justified: a line
+/// ends at the last break opportunity where the content still fits (or can shrink to fit),
+/// at a mandatory break, or after the first piece if even that does not fit. Optimal breaking
+/// is wrong for ragged text, where there is no glue to stretch and it prefers short first lines.
+///
+/// The arguments are those of [`compute_paragraph_breakpoints`].
+pub fn compute_greedy_breakpoints(
+    opportunities: &[BreakOpportunity],
+    mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
+    mut line_width: impl FnMut(usize) -> f64,
+) -> Vec<usize> {
+    if opportunities.len() < 2 {
+        return opportunities.first().map_or_else(Vec::new, |_| vec![0]);
+    }
+    let last = opportunities.len() - 1;
+    let mut sequence = vec![0];
+    let mut from = 0;
+    while from < last {
+        let width = line_width(from);
+        let mut best = None;
+        for to in from + 1..=last {
+            let fits = line_metrics(from, to).is_some_and(|(natural, glue)| {
+                let delta = width - natural;
+                delta >= 0.0 || (glue.shrink > 0.0 && -delta <= glue.shrink)
+            });
+            if fits {
+                best = Some(to);
+            } else if best.is_some() {
+                break;
+            }
+            // a mandatory break ends the line, whether or not the content fits
+            if opportunities[to].forced {
+                best = best.or(Some(to));
+                break;
+            }
+        }
+        let to = best.unwrap_or(from + 1);
+        sequence.push(to);
+        from = to;
+    }
+    sequence
+}
+
 /// Choose paragraph breaks using adjustment-ratio badness and TeX-style demerits.
 ///
 /// `line_metrics` returns the natural width and the total stretch and shrink of glue strictly
@@ -90,9 +133,16 @@ pub fn compute_paragraph_breakpoints(
                     continue;
                 };
                 let (previous_fitness, previous_hyphen) = decode_state(previous_state);
-                let mut demerits = previous.demerits + (LINE_PENALTY + badness).powi(2);
+                // like in TeX the penalty of a break counts towards the badness of the line before
+                // it is squared: a hyphen is worth a looser line
+                let penalty = if opportunity.penalty > 0 && opportunity.penalty < 10_000 {
+                    f64::from(opportunity.penalty)
+                } else {
+                    0.0
+                };
+                let mut demerits = previous.demerits + (LINE_PENALTY + badness + penalty).powi(2);
 
-                if opportunity.penalty > 0 {
+                if opportunity.penalty >= 10_000 {
                     demerits += f64::from(opportunity.penalty).powi(2);
                 } else if opportunity.penalty < 0 && opportunity.penalty > -10_000 {
                     demerits -= f64::from(opportunity.penalty).powi(2);
@@ -308,6 +358,42 @@ mod test {
         println!("{:?}", sequence);
     }
 
+    fn pieces(widths: &[f64], forced: &[usize]) -> (Vec<BreakOpportunity>, Vec<f64>) {
+        // widths of the words, with an opportunity in front of each, one at the end
+        let mut advance = vec![0.0];
+        for w in widths {
+            advance.push(advance.last().unwrap() + w);
+        }
+        let opportunities = (0..=widths.len())
+            .map(|i| BreakOpportunity { forced: forced.contains(&i), hyphen: false, penalty: 0 })
+            .collect();
+        (opportunities, advance)
+    }
+
+    #[test]
+    fn greedy_breaking_fills_the_first_lines() {
+        // words of width 4 (no spaces) in lines of width 10: two words fit per line
+        let (opportunities, advance) = pieces(&[4.0; 5], &[]);
+        let sequence = compute_greedy_breakpoints(
+            &opportunities,
+            |from, to| Some((advance[to] - advance[from], GlueTotals::default())),
+            |_| 10.0,
+        );
+        assert_eq!(sequence, [0, 2, 4, 5]);
+    }
+
+    #[test]
+    fn greedy_breaking_respects_mandatory_breaks_and_overfull_words() {
+        let (opportunities, advance) = pieces(&[4.0, 4.0, 4.0, 12.0, 4.0], &[2]);
+        let sequence = compute_greedy_breakpoints(
+            &opportunities,
+            |from, to| Some((advance[to] - advance[from], GlueTotals::default())),
+            |_| 10.0,
+        );
+        // the forced break after the second word, then one word, the overfull one, the rest
+        assert_eq!(sequence, [0, 2, 3, 4, 5]);
+    }
+
     #[test]
     fn glue_stretch_and_shrink_set_the_adjustment_ratio() {
         let glue = GlueTotals {
@@ -350,6 +436,32 @@ mod test {
             |from, to| match (from, to) {
                 (0, 3) | (1, 2) => None,
                 _ => Some((10.0, GlueTotals::default())),
+            },
+            |_| 10.0,
+        );
+
+        assert_eq!(sequence, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn the_penalty_of_a_hyphen_is_added_to_the_badness_of_its_line() {
+        // Without the hyphen the first line is a bit loose (badness 45); with the hyphen it is
+        // perfect. As in TeX the hyphen penalty (50) is added to the badness before the sum is
+        // squared, which makes the loose line the cheaper one. Added after squaring it would
+        // be cheaper to hyphenate.
+        let opportunities = [
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
+            BreakOpportunity { forced: false, hyphen: true, penalty: 50 },
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
+        ];
+        let sequence = compute_paragraph_breakpoints(
+            &opportunities,
+            |from, to| match (from, to) {
+                (0, 1) | (1, 3) => Some((10.0, GlueTotals::default())),
+                (0, 2) => Some((2.34, GlueTotals { stretch: 10.0, shrink: 0.0 })),
+                (2, 3) => Some((5.0, GlueTotals::default())),
+                _ => None,
             },
             |_| 10.0,
         );

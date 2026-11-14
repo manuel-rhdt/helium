@@ -181,3 +181,142 @@ fn a_box_on_two_pages_has_a_gradient_on_each() {
     );
     assert_eq!(count(&pdf, "sh"), 2);
 }
+
+#[test]
+fn blend_modes_paint_the_layers_in_an_isolated_group() {
+    let pdf = render(
+        "blend",
+        &box_with(
+            "background-color: yellow; background-image: linear-gradient(red, blue), linear-gradient(lime, white); \
+             background-blend-mode: multiply, screen",
+        ),
+    );
+    assert!(pdf.contains("/BM /Multiply"), "{}", pdf);
+    assert!(pdf.contains("/BM /Screen"), "{}", pdf);
+    assert!(pdf.contains("/Subtype /Form"), "{}", pdf);
+    assert!(pdf.contains("/S /Transparency"), "{}", pdf);
+    assert!(pdf.contains("/I true"), "{}", pdf);
+    assert_eq!(shading_types(&pdf), [2, 2]);
+}
+
+#[test]
+fn blend_modes_are_repeated_for_more_layers() {
+    let pdf = render(
+        "blend_repeat",
+        &box_with(
+            "background-image: linear-gradient(red, blue), linear-gradient(lime, white), linear-gradient(black, red); \
+             background-blend-mode: difference, normal",
+        ),
+    );
+    // layers one and three (counted from the top) use `difference`, the graphics state is shared
+    assert_eq!(pdf.matches("/BM /Difference").count(), 1, "{}", pdf);
+    assert_eq!(pdf.matches("/BM /Normal").count(), 1, "{}", pdf);
+    let states: Vec<&str> = pdf
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|w| w[1] == "gs")
+        .map(|w| w[0])
+        .collect();
+    // painted from the bottom: difference, normal, difference
+    assert_eq!(states.len(), 3, "{}", pdf);
+    assert_eq!(states[0], states[2], "{}", pdf);
+    assert_ne!(states[0], states[1], "{}", pdf);
+}
+
+#[test]
+fn normal_blend_mode_needs_no_group() {
+    let pdf = render("no_blend", &box_with("background-image: linear-gradient(red, blue)"));
+    assert!(!pdf.contains("/BM"), "{}", pdf);
+    let pdf = render(
+        "normal_blend",
+        &box_with("background-image: linear-gradient(red, blue); background-blend-mode: normal"),
+    );
+    assert!(!pdf.contains("/S /Transparency"), "{}", pdf);
+}
+
+#[test]
+fn background_shorthand_resets_the_blend_mode() {
+    let pdf = render(
+        "blend_reset",
+        &box_with("background-blend-mode: multiply; background: linear-gradient(red, blue)"),
+    );
+    assert!(!pdf.contains("/BM"), "{}", pdf);
+}
+
+#[test]
+fn a_tile_that_repeats_is_a_tiling_pattern() {
+    let pdf = render(
+        "tiling",
+        &box_with("background-image: linear-gradient(red, blue); background-size: 20px 10px"),
+    );
+    assert_eq!(pdf.matches("/PatternType 1").count(), 1, "{}", pdf);
+    // 15pt by 7.5pt, the cell is one tile
+    assert!(pdf.contains("/XStep 15"), "{}", pdf);
+    assert!(pdf.contains("/YStep 7.5"), "{}", pdf);
+    assert!(pdf.contains("/Pattern cs"), "{}", pdf);
+    assert_eq!(shading_types(&pdf), [2]);
+}
+
+#[test]
+fn the_shorthand_takes_position_size_and_repeat() {
+    let pdf = render(
+        "tiling_shorthand",
+        &box_with("background: linear-gradient(red, blue) 5px 5px / 20px 10px repeat-x, lime"),
+    );
+    assert_eq!(pdf.matches("/PatternType 1").count(), 1, "{}", pdf);
+}
+
+#[test]
+fn a_single_tile_is_painted_without_a_pattern() {
+    let pdf = render(
+        "tiling_single",
+        &box_with("background: linear-gradient(red, blue) center / 20px 10px no-repeat"),
+    );
+    assert!(!pdf.contains("/PatternType"), "{}", pdf);
+    assert_eq!(shading_types(&pdf), [2]);
+    // clipped to the tile
+    assert!(pdf.contains("W n"), "{}", pdf);
+}
+
+#[test]
+fn an_image_that_covers_the_box_needs_no_pattern() {
+    let pdf = render(
+        "tiling_cover",
+        &box_with("background-image: linear-gradient(red, blue); background-size: cover; background-repeat: space"),
+    );
+    assert!(!pdf.contains("/PatternType"), "{}", pdf);
+}
+
+#[test]
+fn every_layer_gets_its_own_tile_properties() {
+    // sizes and repeats are cycled over the images
+    let pdf = render(
+        "tiling_cycle",
+        &box_with(
+            "background-image: linear-gradient(red, blue), linear-gradient(lime, white), linear-gradient(black, red); \
+             background-size: 10px 10px, 100% 100%; background-repeat: repeat",
+        ),
+    );
+    // layers one and three are tiled, layer two covers the box
+    assert_eq!(pdf.matches("/PatternType 1").count(), 2, "{}", pdf);
+}
+
+#[test]
+fn tiles_with_translucent_stops_use_a_soft_mask_in_the_cell() {
+    let pdf = render(
+        "tiling_alpha",
+        &box_with("background: linear-gradient(red, rgba(0,0,255,0)) 0 0 / 20px 10px"),
+    );
+    assert_eq!(pdf.matches("/PatternType 1").count(), 1, "{}", pdf);
+    assert!(pdf.contains("/SMask"), "{}", pdf);
+}
+
+#[test]
+fn background_shorthand_resets_size_position_and_repeat() {
+    let pdf = render(
+        "tiling_reset",
+        &box_with("background-size: 10px 10px; background: linear-gradient(red, blue)"),
+    );
+    assert!(!pdf.contains("/PatternType"), "{}", pdf);
+}

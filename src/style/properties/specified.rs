@@ -50,7 +50,7 @@ fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
         "list-style-type", "white-space", "text-indent", "text-align", "hyphens", "direction",
-        "border-spacing", "border-collapse", "widows", "orphans", "math-style", "math-shift",
+        "border-spacing", "border-collapse", "widows", "orphans", "page", "math-style", "math-shift",
         "math-depth",
     ];
     INHERITED.iter().any(|inherited| name.eq_ignore_ascii_case(inherited))
@@ -421,6 +421,15 @@ pub enum Font {
     FontSize(FontSize),
     #[property]
     LineHeight(LineHeight),
+    /// https://www.w3.org/TR/css-fonts-4/#font-prop. The system font keywords, `font-variant`
+    /// and `font-stretch` are not supported (the last two are accepted and ignored).
+    #[property]
+    #[shorthand("font-style", method = "style")]
+    #[shorthand("font-weight", method = "weight")]
+    #[shorthand("font-size", method = "size")]
+    #[shorthand("line-height", method = "line_height")]
+    #[shorthand("font-family", method = "family")]
+    Font(FontShorthand),
     /// Inherited like the font properties, so it lives in the same style struct.
     #[property]
     Color(Color),
@@ -557,24 +566,62 @@ pub enum Background {
     /// https://www.w3.org/TR/css-backgrounds-3/#background-image
     #[property]
     BackgroundImage(CommaSeparated<super::gradient::SpecifiedImage>),
-    /// Only the colour and the images of the shorthand are supported.
+    /// https://www.w3.org/TR/compositing-1/#background-blend-mode
+    #[property]
+    BackgroundBlendMode(CommaSeparated<BlendMode>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-size
+    #[property]
+    BackgroundSize(CommaSeparated<super::background::SpecifiedSize>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-position
+    #[property]
+    BackgroundPosition(CommaSeparated<super::background::SpecifiedPosition>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-repeat
+    #[property]
+    BackgroundRepeat(CommaSeparated<super::background::Repeat>),
+    /// The shorthand supports the colour, the images with position, size and repeat; not
+    /// `background-origin`, `-clip` or `-attachment`. It resets `background-blend-mode`.
     #[property]
     #[shorthand("background-color", method = "color")]
     #[shorthand("background-image", method = "images")]
+    #[shorthand("background-blend-mode", method = "blend_modes")]
+    #[shorthand("background-size", method = "sizes")]
+    #[shorthand("background-position", method = "positions")]
+    #[shorthand("background-repeat", method = "repeats")]
     Background(super::gradient::BackgroundShorthand),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
 #[computed = "super::computed::Page"]
 pub enum Page {
+    /// https://www.w3.org/TR/css-page-3/#page-size-prop
+    #[property]
+    Size(PageSize),
+    /// https://www.w3.org/TR/css-page-3/#using-named-pages
+    #[property]
+    Page(PageName),
     #[property]
     Orphans(usize),
     #[property]
     Widows(usize),
+    /// https://www.w3.org/TR/css-break-3/#break-between
     #[property]
-    PageBreakAfter(PageBreak),
+    BreakBefore(Break),
     #[property]
-    PageBreakBefore(PageBreak),
+    BreakAfter(Break),
+    /// https://www.w3.org/TR/css-break-3/#break-within
+    #[property]
+    BreakInside(BreakInside),
+    /// The CSS 2 names of `break-before`, `break-after` and `break-inside`.
+    /// https://www.w3.org/TR/CSS22/page.html#page-break-props
+    #[property]
+    #[shorthand("break-before", method = "to_break")]
+    PageBreakBefore(LegacyBreak),
+    #[property]
+    #[shorthand("break-after", method = "to_break")]
+    PageBreakAfter(LegacyBreak),
+    #[property]
+    #[shorthand("break-inside", method = "to_break_inside")]
+    PageBreakInside(LegacyBreakInside),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -592,6 +639,27 @@ pub enum Math {
     MathDepth(MathDepth),
     #[property]
     MathShift(MathShift),
+}
+
+/// https://www.w3.org/TR/compositing-1/#ltblendmodegt
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
@@ -1318,7 +1386,16 @@ impl ComputedValue<FontSize> for super::computed::PixelLength {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
 pub enum WhiteSpace {
     Normal,
+    /// White space is collapsed like for `normal`, but lines do not wrap.
+    Nowrap,
     Pre,
+}
+
+impl WhiteSpace {
+    /// Whether text may be broken into lines at soft wrap opportunities.
+    pub fn wraps(self) -> bool {
+        matches!(self, WhiteSpace::Normal)
+    }
 }
 
 impl Default for WhiteSpace {
@@ -1687,12 +1764,40 @@ pub enum LineHeight {
     Normal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FontFamily {
     SansSerif,
     Serif,
     Monospace,
     Named(String),
+}
+
+impl<'i> PropertyValue<'i> for FontFamily {
+    type Error = StyleParseError;
+
+    /// A generic family keyword, a string, or a name of one or more identifiers that are joined
+    /// by single spaces (https://www.w3.org/TR/css-fonts-4/#family-name-syntax).
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        if let Ok(name) = input.try_parse(|input| input.expect_string().map(|s| s.to_string())) {
+            return Ok(FontFamily::Named(name));
+        }
+        let first = input.expect_ident()?.clone();
+        let generic = match_ignore_ascii_case! { &first,
+            "sans-serif" => Some(FontFamily::SansSerif),
+            "serif" => Some(FontFamily::Serif),
+            "monospace" => Some(FontFamily::Monospace),
+            _ => None,
+        };
+        if let Some(generic) = generic {
+            return Ok(generic);
+        }
+        let mut name = first.to_string();
+        while let Ok(next) = input.try_parse(|input| input.expect_ident().cloned()) {
+            name.push(' ');
+            name.push_str(&next);
+        }
+        Ok(FontFamily::Named(name))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
@@ -1708,10 +1813,106 @@ impl Default for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PropertyValue)]
+/// The value of the `font` shorthand:
+/// `[ <font-style> || <font-variant-css2> || <font-weight> || <font-stretch-css3> ]? <font-size>
+/// [ / <line-height> ]? <font-family>#`. What is left out is reset to its initial value.
+#[derive(Debug, Clone)]
+pub struct FontShorthand {
+    style: FontStyle,
+    weight: FontWeight,
+    size: FontSize,
+    line_height: LineHeight,
+    family: Vec<FontFamily>,
+}
+
+impl FontShorthand {
+    pub fn style(&self) -> FontStyle {
+        self.style.clone()
+    }
+
+    pub fn weight(&self) -> FontWeight {
+        self.weight
+    }
+
+    pub fn size(&self) -> FontSize {
+        self.size
+    }
+
+    pub fn line_height(&self) -> LineHeight {
+        self.line_height
+    }
+
+    pub fn family(&self) -> CommaSeparated<FontFamily> {
+        CommaSeparated::new(self.family.clone())
+    }
+}
+
+impl<'i> PropertyValue<'i> for FontShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        let mut style = None;
+        let mut weight = None;
+        // `normal` stands for the initial value of any of the four, it is only counted
+        let mut normals = 0;
+        let mut others = 0;
+        while normals + others < 4 {
+            if input.try_parse(|input| input.expect_ident_matching("normal")).is_ok() {
+                normals += 1;
+            } else if style.is_none() && let Ok(parsed) = input.try_parse(FontStyle::from_css_property_value) {
+                style = Some(parsed);
+                others += 1;
+            } else if weight.is_none() && let Ok(parsed) = input.try_parse(FontWeight::from_css_property_value) {
+                weight = Some(parsed);
+                others += 1;
+            } else if input
+                .try_parse(|input| {
+                    // `font-variant` of CSS 2 and the keywords of `font-stretch`
+                    let ident = input.expect_ident()?.clone();
+                    match_ignore_ascii_case! { &ident,
+                        "small-caps" | "ultra-condensed" | "extra-condensed" | "condensed"
+                        | "semi-condensed" | "semi-expanded" | "expanded" | "extra-expanded"
+                        | "ultra-expanded" => Ok(()),
+                        _ => Err(input.new_error_for_next_token::<()>()),
+                    }
+                })
+                .is_ok()
+            {
+                others += 1;
+            } else {
+                break;
+            }
+        }
+        let size = FontSize::from_css_property_value(input).map_err(|_| input.new_error_for_next_token())?;
+        let line_height = if input.try_parse(|input| input.expect_delim('/')).is_ok() {
+            LineHeight::from_css_property_value(input).map_err(|_| input.new_error_for_next_token())?
+        } else {
+            LineHeight::Normal
+        };
+        let family = <CommaSeparated<FontFamily>>::from_css_property_value(input)
+            .map_err(|_| input.new_error_for_next_token())?
+            .elements()
+            .to_vec();
+        Ok(FontShorthand {
+            style: style.unwrap_or_default(),
+            weight: weight.unwrap_or_default(),
+            size,
+            line_height,
+            family,
+        })
+    }
+}
+
+/// https://www.w3.org/TR/css-fonts-4/#font-weight-prop: a keyword or a number from 1 to 1000.
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum FontWeight {
     Normal,
     Bold,
+    /// One step heavier than the weight of the parent.
+    Bolder,
+    /// One step lighter than the weight of the parent.
+    Lighter,
+    Number(f32),
 }
 
 impl Default for FontWeight {
@@ -1720,15 +1921,262 @@ impl Default for FontWeight {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
-pub enum PageBreak {
-    Auto,
-    Always,
+impl<'i> PropertyValue<'i> for FontWeight {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        let token = input.next()?.clone();
+        match token {
+            Token::Ident(ident) => match_ignore_ascii_case! { &ident,
+                "normal" => Ok(FontWeight::Normal),
+                "bold" => Ok(FontWeight::Bold),
+                "bolder" => Ok(FontWeight::Bolder),
+                "lighter" => Ok(FontWeight::Lighter),
+                _ => Err(ParseError::unexpected_token()),
+            },
+            Token::Number { value, .. } if (1.0..=1000.0).contains(&value) => {
+                Ok(FontWeight::Number(value))
+            }
+            _ => Err(ParseError::unexpected_token()),
+        }
+    }
 }
 
-impl Default for PageBreak {
+impl ComputedValue<FontWeight> for super::computed::FontWeight {
+    fn from_specified(weight: &FontWeight, style: &super::computed::ComputedValues) -> Self {
+        use super::computed::FontWeight as Computed;
+        let parent = style.font.font_weight.0;
+        match *weight {
+            FontWeight::Normal => Computed::NORMAL,
+            FontWeight::Bold => Computed::BOLD,
+            FontWeight::Number(value) => Computed(value),
+            // https://www.w3.org/TR/css-fonts-4/#relative-weights
+            FontWeight::Bolder => Computed(match parent {
+                w if w < 350.0 => 400.0,
+                w if w < 550.0 => 700.0,
+                _ => 900.0,
+            }),
+            FontWeight::Lighter => Computed(match parent {
+                w if w < 100.0 => w,
+                w if w < 550.0 => 100.0,
+                w if w < 750.0 => 400.0,
+                _ => 700.0,
+            }),
+        }
+    }
+}
+
+/// The sizes with a name for `@page { size }`, in portrait orientation.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum NamedPageSize {
+    A5,
+    A4,
+    A3,
+    B5,
+    B4,
+    JisB5,
+    JisB4,
+    Letter,
+    Legal,
+    Ledger,
+}
+
+impl NamedPageSize {
+    /// The width and height in millimetres, or inches for the American sizes.
+    pub fn dimensions(self) -> (f32, f32, Unit) {
+        match self {
+            NamedPageSize::A5 => (148.0, 210.0, Unit::Mm),
+            NamedPageSize::A4 => (210.0, 297.0, Unit::Mm),
+            NamedPageSize::A3 => (297.0, 420.0, Unit::Mm),
+            NamedPageSize::B5 => (176.0, 250.0, Unit::Mm),
+            NamedPageSize::B4 => (250.0, 353.0, Unit::Mm),
+            NamedPageSize::JisB5 => (182.0, 257.0, Unit::Mm),
+            NamedPageSize::JisB4 => (257.0, 364.0, Unit::Mm),
+            NamedPageSize::Letter => (8.5, 11.0, Unit::In),
+            NamedPageSize::Legal => (8.5, 14.0, Unit::In),
+            NamedPageSize::Ledger => (11.0, 17.0, Unit::In),
+        }
+    }
+}
+
+/// The value of `page`: the name of the kind of page the element is printed on, or `auto`
+/// (`None`), which is the name of the parent.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PageName(pub Option<std::sync::Arc<str>>);
+
+impl<'i> PropertyValue<'i> for PageName {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        input.parse_entirely(|input| {
+            let ident = input.expect_ident()?.clone();
+            if ident.eq_ignore_ascii_case("auto") {
+                Ok(PageName(None))
+            } else if ident.eq_ignore_ascii_case("inherit")
+                || ident.eq_ignore_ascii_case("initial")
+                || ident.eq_ignore_ascii_case("unset")
+            {
+                Err(input.new_error_for_next_token())
+            } else {
+                Ok(PageName(Some(std::sync::Arc::from(&*ident))))
+            }
+        })
+    }
+}
+
+/// The value of `size` in `@page`: `auto`, one or two lengths, or a page size name and/or an
+/// orientation.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum PageSize {
+    Auto,
+    /// One length is both width and height.
+    Lengths(Quantity, Option<Quantity>),
+    /// A named size or only an orientation. A name without orientation is portrait; without a
+    /// name, the orientation applies to the default page size.
+    Keywords {
+        name: Option<NamedPageSize>,
+        landscape: Option<bool>,
+    },
+}
+
+impl Default for PageSize {
     fn default() -> Self {
-        PageBreak::Auto
+        PageSize::Auto
+    }
+}
+
+impl<'i> PropertyValue<'i> for PageSize {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        input.parse_entirely(|input| {
+            if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+                return Ok(PageSize::Auto);
+            }
+            if let Ok(width) = input.try_parse(Quantity::from_css_property_value) {
+                let height = input.try_parse(Quantity::from_css_property_value).ok();
+                return Ok(PageSize::Lengths(width, height));
+            }
+            let (mut name, mut landscape) = (None, None);
+            while !input.is_exhausted() {
+                let ident = input.expect_ident()?.clone();
+                let named = match_ignore_ascii_case! { &ident,
+                    "a5" => Some(NamedPageSize::A5),
+                    "a4" => Some(NamedPageSize::A4),
+                    "a3" => Some(NamedPageSize::A3),
+                    "b5" => Some(NamedPageSize::B5),
+                    "b4" => Some(NamedPageSize::B4),
+                    "jis-b5" => Some(NamedPageSize::JisB5),
+                    "jis-b4" => Some(NamedPageSize::JisB4),
+                    "letter" => Some(NamedPageSize::Letter),
+                    "legal" => Some(NamedPageSize::Legal),
+                    "ledger" => Some(NamedPageSize::Ledger),
+                    _ => None,
+                };
+                let orientation = match_ignore_ascii_case! { &ident,
+                    "landscape" => Some(true),
+                    "portrait" => Some(false),
+                    _ => None,
+                };
+                match (named, orientation) {
+                    (Some(size), _) if name.is_none() => name = Some(size),
+                    (_, Some(value)) if landscape.is_none() => landscape = Some(value),
+                    _ => return Err(input.new_error_for_next_token()),
+                }
+            }
+            if name.is_none() && landscape.is_none() {
+                return Err(input.new_error_for_next_token());
+            }
+            Ok(PageSize::Keywords { name, landscape })
+        })
+    }
+}
+
+/// The values of `break-before` and `break-after` that apply to paged media.
+/// https://www.w3.org/TR/css-break-3/#break-between
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PropertyValue)]
+pub enum Break {
+    #[default]
+    Auto,
+    /// Avoid a break of any kind.
+    Avoid,
+    AvoidPage,
+    /// A forced page break (the CSS 2 name; the same as `page`).
+    Always,
+    Page,
+    /// Forced breaks to a left or right page. Pages are not numbered, so these are forced page
+    /// breaks without the empty page that may be needed to get to the right side.
+    Left,
+    Right,
+    Recto,
+    Verso,
+}
+
+impl Break {
+    /// Whether this value forces a break.
+    pub fn is_forced(self) -> bool {
+        matches!(
+            self,
+            Break::Always | Break::Page | Break::Left | Break::Right | Break::Recto | Break::Verso
+        )
+    }
+
+    /// Whether this value asks to avoid a break.
+    pub fn is_avoid(self) -> bool {
+        matches!(self, Break::Avoid | Break::AvoidPage)
+    }
+}
+
+/// https://www.w3.org/TR/css-break-3/#break-within
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PropertyValue)]
+pub enum BreakInside {
+    #[default]
+    Auto,
+    Avoid,
+    AvoidPage,
+}
+
+impl BreakInside {
+    pub fn is_avoid(self) -> bool {
+        self != BreakInside::Auto
+    }
+}
+
+/// The values of `page-break-before` and `page-break-after`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum LegacyBreak {
+    Auto,
+    Always,
+    Avoid,
+    Left,
+    Right,
+}
+
+impl LegacyBreak {
+    pub fn to_break(&self) -> Break {
+        match self {
+            LegacyBreak::Auto => Break::Auto,
+            LegacyBreak::Always => Break::Page,
+            LegacyBreak::Avoid => Break::Avoid,
+            LegacyBreak::Left => Break::Left,
+            LegacyBreak::Right => Break::Right,
+        }
+    }
+}
+
+/// The values of `page-break-inside`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum LegacyBreakInside {
+    Auto,
+    Avoid,
+}
+
+impl LegacyBreakInside {
+    pub fn to_break_inside(&self) -> BreakInside {
+        match self {
+            LegacyBreakInside::Auto => BreakInside::Auto,
+            LegacyBreakInside::Avoid => BreakInside::Avoid,
+        }
     }
 }
 
@@ -1905,6 +2353,17 @@ mod function_syntax_tests {
         assert_eq!(parse::<MathDepth>("add(1 2)"), None);
         assert_eq!(parse::<MathDepth>("add()"), None);
         assert_eq!(parse::<MathDepth>("add"), None);
+    }
+
+    #[test]
+    fn page_names() {
+        assert_eq!(parse("auto"), Some(PageName(None)));
+        assert_eq!(parse("chapter"), Some(PageName(Some("chapter".into()))));
+        // names are case-sensitive
+        assert_ne!(parse::<PageName>("Chapter"), parse::<PageName>("chapter"));
+        assert_eq!(parse::<PageName>("10"), None);
+        assert_eq!(parse::<PageName>("a b"), None);
+        assert_eq!(parse::<PageName>("inherit"), None);
     }
 
     #[test]

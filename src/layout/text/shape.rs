@@ -368,7 +368,7 @@ mod tests {
             vec![FontFamily::Named("TeX Gyre Termes".into()), FontFamily::Serif];
         let font = register_font(
             &mut font_map,
-            system_font(&style.font.font_family, &FontWeight::Normal, &FontStyle::Normal).unwrap(),
+            system_font(&style.font.font_family, &FontWeight::NORMAL, &FontStyle::Normal).unwrap(),
         );
         let fonts = resolver.ensure_coverage(&style, &font, text, &mut font_map);
         Setup { font, fonts }

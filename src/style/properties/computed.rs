@@ -5,8 +5,8 @@ use super::specified::{
     self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue, MathFamily, MathOperatorForm,
 };
 pub use super::specified::{
-    BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle, FontWeight,
-    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, PageBreak,
+    BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle,
+    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, Break, BreakInside,
     Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
 
@@ -203,7 +203,7 @@ impl LengthPercentage {
         match self {
             LengthPercentage::PixelLength(len) => len,
             LengthPercentage::Percentage(percentage) => container_size * percentage,
-            _ => unimplemented!(),
+            LengthPercentage::Both { length, percentage } => length + container_size * percentage,
         }
     }
 }
@@ -507,6 +507,7 @@ impl ComputedValues {
             position: Default::default(),
             background: Default::default(),
             page: Arc::new(Page {
+                page: self.page.page.clone(),
                 widows: self.page.widows,
                 orphans: self.page.orphans,
                 ..Default::default()
@@ -586,8 +587,10 @@ impl StyleBuilder {
                 border_collapse: inherited_values.text.border_collapse,
                 ..Default::default()
             }),
-            // widows and orphans are inherited, the page break properties are not
+            // widows and orphans and the used value of `page` are inherited, the page break
+            // properties are not
             page: Arc::new(Page {
+                page: inherited_values.page.page.clone(),
                 widows: inherited_values.page.widows,
                 orphans: inherited_values.page.orphans,
                 ..Default::default()
@@ -764,6 +767,30 @@ impl super::ComputedValue<specified::TrackList> for TrackList {
     }
 }
 
+/// The computed value of `font-weight`: a number from 1 to 1000.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct FontWeight(pub f32);
+
+impl FontWeight {
+    pub const NORMAL: FontWeight = FontWeight(400.0);
+    pub const BOLD: FontWeight = FontWeight(700.0);
+}
+
+impl Default for FontWeight {
+    fn default() -> Self {
+        FontWeight::NORMAL
+    }
+}
+
+// the weight is never NaN
+impl Eq for FontWeight {}
+
+impl std::hash::Hash for FontWeight {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Font {
     pub font_family: Vec<specified::FontFamily>,
@@ -893,6 +920,13 @@ pub struct Background {
     pub background_color: Color,
     /// The images from top to bottom, painted above `background_color`.
     pub background_image: Vec<super::gradient::ComputedImage>,
+    /// The blend mode of each image, repeated if there are fewer than images.
+    pub background_blend_mode: Vec<super::specified::BlendMode>,
+    /// Like `background_blend_mode`, the lists of the following properties are repeated if
+    /// there are fewer values than images.
+    pub background_size: Vec<super::background::ComputedSize>,
+    pub background_position: Vec<super::gradient::Position<LengthPercentage>>,
+    pub background_repeat: Vec<super::background::Repeat>,
 }
 
 impl Default for Background {
@@ -900,25 +934,97 @@ impl Default for Background {
         Background {
             background_color: Color::Rgba(cssparser_color::RgbaLegacy::new(0, 0, 0, 0.0)),
             background_image: Vec::new(),
+            background_blend_mode: vec![super::specified::BlendMode::Normal],
+            background_size: vec![Default::default()],
+            background_position: vec![super::gradient::Position {
+                x: LengthPercentage::Percentage(Percentage(0.0)),
+                y: LengthPercentage::Percentage(Percentage(0.0)),
+            }],
+            background_repeat: vec![Default::default()],
+        }
+    }
+}
+
+/// The computed value of `size` in `@page`.
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
+pub enum PageSize {
+    #[default]
+    Auto,
+    Dimensions {
+        width: PixelLength,
+        height: PixelLength,
+    },
+    /// Turn the default page size to the orientation.
+    Orientation { landscape: bool },
+}
+
+impl ComputedValue<specified::PageSize> for PageSize {
+    fn from_specified(spec: &specified::PageSize, style: &ComputedValues) -> Self {
+        let px = |q: specified::Quantity| {
+            PixelLength::from_val_unit(q.value, q.unit, style.font.font_size)
+        };
+        match *spec {
+            specified::PageSize::Auto => PageSize::Auto,
+            specified::PageSize::Lengths(width, height) => PageSize::Dimensions {
+                width: px(width),
+                height: height.map_or(px(width), px),
+            },
+            specified::PageSize::Keywords { name: None, landscape } => PageSize::Orientation {
+                landscape: landscape.unwrap_or(false),
+            },
+            specified::PageSize::Keywords { name: Some(name), landscape } => {
+                let (width, height, unit) = name.dimensions();
+                let (width, height) = (
+                    PixelLength::from_val_unit(width, unit, style.font.font_size),
+                    PixelLength::from_val_unit(height, unit, style.font.font_size),
+                );
+                if landscape == Some(true) {
+                    PageSize::Dimensions { width: height, height: width }
+                } else {
+                    PageSize::Dimensions { width, height }
+                }
+            }
+        }
+    }
+}
+
+/// The computed value of `page`: the name of the page, if any. `auto` is the name of the parent.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PageName(pub Option<std::sync::Arc<str>>);
+
+impl ComputedValue<specified::PageName> for PageName {
+    fn from_specified(spec: &specified::PageName, style: &ComputedValues) -> Self {
+        match &spec.0 {
+            Some(name) => PageName(Some(name.clone())),
+            // the declarations are applied to a style that has the inherited values of the
+            // parent
+            None => style.page.page.clone(),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Page {
+    pub size: PageSize,
+    /// The name of the page: `auto` is the name of the parent, so the used value is inherited.
+    pub page: PageName,
     pub widows: usize,
     pub orphans: usize,
-    pub page_break_after: PageBreak,
-    pub page_break_before: PageBreak,
+    pub break_after: Break,
+    pub break_before: Break,
+    pub break_inside: BreakInside,
 }
 
 impl Default for Page {
     fn default() -> Self {
         Page {
+            size: PageSize::Auto,
+            page: Default::default(),
             widows: 2,
             orphans: 2,
-            page_break_after: PageBreak::Auto,
-            page_break_before: PageBreak::Auto,
+            break_after: Break::Auto,
+            break_before: Break::Auto,
+            break_inside: BreakInside::Auto,
         }
     }
 }
@@ -1148,21 +1254,21 @@ mod css_wide_tests {
         let parent = child(&ComputedValues::default(), "font-weight: normal");
         // a user agent style makes the element bold, the author style undoes it
         let c = child(&parent, "font-weight: bold; font: inherit");
-        assert_eq!(c.font.font_weight, FontWeight::Normal);
+        assert_eq!(c.font.font_weight, FontWeight::NORMAL);
         let c = child(&parent, "font-weight: bold; font: initial");
-        assert_eq!(c.font.font_weight, FontWeight::Normal);
+        assert_eq!(c.font.font_weight, FontWeight::NORMAL);
         // later declarations still win
         let c = child(&parent, "font: inherit; font-weight: bold");
-        assert_eq!(c.font.font_weight, FontWeight::Bold);
+        assert_eq!(c.font.font_weight, FontWeight::BOLD);
     }
 
     #[test]
     fn initial_and_unset() {
         let parent = child(&ComputedValues::default(), "font-weight: bold; width: 10px");
-        assert_eq!(child(&parent, "").font.font_weight, FontWeight::Bold);
-        assert_eq!(child(&parent, "font-weight: initial").font.font_weight, FontWeight::Normal);
+        assert_eq!(child(&parent, "").font.font_weight, FontWeight::BOLD);
+        assert_eq!(child(&parent, "font-weight: initial").font.font_weight, FontWeight::NORMAL);
         // font-weight is inherited, width is not
-        assert_eq!(child(&parent, "font-weight: unset").font.font_weight, FontWeight::Bold);
+        assert_eq!(child(&parent, "font-weight: unset").font.font_weight, FontWeight::BOLD);
         assert!(matches!(child(&parent, "width: unset").position.width, GenericSize::Auto));
     }
 
@@ -1170,7 +1276,122 @@ mod css_wide_tests {
     fn later_keywords_win_and_unknown_properties_are_ignored() {
         let parent = child(&ComputedValues::default(), "font-weight: bold");
         let c = child(&parent, "font-weight: normal; font-weight: inherit");
-        assert_eq!(c.font.font_weight, FontWeight::Bold);
+        assert_eq!(c.font.font_weight, FontWeight::BOLD);
         child(&parent, "bogus: inherit");
+    }
+
+    fn weight(parent: &ComputedValues, css: &str) -> f32 {
+        child(parent, css).font.font_weight.0
+    }
+
+    #[test]
+    fn numeric_font_weights() {
+        let root = ComputedValues::default();
+        assert_eq!(weight(&root, "font-weight: 100"), 100.0);
+        assert_eq!(weight(&root, "font-weight: 650"), 650.0);
+        assert_eq!(weight(&root, "font-weight: 1"), 1.0);
+        assert_eq!(weight(&root, "font-weight: 1000"), 1000.0);
+        assert_eq!(weight(&root, "font-weight: 450.5"), 450.5);
+        assert_eq!(weight(&root, "font-weight: normal"), 400.0);
+        assert_eq!(weight(&root, "font-weight: bold"), 700.0);
+        // values outside of 1 to 1000 are invalid and the declaration is ignored
+        let parent = child(&root, "font-weight: 300");
+        assert_eq!(weight(&parent, "font-weight: 0"), 300.0);
+        assert_eq!(weight(&parent, "font-weight: 1001"), 300.0);
+        assert_eq!(weight(&parent, "font-weight: -100"), 300.0);
+        assert_eq!(weight(&parent, "font-weight: semibold"), 300.0);
+    }
+
+    #[test]
+    fn relative_font_weights() {
+        let root = ComputedValues::default();
+        let at = |w: &str| child(&root, &format!("font-weight: {w}"));
+        // https://www.w3.org/TR/css-fonts-4/#relative-weights
+        for (parent, bolder, lighter) in [
+            (100.0, 400.0, 100.0),
+            (300.0, 400.0, 100.0),
+            (400.0, 700.0, 100.0),
+            (500.0, 700.0, 100.0),
+            (600.0, 900.0, 400.0),
+            (700.0, 900.0, 400.0),
+            (800.0, 900.0, 700.0),
+            (900.0, 900.0, 700.0),
+        ] {
+            let p = at(&parent.to_string());
+            assert_eq!(weight(&p, "font-weight: bolder"), bolder, "bolder than {parent}");
+            assert_eq!(weight(&p, "font-weight: lighter"), lighter, "lighter than {parent}");
+        }
+        // the steps follow the inherited weight
+        let bold = at("bold");
+        let bolder = child(&bold, "font-weight: bolder");
+        assert_eq!(weight(&bolder, ""), 900.0);
+    }
+
+    #[test]
+    fn font_shorthand_sets_all_the_font_properties() {
+        use super::super::specified::{FontFamily, FontStyle};
+        let root = ComputedValues::default();
+        let c = child(&root, "font: italic bold 20px/1.5 \"Helvetica\", serif");
+        assert_eq!(c.font.font_style, FontStyle::Italic);
+        assert_eq!(c.font.font_weight, FontWeight::BOLD);
+        assert_eq!(c.font.font_size, PixelLength(20.0));
+        assert!(matches!(c.font.line_height, LineHeight::LengthPercentage(LengthPercentage::Percentage(Percentage(n))) if n == 1.5));
+        assert_eq!(c.font.font_family, [FontFamily::Named("Helvetica".into()), FontFamily::Serif]);
+        // numeric weights and the order of the optional values
+        let c = child(&root, "font: 300 oblique 10px monospace");
+        assert_eq!(c.font.font_weight, FontWeight(300.0));
+        assert_eq!(c.font.font_style, FontStyle::Oblique);
+        assert_eq!(c.font.font_family, [FontFamily::Monospace]);
+        // `normal`, small-caps and stretch keywords are accepted
+        let c = child(&root, "font: normal small-caps condensed bold 12px serif");
+        assert_eq!(c.font.font_weight, FontWeight::BOLD);
+    }
+
+    #[test]
+    fn font_shorthand_resets_what_it_leaves_out() {
+        let parent = child(
+            &ComputedValues::default(),
+            "font-weight: bold; font-style: italic; line-height: 2",
+        );
+        // the parent values are inherited, the shorthand sets all of them
+        let c = child(&parent, "font: 10px serif");
+        assert_eq!(c.font.font_weight, FontWeight::NORMAL);
+        assert_eq!(c.font.font_style, super::super::specified::FontStyle::Normal);
+        assert!(matches!(c.font.line_height, LineHeight::Normal));
+        // the longhands that follow win
+        let c = child(&parent, "font: 10px serif; font-weight: 600");
+        assert_eq!(c.font.font_weight, FontWeight(600.0));
+        // and the shorthand wins over the longhands before it
+        let c = child(&parent, "font-weight: 600; font: 10px serif");
+        assert_eq!(c.font.font_weight, FontWeight::NORMAL);
+    }
+
+    #[test]
+    fn font_shorthand_needs_size_and_family() {
+        let parent = child(&ComputedValues::default(), "font-weight: 600; font-size: 20px");
+        for css in ["font: bold", "font: 12px", "font: bold serif", "font: 12px/ serif", "font: 1500 12px serif"] {
+            let c = child(&parent, css);
+            assert_eq!(c.font.font_weight, FontWeight(600.0), "{css}");
+            assert_eq!(c.font.font_size, PixelLength(20.0), "{css}");
+        }
+    }
+
+    #[test]
+    fn font_family_names_can_be_unquoted_words() {
+        use super::super::specified::FontFamily;
+        let root = ComputedValues::default();
+        let c = child(&root, "font-family: Times New Roman, 'Foo Bar', Sans-Serif, Monospace");
+        assert_eq!(
+            c.font.font_family,
+            [
+                FontFamily::Named("Times New Roman".into()),
+                FontFamily::Named("Foo Bar".into()),
+                FontFamily::SansSerif,
+                FontFamily::Monospace,
+            ]
+        );
+        let c = child(&root, "font: 14px Courier New");
+        assert_eq!(c.font.font_family, [FontFamily::Named("Courier New".into())]);
+        assert_eq!(c.font.font_size, PixelLength(14.0));
     }
 }
