@@ -347,6 +347,24 @@ impl DisplayList {
         );
     }
 
+    /// Paints the background of a style over a rectangle, behind everything else.
+    fn page_background(&mut self, style: &ComputedValues, rect: Rect, entity: Entity) {
+        let z = ZIndex(i64::MIN);
+        let color = crate::style::properties::color::color_to_rgba(style.background.background_color);
+        let gradients = background_gradients(style, rect, rect);
+        if gradients.iter().any(|layer| layer.blend != BlendMode::Normal) {
+            self.blended_background(rect, color, &gradients, &rect_path(rect), entity, z);
+            return;
+        }
+        if color != RGBA::transparent() {
+            self.append(DisplayItem::Push, entity, z);
+            self.append(DisplayItem::Color(color), entity, z);
+            self.append(DisplayItem::FilledRect(rect), entity, z);
+            self.append(DisplayItem::Pop, entity, z);
+        }
+        self.gradients(&gradients, &rect_path(rect), entity, z);
+    }
+
     /// Paints gradients, clipped to the (rounded) border box `clip`.
     fn gradients(&mut self, gradients: &[Layer], clip: &[PathSegment], entity: Entity, z: ZIndex) {
         for Layer { gradient, .. } in gradients {
@@ -541,6 +559,9 @@ impl PrintPages {
 pub struct DisplayDecoration {
     pub display_list: DisplayList,
     pub bitset: specs::BitSet,
+    /// The element whose background is the background of the canvas. It is painted behind the
+    /// pages and not again in the box of the element.
+    pub canvas_source: Option<Entity>,
 }
 
 impl<'a> System<'a> for DisplayDecoration {
@@ -598,6 +619,12 @@ impl<'a> System<'a> for DisplayDecoration {
             };
             // the images of a fragment of a box that is split across pages are those of the box
             let style_entity = fragments.get(entity).map_or(entity, |fragment| fragment.0);
+            let propagated = self.canvas_source == Some(style_entity);
+            let background_color = if propagated {
+                RGBA::transparent()
+            } else {
+                background_color
+            };
             let gradients = styles
                 .get(style_entity)
                 .map(|style| {
@@ -609,6 +636,7 @@ impl<'a> System<'a> for DisplayDecoration {
                     };
                     background_gradients(style, padding_box, border_box)
                 })
+                .filter(|_| !propagated)
                 .unwrap_or_default();
             if collapsed.is_none() && deco.radius.is_rounded() {
                 let outer = resolve_radii(&deco.radius, border_box.width, border_box.height);
@@ -969,14 +997,59 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
     let pages = world.read_resource::<Option<Pages>>();
     let pages = pages.as_ref().unwrap();
     let mut page_vec = vec![];
-    for page in pages.iter() {
-        let display_list = DisplayList::default();
+
+    // The background of the canvas is the background of the root element, or of the body if the
+    // root element has none. It is painted over every page, on top of the background of the
+    // page.
+    // https://www.w3.org/TR/css-backgrounds-3/#special-backgrounds
+    let canvas = *world.read_resource::<crate::layout::components::CanvasEntities>();
+    let has_background = |style: &ComputedValues| {
+        crate::style::properties::color::color_to_rgba(style.background.background_color)
+            != RGBA::transparent()
+            || style
+                .background
+                .background_image
+                .iter()
+                .any(|image| !matches!(image, Image::None))
+    };
+    let canvas_source = {
+        let styles = world.read_storage::<ComputedValues>();
+        [canvas.html, canvas.body]
+            .into_iter()
+            .flatten()
+            .find(|&entity| styles.get(entity).is_some_and(has_background))
+    };
+    let page_contexts = world.read_resource::<crate::layout::pages::Pages>();
+    let page_styles = world.read_resource::<crate::layout::pages::PageStyles>();
+    let background_entity = world.entities().create();
+
+    for (page_index, page) in pages.iter().enumerate() {
+        let mut display_list = DisplayList::default();
+        // the pages of a document that is cropped have no size to paint
+        if page.size.0.0 > 0.0 && page.size.1.0 > 0.0 {
+            let rect = Rect {
+                x: PixelLength(0.0),
+                y: PixelLength(0.0),
+                width: page.size.0,
+                height: page.size.1,
+            };
+            if let Some(style) = page_contexts.0.get(page_index).and_then(|c| page_styles.style(c)) {
+                display_list.page_background(style, rect, background_entity);
+            }
+            if let Some(source) = canvas_source {
+                let styles = world.read_storage::<ComputedValues>();
+                if let Some(style) = styles.get(source) {
+                    display_list.page_background(style, rect, background_entity);
+                }
+            }
+        }
         let mut bitset = specs::BitSet::new();
         page.add_elements_to_set(&mut bitset);
 
         let mut decorations_builder = DisplayDecoration {
             display_list,
             bitset,
+            canvas_source,
         };
         decorations_builder.run_now(world);
 

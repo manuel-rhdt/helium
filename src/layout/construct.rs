@@ -555,6 +555,7 @@ impl EntityConstructor {
         world.register::<components::TableColumns>();
         world.insert(FontMap::new());
         world.insert(RootNode(None));
+        world.insert(components::CanvasEntities::default());
         EntityConstructor {
             world,
             font_match_cache: Default::default(),
@@ -668,6 +669,14 @@ impl EntityConstructor {
                     Arc::make_mut(&mut style.box_).display = Display::InlineBlock;
                 }
                 let entity = self.build_default_entity(style);
+                {
+                    let mut canvas = self.world.write_resource::<components::CanvasEntities>();
+                    if element_data.name == QualName::new(None, ns!(html), local_name!("html")) {
+                        canvas.html.get_or_insert(entity.0);
+                    } else if element_data.name == QualName::new(None, ns!(html), local_name!("body")) {
+                        canvas.body.get_or_insert(entity.0);
+                    }
+                }
                 if let Some(image) = image {
                     self.world
                         .write_storage::<components::ImageBox>()
