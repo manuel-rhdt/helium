@@ -1132,13 +1132,13 @@ fn hyphenation_language(lang: &crate::style::properties::computed::Language) -> 
 fn break_opportunities_between_letters(
     text: &str,
 ) -> std::iter::Peekable<impl Iterator<Item = usize> + '_> {
-    unicode_linebreak::linebreaks(text)
-        .filter(move |&(index, opportunity)| {
-            opportunity == unicode_linebreak::BreakOpportunity::Allowed
-                && index < text.len()
-                && !text[..index].ends_with(char::is_whitespace)
+    static SEGMENTER: std::sync::LazyLock<icu_segmenter::LineSegmenterBorrowed<'static>> =
+        std::sync::LazyLock::new(|| icu_segmenter::LineSegmenter::new_auto(Default::default()));
+    SEGMENTER
+        .segment_str(text)
+        .filter(move |&index| {
+            index > 0 && index < text.len() && !text[..index].ends_with(char::is_whitespace)
         })
-        .map(|(index, _)| index)
         .peekable()
 }
 
@@ -1152,16 +1152,10 @@ fn is_justified_between(text: &str, index: usize) -> bool {
 }
 
 fn is_cjk(ch: char) -> bool {
-    use unicode_linebreak::BreakClass::*;
+    use unicode_script::{Script, UnicodeScript};
     matches!(
-        unicode_linebreak::break_property(ch as u32),
-        Ideographic
-            | ConditionalJapaneseStarter
-            | HangulLvSyllable
-            | HangulLvtSyllable
-            | HangulLJamo
-            | HangulVJamo
-            | HangulTJamo
+        ch.script(),
+        Script::Han | Script::Hiragana | Script::Katakana | Script::Hangul | Script::Bopomofo
     ) || matches!(ch, '\u{3000}'..='\u{303F}' | '\u{FF00}'..='\u{FFEF}')
 }
 
@@ -2431,6 +2425,20 @@ mod tests {
         assert_eq!(breaks("道，非。名"), vec![6, 12]);
         // no break after the opening bracket
         assert_eq!(breaks("「道」"), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn thai_words_are_found_with_a_dictionary() {
+        // ภาษา | ไทย | เป็น | ภาษา | ที่ (every character is 3 bytes long, the vowel signs too)
+        let text = "ภาษาไทยเป็นภาษาที่";
+        let breaks = breaks(text);
+        assert!(breaks.contains(&12), "{breaks:?}");
+        assert!(breaks.len() >= 3, "{breaks:?}");
+        // never inside a cluster: no break in front of a vowel or tone mark
+        for index in breaks {
+            let next = text[index..].chars().next().unwrap();
+            assert!(!matches!(next, '\u{0E31}' | '\u{0E34}'..='\u{0E3A}' | '\u{0E47}'..='\u{0E4E}'));
+        }
     }
 
     #[test]
