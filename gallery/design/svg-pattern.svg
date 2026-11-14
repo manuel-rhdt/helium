@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80">
+  <defs><pattern id="p" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(30)"><rect width="5" height="10" fill="#0f1c2e"/><circle cx="7.5" cy="5" r="1.6" fill="#ff6b3d"/></pattern></defs>
+  <rect width="120" height="80" rx="8" fill="#f1f4f7"/>
+  <rect x="16" y="14" width="88" height="52" rx="10" fill="url(#p)" stroke="#0f1c2e" stroke-width="2.5" stroke-dasharray="7 4" stroke-linecap="round"/>
+</svg>
