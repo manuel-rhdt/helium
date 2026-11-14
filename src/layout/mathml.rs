@@ -1,8 +1,8 @@
-//! MathML layout and painting with `math_render`'s host API.
+//! MathML layout and painting with `formel`'s host API.
 //!
 //! The formula's elements are entities with a [`MathNode`] component (built in `construct.rs`).
 //! [`EcsMathTree`] exposes them, together with their computed styles, as a
-//! [`math_render::host::MathTree`], so mlayout lays out helium's own tree with helium's CSS.
+//! [`formel::host::MathTree`], so formel lays out helium's own tree with helium's CSS.
 
 use super::{
     FontMap,
@@ -13,12 +13,12 @@ use super::{
     inline_size::calculate_padding_and_border,
     text::font::GlyphIndex,
 };
-use math_render::{
+use formel::{
     host::{
         Direction, Edges, Fragment, LayoutCollector, MathComputedStyle, MathShift, MathTree,
         NodeKind, NodeLayout, OperatorOverrides, Rect, default_operator_overrides, layout_math,
     },
-    shaper::HarfbuzzShaper,
+    shaper::Shaper,
 };
 use specs::{Entities, Entity, Join, Read, ReadStorage, System, WriteStorage};
 
@@ -37,21 +37,23 @@ struct EcsMathTree<'a, 'world> {
     nodes: &'a ReadStorage<'world, MathNode>,
     styles: &'a ReadStorage<'world, ComputedValues>,
     /// One shaper per font face, by font name.
-    fonts: HashMap<String, Rc<HarfbuzzShaper<'static>>>,
+    fonts: HashMap<String, Rc<Shaper<'a>>>,
 }
 
 impl<'a, 'world> EcsMathTree<'a, 'world> {
     fn new(
         nodes: &'a ReadStorage<'world, MathNode>,
         styles: &'a ReadStorage<'world, ComputedValues>,
-        font_map: &FontMap,
+        font_map: &'a FontMap,
     ) -> Self {
         let mut fonts = HashMap::new();
         for node in nodes.join() {
             fonts.entry(node.font_name.clone()).or_insert_with(|| {
-                Rc::new(HarfbuzzShaper::new(
-                    font_map[&node.font_name].hb_font.clone(),
-                ))
+                let font = &font_map[&node.font_name];
+                Rc::new(
+                    Shaper::from_slice(font.data.as_slice(), font.index)
+                        .expect("the math font has a MATH table"),
+                )
             });
         }
         EcsMathTree {
@@ -68,9 +70,9 @@ impl<'a, 'world> EcsMathTree<'a, 'world> {
     }
 }
 
-impl MathTree for EcsMathTree<'_, '_> {
+impl<'a> MathTree for EcsMathTree<'a, '_> {
     type NodeId = Entity;
-    type Font = Rc<HarfbuzzShaper<'static>>;
+    type Font = Rc<Shaper<'a>>;
 
     fn kind(&self, node: Entity) -> NodeKind {
         self.node(node).kind
@@ -138,8 +140,8 @@ fn math_computed_style(style: &ComputedValues) -> MathComputedStyle {
         font_size: style.font.font_size.0,
         math_depth: style.math.depth(),
         math_style: match style.math.math_style {
-            MathStyle::Display => math_render::host::MathStyle::Normal,
-            MathStyle::Inline => math_render::host::MathStyle::Compact,
+            MathStyle::Display => formel::host::MathStyle::Normal,
+            MathStyle::Inline => formel::host::MathStyle::Compact,
         },
         math_shift: match style.math.math_shift {
             computed::MathShift::Normal => MathShift::Normal,
@@ -189,7 +191,7 @@ impl<'world> System<'world> for MathFormat {
     ) {
         let roots: Vec<Entity> = (&entities, &math_nodes)
             .join()
-            .filter(|(_, node)| node.kind == NodeKind::Math(math_render::host::MathElement::Math))
+            .filter(|(_, node)| node.kind == NodeKind::Math(formel::host::MathElement::Math))
             .map(|(entity, _)| entity)
             .collect();
         if roots.is_empty() {
@@ -349,6 +351,17 @@ impl LayoutMathGlyphs {
                     }
                 }
                 Fragment::Rule(rect) => push_rule(graphics, x, y, rect),
+                Fragment::Line {
+                    start,
+                    end,
+                    thickness,
+                } => graphics.ops.push(GraphicsOp::Line {
+                    from_x: x + Px(start.x),
+                    from_y: y + Px(start.y),
+                    to_x: x + Px(end.x),
+                    to_y: y + Px(end.y),
+                    thickness: Px(*thickness),
+                }),
                 Fragment::DashedRule(rect) => {
                     // dashes three times as long as the line is thick
                     let thickness = rect.size.width.min(rect.size.height);
