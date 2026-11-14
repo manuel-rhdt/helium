@@ -26,6 +26,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `blockquote`, `hr`, `ul`/`ol`/`li`/`dl`, `table` with `caption`/`thead`/`tbody`/`tfoot`/`tr`/`td`/`th`/`col`/`colgroup`,
   `a`, inline phrasing elements (`em`, `strong`, `code`, `sub`, `sup`, `q`, `mark`, ...), `figure`,
   `details`, and form controls (`input` shows its `value`; controls are static).
+- **Images:** `<img>` with JPEG and PNG files, from a path inside the directory of the document
+  or a base64 `data:` URI. The format is recognized by the contents of the file. The pixels
+  are not decoded: JPEG files (gray, RGB, CMYK, baseline and progressive) and PNG files (gray,
+  RGB and palette, 1 to 16 bits, with a transparent color or a single transparent palette entry)
+  are embedded as they are, so large images cost no time. PNG files with an alpha channel or
+  with interlacing, and partially transparent palettes, are not supported yet and leave an empty
+  box. Sizes follow the `width`/`height` attributes and properties and the proportions of the
+  image.
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
   document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.
@@ -89,7 +97,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 ## Not supported
 
-Raster and vector images (`<img>`, `<svg>`, `url()` backgrounds), `@font-face`, `@media`,
+Other image formats (GIF, WebP, ...), PNG with alpha, vector images (`<svg>`), `url()` backgrounds, `@font-face`, `@media`,
 `@supports`, `@import`, `!important`, `var()`, `calc()`, `overflow`, `float`, `position:
 relative`/`fixed`/`sticky`, `z-index`, `transform`, `opacity` and color alpha, `box-shadow`,
 `outline`, border styles other than `solid`, `vertical-align`, `word-break`/`overflow-wrap`,

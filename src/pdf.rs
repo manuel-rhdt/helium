@@ -122,7 +122,7 @@ pub fn write_pdf(
     }
 
     // Every image is embedded once, however often it is painted.
-    let mut images: HashMap<*const crate::image::JpegImage, IndirectReference<lemon_pdf::image::ImageXObject>> =
+    let mut images: HashMap<*const crate::image::RasterImage, IndirectReference<lemon_pdf::image::ImageXObject>> =
         HashMap::new();
     for page in &mut print_pages.pages {
         for item in page.display_list.items() {

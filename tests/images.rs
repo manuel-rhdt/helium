@@ -1,4 +1,4 @@
-//! `<img>`: JPEG files are embedded unchanged and laid out as replaced boxes.
+//! `<img>`: JPEG and PNG files are embedded without decoding and laid out as replaced boxes.
 
 mod common;
 
@@ -203,7 +203,7 @@ fn an_image_that_cannot_be_used_is_an_empty_box() {
         ("missing", "nothing.jpg", "cannot read"),
         ("escape", "../../Cargo.toml", "outside of the directory"),
         ("remote", "https://example.com/a.jpg", "not supported"),
-        ("not_a_jpeg", "not_a_jpeg.jpg", "JPEG"),
+        ("not_a_jpeg", "not_a_jpeg.jpg", "JPEG and PNG"),
     ] {
         let r = render(name, &format!("{PAGE}<p>a<img src=\"{src}\">b</p>"));
         assert!(r.log.contains(message), "{}: {}", name, r.log);
@@ -214,16 +214,49 @@ fn an_image_that_cannot_be_used_is_an_empty_box() {
 }
 
 #[test]
-fn a_png_says_that_it_is_not_supported() {
-    let png: &[u8] = &[
-        0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0, b'I', b'E', b'N', b'D',
-    ];
-    let encoded = encode_base64(png);
+fn png_files_are_embedded_without_decoding() {
     let r = render(
         "png",
-        &format!("{PAGE}<img src=\"data:image/png;base64,{encoded}\">"),
+        &format!("{PAGE}<img src=\"red.png\"><img src=\"gray.png\"><img src=\"palette.png\">"),
     );
-    assert!(r.log.contains("PNG"), "{}", r.log);
+    assert_eq!(r.images.len(), 3, "{}", r.log);
+    for image in &r.images {
+        // 40 x 20 pixels
+        assert_close(image[2], 30.0);
+        assert_close(image[3], 15.0);
+    }
+    assert_eq!(count(&r.pdf, "/Subtype /Image"), 3, "{}", r.log);
+    assert_eq!(count(&r.pdf, "/Predictor 15"), 3);
+    assert_eq!(count(&r.pdf, "/DCTDecode"), 0);
+    assert_eq!(count(&r.pdf, "/Indexed /DeviceRGB 2"), 1);
+    // the transparent palette entry
+    assert_eq!(count(&r.pdf, "/Mask [ 0 0 ]"), 1);
+}
+
+#[test]
+fn the_file_type_is_not_taken_from_the_name() {
+    // a PNG called `.jpg` and a JPEG called `.png`
+    let dir = fixtures();
+    std::fs::copy(dir.join("red.png"), dir.join("_png_as.jpg")).unwrap();
+    std::fs::copy(dir.join("red.jpg"), dir.join("_jpg_as.png")).unwrap();
+    let r = render("sniff", &format!("{PAGE}<img src=\"_png_as.jpg\"><img src=\"_jpg_as.png\">"));
+    std::fs::remove_file(dir.join("_png_as.jpg")).unwrap();
+    std::fs::remove_file(dir.join("_jpg_as.png")).unwrap();
+    assert_eq!(count(&r.pdf, "/Predictor 15"), 1, "{}", r.log);
+    assert_eq!(count(&r.pdf, "/DCTDecode"), 1);
+}
+
+#[test]
+fn png_files_that_need_decoding_are_empty_boxes() {
+    for (name, src, message) in [
+        ("alpha", "alpha.png", "alpha channel"),
+        ("interlaced", "interlaced.png", "interlaced"),
+    ] {
+        let r = render(name, &format!("{PAGE}<p>a<img src=\"{src}\">b</p>"));
+        assert!(r.log.contains(message), "{}: {}", name, r.log);
+        assert_eq!(count(&r.pdf, "/Subtype /Image"), 0, "{}", name);
+        assert_close(r.images[0][2], 0.0);
+    }
 }
 
 #[test]
