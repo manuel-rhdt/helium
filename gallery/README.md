@@ -11,7 +11,7 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 | `math-notes/` | MathML: integrals, sums, matrices, theorem boxes, numbered equations |
 | `book/` | a trade paperback: facing pages, running heads, chapter openings |
 | `poetry/` | verse on small pages |
-| `scripts/` | one sentence in 31 languages and more than 20 scripts (uses installed fonts) |
+| `scripts/` | one sentence in 30 languages and more than 20 scripts |
 | `design/` | gradients, blend modes, tiled patterns, rounded boxes, a dashboard |
 
 ## Build locally
@@ -32,9 +32,8 @@ Create `gallery/<name>/index.html` (with its images next to it) and add the name
 - `<title>`, `<meta name="description">` and `<meta name="keywords">` (comma-separated tags);
 - `<meta name="gallery-thumbnail" content="3">` to use another page than the first;
 - `<meta name="gallery-fonts" content="system">` to render with the fonts installed on the
-  machine. By default only the fonts built into Helium are used, so the output is the same
-  everywhere; the `scripts` document needs the installed fonts for scripts that Helium does not
-  bundle (the workflow installs Noto for it).
+  machine. By default only the fonts built into Helium are used (they include Noto fonts for
+  most scripts), so the output is the same everywhere.
 
 References in the document (stylesheets, images) are resolved relative to its directory, and
 only files inside that directory can be read.
