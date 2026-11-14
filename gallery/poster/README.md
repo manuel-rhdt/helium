@@ -1,20 +1,34 @@
-# Scripts (A3 print)
+# Scripts (A2 print)
 
-`index.html` is an A3 print of 140 writing systems, set only by their shapes: six characters of each
-script, ordered by the date of its earliest use, with its name and date underneath. The band at the top
-holds an Egyptian cartouche (a CSS border around the signs of *Ra-ms-s*), the Maya numerals of the Long
-Count date 9.8.9.13.0, and a vermilion seal. Maya glyph blocks are not encoded in Unicode, so only the
-numerals can be set as text.
+`index.html` is an A2 print of 52 writing systems, each set in a real text. Next to every specimen
+stands the name of its script, small and vertical, and nothing else.
+
+- **Article 1 of the Universal Declaration of Human Rights** for the 40 scripts that have a
+  translation in the [UDHR in Unicode](https://www.unicode.org/udhr/) corpus (from Latin and Greek
+  to Tibetan, Cherokee, Vai, Adlam, Javanese and Grantha). The texts come from the MIT-licensed `udhr`
+  npm package. Each text is cut after as many lines as the tile holds. Mongolian is set in vertical
+  columns.
+- **Inscriptions and words** for the historic scripts, transcribed from published editions:
+  an Akkadian phrase in cuneiform (*šum-ma a-wi-lum*, the first words of the Code of Hammurabi),
+  the cartouche of Ramesses, Cretan place names in Linear B (*ko-no-so*, *pa-i-to*, *a-mi-ni-so*,
+  *tu-ri-so*), the Ugaritic abecedary, the opening of the Ahiram sarcophagus in Phoenician, the
+  first words of Darius's Behistun inscription in Old Persian, the Ashoka edicts in Brahmi, the Long
+  Count date 7.16.3.2.13 of Chiapa de Corzo Stela 2 in Mayan numerals, *maqi mucoi* in Ogham, the
+  Gallehus horn in Elder Futhark, the Lord's Prayer of Wulfila in Gothic, and a line of the UDHR
+  in Braille. Maya glyph blocks are not encoded in Unicode, so only the numerals can be set as text.
+
+The specimens are ordered by the date of each script's earliest use, from the top left to the bottom
+right. Nothing on the page says so.
 
 `scripts-poster.pdf` is the result.
 
 ## Render it
 
 Helium has no `@font-face` yet and uses the fonts installed on the system, so the extra Noto fonts
-have to be installed first:
+have to be installed first. Line breaking of Thai, Khmer, Lao and Burmese needs Helium 0.2.1 or later.
 
 ```
-gallery/poster/fetch-fonts.sh            # downloads about 115 Noto fonts into ~/.fonts/helium-poster
+gallery/poster/fetch-fonts.sh            # downloads about 25 Noto fonts into ~/.fonts/helium-poster
 cargo run --release -- gallery/poster/index.html gallery/poster/scripts-poster.pdf
 ```
 
