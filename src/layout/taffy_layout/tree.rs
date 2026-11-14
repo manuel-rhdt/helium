@@ -101,7 +101,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         &mut self.nodes[usize::from(id)]
     }
 
-    fn new_node(&mut self, entity: Entity, content: Content) -> NodeId {
+    pub(super) fn new_node(&mut self, entity: Entity, content: Content) -> NodeId {
         let style = self
             .computed_values
             .get(entity)
@@ -585,8 +585,8 @@ impl HeliumTree<'_, '_> {
                 return (width, height);
             }
             let ratio = width / height;
-            let (mut w, mut h) = (width.clamp(min_width.min(max_width), max_width), height);
-            h = (w / ratio).clamp(min_height.min(max_height), max_height);
+            let mut w = width.clamp(min_width.min(max_width), max_width);
+            let h = (w / ratio).clamp(min_height.min(max_height), max_height);
             if (w / h - ratio).abs() > 1e-3 {
                 // the height was limited: the width follows
                 w = (h * ratio).clamp(min_width.min(max_width), max_width);

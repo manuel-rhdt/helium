@@ -11,12 +11,12 @@
     @top-right { content: "MAT 301"; font: 8.5pt sans-serif; letter-spacing: 1.5pt; color: #7b8190; }
     @bottom-center { content: counter(page); font: 9pt sans-serif; color: #7b8190; }
   }
-  @page :first { @top-left { content: ""; } @top-right { content: ""; } @bottom-center { content: ""; } }
+  @page cover { margin: 0; @top-left { content: ""; } @top-right { content: ""; } @bottom-center { content: ""; } }
 
   html { font-family: serif; font-size: 11pt; line-height: 1.5; color: #1c2030; hyphens: auto; }
   body { margin: 0; }
 
-  .cover { height: 236mm; box-sizing: border-box; padding: 24mm 20mm 18mm; border-radius: 16pt; display: flex; flex-direction: column; color: #ffffff; background: linear-gradient(160deg, #0b1030 0%, #1d2a78 48%, #14899b 100%); page-break-after: always; }
+  .cover { page: cover; height: 297mm; box-sizing: border-box; padding: 34mm 26mm 26mm; display: flex; flex-direction: column; color: #ffffff; background: linear-gradient(160deg, #0b1030 0%, #1d2a78 48%, #14899b 100%); page-break-after: always; }
   .cover .course { font: 10pt sans-serif; letter-spacing: 4pt; text-transform: uppercase; color: #bfd0ff; }
   .cover h1 { font-family: sans-serif; font-size: 40pt; line-height: 1.08; letter-spacing: -0.5pt; margin: 34mm 0 10mm; }
   .cover .rule { width: 42mm; height: 3pt; background: linear-gradient(90deg, #ffd166, #ef8f3a); margin-bottom: 9mm; }
