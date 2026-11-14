@@ -269,6 +269,9 @@ pub enum DisplayItem {
     Text(Point, PixelLength, String, Glyphs),
     Paragraph(Paragraph),
     Translate(PixelLength, PixelLength),
+    /// Applies a transformation (the CSS `transform`) to what follows, until the enclosing `Pop`.
+    /// The matrix is in the coordinates of the page: pixels, y pointing down.
+    Transform([f32; 6]),
     Push,
     Pop,
 }
@@ -282,12 +285,127 @@ struct DisplayElement {
     item: DisplayItem,
 }
 
+/// The boxes with a transform that `entity` is inside of, the outermost first.
+///
+/// The entities that were made from the nodes of the document know them. The ones that the
+/// layout made later (the paragraphs of the lines, markers, decorations) do not: they are in
+/// the innermost box with a transform on the same page that contains their center.
+fn transform_chain(
+    entity: Entity,
+    scopes: &crate::layout::components::TransformScopes,
+    positions: &ReadStorage<Position>,
+) -> Vec<Entity> {
+    let mut current = scopes.scope.get(&entity).copied();
+    if current.is_none() {
+        if let Some(pos) = positions.get(entity) {
+            let (x, y) = (pos.x.0 + pos.width.0 / 2.0, pos.y.0 + pos.height.0 / 2.0);
+            let depth = |mut scope: Entity| {
+                let mut depth = 0;
+                while let Some(parent) = scopes.boxes.get(&scope).and_then(|b| b.parent) {
+                    scope = parent;
+                    depth += 1;
+                }
+                depth
+            };
+            current = scopes
+                .boxes
+                .keys()
+                .copied()
+                .filter(|&candidate| {
+                    positions.get(candidate).is_some_and(|b| {
+                        b.page == pos.page
+                            && x >= b.x.0
+                            && x <= b.x.0 + b.width.0
+                            && y >= b.y.0
+                            && y <= b.y.0 + b.height.0
+                    })
+                })
+                .max_by_key(|&candidate| depth(candidate));
+        }
+    }
+    let mut chain = vec![];
+    while let Some(scope) = current {
+        chain.push(scope);
+        current = scopes.boxes.get(&scope).and_then(|b| b.parent);
+    }
+    chain.reverse();
+    chain
+}
+
+/// Groups the items that are inside of the same box with a transform (the `depth`-th of their
+/// chains) between a transformation and a `Pop`, at the place of the first of them.
+fn wrap_transforms(
+    items: Vec<DisplayElement>,
+    depth: usize,
+    scopes: &crate::layout::components::TransformScopes,
+    positions: &ReadStorage<Position>,
+) -> Vec<DisplayElement> {
+    enum Slot {
+        Item(DisplayElement),
+        Group(Entity),
+    }
+    let mut slots = vec![];
+    let mut groups: std::collections::HashMap<Entity, Vec<DisplayElement>> = Default::default();
+    for item in items {
+        match transform_chain(item.entity, scopes, positions).get(depth) {
+            None => slots.push(Slot::Item(item)),
+            Some(&root) => {
+                if !groups.contains_key(&root) {
+                    slots.push(Slot::Group(root));
+                }
+                groups.entry(root).or_default().push(item);
+            }
+        }
+    }
+    let mut out = vec![];
+    for slot in slots {
+        match slot {
+            Slot::Item(item) => out.push(item),
+            Slot::Group(root) => {
+                let inner = wrap_transforms(groups.remove(&root).unwrap_or_default(), depth + 1, scopes, positions);
+                let matrix = scopes.boxes.get(&root).zip(positions.get(root)).and_then(|(b, p)| {
+                    b.transform.matrix(&b.origin, p.x.0, p.y.0, p.width.0, p.height.0, b.font_size)
+                });
+                match (matrix, inner.first().map(|first| first.z_index)) {
+                    (Some(matrix), Some(z)) => {
+                        out.push(DisplayElement { z_index: z, entity: root, item: DisplayItem::Push });
+                        out.push(DisplayElement { z_index: z, entity: root, item: DisplayItem::Transform(matrix) });
+                        out.extend(inner);
+                        out.push(DisplayElement { z_index: z, entity: root, item: DisplayItem::Pop });
+                    }
+                    _ => out.extend(inner),
+                }
+            }
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DisplayList {
     items: Vec<DisplayElement>,
+    /// Whether the items are in the order in which they are painted: the order of `items` is
+    /// kept then, it is not sorted by the z index again.
+    ordered: bool,
 }
 
 impl DisplayList {
+    /// Wraps the items of the boxes that have a `transform` in the transformation, in the order
+    /// of the painting. After this, the items are not sorted by the z index again.
+    pub fn apply_transforms(
+        &mut self,
+        scopes: &crate::layout::components::TransformScopes,
+        positions: &ReadStorage<Position>,
+    ) {
+        if scopes.boxes.is_empty() {
+            return;
+        }
+        self.items.sort_by_key(|elem| ZIndex(elem.z_index.0));
+        let items = std::mem::take(&mut self.items);
+        self.items = wrap_transforms(items, 0, scopes, positions);
+        self.ordered = true;
+    }
+
     pub fn append(&mut self, item: DisplayItem, entity: Entity, z_index: ZIndex) {
         self.items.push(DisplayElement {
             item,
@@ -297,7 +415,9 @@ impl DisplayList {
     }
 
     pub fn items(&mut self) -> impl ExactSizeIterator<Item = &DisplayItem> {
-        self.items.sort_by_key(|elem| ZIndex(elem.z_index.0));
+        if !self.ordered {
+            self.items.sort_by_key(|elem| ZIndex(elem.z_index.0));
+        }
         self.items.iter().map(|elem| &elem.item)
     }
 
@@ -1084,7 +1204,11 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
             bitset,
         };
         text_builder.run_now(world);
-        let display_list = text_builder.display_list;
+        let mut display_list = text_builder.display_list;
+        {
+            let scopes = world.read_resource::<crate::layout::components::TransformScopes>();
+            display_list.apply_transforms(&scopes, &world.read_storage::<Position>());
+        }
 
         let bitset = text_builder.bitset;
 
