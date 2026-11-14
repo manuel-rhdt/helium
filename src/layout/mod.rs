@@ -6,7 +6,6 @@ pub mod construct;
 pub mod dump;
 pub mod inline;
 pub mod inline_size;
-pub(crate) mod lscheme;
 mod margin_boxes;
 mod mathml;
 pub mod normal_formatting;
@@ -38,31 +37,6 @@ use std::time::Instant;
 use log::info;
 
 pub type FontMap = std::collections::HashMap<String, std::sync::Arc<text::Font>>;
-
-/// The engine that lays out the boxes of the document.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
-pub enum LayoutEngine {
-    /// The block layout written in Scheme (`lscheme/block_layout.scm`).
-    Scheme,
-    /// [Taffy](https://github.com/DioxusLabs/taffy): block, flexbox and grid layout.
-    #[default]
-    Taffy,
-}
-
-impl std::str::FromStr for LayoutEngine {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "scheme" => Ok(LayoutEngine::Scheme),
-            "taffy" => Ok(LayoutEngine::Taffy),
-            other => Err(format!(
-                "unknown layout engine `{}` (expected `scheme` or `taffy`)",
-                other
-            )),
-        }
-    }
-}
 
 /// Collects every layout entity that is inside an `<a href>` element and remembers its href.
 ///
@@ -192,9 +166,8 @@ pub fn layout(
     dom: DomRef,
     device: Device,
     crop: bool,
-    engine: LayoutEngine,
     stylesheet_base_dir: &Path,
-) -> Result<LayoutContext, lscheme::RuntimeError> {
+) -> Result<LayoutContext, String> {
     // here we set the layout passes
     let world = World::new();
 
@@ -330,28 +303,14 @@ pub fn layout(
     let RootNode(root_entity) = *layout_context.read_resource();
     let root_entity = root_entity.expect("Could not find root entity.");
     time_before = Instant::now();
-    match engine {
-        LayoutEngine::Scheme => lscheme::scheme_layout::SchemeBlockLayout {
-            root_entity,
-            page_width,
-            page_height,
-            margin,
-        }
-        .run(&mut layout_context)?,
-        LayoutEngine::Taffy => taffy_layout::TaffyBlockLayout {
-            root_entity,
-            page_width,
-            page_height,
-            margin,
-        }
-        .run(&mut layout_context)
-        .map_err(lscheme::RuntimeError::Message)?,
+    taffy_layout::TaffyBlockLayout {
+        root_entity,
+        page_width,
+        page_height,
+        margin,
     }
-    info!(
-        "TIMED: block layout ({:?}) {:?}",
-        engine,
-        time_before.elapsed()
-    );
+    .run(&mut layout_context)?;
+    info!("TIMED: block layout {:?}", time_before.elapsed());
 
     let mut paginator = paginate::Paginator {
         page_height,
