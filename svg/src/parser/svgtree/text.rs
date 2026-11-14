@@ -10,9 +10,8 @@ use super::{AId, Document, EId, NodeId, NodeKind, SvgNode};
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 
 pub(crate) fn parse_svg_text_element<'input>(
-    parent: roxmltree::Node<'_, 'input>,
+    parent: crate::xml::Node<'_, 'input>,
     parent_id: NodeId,
-    style_sheet: &simplecss::StyleSheet,
     doc: &mut Document<'input>,
 ) -> Result<(), Error> {
     debug_assert_eq!(parent.tag_name().name(), "text");
@@ -31,16 +30,15 @@ pub(crate) fn parse_svg_text_element<'input>(
         }
     };
 
-    parse_svg_text_element_impl(parent, parent_id, style_sheet, space, doc)?;
+    parse_svg_text_element_impl(parent, parent_id, space, doc)?;
 
     trim_text_nodes(parent_id, space, doc);
     Ok(())
 }
 
 fn parse_svg_text_element_impl<'input>(
-    parent: roxmltree::Node<'_, 'input>,
+    parent: crate::xml::Node<'_, 'input>,
     parent_id: NodeId,
-    style_sheet: &simplecss::StyleSheet,
     space: XmlSpace,
     doc: &mut Document<'input>,
 ) -> Result<(), Error> {
@@ -78,7 +76,7 @@ fn parse_svg_text_element_impl<'input>(
         }
 
         let node_id =
-            super::parse::parse_svg_element(node, parent_id, tag_name, style_sheet, false, doc)?;
+            super::parse::parse_svg_element(node, parent_id, tag_name, false, doc)?;
         let space = get_xmlspace(doc, node_id, space);
 
         if is_tref {
@@ -93,14 +91,14 @@ fn parse_svg_text_element_impl<'input>(
                 }
             }
         } else {
-            parse_svg_text_element_impl(node, node_id, style_sheet, space, doc)?;
+            parse_svg_text_element_impl(node, node_id, space, doc)?;
         }
     }
 
     Ok(())
 }
 
-fn resolve_tref_text(xml: &roxmltree::Document, href: &str) -> Option<String> {
+fn resolve_tref_text(xml: &crate::xml::Document, href: &str) -> Option<String> {
     let id = svgtypes::IRI::from_str(href).ok()?.0;
 
     // Find linked element in the original tree.

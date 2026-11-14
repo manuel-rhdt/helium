@@ -168,7 +168,8 @@ impl crate::Tree {
         let doc = {
             let xml = roxmltree::Document::parse_with_options(text, xml_opt)
                 .map_err(Error::ParsingFailed)?;
-            svgtree::Document::parse_tree(&xml, opt.style_sheet.as_deref(), opt.max_depth)?
+            let xml = crate::xml::Document::from_roxmltree(&xml, opt.style_sheet.as_deref());
+            svgtree::Document::parse_tree(&xml, opt.max_depth)?
         };
 
         self::converter::convert_doc(&doc, opt)
@@ -176,7 +177,15 @@ impl crate::Tree {
 
     /// Parses `Tree` from `roxmltree::Document`.
     pub fn from_xmltree(doc: &roxmltree::Document, opt: &Options) -> Result<Self, Error> {
-        let doc = svgtree::Document::parse_tree(doc, opt.style_sheet.as_deref(), opt.max_depth)?;
+        let doc = crate::xml::Document::from_roxmltree(doc, opt.style_sheet.as_deref());
+        Self::from_xml(&doc, opt)
+    }
+
+    /// Parses `Tree` from an [`xml::Document`](crate::xml::Document), which can be built from any
+    /// tree. The CSS that applies to the elements is part of the document, `opt.style_sheet` is
+    /// not used.
+    pub fn from_xml(doc: &crate::xml::Document, opt: &Options) -> Result<Self, Error> {
+        let doc = svgtree::Document::parse_tree(doc, opt.max_depth)?;
         self::converter::convert_doc(&doc, opt)
     }
 }

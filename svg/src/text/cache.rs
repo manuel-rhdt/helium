@@ -141,7 +141,7 @@ impl LoadedFont {
         // Share the font data if it is already in memory, otherwise copy it.
         let font = match fontdb.face_source(id)? {
             (fontdb::Source::Binary(data), face_index) => skrifa::Font::new(data, face_index),
-            #[cfg(feature = "memmap-fonts")]
+            #[cfg(any())]
             (fontdb::Source::SharedFile(_, data), face_index) => {
                 skrifa::Font::new(data, face_index)
             }
