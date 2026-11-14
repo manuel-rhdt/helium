@@ -2,14 +2,14 @@
 //!
 //! SVG images are parsed into a `usvg` tree that `crate::svg` draws as vector graphics.
 //!
-//! JPEG files and PNG files are supported. Their pixels are not decoded: the PDF embeds the
-//! compressed data as it is (`DCTDecode` for JPEG, `FlateDecode` with a predictor for PNG), so
-//! the only thing needed to lay an image out is its size in pixels. That is why PNG files with an
-//! alpha channel (or interlacing) are not supported yet: they would have to be decoded.
+//! JPEG files and PNG files are supported. Their pixels are normally not decoded: the PDF
+//! embeds the compressed data as it is (`DCTDecode` for JPEG, `FlateDecode` with a predictor for
+//! PNG), so the only thing needed to lay an image out is its size in pixels. Only the PNG files
+//! that PDF cannot take as they are (with an alpha channel, or interlaced) are decoded.
 
 use std::path::{Path, PathBuf};
 
-use lemon_pdf::image::Image;
+use lemon_pdf::image::{Image, ImageError};
 
 /// An image that is going to be painted into the PDF: a raster image that is embedded as it is,
 /// or a vector image that is drawn.
@@ -85,6 +85,8 @@ pub struct RasterImage {
     /// The size in pixels, which is also the intrinsic size in CSS pixels.
     pub width: u32,
     pub height: u32,
+    /// The decoded pixels, for the PNG files that cannot be embedded as they are.
+    decoded: Option<Image>,
 }
 
 impl RasterImage {
@@ -92,31 +94,74 @@ impl RasterImage {
     ///
     /// The format is recognized by the signature of the file, not by its name or MIME type.
     pub fn from_bytes(data: Vec<u8>) -> Result<RasterImage, String> {
-        let image = to_pdf_image(&data)?;
+        let (image, decoded) = to_pdf_image(&data)?;
         if image.width() == 0 || image.height() == 0 {
             return Err("the image has no pixels".to_owned());
         }
         Ok(RasterImage {
             width: image.width(),
             height: image.height(),
+            decoded: decoded.then_some(image),
             data,
         })
     }
 
     /// The image as the PDF library embeds it.
     pub fn to_pdf_image(&self) -> Result<Image, String> {
-        to_pdf_image(&self.data)
+        match &self.decoded {
+            Some(image) => Ok(image.clone()),
+            None => to_pdf_image(&self.data).map(|(image, _)| image),
+        }
     }
 }
 
-fn to_pdf_image(data: &[u8]) -> Result<Image, String> {
+/// The image for the PDF library, and whether its pixels were decoded (and not the file kept).
+///
+/// JPEG files and the PNG files without alpha channel and interlacing are embedded as they
+/// are. The other PNG files are decoded to 8 bits per component, with the alpha channel as a
+/// soft mask.
+fn to_pdf_image(data: &[u8]) -> Result<(Image, bool), String> {
     if data.starts_with(&[0x89, b'P', b'N', b'G']) {
-        Image::from_png(data).map_err(|error| error.to_string())
+        match Image::from_png(data) {
+            Ok(image) => Ok((image, false)),
+            Err(ImageError::UnsupportedPng(_)) => decode_png(data).map(|image| (image, true)),
+            Err(error) => Err(error.to_string()),
+        }
     } else if data.starts_with(&[0xFF, 0xD8]) {
-        Image::from_jpeg(data.to_vec()).map_err(|error| error.to_string())
+        Image::from_jpeg(data.to_vec())
+            .map(|image| (image, false))
+            .map_err(|error| error.to_string())
     } else {
         Err("only JPEG and PNG images are supported".to_owned())
     }
+}
+
+/// Decodes a PNG file. Palettes and transparent colors are expanded and 16 bit samples are
+/// reduced to 8 bits; gamma and color profiles are ignored.
+fn decode_png(data: &[u8]) -> Result<Image, String> {
+    use png::ColorType;
+    let invalid = |error: png::DecodingError| format!("invalid PNG file: {}", error);
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().map_err(invalid)?;
+    let size = reader
+        .output_buffer_size()
+        .ok_or_else(|| "the PNG image is too large".to_owned())?;
+    let mut buffer = vec![0; size];
+    let frame = reader.next_frame(&mut buffer).map_err(invalid)?;
+    buffer.truncate(frame.buffer_size());
+    if frame.bit_depth != png::BitDepth::Eight {
+        return Err("unexpected bit depth of the decoded PNG image".to_owned());
+    }
+    let (width, height) = (frame.width, frame.height);
+    match frame.color_type {
+        ColorType::Rgba => Image::from_rgba8(width, height, &buffer),
+        ColorType::GrayscaleAlpha => Image::from_gray_alpha8(width, height, &buffer),
+        ColorType::Rgb => Image::from_rgb8(width, height, buffer),
+        ColorType::Grayscale => Image::from_gray8(width, height, buffer),
+        ColorType::Indexed => return Err("the palette of the PNG image was not expanded".to_owned()),
+    }
+    .map_err(|error| error.to_string())
 }
 
 /// Loads the image that the `src` attribute of an `<img>` refers to.
@@ -264,6 +309,43 @@ mod tests {
     fn percent() {
         assert_eq!(percent_decode("a%20b.jpg").unwrap(), "a b.jpg");
         assert!(percent_decode("a%2").is_err());
+    }
+
+    fn fixture(name: &str) -> Vec<u8> {
+        std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images").join(name))
+            .unwrap()
+    }
+
+    #[test]
+    fn png_files_with_alpha_are_decoded() {
+        let plain = RasterImage::from_bytes(fixture("alpha.png")).unwrap();
+        assert_eq!((plain.width, plain.height), (40, 20));
+        let image = plain.to_pdf_image().unwrap();
+        assert!(image.has_alpha());
+        // 16 bit samples are reduced to 8 bits, a palette with partial transparency is expanded
+        for name in ["alpha16.png", "gray_alpha.png", "palette_alpha.png"] {
+            let image = RasterImage::from_bytes(fixture(name)).unwrap().to_pdf_image().unwrap();
+            assert!(image.has_alpha(), "{}", name);
+        }
+        // an opaque PNG that is embedded as it is has no soft mask
+        assert!(!RasterImage::from_bytes(fixture("red.png")).unwrap().to_pdf_image().unwrap().has_alpha());
+    }
+
+    #[test]
+    fn interlacing_does_not_change_the_pixels() {
+        let plain = RasterImage::from_bytes(fixture("alpha.png")).unwrap().to_pdf_image().unwrap();
+        let interlaced = RasterImage::from_bytes(fixture("alpha_interlaced.png"))
+            .unwrap()
+            .to_pdf_image()
+            .unwrap();
+        assert_eq!(plain, interlaced);
+    }
+
+    #[test]
+    fn a_damaged_png_is_an_error() {
+        let mut file = fixture("alpha.png");
+        file.truncate(file.len() - 30);
+        assert!(RasterImage::from_bytes(file).unwrap_err().contains("PNG"));
     }
 
     #[test]

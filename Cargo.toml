@@ -33,6 +33,7 @@ unicode-script = "0.5.9"
 unicode-segmentation = "1.13.3"
 ttf-parser = { version = "0.25.1", default-features = false, features = ["glyph-names", "std"] }
 usvg = { version = "0.50", default-features = false, features = ["text"] }
+png = "0.18.1"
 
 # Finding an installed font for characters that the fonts of `font-family` lack
 [target.'cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios")))'.dependencies]
