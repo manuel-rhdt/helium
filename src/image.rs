@@ -53,13 +53,16 @@ impl LoadedImage {
     }
 }
 
-/// Parses an SVG file. Its own images and fonts are resolved under the same rules as the images
-/// of the document: files only inside of `base_dir`, and no network.
-fn parse_svg(data: &[u8], base_dir: &Path) -> Result<usvg::Tree, String> {
+/// The options for reading SVG: its own images are resolved under the same rules as the images
+/// of the document (files only inside of `base_dir`, and no network) and its text uses the fonts
+/// of the document.
+fn svg_options(base_dir: &Path) -> usvg::Options<'static> {
     let mut options = usvg::Options::default();
     options.resources_dir = Some(base_dir.to_path_buf());
     options.fontdb = crate::layout::text::font::svg_font_database();
     options.font_family = "serif".to_owned();
+    // the size of an SVG that has none, like the default object size of CSS
+    options.default_size = usvg::Size::from_wh(300.0, 150.0).unwrap();
     options.image_href_resolver.resolve_string = {
         let default = usvg::ImageHrefResolver::default_string_resolver();
         let base_dir = base_dir.to_path_buf();
@@ -71,9 +74,32 @@ fn parse_svg(data: &[u8], base_dir: &Path) -> Result<usvg::Tree, String> {
             }
         })
     };
+    options
+}
+
+/// Parses an SVG file.
+fn parse_svg(data: &[u8], base_dir: &Path) -> Result<usvg::Tree, String> {
+    let options = svg_options(base_dir);
     // `usvg` is meant for untrusted files, but a panic must not take the document down
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| usvg::Tree::from_data(data, &options)))
         .map_err(|_| "the SVG image could not be processed".to_owned())?
+        .map_err(|error| format!("invalid SVG image: {}", error))
+}
+
+/// The SVG image of an `<svg>` element of the document, from the XML tree that
+/// `crate::svg_dom::document` made of it. `font_size` and `font_family` are the ones of the
+/// element, for the lengths in `em`. The font family of the text is an attribute of the root
+/// element of the document.
+pub fn svg_from_dom(
+    document: &usvg::xml::Document,
+    base_dir: &Path,
+    font_size: f32,
+) -> Result<LoadedImage, String> {
+    let mut options = svg_options(base_dir);
+    options.font_size = font_size;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| usvg::Tree::from_xml(document, &options)))
+        .map_err(|_| "the SVG image could not be processed".to_owned())?
+        .map(|tree| LoadedImage::Svg(SvgImage { tree }))
         .map_err(|error| format!("invalid SVG image: {}", error))
 }
 

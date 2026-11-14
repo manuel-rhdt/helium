@@ -39,9 +39,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **SVG** (`usvg` parses it): paths and basic shapes, fill and stroke (caps, joins, dashes), solid
   colors, linear and radial gradients including `spreadMethod`, patterns, clip paths, masks, group
   opacity, `mix-blend-mode`, nested transforms, `use` and `symbol`, embedded JPEG and PNG
-  images, text (drawn as outlines, with the fonts of the document). Not supported: filters
-  (ignored), the opacity of gradient stops, GIF and WebP inside of SVG, `foreignObject`, and inline
-  `<svg>` elements in HTML.
+  images, text (drawn as outlines, with the fonts of the document). The same code draws the
+  `<svg>` elements of an HTML document: replaced boxes (sized by `width`/`height`, the
+  `viewBox` or CSS) that read the DOM directly, so the style sheets of the document apply to
+  their elements (all selectors, the cascade, the `style` attribute), `currentColor` and the font
+  are the ones of the page, and elements can refer to the ones of another `<svg>` of the page
+  (`<use href="#icon">` of a hidden sprite, a shared gradient). Not supported: filters (ignored),
+  the opacity of gradient stops, GIF and WebP inside of SVG, `!important` in the CSS of SVG
+  elements, and `foreignObject`.
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
   document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.
@@ -105,7 +110,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 ## Not supported
 
-Other image formats (GIF, WebP, ...), inline `<svg>`, `url()` backgrounds, `@font-face`, `@media`,
+Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`, `@media`,
 `@supports`, `@import`, `!important`, `var()`, `calc()`, `overflow`, `float`, `position:
 relative`/`fixed`/`sticky`, `z-index`, `transform`, `opacity` and color alpha, `box-shadow`,
 `outline`, border styles other than `solid`, `vertical-align`, `word-break`/`overflow-wrap`,
