@@ -1,6 +1,6 @@
 # Scripts (A2 print)
 
-`index.html` is a two-page A2 print of 89 writing systems, each set in a real text. Next to every specimen
+`index.html` is a two-page A2 print of 123 writing systems, each set in a real text. Next to every specimen
 stands the name of its script, small and vertical, and nothing else.
 
 - **The opening of the Universal Declaration of Human Rights** (Article 1 and the start of Article 2; a few translations in the corpus begin at Article 2) for 41 scripts that have a
@@ -9,6 +9,7 @@ stands the name of its script, small and vertical, and nothing else.
   npm package. Each text is cut after as many lines as the tile holds. Tiles are ordered from page 1 to page 2. Mongolian is set in vertical
   columns.
 - **Sample sentences** for 36 further scripts (Balinese, Batak, N'Ko, Osage, Warang Citi, Hanifi Rohingya, Toto, Nag Mundari and others), taken from a language-sample file supplied for this print. They are short translations in the style of the UDHR.
+- **Samples for the historic scripts** from a second research file supplied for this print: Wikipedia candidate strings (checked only for script membership) for Glagolitic, Coptic (the Bohairic Lord's Prayer), Lycian, Lydian, Carian, Old Italic, Avestan, Pahlavi, Manichaean, Sogdian, Mandaic, Kharoshthi, Old Turkic, Old Hungarian, Old Permic, Elbasan, Newa, Sharada, Modi, Kaithi, Tirhuta, Khudawadi, Dogra and others, real inscriptions for Cypriot (IG XV 1) and Linear A (Haghia Triada tablet HT 1), and the sign sequence of the Phaistos disc (side A, with the conventional reading order). Several are only a word or a short phrase.
 - **Inscriptions and words** for the historic scripts, transcribed from published editions:
   an Akkadian phrase in cuneiform (*šum-ma a-wi-lum*, the first words of the Code of Hammurabi),
   the cartouche of Ramesses, Cretan place names in Linear B (*ko-no-so*, *pa-i-to*, *a-mi-ni-so*,
@@ -29,7 +30,7 @@ Helium has no `@font-face` yet and uses the fonts installed on the system, so th
 have to be installed first. Line breaking of Thai, Khmer, Lao and Burmese needs Helium 0.2.1 or later.
 
 ```
-gallery/poster/fetch-fonts.sh            # downloads about 80 fonts into ~/.fonts/helium-poster
+gallery/poster/fetch-fonts.sh            # downloads about 110 fonts into ~/.fonts/helium-poster
 cargo run --release -- gallery/poster/index.html gallery/poster/scripts-poster.pdf
 ```
 

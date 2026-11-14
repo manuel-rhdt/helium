@@ -7,46 +7,75 @@ base=https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts
 mkdir -p "$dest"
 for family in \
   NotoSansAdlam \
+  NotoSansAnatolianHieroglyphs \
+  NotoSansAvestan \
   NotoSansBatak \
   NotoSansBrahmi \
   NotoSansBuginese \
   NotoSansBuhid \
   NotoSansCanadianAboriginal \
+  NotoSansCarian \
+  NotoSansCaucasianAlbanian \
   NotoSansChakma \
   NotoSansCham \
   NotoSansCherokee \
+  NotoSansCoptic \
   NotoSansCuneiform \
+  NotoSansCypriot \
   NotoSansDeseret \
   NotoSansEgyptianHieroglyphs \
+  NotoSansElbasan \
+  NotoSansGlagolitic \
   NotoSansGothic \
+  NotoSansGunjalaGondi \
   NotoSansHanifiRohingya \
   NotoSansHanunoo \
+  NotoSansInscriptionalPahlavi \
   NotoSansJavanese \
+  NotoSansKaithi \
   NotoSansKayahLi \
+  NotoSansKharoshthi \
+  NotoSansKhudawadi \
   NotoSansLepcha \
   NotoSansLimbu \
+  NotoSansLinearA \
   NotoSansLinearB \
   NotoSansLisu \
+  NotoSansLycian \
+  NotoSansLydian \
+  NotoSansMandaic \
+  NotoSansManichaean \
+  NotoSansMasaramGondi \
   NotoSansMayanNumerals \
   NotoSansMedefaidrin \
   NotoSansMeeteiMayek \
   NotoSansMendeKikakui \
+  NotoSansModi \
   NotoSansMongolian \
   NotoSansMro \
   NotoSansNKo \
   NotoSansNagMundari \
   NotoSansNewTaiLue \
+  NotoSansNewa \
   NotoSansOgham \
   NotoSansOlChiki \
+  NotoSansOldHungarian \
+  NotoSansOldItalic \
+  NotoSansOldPermic \
   NotoSansOldPersian \
+  NotoSansOldTurkic \
   NotoSansOsage \
   NotoSansOsmanya \
   NotoSansPahawhHmong \
+  NotoSansPhagsPa \
   NotoSansPhoenician \
   NotoSansRejang \
   NotoSansRunic \
   NotoSansSaurashtra \
+  NotoSansSharada \
   NotoSansShavian \
+  NotoSansSogdian \
+  NotoSansSoyombo \
   NotoSansSundanese \
   NotoSansSylotiNagri \
   NotoSansTagalog \
@@ -56,15 +85,19 @@ for family in \
   NotoSansTaiViet \
   NotoSansTangsa \
   NotoSansTifinagh \
+  NotoSansTirhuta \
   NotoSansUgaritic \
   NotoSansVai \
   NotoSansWancho \
   NotoSansWarangCiti \
   NotoSansYi \
+  NotoSerifAhom \
   NotoSerifArmenian \
   NotoSerifBalinese \
   NotoSerifBengali \
   NotoSerifDevanagari \
+  NotoSerifDivesAkuru \
+  NotoSerifDogra \
   NotoSerifGeorgian \
   NotoSerifGrantha \
   NotoSerifGujarati \
