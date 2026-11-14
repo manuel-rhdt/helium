@@ -73,6 +73,351 @@ impl MarkedContent {
 
 type PageContext<'p, 'c, 'b> = lemon_pdf::content::PageContext<'p, 'c, 'b>;
 
+/// How an image is embedded: raster images as an image XObject, SVG images as a form.
+enum Embedded {
+    Raster(IndirectReference<lemon_pdf::image::ImageXObject>),
+    /// An SVG image as a form, with its size.
+    Svg(lemon_pdf::form::FormReference, f32, f32),
+}
+
+/// Paints the items of a display list. The coordinates of the items are in pixels from the top
+/// left corner of a page that is `page_height` high.
+#[allow(clippy::too_many_arguments)]
+fn paint_items(
+    page_context: &mut PageContext<'_, '_, '_>,
+    display_list: &mut display_list::DisplayList,
+    page_height: PixelLength,
+    filter: Option<StreamFilter>,
+    font_map: &HashMap<String, IndirectReference<lemon_pdf::font::Font>>,
+    images: &HashMap<*const crate::image::LoadedImage, Embedded>,
+    tagged: bool,
+    recorder: &mut Option<TagRecorder>,
+    page_index: usize,
+) -> Result<(), Error> {
+    for item in display_list.items() {
+        match item {
+            DisplayItem::Push => page_context.save_graphics_state()?,
+            DisplayItem::Pop => page_context.restore_graphics_state()?,
+            DisplayItem::Translate(x, y) => {
+                let x = *x;
+                let y = -*y;
+                page_context.concatenate_matrix(1.0, 0.0, 0.0, 1.0, x.into(), y.into())?;
+            }
+            &DisplayItem::Color(color) => {
+                let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
+                let red = floatize(color.red);
+                let green = floatize(color.green);
+                let blue = floatize(color.blue);
+                page_context.device_rgb_fill_color(red, green, blue)?;
+            }
+            &DisplayItem::StrokeColor(color) => {
+                let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
+                let red = floatize(color.red);
+                let green = floatize(color.green);
+                let blue = floatize(color.blue);
+                page_context.device_rgb_stroke_color(red, green, blue)?;
+            }
+            &DisplayItem::LineString {
+                ref points,
+                line_width,
+            } => {
+                let mut point_iter =
+                    points.iter().map(|&crate::display_list::Point { x, y }| {
+                        let x = Pt::from(x);
+                        let y = Pt::from(page_height - y);
+                        (x, y)
+                    });
+
+                if let Some((x, y)) = point_iter.next() {
+                    page_context.push_operand(RawPdf("/Artifact".into()))?;
+                    page_context.apply_operator("BMC")?;
+                    page_context.move_to(x, y)?
+                } else {
+                    continue;
+                }
+
+                for (x, y) in point_iter {
+                    page_context.line_to(x, y)?
+                }
+
+                page_context.line_width(line_width.into())?;
+                page_context.stroke_path()?;
+                page_context.apply_operator("EMC")?;
+            }
+            DisplayItem::FillPath { path, even_odd } => {
+                page_context.push_operand(RawPdf("/Artifact".into()))?;
+                page_context.apply_operator("BMC")?;
+                emit_path(page_context, path, page_height)?;
+                let rule = if *even_odd {
+                    lemon_pdf::graphics_state::FillRule::EvenOdd
+                } else {
+                    lemon_pdf::graphics_state::FillRule::NonZero
+                };
+                page_context.fill_path_with_rule(rule)?;
+                page_context.apply_operator("EMC")?;
+            }
+            DisplayItem::Gradient(resolved) => {
+                gradient::paint(page_context, resolved, page_height, filter)?
+            }
+            DisplayItem::Image { rect, image } => {
+                let Some(embedded) = images.get(&std::sync::Arc::as_ptr(image)) else {
+                    continue;
+                };
+                page_context.push_operand(RawPdf("/Artifact".into()))?;
+                page_context.apply_operator("BMC")?;
+                match *embedded {
+                    Embedded::Raster(reference) => {
+                        let key = page_context.add_xobject(reference);
+                        page_context.draw_image(
+                            &key,
+                            Pt::from(rect.x),
+                            Pt::from(page_height - rect.y - rect.height),
+                            Pt::from(rect.width),
+                            Pt::from(rect.height),
+                        )?;
+                    }
+                    Embedded::Svg(form, width, height) => {
+                        // like `object-fit: contain`: the SVG keeps its proportions
+                        // and is centered in the box
+                        let (box_w, box_h) = (rect.width.0, rect.height.0);
+                        let scale = (box_w / width).min(box_h / height);
+                        // layout is in pixels, the PDF in points
+                        let x = Pt::from(rect.x + PixelLength((box_w - width * scale) / 2.0));
+                        let y = Pt::from(page_height - rect.y - PixelLength((box_h - height * scale) / 2.0));
+                        let scale = f64::from(Pt::from(PixelLength(scale)).0);
+                        let key = page_context.add_xobject(form);
+                        page_context.save_graphics_state()?;
+                        page_context.rect(
+                            Pt::from(rect.x),
+                            Pt::from(page_height - rect.y - rect.height),
+                            Pt::from(rect.width),
+                            Pt::from(rect.height),
+                        )?;
+                        page_context.clip(lemon_pdf::graphics_state::FillRule::NonZero)?;
+                        page_context.end_path()?;
+                        // SVG has y pointing down
+                        page_context.concatenate_matrix(
+                            scale,
+                            0.0,
+                            0.0,
+                            -scale,
+                            x,
+                            y,
+                        )?;
+                        page_context.draw_xobject(&key)?;
+                        page_context.restore_graphics_state()?;
+                    }
+                }
+                page_context.apply_operator("EMC")?;
+            }
+            DisplayItem::BlendGroup(group) => {
+                gradient::paint_blend_group(page_context, group, page_height, filter)?
+            }
+            DisplayItem::ClipPath { path, even_odd } => {
+                emit_path(page_context, path, page_height)?;
+                let rule = if *even_odd {
+                    lemon_pdf::graphics_state::FillRule::EvenOdd
+                } else {
+                    lemon_pdf::graphics_state::FillRule::NonZero
+                };
+                page_context.clip(rule)?;
+                page_context.end_path()?;
+            }
+            &DisplayItem::FilledRect(Rect {
+                x,
+                y,
+                width,
+                height,
+            }) => {
+                let x = Pt::from(x);
+                let y = Pt::from(page_height - y - height);
+                let width = Pt::from(width);
+                let height = Pt::from(height);
+
+                page_context.push_operand(RawPdf("/Artifact".into()))?;
+                page_context.apply_operator("BMC")?;
+                page_context.rect(x, y, width, height)?;
+                page_context.fill_path()?;
+                page_context.apply_operator("EMC")?;
+            }
+            &DisplayItem::Text(
+                display_list::Point { x, y },
+                font_size,
+                ref font_name,
+                ref glyphs,
+            ) => {
+                let x = x;
+                let y = page_height - y;
+                page_context.begin_text()?;
+                let mut marked = MarkedContent::default();
+                let font_ref = font_map[font_name];
+                let key = page_context.add_font(font_ref);
+                page_context.set_font(&key, font_size.into())?;
+                page_context.set_position(x.into(), y.into())?;
+                marked.before_content(page_context, tagged)?;
+                page_context.push_operand(glyphs)?;
+                page_context.apply_operator("Tj")?;
+                marked.finish(page_context)?;
+                page_context.end_text()?;
+            }
+            DisplayItem::Paragraph(par) => {
+                let x = par.start_pos.0;
+                let y = page_height - par.start_pos.1;
+
+                page_context.begin_text()?;
+                page_context.set_position(x.into(), y.into())?;
+                let mut marked = MarkedContent::default();
+
+                for op in &par.ops {
+                    match op {
+                        TextOperator::SetFont(font_name, size) => {
+                            // A font that draws no glyph anywhere is not embedded (e.g.
+                            // the font of text that is drawn entirely with fallback
+                            // fonts). Selecting it would change nothing.
+                            if let Some(&font_ref) = font_map.get(font_name) {
+                                let key = page_context.add_font(font_ref);
+                                page_context.set_font(&key, (*size).into())?;
+                            }
+                        }
+                        &TextOperator::SetColor(color) => {
+                            let floatize =
+                                |val: u8| f64::from(val) / f64::from(u8::MAX);
+                            page_context.device_rgb_fill_color(
+                                floatize(color.red),
+                                floatize(color.green),
+                                floatize(color.blue),
+                            )?;
+                        }
+                        TextOperator::Glyphs(glyphs) => {
+                            marked.before_content(page_context, tagged)?;
+                            page_context.push_operand(glyphs)?;
+                            page_context.apply_operator("Tj")?;
+                        }
+                        TextOperator::KernedGlyphs(glyphs) => {
+                            marked.before_content(page_context, tagged)?;
+                            page_context.push_operand(glyphs)?;
+                            page_context.apply_operator("TJ")?;
+                        }
+                        &TextOperator::NewLine { x_offset, leading } => {
+                            page_context
+                                .set_position(x_offset.into(), (-leading).into())?;
+                        }
+                        &TextOperator::SetWordSpacing(spacing) => {
+                            page_context.push_operand(Pt::from(spacing))?;
+                            page_context.apply_operator("Tw")?;
+                        }
+                        TextOperator::BeginActualText(text) => {
+                            marked.before_content(page_context, tagged)?;
+                            marked.stack.push(true);
+                            page_context.push_operand(RawPdf("/Span".into()))?;
+                            let mut hex = String::from("FEFF");
+                            for unit in text.encode_utf16() {
+                                hex.push_str(&format!("{unit:04X}"));
+                            }
+                            page_context
+                                .push_operand(RawPdf(format!("<< /ActualText <{hex}> >>")))?;
+                            page_context.apply_operator("BDC")?;
+                        }
+                        TextOperator::BeginArtifact => {
+                            // page numbers, running headers and footers
+                            marked.close_implicit_artifact(page_context)?;
+                            marked.stack.push(true);
+                            page_context.push_operand(RawPdf("/Artifact".into()))?;
+                            page_context
+                                .push_operand(RawPdf("<< /Type /Pagination >>".into()))?;
+                            page_context.apply_operator("BDC")?;
+                        }
+                        TextOperator::BeginTag(tag) => match recorder.as_mut() {
+                            Some(recorder) => {
+                                marked.close_implicit_artifact(page_context)?;
+                                marked.stack.push(true);
+                                let (role, mcid) = recorder.mark(page_index, *tag);
+                                page_context.push_operand(RawPdf(format!("/{role}")))?;
+                                page_context.push_operand(RawPdf(format!(
+                                    "<< /MCID {mcid} >>"
+                                )))?;
+                                page_context.apply_operator("BDC")?;
+                            }
+                            None => marked.stack.push(false),
+                        },
+                        TextOperator::EndMarkedContent => {
+                            marked.end(page_context)?;
+                        }
+                        &TextOperator::SetRise(rise) => {
+                            page_context.push_operand(Pt::from(rise))?;
+                            page_context.apply_operator("Ts")?;
+                        }
+                        &TextOperator::Embed { x, y, .. } => {
+                            // resolved by the display list; only the position is left
+                            page_context.push_operand(1.0f32)?;
+                            page_context.push_operand(0.0f32)?;
+                            page_context.push_operand(0.0f32)?;
+                            page_context.push_operand(1.0f32)?;
+                            page_context.push_operand(Pt::from(x).0 as f32)?;
+                            page_context.push_operand(Pt::from(page_height - y).0 as f32)?;
+                            page_context.apply_operator("Tm")?;
+                        }
+                        &TextOperator::SetTransform(matrix) => {
+                            let matrix: [f32; 6] = [
+                                matrix.a,
+                                matrix.b,
+                                matrix.c,
+                                matrix.d,
+                                Pt::from(matrix.e).0 as f32,
+                                Pt::from(page_height - matrix.f).0 as f32,
+                            ];
+                            for elem in &matrix {
+                                page_context.push_operand(*elem)?;
+                            }
+                            page_context.apply_operator("Tm")?;
+                        }
+                    }
+                }
+
+                marked.finish(page_context)?;
+                page_context.end_text()?;
+            }
+        }
+    }
+
+
+    Ok(())
+}
+
+/// Embeds the images of the items of a display list that are not embedded yet.
+fn embed_images(
+    context: &mut DocumentContext<'_>,
+    display_list: &mut display_list::DisplayList,
+    images: &mut HashMap<*const crate::image::LoadedImage, Embedded>,
+    svg_writer: &mut crate::svg::SvgWriter,
+) {
+    for item in display_list.items() {
+        let DisplayItem::Image { image, .. } = item else {
+            continue;
+        };
+        let key = std::sync::Arc::as_ptr(image);
+        if images.contains_key(&key) {
+            continue;
+        }
+        let embedded = match &**image {
+            crate::image::LoadedImage::Raster(raster) => raster
+                .to_pdf_image()
+                .and_then(|pdf_image| context.write_image(pdf_image).map_err(|error| error.to_string()))
+                .map(Embedded::Raster),
+            crate::image::LoadedImage::Svg(svg) => svg_writer
+                .write(context, &svg.tree)
+                .map(|form| Embedded::Svg(form, svg.tree.size().width(), svg.tree.size().height()))
+                .map_err(|error| error.to_string()),
+        };
+        match embedded {
+            Ok(embedded) => {
+                images.insert(key, embedded);
+            }
+            Err(error) => log::warn!("cannot embed an image: {}", error),
+        }
+    }
+}
+
 /// Writes the pages as a PDF file. If `tagged`, it is a tagged PDF whose structure tree is the
 /// `structure` of the pages.
 pub fn write_pdf(
@@ -122,41 +467,38 @@ pub fn write_pdf(
     }
 
     // Every image is embedded once, however often it is painted.
-    enum Embedded {
-        Raster(IndirectReference<lemon_pdf::image::ImageXObject>),
-        /// An SVG image as a form, with its size.
-        Svg(lemon_pdf::form::FormReference, f32, f32),
-    }
     let mut images: HashMap<*const crate::image::LoadedImage, Embedded> = HashMap::new();
-    let mut svg_writer = crate::svg::SvgWriter::new(if no_filter { None } else { Some(StreamFilter::Deflate) });
+    let page_filter = if no_filter { None } else { Some(StreamFilter::Deflate) };
+    let mut svg_writer = crate::svg::SvgWriter::new(page_filter);
+    // The content of the `foreignObject` elements of SVG images (HTML and MathML) was laid out
+    // like small pages and becomes forms. An island can contain SVG images with islands of their
+    // own, which come after it, so the last one is written first.
+    for index in (0..print_pages.islands.len()).rev() {
+        let mut island = std::mem::take(&mut print_pages.islands[index]);
+        embed_images(&mut context, &mut island.display_list, &mut images, &mut svg_writer);
+        let (width, height) = (island.width, island.height);
+        let form = context.write_form(
+            [Pt(0.0), Pt(0.0), Pt::from(width), Pt::from(height)],
+            None,
+            page_filter,
+            |form| {
+                paint_items(
+                    form,
+                    &mut island.display_list,
+                    height,
+                    page_filter,
+                    &font_map,
+                    &images,
+                    false,
+                    &mut None,
+                    0,
+                )
+            },
+        )?;
+        svg_writer.add_island(index as u64, form);
+    }
     for page in &mut print_pages.pages {
-        for item in page.display_list.items() {
-            let DisplayItem::Image { image, .. } = item else {
-                continue;
-            };
-            let key = std::sync::Arc::as_ptr(image);
-            if images.contains_key(&key) {
-                continue;
-            }
-            let embedded = match &**image {
-                crate::image::LoadedImage::Raster(raster) => raster
-                    .to_pdf_image()
-                    .and_then(|pdf_image| {
-                        context.write_image(pdf_image).map_err(|error| error.to_string())
-                    })
-                    .map(Embedded::Raster),
-                crate::image::LoadedImage::Svg(svg) => svg_writer
-                    .write(&mut context, &svg.tree)
-                    .map(|form| Embedded::Svg(form, svg.tree.size().width(), svg.tree.size().height()))
-                    .map_err(|error| error.to_string()),
-            };
-            match embedded {
-                Ok(embedded) => {
-                    images.insert(key, embedded);
-                }
-                Err(error) => log::warn!("cannot embed an image: {}", error),
-            }
-        }
+        embed_images(&mut context, &mut page.display_list, &mut images, &mut svg_writer);
     }
 
     log::info!("Write {} pages.", print_pages.pages.len());
@@ -170,7 +512,6 @@ pub fn write_pdf(
             page.struct_parents = Some(page_index as i64);
             page.tabs = Some(Name::from("S"));
         }
-        let recorder = &mut recorder;
 
         if crop {
             page.set_media_box(MediaBox::new(
@@ -195,291 +536,17 @@ pub fn write_pdf(
         };
 
         page.add_content(&mut context, filter, |page_context| {
-            for item in print_page.display_list.items() {
-                match item {
-                    DisplayItem::Push => page_context.save_graphics_state()?,
-                    DisplayItem::Pop => page_context.restore_graphics_state()?,
-                    DisplayItem::Translate(x, y) => {
-                        let x = *x;
-                        let y = -*y;
-                        page_context.concatenate_matrix(1.0, 0.0, 0.0, 1.0, x.into(), y.into())?;
-                    }
-                    &DisplayItem::Color(color) => {
-                        let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
-                        let red = floatize(color.red);
-                        let green = floatize(color.green);
-                        let blue = floatize(color.blue);
-                        page_context.device_rgb_fill_color(red, green, blue)?;
-                    }
-                    &DisplayItem::StrokeColor(color) => {
-                        let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
-                        let red = floatize(color.red);
-                        let green = floatize(color.green);
-                        let blue = floatize(color.blue);
-                        page_context.device_rgb_stroke_color(red, green, blue)?;
-                    }
-                    &DisplayItem::LineString {
-                        ref points,
-                        line_width,
-                    } => {
-                        let mut point_iter =
-                            points.iter().map(|&crate::display_list::Point { x, y }| {
-                                let x = Pt::from(x);
-                                let y = Pt::from(page_height - y);
-                                (x, y)
-                            });
-
-                        if let Some((x, y)) = point_iter.next() {
-                            page_context.push_operand(RawPdf("/Artifact".into()))?;
-                            page_context.apply_operator("BMC")?;
-                            page_context.move_to(x, y)?
-                        } else {
-                            continue;
-                        }
-
-                        for (x, y) in point_iter {
-                            page_context.line_to(x, y)?
-                        }
-
-                        page_context.line_width(line_width.into())?;
-                        page_context.stroke_path()?;
-                        page_context.apply_operator("EMC")?;
-                    }
-                    DisplayItem::FillPath { path, even_odd } => {
-                        page_context.push_operand(RawPdf("/Artifact".into()))?;
-                        page_context.apply_operator("BMC")?;
-                        emit_path(page_context, path, page_height)?;
-                        let rule = if *even_odd {
-                            lemon_pdf::graphics_state::FillRule::EvenOdd
-                        } else {
-                            lemon_pdf::graphics_state::FillRule::NonZero
-                        };
-                        page_context.fill_path_with_rule(rule)?;
-                        page_context.apply_operator("EMC")?;
-                    }
-                    DisplayItem::Gradient(resolved) => {
-                        gradient::paint(page_context, resolved, page_height, filter)?
-                    }
-                    DisplayItem::Image { rect, image } => {
-                        let Some(embedded) = images.get(&std::sync::Arc::as_ptr(image)) else {
-                            continue;
-                        };
-                        page_context.push_operand(RawPdf("/Artifact".into()))?;
-                        page_context.apply_operator("BMC")?;
-                        match *embedded {
-                            Embedded::Raster(reference) => {
-                                let key = page_context.add_xobject(reference);
-                                page_context.draw_image(
-                                    &key,
-                                    Pt::from(rect.x),
-                                    Pt::from(page_height - rect.y - rect.height),
-                                    Pt::from(rect.width),
-                                    Pt::from(rect.height),
-                                )?;
-                            }
-                            Embedded::Svg(form, width, height) => {
-                                // like `object-fit: contain`: the SVG keeps its proportions
-                                // and is centered in the box
-                                let (box_w, box_h) = (rect.width.0, rect.height.0);
-                                let scale = (box_w / width).min(box_h / height);
-                                // layout is in pixels, the PDF in points
-                                let x = Pt::from(rect.x + PixelLength((box_w - width * scale) / 2.0));
-                                let y = Pt::from(page_height - rect.y - PixelLength((box_h - height * scale) / 2.0));
-                                let scale = f64::from(Pt::from(PixelLength(scale)).0);
-                                let key = page_context.add_xobject(form);
-                                page_context.save_graphics_state()?;
-                                page_context.rect(
-                                    Pt::from(rect.x),
-                                    Pt::from(page_height - rect.y - rect.height),
-                                    Pt::from(rect.width),
-                                    Pt::from(rect.height),
-                                )?;
-                                page_context.clip(lemon_pdf::graphics_state::FillRule::NonZero)?;
-                                page_context.end_path()?;
-                                // SVG has y pointing down
-                                page_context.concatenate_matrix(
-                                    scale,
-                                    0.0,
-                                    0.0,
-                                    -scale,
-                                    x,
-                                    y,
-                                )?;
-                                page_context.draw_xobject(&key)?;
-                                page_context.restore_graphics_state()?;
-                            }
-                        }
-                        page_context.apply_operator("EMC")?;
-                    }
-                    DisplayItem::BlendGroup(group) => {
-                        gradient::paint_blend_group(page_context, group, page_height, filter)?
-                    }
-                    DisplayItem::ClipPath { path, even_odd } => {
-                        emit_path(page_context, path, page_height)?;
-                        let rule = if *even_odd {
-                            lemon_pdf::graphics_state::FillRule::EvenOdd
-                        } else {
-                            lemon_pdf::graphics_state::FillRule::NonZero
-                        };
-                        page_context.clip(rule)?;
-                        page_context.end_path()?;
-                    }
-                    &DisplayItem::FilledRect(Rect {
-                        x,
-                        y,
-                        width,
-                        height,
-                    }) => {
-                        let x = Pt::from(x);
-                        let y = Pt::from(page_height - y - height);
-                        let width = Pt::from(width);
-                        let height = Pt::from(height);
-
-                        page_context.push_operand(RawPdf("/Artifact".into()))?;
-                        page_context.apply_operator("BMC")?;
-                        page_context.rect(x, y, width, height)?;
-                        page_context.fill_path()?;
-                        page_context.apply_operator("EMC")?;
-                    }
-                    &DisplayItem::Text(
-                        display_list::Point { x, y },
-                        font_size,
-                        ref font_name,
-                        ref glyphs,
-                    ) => {
-                        let x = x;
-                        let y = page_height - y;
-                        page_context.begin_text()?;
-                        let mut marked = MarkedContent::default();
-                        let font_ref = font_map[font_name];
-                        let key = page_context.add_font(font_ref);
-                        page_context.set_font(&key, font_size.into())?;
-                        page_context.set_position(x.into(), y.into())?;
-                        marked.before_content(page_context, tagged)?;
-                        page_context.push_operand(glyphs)?;
-                        page_context.apply_operator("Tj")?;
-                        marked.finish(page_context)?;
-                        page_context.end_text()?;
-                    }
-                    DisplayItem::Paragraph(par) => {
-                        let x = par.start_pos.0;
-                        let y = page_height - par.start_pos.1;
-
-                        page_context.begin_text()?;
-                        page_context.set_position(x.into(), y.into())?;
-                        let mut marked = MarkedContent::default();
-
-                        for op in &par.ops {
-                            match op {
-                                TextOperator::SetFont(font_name, size) => {
-                                    // A font that draws no glyph anywhere is not embedded (e.g.
-                                    // the font of text that is drawn entirely with fallback
-                                    // fonts). Selecting it would change nothing.
-                                    if let Some(&font_ref) = font_map.get(font_name) {
-                                        let key = page_context.add_font(font_ref);
-                                        page_context.set_font(&key, (*size).into())?;
-                                    }
-                                }
-                                &TextOperator::SetColor(color) => {
-                                    let floatize =
-                                        |val: u8| f64::from(val) / f64::from(u8::MAX);
-                                    page_context.device_rgb_fill_color(
-                                        floatize(color.red),
-                                        floatize(color.green),
-                                        floatize(color.blue),
-                                    )?;
-                                }
-                                TextOperator::Glyphs(glyphs) => {
-                                    marked.before_content(page_context, tagged)?;
-                                    page_context.push_operand(glyphs)?;
-                                    page_context.apply_operator("Tj")?;
-                                }
-                                TextOperator::KernedGlyphs(glyphs) => {
-                                    marked.before_content(page_context, tagged)?;
-                                    page_context.push_operand(glyphs)?;
-                                    page_context.apply_operator("TJ")?;
-                                }
-                                &TextOperator::NewLine { x_offset, leading } => {
-                                    page_context
-                                        .set_position(x_offset.into(), (-leading).into())?;
-                                }
-                                &TextOperator::SetWordSpacing(spacing) => {
-                                    page_context.push_operand(Pt::from(spacing))?;
-                                    page_context.apply_operator("Tw")?;
-                                }
-                                TextOperator::BeginActualText(text) => {
-                                    marked.before_content(page_context, tagged)?;
-                                    marked.stack.push(true);
-                                    page_context.push_operand(RawPdf("/Span".into()))?;
-                                    let mut hex = String::from("FEFF");
-                                    for unit in text.encode_utf16() {
-                                        hex.push_str(&format!("{unit:04X}"));
-                                    }
-                                    page_context
-                                        .push_operand(RawPdf(format!("<< /ActualText <{hex}> >>")))?;
-                                    page_context.apply_operator("BDC")?;
-                                }
-                                TextOperator::BeginArtifact => {
-                                    // page numbers, running headers and footers
-                                    marked.close_implicit_artifact(page_context)?;
-                                    marked.stack.push(true);
-                                    page_context.push_operand(RawPdf("/Artifact".into()))?;
-                                    page_context
-                                        .push_operand(RawPdf("<< /Type /Pagination >>".into()))?;
-                                    page_context.apply_operator("BDC")?;
-                                }
-                                TextOperator::BeginTag(tag) => match recorder.as_mut() {
-                                    Some(recorder) => {
-                                        marked.close_implicit_artifact(page_context)?;
-                                        marked.stack.push(true);
-                                        let (role, mcid) = recorder.mark(page_index, *tag);
-                                        page_context.push_operand(RawPdf(format!("/{role}")))?;
-                                        page_context.push_operand(RawPdf(format!(
-                                            "<< /MCID {mcid} >>"
-                                        )))?;
-                                        page_context.apply_operator("BDC")?;
-                                    }
-                                    None => marked.stack.push(false),
-                                },
-                                TextOperator::EndMarkedContent => {
-                                    marked.end(page_context)?;
-                                }
-                                &TextOperator::SetRise(rise) => {
-                                    page_context.push_operand(Pt::from(rise))?;
-                                    page_context.apply_operator("Ts")?;
-                                }
-                                &TextOperator::Embed { x, y, .. } => {
-                                    // resolved by the display list; only the position is left
-                                    page_context.push_operand(1.0f32)?;
-                                    page_context.push_operand(0.0f32)?;
-                                    page_context.push_operand(0.0f32)?;
-                                    page_context.push_operand(1.0f32)?;
-                                    page_context.push_operand(Pt::from(x).0 as f32)?;
-                                    page_context.push_operand(Pt::from(page_height - y).0 as f32)?;
-                                    page_context.apply_operator("Tm")?;
-                                }
-                                &TextOperator::SetTransform(matrix) => {
-                                    let matrix: [f32; 6] = [
-                                        matrix.a,
-                                        matrix.b,
-                                        matrix.c,
-                                        matrix.d,
-                                        Pt::from(matrix.e).0 as f32,
-                                        Pt::from(page_height - matrix.f).0 as f32,
-                                    ];
-                                    for elem in &matrix {
-                                        page_context.push_operand(*elem)?;
-                                    }
-                                    page_context.apply_operator("Tm")?;
-                                }
-                            }
-                        }
-
-                        marked.finish(page_context)?;
-                        page_context.end_text()?;
-                    }
-                }
-            }
+            paint_items(
+                page_context,
+                &mut print_page.display_list,
+                page_height,
+                filter,
+                &font_map,
+                &images,
+                tagged,
+                &mut recorder,
+                page_index,
+            )?;
 
             Ok(())
         })?;

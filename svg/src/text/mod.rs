@@ -11,7 +11,6 @@ use crate::{Cache, Font, FontStretch, FontStyle, Text};
 pub(crate) mod cache;
 pub(crate) mod flatten;
 
-mod colr;
 /// Provides access to the layout of a text node.
 pub mod layout;
 
@@ -19,10 +18,43 @@ pub mod layout;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GlyphId(pub u32);
 
-impl From<GlyphId> for skrifa::raw::types::GlyphId {
-    fn from(value: GlyphId) -> Self {
-        Self::new(value.0)
-    }
+/// A glyph that the [`TextShaper`] made, in logical order of the text it shaped.
+///
+/// All values are in font units.
+#[derive(Copy, Clone, Debug)]
+pub struct ShapedGlyph {
+    /// The byte offset in the shaped text of the cluster that the glyph belongs to.
+    pub cluster: usize,
+    /// The glyph in the font.
+    pub glyph_id: u32,
+    /// How far the glyph is moved horizontally from the pen.
+    pub x_offset: i32,
+    /// How far the glyph is moved vertically from the pen.
+    pub y_offset: i32,
+    /// How far the pen advances.
+    pub x_advance: i32,
+}
+
+/// Shapes text: turns a string and a font into positioned glyphs.
+///
+/// This fork does not shape text itself; the caller provides the shaper, so that the text of
+/// SVG images is shaped by the same code and with the same fonts as the text around it.
+pub trait TextShaper: Send + Sync + std::fmt::Debug {
+    /// Shapes `text`, which is written in one direction (`rtl`), with the face `index` of the
+    /// font file `data`, which is the face `id` of the font database. The glyphs are returned
+    /// in the visual order of the text (left to right), each with the byte offset of its
+    /// cluster in `text`. `small_caps` and `kerning` turn the OpenType features `smcp` and
+    /// `kern` on and off.
+    fn shape(
+        &self,
+        id: ID,
+        data: &[u8],
+        index: u32,
+        text: &str,
+        rtl: bool,
+        small_caps: bool,
+        kerning: bool,
+    ) -> Option<Vec<ShapedGlyph>>;
 }
 
 /// A shorthand for [FontResolver]'s font selection function.
@@ -227,14 +259,13 @@ pub(crate) fn convert(text: &mut Text, resolver: &FontResolver, cache: &mut Cach
 
 #[inline(never)]
 fn has_char(fontdb: &Database, id: ID, c: char) -> bool {
-    // Unlike for the main fonts where we use skrifa's owned font abstraction,
-    // here we just call `with_face_data` repeatedly so we don't need to call `to_vec`
+    // Unlike for the main fonts, which are kept, here we just call `with_face_data` repeatedly so we don't need to call `to_vec`
     // for all fallback fonts.
     // TODO: Cache the charmaps of fallback candidates, building one for every lookup is expensive.
     fontdb
         .with_face_data(id, |data, face_index| {
-            let font = skrifa::FontRef::from_index(data, face_index).ok()?;
-            skrifa::charmap::Charmap::new(&font).map(c)
+            let face = ttf_parser::Face::parse(data, face_index).ok()?;
+            face.glyph_index(c)
         })
         .flatten()
         .is_some()

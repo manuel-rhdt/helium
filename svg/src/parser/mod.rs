@@ -4,6 +4,7 @@
 mod clippath;
 mod converter;
 mod filter;
+mod foreign;
 mod image;
 mod marker;
 mod mask;
@@ -141,6 +142,8 @@ impl crate::Tree {
             // fontdb, not the one from the cache.
             #[cfg(feature = "text")]
             fontdb: opt.fontdb.clone(),
+            #[cfg(feature = "text")]
+            text_shaper: opt.text_shaper.clone(),
             // Can't clone the resolver, so we create a new one that forwards to it.
             #[cfg(feature = "text")]
             font_resolver: crate::FontResolver {

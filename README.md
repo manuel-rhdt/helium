@@ -39,14 +39,19 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **SVG** (`usvg` parses it): paths and basic shapes, fill and stroke (caps, joins, dashes), solid
   colors, linear and radial gradients including `spreadMethod`, patterns, clip paths, masks, group
   opacity, `mix-blend-mode`, nested transforms, `use` and `symbol`, embedded JPEG and PNG
-  images, text (drawn as outlines, with the fonts of the document). The same code draws the
+  images, text (shaped by HarfBuzz with the fonts of the document, drawn as outlines; no colour glyphs). The same code draws the
   `<svg>` elements of an HTML document: replaced boxes (sized by `width`/`height`, the
   `viewBox` or CSS) that read the DOM directly, so the style sheets of the document apply to
   their elements (all selectors, the cascade, the `style` attribute), `currentColor` and the font
   are the ones of the page, and elements can refer to the ones of another `<svg>` of the page
-  (`<use href="#icon">` of a hidden sprite, a shared gradient). Not supported: filters (ignored),
-  the opacity of gradient stops, GIF and WebP inside of SVG, `!important` in the CSS of SVG
-  elements, and `foreignObject`.
+  (`<use href="#icon">` of a hidden sprite, a shared gradient). `<foreignObject>` holds HTML and
+  MathML: its content is laid out like a small page of the size of the element, with the style
+  sheets and the fonts of the page (selectors can reach from the page into it), and drawn with
+  the transformations, clip paths and masks of the SVG around it, so diagram labels can be
+  formulas; it can contain `<svg>` again. Not supported: filters (ignored), the opacity of
+  gradient stops, GIF and WebP inside of SVG, `!important` in the CSS of SVG elements, a
+  `foreignObject` in an SVG file (`<img src="x.svg">`: the content needs the document),
+  hyperlinks and tags (accessibility structure) inside of a `foreignObject`.
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
   document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.

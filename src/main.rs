@@ -26,6 +26,7 @@ pub mod dot;
 pub mod image;
 mod svg;
 pub mod svg_dom;
+mod svg_text;
 pub mod layout;
 pub mod node_data_ref;
 mod parser;

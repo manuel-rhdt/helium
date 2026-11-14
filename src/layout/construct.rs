@@ -11,7 +11,7 @@ use crate::style::properties::computed::{
     TextAlign, color_to_rgba,
 };
 use crate::style::properties::specified::{MathFamily, PropertyDeclaration, Text};
-use crate::traverse::Traversal;
+use crate::traverse::{Traversal, Traverse};
 use crate::tree::{DomRef, NodeData, TreeLinked};
 
 use html5ever::{Attribute, QualName, local_name, ns};
@@ -23,6 +23,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// The content of a `foreignObject` element of an SVG image: laid out on its own, as a block of a
+/// given size, because the SVG decides where it goes.
+#[derive(Debug, Clone)]
+pub struct IslandSpec {
+    /// The `foreignObject` element, whose children are the content.
+    pub node: DomRef,
+    /// The size of the element in pixels, known when the SVG image is read.
+    pub width: f32,
+    pub height: f32,
+}
+
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
 pub struct FlowConstructor {
@@ -33,6 +44,10 @@ pub struct FlowConstructor {
     inside_svg: Option<DomRef>,
     /// The outermost `<svg>` elements of the document, found when the first one is needed.
     svg_roots: Option<Vec<DomRef>>,
+    /// The `foreignObject` elements of the SVG images, in the order of their handles.
+    pub islands: Vec<IslandSpec>,
+    /// The `foreignObject` element that is laid out as the root of the document, with its size.
+    island_root: Option<(DomRef, f32, f32)>,
 }
 
 impl FlowConstructor {
@@ -43,7 +58,32 @@ impl FlowConstructor {
             entity_constructor: EntityConstructor::new(world, stylesheet_base_dir.clone()),
             inside_svg: None,
             svg_roots: None,
+            islands: vec![],
+            island_root: None,
         }
+    }
+
+    /// A constructor for the content of a `foreignObject`: it works on the style sheets of the
+    /// document that the element is in and on its fonts. `islands` are the ones found so far.
+    pub fn for_island(
+        world: World,
+        stylesheet_base_dir: PathBuf,
+        styles: Styles,
+        fonts: FontMap,
+        island: (DomRef, f32, f32),
+        islands: Vec<IslandSpec>,
+    ) -> Self {
+        let mut constructor = FlowConstructor::new(world, stylesheet_base_dir);
+        constructor.styles = styles;
+        *constructor.entity_constructor.world.write_resource::<FontMap>() = fonts;
+        constructor.island_root = Some(island);
+        constructor.islands = islands;
+        constructor
+    }
+
+    /// Takes the style sheets and the `foreignObject` elements out of the constructor.
+    pub fn take_shared(&mut self) -> (Styles, Vec<IslandSpec>) {
+        (std::mem::take(&mut self.styles), std::mem::take(&mut self.islands))
     }
 
     /// The image of an `<svg>` element: its contents are drawn as vector graphics.
@@ -76,13 +116,125 @@ impl FlowConstructor {
             font_family: Some(family),
             font_size: Some(format!("{}px", style.font.font_size.0)),
         };
-        let document = crate::svg_dom::document(node, &roots, &self.styles, &inherited);
+        let document =
+            crate::svg_dom::document(node, &roots, &self.styles, &inherited, &mut self.islands);
         match crate::image::svg_from_dom(&document, &self.stylesheet_base_dir, style.font.font_size.0) {
-            Ok(image) => Some(image),
+            Ok(image) => {
+                if let crate::image::LoadedImage::Svg(svg) = &image {
+                    foreign_sizes(svg.tree.root(), &mut self.islands);
+                }
+                Some(image)
+            }
             Err(error) => {
                 log::warn!("cannot draw an <svg> element: {}", error);
                 None
             }
+        }
+    }
+
+    /// Computes the style of the node from the rules of the style sheets and the style of its
+    /// parent.
+    fn compute_style(&mut self, node: &DomRef) {
+        // TODO: Selector matching, Cascade
+        match &node.clone().into_element_ref() {
+            Some(element_ref) => {
+                let parent_style = element_ref
+                    .as_node()
+                    .parent()
+                    .and_then(|parent| NodeData::style(&parent));
+                let parent_is_flex_or_grid = parent_style
+                    .as_ref()
+                    .is_some_and(|style| style.box_.display.is_flex_or_grid());
+                let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
+                // The cascade applies rules in ascending specificity order; the stable sort keeps
+                // the source order of rules with equal specificity, so later rules still win.
+                let mut matched_rules: Vec<_> = self
+                    .styles
+                    .rules_iter()
+                    .filter_map(|rule| {
+                        rule.matching_specificity(element_ref)
+                            .map(|specificity| (specificity, rule))
+                    })
+                    .collect();
+                matched_rules.sort_by_key(|&(specificity, _)| specificity);
+                for (_, rule) in &matched_rules {
+                    let properties = &rule.properties;
+                    for declaration in properties.declarations() {
+                        style_builder.add_declaration(declaration);
+                    }
+                }
+                // declarations in the `style` attribute override all matched rules
+                let inline_style = element_ref
+                    .attributes
+                    .borrow()
+                    .get(&QualName::new(None, ns!(), local_name!("style")))
+                    .map(|attr| PropertyDeclarationBlock::parse_inline(&attr.value));
+                if let Some(block) = &inline_style {
+                    for declaration in block.declarations() {
+                        style_builder.add_declaration(declaration);
+                    }
+                }
+                let mut style = style_builder.build();
+                if parent_is_flex_or_grid {
+                    style.blockify();
+                }
+                // the content of a `foreignObject` is a block of the size of the element
+                if let Some((root, width, height)) = &self.island_root {
+                    if root == node {
+                        std::sync::Arc::make_mut(&mut style.box_).display = Display::Block;
+                        let position = std::sync::Arc::make_mut(&mut style.position);
+                        position.width = Px(*width).into();
+                        position.height = Px(*height).into();
+                    }
+                }
+                // the language of the element, inherited from the parent unless it has its own
+                // (`xml:lang` wins over `lang`)
+                let lang = {
+                    let attributes = element_ref.attributes.borrow();
+                    attributes
+                        .get(&QualName::new(None, ns!(xml), local_name!("lang")))
+                        .or_else(|| attributes.get(&QualName::new(None, ns!(), local_name!("lang"))))
+                        .map(|attr| crate::style::properties::computed::Language::from_tag(&attr.value))
+                };
+                if let Some(lang) = lang {
+                    std::sync::Arc::make_mut(&mut style.font).lang = lang;
+                }
+                element_ref.as_node().set_style(style);
+            }
+            _ => {
+                let parent_style = node.parent().and_then(|parent| NodeData::style(&parent));
+                let style = StyleBuilder::new(parent_style.unwrap_or_default()).build();
+                node.set_style(style);
+            }
+        }
+
+    }
+
+    /// Computes the style of the node, and before that the one of its ancestors, if they do not
+    /// have one yet.
+    fn ensure_style(&mut self, node: &DomRef) {
+        if NodeData::style(node).is_some() {
+            return;
+        }
+        if let Some(parent) = node.parent() {
+            self.ensure_style(&parent);
+        }
+        self.compute_style(node);
+    }
+
+    /// Lays out the content of a `foreignObject`: the element is the root of the document.
+    pub fn construct_island(&mut self) {
+        let Some((root, _, _)) = self.island_root.clone() else {
+            return;
+        };
+        self.ensure_style(&root);
+        // the style of the root was computed from the ancestors: do it again with the size
+        self.compute_style(&root);
+        root.traverse(self);
+        // the root is the element, also when it has no block-level content: the formatting
+        // context that was built last is then one of an element inside of it
+        if let Some(LayoutEntity(entity)) = root.layout_entity.get() {
+            *self.entity_constructor.world.write_resource::<RootNode>() = RootNode(Some(entity));
         }
     }
 
@@ -224,69 +376,7 @@ impl Traversal<DomRef> for FlowConstructor {
             // the elements of an `<svg>` are drawn by the SVG code, not laid out
             return;
         }
-        // TODO: Selector matching, Cascade
-        match &node.clone().into_element_ref() {
-            Some(element_ref) => {
-                let parent_style = element_ref
-                    .as_node()
-                    .parent()
-                    .and_then(|parent| NodeData::style(&parent));
-                let parent_is_flex_or_grid = parent_style
-                    .as_ref()
-                    .is_some_and(|style| style.box_.display.is_flex_or_grid());
-                let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
-                // The cascade applies rules in ascending specificity order; the stable sort keeps
-                // the source order of rules with equal specificity, so later rules still win.
-                let mut matched_rules: Vec<_> = self
-                    .styles
-                    .rules_iter()
-                    .filter_map(|rule| {
-                        rule.matching_specificity(element_ref)
-                            .map(|specificity| (specificity, rule))
-                    })
-                    .collect();
-                matched_rules.sort_by_key(|&(specificity, _)| specificity);
-                for (_, rule) in &matched_rules {
-                    let properties = &rule.properties;
-                    for declaration in properties.declarations() {
-                        style_builder.add_declaration(declaration);
-                    }
-                }
-                // declarations in the `style` attribute override all matched rules
-                let inline_style = element_ref
-                    .attributes
-                    .borrow()
-                    .get(&QualName::new(None, ns!(), local_name!("style")))
-                    .map(|attr| PropertyDeclarationBlock::parse_inline(&attr.value));
-                if let Some(block) = &inline_style {
-                    for declaration in block.declarations() {
-                        style_builder.add_declaration(declaration);
-                    }
-                }
-                let mut style = style_builder.build();
-                if parent_is_flex_or_grid {
-                    style.blockify();
-                }
-                // the language of the element, inherited from the parent unless it has its own
-                // (`xml:lang` wins over `lang`)
-                let lang = {
-                    let attributes = element_ref.attributes.borrow();
-                    attributes
-                        .get(&QualName::new(None, ns!(xml), local_name!("lang")))
-                        .or_else(|| attributes.get(&QualName::new(None, ns!(), local_name!("lang"))))
-                        .map(|attr| crate::style::properties::computed::Language::from_tag(&attr.value))
-                };
-                if let Some(lang) = lang {
-                    std::sync::Arc::make_mut(&mut style.font).lang = lang;
-                }
-                element_ref.as_node().set_style(style);
-            }
-            _ => {
-                let parent_style = node.parent().and_then(|parent| NodeData::style(&parent));
-                let style = StyleBuilder::new(parent_style.unwrap_or_default()).build();
-                node.set_style(style);
-            }
-        }
+        self.compute_style(&node);
 
         if crate::svg_dom::is_outermost_svg(&node) {
             if let Some(style) = NodeData::style(&node) {
@@ -1524,5 +1614,26 @@ pub mod test {
         let style: &ComputedValues = html.get(&styles);
 
         assert_eq!(style.position.margin_top, GenericSize::from(Px(10.0)))
+    }
+}
+
+/// Records the sizes of the `foreignObject` elements of an SVG tree in `islands`.
+fn foreign_sizes(group: &usvg::Group, islands: &mut [IslandSpec]) {
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(group) => foreign_sizes(group, islands),
+            usvg::Node::Foreign(foreign) => {
+                if let Some(island) = islands.get_mut(foreign.handle() as usize) {
+                    island.width = foreign.rect().width();
+                    island.height = foreign.rect().height();
+                }
+            }
+            usvg::Node::Image(image) => {
+                if let usvg::ImageKind::SVG(tree) = image.kind() {
+                    foreign_sizes(tree.root(), islands);
+                }
+            }
+            _ => {}
+        }
     }
 }
