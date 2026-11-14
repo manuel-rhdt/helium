@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "helium"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "cssparser",
@@ -733,7 +733,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 [[package]]
 name = "lemon_pdf"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=png-passthrough#f4e8aaeb0d8290bc48f4d4a197f36209c948ee96"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=master#0366522d1ed485f1ee1055b4590c6f66e82241eb"
 dependencies = [
  "Inflector",
  "bitflags 2.13.2",
@@ -751,7 +751,7 @@ dependencies = [
 [[package]]
 name = "lemon_pdf_derive"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=png-passthrough#f4e8aaeb0d8290bc48f4d4a197f36209c948ee96"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=master#0366522d1ed485f1ee1055b4590c6f66e82241eb"
 dependencies = [
  "Inflector",
  "proc-macro2 0.4.30",
