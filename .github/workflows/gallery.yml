@@ -25,13 +25,12 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
     - name: Cache cargo
       uses: Swatinem/rust-cache@v2
-    # fontconfig: Helium's default features. Noto: only the document that sets text in many
-    # scripts uses installed fonts; the others use the fonts built into Helium.
-    # poppler-utils: thumbnails and page counts.
+    # fontconfig: Helium's default features. poppler-utils: thumbnails and page counts.
+    # The documents use the fonts built into Helium, so no fonts are installed.
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libfontconfig1-dev poppler-utils fonts-noto-core fonts-noto-cjk
+        sudo apt-get install -y libfontconfig1-dev poppler-utils
     - name: Build
       run: cargo build --release --locked
     - name: Render the gallery

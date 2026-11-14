@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Many scripts, one sentence</title>
-<meta name="gallery-fonts" content="system">
-<meta name="description" content="Article 1 of the Universal Declaration of Human Rights in thirty-one languages and more than twenty scripts: shaping, right-to-left text, stacked marks, line breaking without spaces and per-script font fallback.">
+<meta name="description" content="Article 1 of the Universal Declaration of Human Rights in thirty languages and more than twenty scripts: shaping, right-to-left text, stacked marks, line breaking without spaces and per-script font fallback.">
 <meta name="keywords" content="Unicode, bidi, shaping, font fallback, CJK, Indic scripts">
 <style>
   @page { size: A4; margin: 22mm 20mm 22mm;
@@ -21,7 +20,7 @@
   .quote small { display: block; margin-top: 3pt; font: 8pt sans-serif; letter-spacing: 1.5pt; text-transform: uppercase; font-style: normal; color: #8a8f98; }
 
   h2 { font: bold 8.5pt sans-serif; letter-spacing: 2.2pt; text-transform: uppercase; color: #8a2f6f; margin: 18pt 0 7pt; padding-bottom: 3pt; border-bottom: 0.75pt solid #e1d3e0; break-after: avoid; }
-  .grid { width: 100%; border-collapse: separate; border-spacing: 8pt; margin: -8pt; table-layout: auto; }
+  .grid { width: 100%; border-collapse: separate; border-spacing: 8pt; margin: -8pt; }
   .grid td { width: 50%; }
   .grid td.gap { background: none; border: none; padding: 0; }
   .grid td.card { background: #f7f4f8; border-radius: 8pt; padding: 8pt 11pt 9pt; border-left: 2.5pt solid #8a2f6f; }
@@ -38,7 +37,7 @@
 
 <div class="hero">
   <div class="k">Typesetting every script</div>
-  <h1>One sentence, thirty-one languages</h1>
+  <h1>One sentence, thirty languages</h1>
   <p>Each card below sets the same sentence in its own language and script. Helium shapes the text with HarfBuzz, orders mixed directions with the Unicode bidi algorithm, breaks lines where the script allows, and picks fonts per script.</p>
 </div>
 <div class="quote">“All human beings are born free and equal in dignity and rights.”<small>Article 1 · Universal Declaration of Human Rights</small></div>
@@ -67,7 +66,6 @@
 <table class="grid">
 <tr><td class="card"><div class="meta"><b lang="th" dir="ltr">ไทย</b><span>Thai</span></div><p lang="th" dir="ltr">มนุษย์ทั้งหลายเกิดมามีอิสระและเสมอภาคกันในศักดิ์ศรีและสิทธิ ต่างมีเหตุผลและมโนธรรม และควรปฏิบัติต่อกันด้วยจิตวิญญาณแห่งภราดรภาพ</p></td><td class="card"><div class="meta"><b lang="lo" dir="ltr">ລາວ</b><span>Lao</span></div><p lang="lo" dir="ltr">ມະນຸດທຸກຄົນເກີດມາມີສິດເສລີພາບ ແລະ ເທົ່າທຽມກັນໃນດ້ານກຽດສັກສີ ແລະ ສິດທິ. ທຸກຄົນມີເຫດຜົນ ແລະ ມະໂນທຳ ແລະ ຄວນປະຕິບັດຕໍ່ກັນດ້ວຍຈິດໃຈແຫ່ງພາດຕະພາບ.</p></td></tr>
 <tr><td class="card"><div class="meta"><b lang="my" dir="ltr">မြန်မာ</b><span>Burmese</span></div><p lang="my" dir="ltr">လူသားအားလုံးတို့သည် တစ်ဦးချင်းလွတ်လပ်၍ ဂုဏ်သိက္ခာနှင့် အခွင့်အရေးတို့၌ တန်းတူညီမျှကြသည်။ ထိုသူတို့တွင် ဆင်ခြင်တုံတရားနှင့် ကိုယ်ကျင့်တရားရှိကြ၍ ညီအစ်ကိုမောင်နှမစိတ်ဓာတ်ဖြင့် အချင်းချင်း ဆက်ဆံသင့်သည်။</p></td><td class="card"><div class="meta"><b lang="km" dir="ltr">ខ្មែរ</b><span>Khmer</span></div><p lang="km" dir="ltr">មនុស្សទាំងអស់កើតមកមានសេរីភាព និងសមភាពក្នុងសេចក្តីថ្លៃថ្នូរ និងសិទ្ធិ។ មនុស្សគ្រប់រូបសុទ្ធតែមានវិចារណញ្ញាណ និងសតិសម្បជញ្ញៈ ហើយត្រូវប្រព្រឹត្តចំពោះគ្នាទៅវិញទៅមកក្នុងស្មារតីនៃភាតរភាព។</p></td></tr>
-<tr><td class="card"><div class="meta"><b lang="bo" dir="ltr">བོད་ཡིག</b><span>Tibetan</span></div><p lang="bo" dir="ltr">སྐྱེ་བོ་མིའི་རིགས་རྒྱུད་ཡོངས་ལ་སྐྱེས་ཙམ་ཉིད་ནས་ཆེ་མཐོང་དང་ཐོབ་ཐང་ལ་དབང་བའི་རང་དབང་དང་འདྲ་མཉམ་ཡོད།</p></td><td class="gap"></td></tr>
 </table>
 <h2>East Asia</h2>
 <table class="grid">
