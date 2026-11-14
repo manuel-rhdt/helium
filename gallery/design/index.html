@@ -3,16 +3,19 @@
 <head>
 <meta charset="utf-8">
 <title>Boxes, backgrounds and layout</title>
-<meta name="description" content="A style sheet of what the page can be made of: linear, radial and conic gradients, blend modes, tiled patterns, rounded boxes, and a flexbox and grid dashboard.">
+<meta name="description" content="A style sheet of what the page can be made of: linear, radial and conic gradients, blend modes, tiled patterns, rounded boxes, and a flexbox and grid dashboard, under a masthead that fills the width of a first page without margins.">
 <meta name="keywords" content="gradients, blend modes, tiling, flexbox, grid, border-radius">
 <style>
   @page { size: A4; margin: 14mm 14mm 16mm;
     @bottom-left { content: "Boxes, backgrounds and layout"; font: 7.5pt sans-serif; color: #7c8794; }
     @bottom-right { content: counter(page); font: 7.5pt sans-serif; color: #7c8794; } }
+  /* the first page has no margins: the masthead is as wide as the page */
+  @page :first { margin: 0; @bottom-left { content: ""; } @bottom-right { content: ""; } }
   html { font-family: sans-serif; font-size: 9pt; line-height: 1.45; color: #0f1c2e; }
   body { margin: 0; }
 
-  .masthead { display: flex; align-items: center; gap: 16pt; padding: 16pt 20pt; border-radius: 14pt; background: linear-gradient(110deg, #0f1c2e 0%, #17394f 60%, #1f6f77 100%); color: #ffffff; }
+  .inner { padding: 0 14mm; }
+  .masthead { display: flex; align-items: center; gap: 16pt; padding: 16mm 14mm 11mm; background: linear-gradient(110deg, #0f1c2e 0%, #17394f 60%, #1f6f77 100%); color: #ffffff; }
   .orb { width: 52pt; height: 52pt; border-radius: 50%; background: conic-gradient(from 20deg, #ff6b3d, #fad68c, #1f9ea0, #3f5fe0, #ff6b3d); }
   .masthead h1 { margin: 0; font-size: 21pt; line-height: 1.1; letter-spacing: -0.2pt; }
   .masthead p { margin: 4pt 0 0; color: #b9d4da; font-size: 9.5pt; }
@@ -94,10 +97,11 @@
   <div class="orb"></div>
   <div>
     <h1>Boxes, backgrounds and layout</h1>
-    <p>Everything on this page is plain CSS: no images, no scripts.</p>
+    <p>Everything in this document is plain CSS: no images, no scripts.</p>
   </div>
 </div>
 
+<div class="inner">
 <h2><b></b>Gradients</h2>
 <div class="row">
   <div class="sw"><div class="b g1"></div><span><b>linear</b> 135deg, three stops</span></div>
@@ -127,6 +131,8 @@
 <h2><b></b>Rounded boxes and borders</h2>
 <div class="shapes">
   <div class="s1"></div><div class="s2"></div><div class="s3"></div><div class="s4"></div><div class="s5"></div><div class="s6"></div>
+</div>
+
 </div>
 
 <div style="break-before: page"></div>
