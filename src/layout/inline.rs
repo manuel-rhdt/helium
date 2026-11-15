@@ -366,7 +366,7 @@ impl InlineFormattingContext {
             } else {
                 let font_size = text_runs
                     .get(breakpoints[to].entity)
-                    .map_or(16.0, |run| run.font_size.0);
+                    .map_or(16.0, |run| run.face.font_size.0);
                 super::paragraph::GlueTotals {
                     stretch: f64::from(2.0 * font_size),
                     shrink: 0.0,
@@ -660,7 +660,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             for (index, &entity) in elements.iter().enumerate() {
                 let element_start = advance;
                 if let Some(text_run) = text_runs.get_mut(entity) {
-                    let font = &font_map[&text_run.font_name];
+                    let font = &font_map[&text_run.face.font_name];
                     let levels = runs_of(index);
                     // the glyphs of the run as `(cluster, width)`, for the advances of the bidi
                     // runs
@@ -676,10 +676,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 segment_start,
                                 levels,
                                 font,
-                                &text_run.fallback,
+                                &text_run.face.fallback,
                             ) {
                                 let width =
-                                    font.scale_to_px(position.x_advance, text_run.font_size);
+                                    font.scale_to_px(position.x_advance, text_run.face.font_size);
                                 glyph_widths.push((segment_start + info.cluster as usize, width));
                                 advance += width;
                             }
@@ -705,23 +705,23 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             segment_start,
                             levels,
                             font,
-                            &text_run.fallback,
+                            &text_run.face.fallback,
                         ) {
-                            let width = font.scale_to_px(position.x_advance, text_run.font_size);
+                            let width = font.scale_to_px(position.x_advance, text_run.face.font_size);
                             glyph_widths.push((segment_start + info.cluster as usize, width));
                             advance += width;
                         }
                         push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start);
                         continue;
                     }
-                    let shaped = shape_with_levels(&text_run.text, 0, levels, font, &text_run.fallback);
+                    let shaped = shape_with_levels(&text_run.text, 0, levels, font, &text_run.face.fallback);
                     if !levels.is_empty() {
                         glyph_widths = shaped
                             .iter()
                             .map(|(position, info)| {
                                 (
                                     info.cluster as usize,
-                                    font.scale_to_px(position.x_advance, text_run.font_size),
+                                    font.scale_to_px(position.x_advance, text_run.face.font_size),
                                 )
                             })
                             .collect();
@@ -758,7 +758,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                     hyphen: false,
                                     hyphen_width: Px(0.0),
                                     glue_stretch: if inter_letter {
-                                        text_run.font_size / 8.0
+                                        text_run.face.font_size / 8.0
                                     } else {
                                         Px(0.0)
                                     },
@@ -777,7 +777,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             && (wraps || ends_run)
                         {
                             let advance_before = advance;
-                            advance += font.scale_to_px(pos.x_advance, text_run.font_size);
+                            advance += font.scale_to_px(pos.x_advance, text_run.face.font_size);
                             let advance_after = advance;
 
                             let ws_len = cur_char.len() - cur_char.trim_start().len();
@@ -793,15 +793,15 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 hyphen: false,
                                 hyphen_width: Px(0.0),
                                 glue_stretch: Px(
-                                    pos.x_advance.0 as f32 * text_run.font_size.0 / 2000.0
+                                    pos.x_advance.0 as f32 * text_run.face.font_size.0 / 2000.0
                                 ),
                                 glue_shrink: Px(
-                                    pos.x_advance.0 as f32 * text_run.font_size.0 / 3000.0
+                                    pos.x_advance.0 as f32 * text_run.face.font_size.0 / 3000.0
                                 ),
                                 penalty: 0,
                             })
                         } else {
-                            advance += font.scale_to_px(pos.x_advance, text_run.font_size);
+                            advance += font.scale_to_px(pos.x_advance, text_run.face.font_size);
                         }
                     }
                     let hyphenation = match text_run.hyphens {
@@ -838,10 +838,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                     };
                     if !hyphenation.is_empty() {
-                        let hyphen_width = shape("-", font, &text_run.fallback, None)
+                        let hyphen_width = shape("-", font, &text_run.face.fallback, None)
                             .iter()
                             .map(|(position, _)| {
-                                font.scale_to_px(position.x_advance, text_run.font_size)
+                                font.scale_to_px(position.x_advance, text_run.face.font_size)
                             })
                             .fold(Px(0.0), |sum, width| sum + width);
                         // The width of the text in front of a glyph, from the shaping of the
@@ -850,7 +850,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         let mut width = Px(0.0);
                         for (position, glyph_info) in &shaped {
                             prefix_widths.push((glyph_info.cluster as usize, width));
-                            width += font.scale_to_px(position.x_advance, text_run.font_size);
+                            width += font.scale_to_px(position.x_advance, text_run.face.font_size);
                         }
                         let run_width = width;
                         // Clusters are monotone, so the width in front of a cluster boundary is
@@ -875,10 +875,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 index + prefix[index..].chars().next().map_or(1, char::len_utf8)
                             });
                             let prefix_width = width_before(word_start)
-                                + shape(&prefix[word_start..], font, &text_run.fallback, Some(word_start))
+                                + shape(&prefix[word_start..], font, &text_run.face.fallback, Some(word_start))
                                     .iter()
                                     .map(|(position, _)| {
-                                        font.scale_to_px(position.x_advance, text_run.font_size)
+                                        font.scale_to_px(position.x_advance, text_run.face.font_size)
                                     })
                                     .fold(Px(0.0), |sum, width| sum + width);
                             break_points.push(BreakPoint {
@@ -1665,18 +1665,18 @@ impl<'a> System<'a> for LineBoxCreator {
                         }
                     }
                     let piece_width = if let Some(run) = text_runs.get(entity) {
-                        if previous_font != Some((run.font_name.clone(), run.font_size)) {
-                            ops.push(TextOperator::SetFont(run.font_name.clone(), run.font_size));
-                            previous_font = Some((run.font_name.clone(), run.font_size));
+                        if previous_font != Some((run.face.font_name.clone(), run.face.font_size)) {
+                            ops.push(TextOperator::SetFont(run.face.font_name.clone(), run.face.font_size));
+                            previous_font = Some((run.face.font_name.clone(), run.face.font_size));
                         }
 
-                        if previous_color != Some(run.color) {
-                            ops.push(TextOperator::SetColor(run.color));
-                            previous_color = Some(run.color);
+                        if previous_color != Some(run.face.color) {
+                            ops.push(TextOperator::SetColor(run.face.color));
+                            previous_color = Some(run.face.color);
                         }
 
                         let characters = &run.text[piece.start..piece.end];
-                        let font = &font_map[&run.font_name];
+                        let font = &font_map[&run.face.font_name];
                         let rtl = piece.is_rtl();
 
                         // the hyphen of a hyphenated word goes at its end
@@ -1688,9 +1688,9 @@ impl<'a> System<'a> for LineBoxCreator {
                                 shape_piece(
                                 "-",
                                 font,
-                                &run.fallback,
+                                &run.face.fallback,
                                 None,
-                                run.font_size,
+                                run.face.font_size,
                                 Px(0.0),
                                 &[],
                                 true,
@@ -1707,9 +1707,9 @@ impl<'a> System<'a> for LineBoxCreator {
                         piece_width += shape_piece_in_flow(
                             characters,
                             font,
-                            &run.fallback,
+                            &run.face.fallback,
                             Some(piece.start),
-                            run.font_size,
+                            run.face.font_size,
                             word_spacing,
                             &ifc.inter_letter_offsets(line, &piece),
                             rtl,
@@ -1721,7 +1721,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             &mut ops,
                             ops_before,
                             (line_pos.x + piece_start, line_pos.y + line.baseline),
-                            run.color,
+                            run.face.color,
                         ));
                         if hyphen && !rtl {
                             ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
@@ -1729,9 +1729,9 @@ impl<'a> System<'a> for LineBoxCreator {
                                 shape_piece(
                                 "-",
                                 font,
-                                &run.fallback,
+                                &run.face.fallback,
                                 None,
-                                run.font_size,
+                                run.face.font_size,
                                 Px(0.0),
                                 &[],
                                 false,
@@ -1748,7 +1748,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             let x = line_pos.x + advance;
                             let baseline = line_pos.y + line.baseline;
                             for ((offset, thickness), enabled) in
-                                decoration_lines(run.font_size, run.decoration)
+                                decoration_lines(run.face.font_size, run.decoration)
                             {
                                 if !enabled {
                                     continue;
@@ -1779,7 +1779,7 @@ impl<'a> System<'a> for LineBoxCreator {
                                     .with(
                                         components::VectorGraphics {
                                             ops: vec![line_op],
-                                            color: Some(run.color),
+                                            color: Some(run.face.color),
                                         },
                                         &mut graphics,
                                     )

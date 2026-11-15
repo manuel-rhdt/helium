@@ -219,7 +219,7 @@ impl Component for TableColumns {
 /// shaping needs (letter-spacing, OpenType features, fallback fonts). Text that is not part of a
 /// `TextRun` (the markers of list items, the margin boxes of pages) takes it from its style in
 /// one place, `EntityConstructor::text_face`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TextFace {
     pub font_name: String,
     pub font_size: PixelLength,
@@ -241,19 +241,16 @@ impl Component for ListMarker {
 #[derive(Debug, Clone, Default)]
 pub struct TextRun {
     pub text: String,
-    pub font_name: String,
-    /// Size of an EM box.
-    pub font_size: PixelLength,
+    /// What the text is set in: the font, the size of an EM box, the color and the fonts that
+    /// decide the fallback fonts and the features of the text.
+    pub face: TextFace,
     pub line_height: PixelLength,
     pub baseline: PixelLength,
-    pub color: crate::style::properties::computed::RGBA,
     pub decoration: crate::style::properties::specified::TextDecoration,
     pub hyphens: crate::style::properties::specified::Hyphens,
     pub manual_hyphen_points: Vec<usize>,
     /// The language of the text, for shaping, fallback fonts and hyphenation.
     pub lang: crate::style::properties::computed::Language,
-    /// The font description that decides the fallback fonts of the text.
-    pub fallback: crate::layout::text::fallback::TextFonts,
 }
 
 impl Component for TextRun {
