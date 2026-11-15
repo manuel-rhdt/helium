@@ -14,7 +14,6 @@ overflow-x:
 overflow-y:
 
 # positioning that is not implemented
-position:relative
 position:fixed
 position:sticky
 z-index:

@@ -164,26 +164,47 @@ pub struct Inset {
 }
 
 impl RelativeOffset {
-    /// How far the box is moved to the right and down, for a containing block that is
-    /// `container_width` wide and whose direction is right-to-left if `rtl`.
+    /// The physical move of a box on a line of a box with this `flow` whose size along the line
+    /// is `line_size`. The size of a vertical box across the lines is not known here, so its
+    /// percentages of `left` and `right` count as `auto`; the ones of `top` and `bottom` refer
+    /// to the height, which is the size along the lines.
+    pub fn resolve_in_line(
+        &self,
+        flow: crate::layout::writing_mode::Flow,
+        line_size: PixelLength,
+        rtl: bool,
+    ) -> (PixelLength, PixelLength) {
+        if flow.is_vertical() {
+            self.resolve(None, Some(line_size), rtl)
+        } else {
+            self.resolve(Some(line_size), None, rtl)
+        }
+    }
+
+    /// How far the box is moved to the right and down, for a containing block that is `width`
+    /// wide and `height` high (if its height is not `auto`) and whose direction is right-to-left
+    /// if `rtl`.
     ///
-    /// Percentages of `top` and `bottom` refer to the height of the containing block, which is
-    /// usually `auto` and then makes them behave like `auto` (CSS 2.2, 9.3.2); they are taken as
-    /// `auto` here.
-    pub fn resolve(&self, container_width: PixelLength, rtl: bool) -> (PixelLength, PixelLength) {
+    /// A percentage of `top` or `bottom` refers to the height of the containing block; if that
+    /// is `auto`, the value behaves like `auto` (CSS 2.2, 9.3.2). The same holds for the width,
+    /// which is unknown for the lines of a vertical box.
+    pub fn resolve(
+        &self,
+        width: Option<PixelLength>,
+        height: Option<PixelLength>,
+        rtl: bool,
+    ) -> (PixelLength, PixelLength) {
         use crate::style::properties::computed::{GenericSize, LengthPercentage};
-        let horizontal = |size: GenericSize| match size {
-            GenericSize::Auto => None,
-            GenericSize::LengthPercentage(lp) => Some(lp.absolute(container_width).0),
-        };
-        let vertical = |size: GenericSize| match size {
-            GenericSize::LengthPercentage(LengthPercentage::PixelLength(len)) => Some(len.0),
+        let axis = |size: GenericSize, container: Option<PixelLength>| match (size, container) {
+            (GenericSize::Auto, _) => None,
+            (GenericSize::LengthPercentage(LengthPercentage::PixelLength(len)), _) => Some(len.0),
+            (GenericSize::LengthPercentage(lp), Some(container)) => Some(lp.absolute(container).0),
             _ => None,
         };
         let (mut dx, mut dy) = (0.0, 0.0);
         for inset in &self.0 {
             // over-constrained: `left` wins in a left-to-right container, `right` in the other
-            dx += match (horizontal(inset.left), horizontal(inset.right)) {
+            dx += match (axis(inset.left, width), axis(inset.right, width)) {
                 (Some(left), Some(_)) if !rtl => left,
                 (Some(_), Some(right)) => -right,
                 (Some(left), None) => left,
@@ -191,7 +212,7 @@ impl RelativeOffset {
                 (None, None) => 0.0,
             };
             // over-constrained: `top` wins
-            dy += match (vertical(inset.top), vertical(inset.bottom)) {
+            dy += match (axis(inset.top, height), axis(inset.bottom, height)) {
                 (Some(top), _) => top,
                 (None, Some(bottom)) => -bottom,
                 (None, None) => 0.0,

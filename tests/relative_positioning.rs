@@ -329,3 +329,65 @@ fn a_relative_box_is_painted_over_the_boxes_after_it() {
     // the part of the second box that the first does not cover
     assert_eq!(pixel(5, 40), [0, 0, 255]);
 }
+
+#[test]
+fn inline_boxes_next_to_block_boxes_move_once() {
+    // the inline content of a box that has block children goes through anonymous blocks
+    let plain = render(
+        "anonymous-plain",
+        "<div><span style='text-decoration:underline'>aa</span><div>x</div></div>",
+    );
+    let moved = render(
+        "anonymous-moved",
+        "<div><span style='position:relative;left:30px;top:-5px;text-decoration:underline'>aa</span><div>x</div></div>",
+    );
+    let (a, b) = (plain.lines()[0], moved.lines()[0]);
+    assert!(close(b.0, a.0 + 30.0) && close(b.1, a.1 - 5.0), "{:?} {:?}", a, b);
+}
+
+#[test]
+fn vertical_text_moves_in_physical_directions() {
+    let css = "writing-mode:vertical-rl;height:200px;width:100px";
+    let plain = render(
+        "vertical-plain",
+        &format!("<div style='{css}'>ab <span style='text-decoration:underline'>cd</span> ef</div>"),
+    );
+    let moved = render(
+        "vertical-moved",
+        &format!("<div style='{css}'>ab <span style='position:relative;left:10px;top:7px;text-decoration:underline'>cd</span> ef</div>"),
+    );
+    let (a, b) = (plain.lines()[0], moved.lines()[0]);
+    // `left` is across the lines and `top` along them
+    assert!(close(b.0, a.0 + 10.0), "{:?} {:?}", a, b);
+    assert!(close(b.1, a.1 + 7.0), "{:?} {:?}", a, b);
+    assert!(close(b.2, a.2 + 10.0), "{:?} {:?}", a, b);
+    // the text is moved along the line and, across it, to the right (up for the turned text)
+    let moves = moved.text_moves();
+    assert!(moves.iter().any(|&(_, across)| close(across, -10.0)), "{:?}", moves);
+}
+
+#[test]
+fn a_formula_moves() {
+    let plain = render(
+        "math-plain",
+        "<p>a <math id=m><mi>x</mi><mo>+</mo><mn>1</mn></math> b</p>",
+    );
+    let moved = render(
+        "math-moved",
+        "<p>a <math id=m style='position:relative;left:25px;top:6px'><mi>x</mi><mo>+</mo><mn>1</mn></math> b</p>",
+    );
+    let (a, b) = (plain.border_box("m"), moved.border_box("m"));
+    assert!(close(b.0, a.0 + 25.0) && close(b.1, a.1 + 6.0), "{:?} {:?}", a, b);
+    assert!(close(b.2, a.2) && close(b.3, a.3));
+    // what follows stays where it is
+    let text = |r: &Rendered| {
+        r.dump["paint"]["text"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|run| (run["x"].as_f64().unwrap(), run["y"].as_f64().unwrap()))
+            .collect::<Vec<_>>()
+    };
+    // the glyphs of the formula move with the box: the other runs (a and b) do not
+    assert_eq!(text(&plain).len(), text(&moved).len());
+}
