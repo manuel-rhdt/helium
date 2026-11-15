@@ -5,7 +5,8 @@ use harfbuzz_rs::{
 
 use super::{Font, font::FontUnit};
 use super::fallback::TextFonts;
-use super::segment::clusters;
+use super::segment::{Cluster, Span, cluster_spans, clusters};
+use std::cell::RefCell;
 use crate::style::properties::computed::Language;
 use crate::style::properties::font_features::Feature;
 use unicode_script::Script;
@@ -147,6 +148,23 @@ fn offset_clusters(
 /// cluster values increase.
 ///
 /// The text is split into runs of one script and one font, each of which is shaped on its own.
+/// Buffers that shaping reuses so that it does not allocate for every piece of text: a text of
+/// a few words is shaped in a few microseconds, so allocating and growing a harfbuzz buffer, the
+/// clusters and the features for each of them was a large part of the allocations of a document.
+#[derive(Default)]
+struct Scratch {
+    /// Empty (it is cleared when it is put back) but with the capacity of earlier texts.
+    buffer: Option<UnicodeBuffer>,
+    features: Vec<harfbuzz_rs::Feature>,
+    spans: Vec<Span>,
+    /// The glyphs of the text that `with_shaped` measures.
+    glyphs: Vec<(GlyphPosition, GlyphInfo)>,
+}
+
+thread_local! {
+    static SCRATCH: RefCell<Scratch> = RefCell::new(Scratch::default());
+}
+
 /// The font of a cluster is the one that `fonts` has for the text at `at` or else the one that
 /// was chosen for the cluster and its script (see `FontResolver`), so a base character and its
 /// marks stay together.
@@ -157,18 +175,49 @@ pub fn shape_directed(
     at: Option<usize>,
     rtl: bool,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
+    let mut glyphs = Vec::new();
+    shape_directed_into(text, font, fonts, at, rtl, &mut glyphs);
+    glyphs
+}
+
+/// Shapes `text` like [`shape`] and calls `f` with the glyphs, for measuring text: the glyphs are
+/// in a buffer that is reused, so that measuring does not allocate. `f` must not shape text.
+pub fn with_shaped<R>(
+    text: &str,
+    font: &Font,
+    fonts: &TextFonts,
+    at: Option<usize>,
+    f: impl FnOnce(&[(GlyphPosition, GlyphInfo)]) -> R,
+) -> R {
+    let mut glyphs = SCRATCH.with(|scratch| std::mem::take(&mut scratch.borrow_mut().glyphs));
+    glyphs.clear();
+    shape_directed_into(text, font, fonts, at, false, &mut glyphs);
+    let result = f(&glyphs);
+    SCRATCH.with(|scratch| scratch.borrow_mut().glyphs = glyphs);
+    result
+}
+
+/// [`shape_directed`], appending the glyphs to `out`, whose capacity is reused.
+pub fn shape_directed_into(
+    text: &str,
+    font: &Font,
+    fonts: &TextFonts,
+    at: Option<usize>,
+    rtl: bool,
+    out: &mut Vec<(GlyphPosition, GlyphInfo)>,
+) {
     let text = text.trim_end_matches(['\r', '\n']);
     // harfbuzz hands back a null glyph array for an empty buffer, which trips
     // the slice precondition check in harfbuzz_rs.
     if text.is_empty() {
-        return Vec::new();
+        return;
     }
 
-    let mut glyphs = shape_runs(text, font, fonts, at, rtl);
+    let start = out.len();
+    shape_runs(text, font, fonts, at, rtl, out);
     if fonts.letter_spacing != 0.0 {
-        apply_letter_spacing(&mut glyphs, text, fonts.letter_spacing, rtl);
+        apply_letter_spacing(&mut out[start..], text, fonts.letter_spacing, rtl);
     }
-    glyphs
 }
 
 fn shape_runs(
@@ -177,22 +226,26 @@ fn shape_runs(
     fonts: &TextFonts,
     at: Option<usize>,
     rtl: bool,
-) -> Vec<(GlyphPosition, GlyphInfo)> {
+    result: &mut Vec<(GlyphPosition, GlyphInfo)>,
+) {
     let lang = &fonts.key.lang;
     let ligatures = fonts.letter_spacing == 0.0;
     let toggles = Toggles { features: &fonts.features };
     let set = font.fallback_set(&fonts.key);
     if set.fonts.is_empty() && text.is_ascii() && fonts.orientation.is_none() {
         // the script is guessed
-        return shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false, toggles);
+        shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false, toggles, result);
+        return;
     }
     let fallbacks = &set.fonts;
 
-    let mut result = Vec::with_capacity(text.len());
+    let mut spans = SCRATCH.with(|scratch| std::mem::take(&mut scratch.borrow_mut().spans));
+    cluster_spans(text, &mut spans);
     let mut run_start = 0;
     // The font index and the script of the current run
     let mut run: Option<(u16, Script, bool)> = None;
-    for cluster in clusters(text) {
+    for span in &spans {
+        let cluster = Cluster { start: span.start, text: &text[span.start..span.end], script: span.script };
         // in vertical lines: whether the characters stand upright, which changes their glyphs
         let upright = fonts.orientation.is_some_and(|orientation| {
             cluster
@@ -223,7 +276,7 @@ fn shape_runs(
         if let Some((current, script, was_upright)) = run
             && (current != ch_font || script != cluster.script || was_upright != upright)
         {
-            result.extend(shape_run(
+            shape_run(
                 &text[run_start..cluster.start],
                 run_start,
                 font,
@@ -234,13 +287,14 @@ fn shape_runs(
                 ligatures,
                 was_upright,
                 toggles,
-            ));
+                result,
+            );
             run_start = cluster.start;
         }
         run = Some((ch_font, cluster.script, upright));
     }
     if let Some((index, script, upright)) = run {
-        result.extend(shape_run(
+        shape_run(
             &text[run_start..],
             run_start,
             font,
@@ -251,9 +305,10 @@ fn shape_runs(
             ligatures,
             upright,
             toggles,
-        ));
+            result,
+        );
     }
-    result
+    SCRATCH.with(|scratch| scratch.borrow_mut().spans = spans);
 }
 
 /// The OpenType features that the author turns on or off for a text.
@@ -289,7 +344,8 @@ fn shape_run(
     ligatures: bool,
     upright: bool,
     toggles: Toggles<'_>,
-) -> Vec<(GlyphPosition, GlyphInfo)> {
+    out: &mut Vec<(GlyphPosition, GlyphInfo)>,
+) {
     shape_single(
         text,
         font_at(font, fallbacks, font_index),
@@ -301,12 +357,13 @@ fn shape_run(
         ligatures,
         upright,
         toggles,
+        out,
     )
 }
 
 /// Shapes `text` with exactly `font`. `script` is the script of the text, if known.
 /// `cluster_offset` is added to the cluster values and `font_index` is stored in every glyph.
-/// The glyphs are returned in logical order.
+/// The glyphs are appended to `out` in logical order.
 fn shape_single(
     text: &str,
     font: &Font,
@@ -318,14 +375,20 @@ fn shape_single(
     ligatures: bool,
     upright: bool,
     toggles: Toggles<'_>,
-) -> Vec<(GlyphPosition, GlyphInfo)> {
+    out: &mut Vec<(GlyphPosition, GlyphInfo)>,
+) {
     // The direction is always set: harfbuzz would otherwise guess it from the script, so that
     // e.g. Hebrew text in a left-to-right run would be shaped right-to-left. The script (for
     // example for the joining of Arabic letters) is the one of the run, which also resolves
     // punctuation and digits by their neighbours. The language selects language-specific glyphs
     // (the `locl` feature, e.g. the Chinese or Japanese forms of Han characters). What is still
     // unset (an unknown script or language) is guessed by harfbuzz from the text.
-    let mut buffer = UnicodeBuffer::new()
+    let (recycled, mut features) = SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        (scratch.buffer.take(), std::mem::take(&mut scratch.features))
+    });
+    let mut buffer = recycled
+        .unwrap_or_default()
         .add_str(text)
         .set_cluster_level(ClusterLevel::MonotoneCharacters)
         .set_direction(if rtl {
@@ -356,7 +419,7 @@ fn shape_single(
         harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('v', 'e', 'r', 't'), 1, ..),
         harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('v', 'r', 't', '2'), 1, ..),
     ];
-    let mut features: Vec<harfbuzz_rs::Feature> = vec![];
+    features.clear();
     if !ligatures {
         features.extend(no_ligatures);
     }
@@ -372,25 +435,31 @@ fn shape_single(
 
     let scale = |val| FontUnit(val as f64 * (1000f64 / font.upem as f64));
 
-    let glyphs = result
-        .get_glyph_positions()
-        .iter()
-        .map(|gp| GlyphPosition {
-            x_advance: scale(gp.x_advance),
-            x_offset: scale(gp.x_offset),
-            y_offset: scale(gp.y_offset),
-        })
-        .zip(result.get_glyph_infos().iter().map(|&gi| GlyphInfo {
-            cluster: gi.cluster + cluster_offset,
-            font: font_index,
-            ..gi.into()
-        }));
+    let start = out.len();
+    out.extend(
+        result
+            .get_glyph_positions()
+            .iter()
+            .map(|gp| GlyphPosition {
+                x_advance: scale(gp.x_advance),
+                x_offset: scale(gp.x_offset),
+                y_offset: scale(gp.y_offset),
+            })
+            .zip(result.get_glyph_infos().iter().map(|&gi| GlyphInfo {
+                cluster: gi.cluster + cluster_offset,
+                font: font_index,
+                ..gi.into()
+            })),
+    );
     if rtl {
         // harfbuzz returns right-to-left glyphs in visual order
-        glyphs.rev().collect()
-    } else {
-        glyphs.collect()
+        out[start..].reverse();
     }
+    SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        scratch.buffer = Some(result.clear());
+        scratch.features = features;
+    });
 }
 
 #[cfg(test)]

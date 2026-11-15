@@ -8,9 +8,9 @@ use crate::style::properties::computed::{ComputedValues, PixelLength as Px, RGBA
 use crate::style::properties::specified::{Direction, UnicodeBidi};
 
 use crate::display_list::Rect;
-use crate::layout::text::{is_invisible_formatting, shape, shape_directed, shape_with_levels};
+use crate::layout::text::{is_invisible_formatting, shape_directed_into, shape_with_levels, with_shaped};
 
-use components::{Glyphs, GraphicsOp, IntrinsicSize, KernedGlyphs, Position};
+use components::{GlyphRange, GraphicsOp, IntrinsicSize, KernedGlyph, Position, TextOps};
 use hyphenation::{Hyphenator, Language, Load, Standard};
 use lemon_pdf::font::FontUnit;
 use specs::storage::GenericReadStorage;
@@ -846,28 +846,30 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                         crate::style::properties::specified::Hyphens::Auto => {
                             // without a dictionary for the language, words are not hyphenated
-                            match dictionaries.get(&text_run.lang) {
-                                Some(dictionary) => word_ranges(&text_run.text)
-                                    .into_iter()
-                                    .flat_map(|(word_start, word_end)| {
-                                        let word = &text_run.text[word_start..word_end];
-                                        let breaks = dictionary.hyphenate(word).breaks;
-                                        limit_hyphenation_chars(word, breaks)
-                                            .into_iter()
-                                            .map(move |offset| word_start + offset)
-                                    })
-                                    .collect(),
-                                None => Vec::new(),
+                            if dictionaries.get(&text_run.lang).is_none() {
+                                Vec::new()
+                            } else {
+                                let mut points = Vec::new();
+                                for (word_start, word_end) in word_ranges(&text_run.text) {
+                                    let word = &text_run.text[word_start..word_end];
+                                    points.extend(
+                                        dictionaries
+                                            .points(&text_run.lang, word)
+                                            .iter()
+                                            .map(|offset| word_start + offset),
+                                    );
+                                }
+                                points
                             }
                         }
                     };
                     if !hyphenation.is_empty() {
-                        let hyphen_width = shape("-", font, &text_run.face.fallback, None)
-                            .iter()
-                            .map(|(position, _)| {
-                                font.scale_to_px(position.x_advance, text_run.face.font_size)
-                            })
-                            .fold(Px(0.0), |sum, width| sum + width);
+                        let hyphen_width = with_shaped("-", font, &text_run.face.fallback, None, |glyphs| {
+                            glyphs
+                                .iter()
+                                .map(|(position, _)| font.scale_to_px(position.x_advance, text_run.face.font_size))
+                                .fold(Px(0.0), |sum, width| sum + width)
+                        });
                         // The width of the text in front of a glyph, from the shaping of the
                         // whole run above: `(cluster, width of all glyphs before it)`.
                         let mut prefix_widths = Vec::with_capacity(shaped.len());
@@ -899,12 +901,14 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 index + prefix[index..].chars().next().map_or(1, char::len_utf8)
                             });
                             let prefix_width = width_before(word_start)
-                                + shape(&prefix[word_start..], font, &text_run.face.fallback, Some(word_start))
-                                    .iter()
-                                    .map(|(position, _)| {
-                                        font.scale_to_px(position.x_advance, text_run.face.font_size)
-                                    })
-                                    .fold(Px(0.0), |sum, width| sum + width);
+                                + with_shaped(&prefix[word_start..], font, &text_run.face.fallback, Some(word_start), |glyphs| {
+                                    glyphs
+                                        .iter()
+                                        .map(|(position, _)| {
+                                            font.scale_to_px(position.x_advance, text_run.face.font_size)
+                                        })
+                                        .fold(Px(0.0), |sum, width| sum + width)
+                                });
                             // The line after the break starts with the rest of the word, shaped
                             // alone too (its first glyph is not kerned with the last one of the
                             // line before, and a ligature across the break is split). The rest
@@ -914,12 +918,20 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 + text_run.text[char_index..]
                                     .find(char::is_whitespace)
                                     .unwrap_or(text_run.text.len() - char_index);
-                            let suffix_width = shape(&text_run.text[char_index..word_end], font, &text_run.face.fallback, Some(char_index))
-                                .iter()
-                                .map(|(position, _)| {
-                                    font.scale_to_px(position.x_advance, text_run.face.font_size)
-                                })
-                                .fold(Px(0.0), |sum, width| sum + width);
+                            let suffix_width = with_shaped(
+                                &text_run.text[char_index..word_end],
+                                font,
+                                &text_run.face.fallback,
+                                Some(char_index),
+                                |glyphs| {
+                                    glyphs
+                                        .iter()
+                                        .map(|(position, _)| {
+                                            font.scale_to_px(position.x_advance, text_run.face.font_size)
+                                        })
+                                        .fold(Px(0.0), |sum, width| sum + width)
+                                },
+                            );
                             let word_end_width = width_before(word_end);
                             break_points.push(BreakPoint {
                                 entity,
@@ -1091,26 +1103,56 @@ fn push_bidi_runs(
 
 /// The hyphenation dictionaries of the languages of a document, loaded when they are first
 /// needed. Only the dictionaries that are embedded into Helium (Cargo features `embed_*` of the
-/// `hyphenation` crate, currently US English) are available.
+/// `hyphenation` crate, currently US English) are available. The hyphenation points of the words
+/// that were looked up are kept: words repeat, and the dictionary allocates for every lookup.
 #[derive(Default)]
-struct HyphenationDictionaries(HashMap<Language, Option<Standard>>);
+struct HyphenationDictionaries {
+    dictionaries: HashMap<Language, Option<Standard>>,
+    /// The points of a word (see `limit_hyphenation_chars`) by language.
+    words: HashMap<Language, HashMap<String, Vec<usize>>>,
+}
 
 impl HyphenationDictionaries {
+    /// Loads the dictionary of `language` if it has not been.
+    fn load(&mut self, language: Language) {
+        self.dictionaries.entry(language).or_insert_with(|| {
+            Standard::from_embedded(language).ok().or_else(|| {
+                // British English is hyphenated as American English without its dictionary
+                (language == Language::EnglishGB)
+                    .then(|| Standard::from_embedded(Language::EnglishUS).ok())
+                    .flatten()
+            })
+        });
+    }
+
     /// The dictionary for text in `lang`. Text of an unknown language is hyphenated as English,
     /// text in a language without a dictionary not at all.
     fn get(&mut self, lang: &crate::style::properties::computed::Language) -> Option<&Standard> {
         let language = hyphenation_language(lang)?;
-        self.0
-            .entry(language)
-            .or_insert_with(|| {
-                Standard::from_embedded(language).ok().or_else(|| {
-                    // British English is hyphenated as American English without its dictionary
-                    (language == Language::EnglishGB)
-                        .then(|| Standard::from_embedded(Language::EnglishUS).ok())
-                        .flatten()
-                })
-            })
-            .as_ref()
+        self.load(language);
+        self.dictionaries[&language].as_ref()
+    }
+
+    /// The byte offsets in `word` of the hyphenation points that leave enough characters on both
+    /// sides (see `limit_hyphenation_chars`), in text in `lang`.
+    fn points(&mut self, lang: &crate::style::properties::computed::Language, word: &str) -> &[usize] {
+        // a word that is too short has no points: the dictionary does not need to be asked
+        if word.chars().count() < HYPHENATE_MIN_WORD {
+            return &[];
+        }
+        let Some(language) = hyphenation_language(lang) else {
+            return &[];
+        };
+        self.load(language);
+        let words = self.words.entry(language).or_default();
+        if !words.contains_key(word) {
+            let points = match &self.dictionaries[&language] {
+                Some(dictionary) => limit_hyphenation_chars(word, dictionary.hyphenate(word).breaks),
+                None => Vec::new(),
+            };
+            words.insert(word.to_owned(), points);
+        }
+        &words[word]
     }
 }
 
@@ -1609,7 +1651,7 @@ pub struct LineBoxCreator;
 impl<'a> System<'a> for LineBoxCreator {
     type SystemData = (
         Entities<'a>,
-        ReadStorage<'a, InlineFormattingContext>,
+        WriteStorage<'a, InlineFormattingContext>,
         ReadStorage<'a, components::TextRun>,
         ReadStorage<'a, components::IntrinsicSize>,
         ReadStorage<'a, ComputedValues>,
@@ -1628,7 +1670,7 @@ impl<'a> System<'a> for LineBoxCreator {
         &mut self,
         (
             entities,
-            inline_formatting_contexts,
+            mut inline_formatting_contexts,
             text_runs,
             intrinsic_sizes,
             computed_values,
@@ -1643,7 +1685,16 @@ impl<'a> System<'a> for LineBoxCreator {
             structure,
         ): Self::SystemData,
     ) {
-        for ifc in inline_formatting_contexts.join() {
+        // The break points are only needed to make the line boxes of their context. They are
+        // freed as soon as it is done (when the next context starts), so that they are not alive
+        // together with the text of all the other contexts.
+        let contexts: Vec<Entity> = (&entities, &inline_formatting_contexts).join().map(|(entity, _)| entity).collect();
+        let mut previous: Option<Entity> = None;
+        for context in contexts {
+            if let Some(done) = previous.replace(context) {
+                inline_formatting_contexts.get_mut(done).expect("the context exists").break_points = Vec::new();
+            }
+            let ifc = inline_formatting_contexts.get(context).expect("the context exists");
             let InlineFormattingContext {
                 break_points,
                 lines,
@@ -1655,7 +1706,7 @@ impl<'a> System<'a> for LineBoxCreator {
                 continue;
             }
 
-            let mut ops: Vec<TextOperator> = vec![];
+            let mut ops = TextOps::default();
             let mut color_glyphs: Vec<components::PlacedColorGlyph> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
             let mut previous_color: Option<RGBA> = None;
@@ -1714,7 +1765,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             .with(
                                 Paragraph {
                                     start_pos: paragraph_start,
-                                    ops: ops.clone(),
+                                    ops: std::mem::take(&mut ops),
                                     color_glyphs: std::mem::take(&mut color_glyphs),
                                 },
                                 &mut paragraphs,
@@ -2088,6 +2139,9 @@ impl<'a> System<'a> for LineBoxCreator {
                     .build();
             }
         }
+        if let Some(done) = previous {
+            inline_formatting_contexts.get_mut(done).expect("the context exists").break_points = Vec::new();
+        }
     }
 }
 
@@ -2143,7 +2197,7 @@ impl std::ops::Add<Px> for Pen {
 /// A text that is set on one line in one go.
 pub(super) struct ShapedLine {
     /// The operators that draw the text, from the font and the color to the last glyph.
-    pub ops: Vec<TextOperator>,
+    pub ops: TextOps,
     pub width: Px,
     /// The colour glyphs of the text, relative to the start of the text on the baseline.
     pub color_glyphs: Vec<PlacedColorGlyph>,
@@ -2156,10 +2210,13 @@ pub(super) struct ShapedLine {
 pub(super) fn shape_line(text: &str, font: &Font, face: &components::TextFace, rtl: bool) -> ShapedLine {
     use unicode_bidi::{BidiInfo, Level};
 
-    let mut ops = vec![
-        TextOperator::SetFont(face.font_name.clone(), face.font_size),
-        TextOperator::SetColor(face.color),
-    ];
+    let mut ops = TextOps::from_parts(
+        vec![
+            TextOperator::SetFont(face.font_name.clone(), face.font_size),
+            TextOperator::SetColor(face.color),
+        ],
+        vec![],
+    );
     let info = BidiInfo::new(text, Some(if rtl { Level::rtl() } else { Level::ltr() }));
     let mut width = Px(0.0);
     let mut color_glyphs = Vec::new();
@@ -2200,7 +2257,7 @@ pub(super) fn shape_piece(
     word_spacing: Px,
     inter_letter: &[usize],
     rtl: bool,
-    ops: &mut Vec<TextOperator>,
+    ops: &mut TextOps,
 ) -> Px {
     shape_piece_in_flow(characters, font, fonts, at, font_size, word_spacing, inter_letter, rtl, None, ops)
 }
@@ -2233,7 +2290,7 @@ pub(super) fn shape_piece_in_flow(
     inter_letter: &[usize],
     rtl: bool,
     vertical: Option<VerticalPiece>,
-    ops: &mut Vec<TextOperator>,
+    ops: &mut TextOps,
 ) -> Px {
     // lines that run upwards or right-to-left in a vertical flow are not supported
     let vertical = vertical.filter(|_| !rtl);
@@ -2252,10 +2309,11 @@ pub(super) fn shape_piece_in_flow(
             .next()
             .is_some_and(is_invisible_formatting)
     };
-    let shaped: Vec<_> = shape_directed(characters, font, fonts, at, rtl)
-        .into_iter()
-        .filter(|(_, info)| !is_invisible(info))
-        .collect();
+    // the glyphs go to a buffer that is reused for the next piece
+    let mut shaped = SHAPED_SCRATCH.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
+    shaped.clear();
+    shape_directed_into(characters, font, fonts, at, rtl, &mut shaped);
+    shaped.retain(|(_, info)| !is_invisible(info));
 
     // Glyphs of characters that `font` has no glyph for come from its fallback fonts. The font
     // is switched for them and switched back to `font` at the end of the piece.
@@ -2333,7 +2391,7 @@ pub(super) fn shape_piece_in_flow(
 
     // The glyphs are written in visual order, and right-to-left text gets its logical order from
     // `/ActualText`. Each kern moves the pen to where its glyph is drawn.
-    let mut out = GlyphRunWriter::default();
+    let mut out = GlyphRunWriter::new(ops);
     let mut current_font = 0u16;
     let mut rise = FontUnit(0.0);
     // where the pen is after the last glyph
@@ -2342,16 +2400,19 @@ pub(super) fn shape_piece_in_flow(
         ops.push(TextOperator::BeginActualText(text.to_owned()));
     }
     for glyph in &placed {
-        let cluster = grapheme_start(&boundaries, glyph.cluster);
-        if open_cluster != Some(cluster) {
-            if open_cluster.take().is_some() {
-                out.flush(ops);
-                ops.push(TextOperator::EndMarkedContent);
-            }
-            if let Some(text) = actual_text.get(&cluster) {
-                out.flush(ops);
-                ops.push(TextOperator::BeginActualText(text.clone()));
-                open_cluster = Some(cluster);
+        // the clusters that are marked with their text; there are none in most pieces
+        if !actual_text.is_empty() {
+            let cluster = grapheme_start(&boundaries, glyph.cluster);
+            if open_cluster != Some(cluster) {
+                if open_cluster.take().is_some() {
+                    out.flush(ops);
+                    ops.push(TextOperator::EndMarkedContent);
+                }
+                if let Some(text) = actual_text.get(&cluster) {
+                    out.flush(ops);
+                    ops.push(TextOperator::BeginActualText(text.clone()));
+                    open_cluster = Some(cluster);
+                }
             }
         }
 
@@ -2382,7 +2443,8 @@ pub(super) fn shape_piece_in_flow(
                 e: Px(center_x - advance_px / 2.0),
                 f: Px(along + advance_px / 2.0 + IDEOGRAPHIC_CENTER * size),
             }));
-            ops.push(TextOperator::KernedGlyphs(vec![KernedGlyphs::Glyphs(Glyphs(vec![glyph.glyph]))]));
+            ops.push_glyph(glyph.glyph);
+            out.skip_pushed(ops);
             // back to the line, behind the glyph
             let [a, b, c, d] = piece.flow.text_matrix();
             pen = FontUnit(glyph.x.0 + advance.0);
@@ -2405,7 +2467,7 @@ pub(super) fn shape_piece_in_flow(
             rise = glyph.rise;
             ops.push(TextOperator::SetRise(font_size * (rise.0 as f32 / 1000.0)));
         }
-        out.glyph(glyph.glyph);
+        out.glyph(ops, glyph.glyph);
         if vertical.is_none() && glyph_font.is_color_glyph(glyph.glyph) {
             ops.push(TextOperator::ColorGlyph {
                 font: glyph_font.postscript_name(),
@@ -2434,52 +2496,68 @@ pub(super) fn shape_piece_in_flow(
         ops.push(TextOperator::SetFont(font.postscript_name(), font_size));
     }
 
+    SHAPED_SCRATCH.with(|scratch| *scratch.borrow_mut() = shaped);
     advance
 }
 
-/// Collects glyphs and the kerns between them into `TJ` operators.
-#[derive(Default)]
+/// Collects glyphs and the kerns between them into `TJ` operators. The glyphs are appended to
+/// `TextOps::glyphs` as they come, and `flush` ends the operator that they make up.
 struct GlyphRunWriter {
-    items: Vec<KernedGlyphs>,
-    glyphs: Vec<GlyphIndex>,
+    /// Where the glyphs of the operator that is being collected start.
+    start: usize,
     /// The kern that goes in front of the next glyph, summed up so that a glyph gets one kern.
     pending_kern: FontUnit,
 }
 
 impl GlyphRunWriter {
+    fn new(ops: &TextOps) -> Self {
+        GlyphRunWriter { start: ops.glyphs.len(), pending_kern: FontUnit(0.0) }
+    }
+
     fn kern(&mut self, kern: FontUnit) {
         self.pending_kern.0 += kern.0;
     }
 
-    fn glyph(&mut self, glyph: GlyphIndex) {
-        self.write_pending_kern();
-        self.glyphs.push(glyph);
-    }
-
-    fn write_pending_kern(&mut self) {
-        // 0.1/1000 em is far below anything visible; the coarser values compress better
-        let kern = (self.pending_kern.0 * 10.0).round() / 10.0;
-        if kern.abs() >= 0.1 {
-            if !self.glyphs.is_empty() {
-                self.items
-                    .push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut self.glyphs))));
-            }
-            self.items.push(KernedGlyphs::Kern(FontUnit(kern)));
-        }
+    /// The pending kern in tenths of a font unit, which is reset: 0.1/1000 em is far below
+    /// anything visible; the coarser values compress better.
+    fn take_kern(&mut self) -> i32 {
+        let tenths = (self.pending_kern.0 * 10.0).round();
         self.pending_kern = FontUnit(0.0);
+        if tenths.abs() >= 1.0 { tenths as i32 } else { 0 }
     }
 
-    /// Appends the collected glyphs and kerns to `ops` as one `TJ` operator.
-    fn flush(&mut self, ops: &mut Vec<TextOperator>) {
-        self.write_pending_kern();
-        if !self.glyphs.is_empty() {
-            self.items
-                .push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut self.glyphs))));
-        }
-        if !self.items.is_empty() {
-            ops.push(TextOperator::KernedGlyphs(std::mem::take(&mut self.items)));
-        }
+    fn glyph(&mut self, ops: &mut TextOps, glyph: GlyphIndex) {
+        let kern = self.take_kern();
+        ops.glyphs.push(KernedGlyph { glyph, kern });
     }
+
+    /// Continues after glyphs that were pushed to `ops` without this writer.
+    fn skip_pushed(&mut self, ops: &TextOps) {
+        self.start = ops.glyphs.len();
+    }
+
+    /// Ends the `TJ` operator of the collected glyphs and kerns and appends it to `ops`.
+    fn flush(&mut self, ops: &mut TextOps) {
+        let trailing_kern = self.take_kern();
+        let end = ops.glyphs.len();
+        if end > self.start || trailing_kern != 0 {
+            ops.push(TextOperator::KernedGlyphs(GlyphRange {
+                start: self.start as u32,
+                end: end as u32,
+                trailing_kern,
+            }));
+        }
+        self.start = end;
+    }
+}
+
+thread_local! {
+    /// The glyphs of the piece that `shape_piece_in_flow` is shaping.
+    static SHAPED_SCRATCH: std::cell::RefCell<Vec<(super::text::GlyphPosition, super::text::GlyphInfo)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// The buffers of `record_to_unicode`: the glyphs by cluster and the starts of the clusters.
+    static TO_UNICODE_SCRATCH: std::cell::RefCell<(Vec<(usize, u16, GlyphIndex)>, Vec<usize>)> =
+        const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
 }
 
 /// Records which characters the glyphs of `shaped` (in logical order) stand for, so that the text
@@ -2496,27 +2574,29 @@ fn record_to_unicode<'a>(
     font_at: &impl Fn(u16) -> &'a Font,
 ) -> (std::collections::HashMap<usize, String>, Vec<usize>) {
     use unicode_segmentation::UnicodeSegmentation;
-    let mut clusters: BTreeMap<usize, Vec<(u16, GlyphIndex)>> = BTreeMap::new();
-    for (_, info) in shaped {
-        clusters
-            .entry(info.cluster as usize)
-            .or_default()
-            .push((info.font, GlyphIndex(info.codepoint)));
+    // The glyphs by cluster. The buffers are reused: this runs for every piece of text.
+    let (mut glyphs, mut starts) = TO_UNICODE_SCRATCH.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
+    glyphs.clear();
+    glyphs.extend(shaped.iter().map(|(_, info)| (info.cluster as usize, info.font, GlyphIndex(info.codepoint))));
+    // the glyphs are in logical order, which is the order of their clusters, but not in every
+    // case (the stable sort keeps the order of the glyphs of a cluster)
+    if !glyphs.is_sorted_by_key(|&(cluster, ..)| cluster) {
+        glyphs.sort_by_key(|&(cluster, ..)| cluster);
     }
-    let starts: Vec<usize> = clusters.keys().copied().collect();
+    starts.clear();
+    starts.extend(glyphs.chunk_by(|a, b| a.0 == b.0).map(|group| group[0].0));
     // The unit of `/ActualText` is the grapheme cluster: a base character with its marks, whose
     // glyphs the extractor would otherwise have to assemble from the positions of the marks.
     // A unit has to hold whole glyph clusters too, since a glyph cannot be split between two
     // texts: a conjunct with its vowel sign (Kannada "ಲ್ಲಾ", Sinhala "ක්‍රි") is several
     // grapheme clusters but one glyph cluster. So a unit boundary is a grapheme boundary where a
     // glyph cluster starts.
-    let boundaries: Vec<usize> = characters
-        .grapheme_indices(true)
-        .map(|(i, _)| i)
-        .filter(|&i| i == 0 || starts.binary_search(&i).is_ok())
-        .collect();
+    // Only needed for clusters that go into `actual_text`, so it is built when the first one
+    // is found: it is empty if there are none, which is the case for most texts.
+    let mut boundaries: Vec<usize> = Vec::new();
     let mut unclean = std::collections::BTreeSet::new();
-    for (i, (&start, glyphs)) in clusters.iter().enumerate() {
+    for (i, group) in glyphs.chunk_by(|a, b| a.0 == b.0).enumerate() {
+        let start = group[0].0;
         let end = starts.get(i + 1).copied().unwrap_or(characters.len());
         // without the invisible characters that were dropped in front of the next cluster
         let Some(text) = characters.get(start..end) else { continue };
@@ -2524,8 +2604,8 @@ fn record_to_unicode<'a>(
         if text.is_empty() {
             continue;
         }
-        let clean = match glyphs[..] {
-            [(font, glyph)] => {
+        let clean = match group {
+            &[(_, font, glyph)] => {
                 let mut map = font_at(font).to_unicode.lock();
                 match map.get(&glyph) {
                     Some(existing) => existing == text,
@@ -2538,16 +2618,25 @@ fn record_to_unicode<'a>(
             _ => false,
         };
         if !clean {
-            for &(font, glyph) in glyphs {
+            for &(_, font, glyph) in group {
                 font_at(font)
                     .to_unicode_fallback
                     .lock()
                     .entry(glyph)
                     .or_insert_with(|| text.to_owned());
             }
+            if boundaries.is_empty() {
+                boundaries.extend(
+                    characters
+                        .grapheme_indices(true)
+                        .map(|(i, _)| i)
+                        .filter(|&i| i == 0 || starts.binary_search(&i).is_ok()),
+                );
+            }
             unclean.insert(grapheme_start(&boundaries, start));
         }
     }
+    TO_UNICODE_SCRATCH.with(|scratch| *scratch.borrow_mut() = (glyphs, starts));
     let mut actual_text = std::collections::HashMap::new();
     for &start in &unclean {
         let i = boundaries.partition_point(|&b| b <= start);
@@ -2619,10 +2708,10 @@ mod tests {
     }
 
     /// The operators `shape_piece` emits for `text`, with the width it returns.
-    fn pieces(family: &str, text: &str, rtl: bool, word_spacing: Px) -> (Vec<TextOperator>, Px, Font) {
+    fn pieces(family: &str, text: &str, rtl: bool, word_spacing: Px) -> (TextOps, Px, Font) {
         let font = font_named(family);
         let fonts = crate::layout::text::fallback::TextFonts::default();
-        let mut ops = Vec::new();
+        let mut ops = TextOps::default();
         let width = shape_piece(text, &font, &fonts, None, Px(16.0), word_spacing, &[], rtl, &mut ops);
         (ops, width, font)
     }
@@ -2656,16 +2745,10 @@ mod tests {
     }
 
     /// The glyphs of the `TJ` operators, in order.
-    fn glyph_count(ops: &[TextOperator]) -> usize {
+    fn glyph_count(ops: &TextOps) -> usize {
         ops.iter()
             .map(|op| match op {
-                TextOperator::KernedGlyphs(items) => items
-                    .iter()
-                    .map(|item| match item {
-                        KernedGlyphs::Glyphs(glyphs) => glyphs.0.len(),
-                        KernedGlyphs::Kern(_) => 0,
-                    })
-                    .sum(),
+                TextOperator::KernedGlyphs(range) => (range.end - range.start) as usize,
                 _ => 0,
             })
             .sum()
@@ -2673,18 +2756,16 @@ mod tests {
 
     /// The pen has to end where the returned width says it does: the glyph advances minus
     /// the kerns of the `TJ` operators is the width of the piece.
-    fn net_advance(ops: &[TextOperator], font: &Font, size: f32) -> f32 {
+    fn net_advance(ops: &TextOps, font: &Font, size: f32) -> f32 {
         let mut total = 0.0;
-        for op in ops {
-            if let TextOperator::KernedGlyphs(items) = op {
-                for item in items {
-                    match item {
-                        KernedGlyphs::Glyphs(glyphs) => {
-                            total += glyphs.0.iter().map(|g| font.advance(*g).0 as f32).sum::<f32>()
-                        }
-                        KernedGlyphs::Kern(kern) => total -= kern.0 as f32,
+        for op in ops.iter() {
+            if let TextOperator::KernedGlyphs(range) = op {
+                range.for_each_item(&ops.glyphs, |item| match item {
+                    components::KernedItem::Glyphs(glyphs) => {
+                        total += glyphs.iter().map(|g| font.advance(g.glyph).0 as f32).sum::<f32>()
                     }
-                }
+                    components::KernedItem::Kern(kern) => total -= kern.0 as f32,
+                });
             }
         }
         total * size / 1000.0
@@ -2721,8 +2802,8 @@ mod tests {
     fn marking_does_not_depend_on_earlier_text() {
         let font = font_named("Noto Sans Devanagari");
         let fonts = crate::layout::text::fallback::TextFonts::default();
-        let mut first = Vec::new();
-        let mut second = Vec::new();
+        let mut first = TextOps::default();
+        let mut second = TextOps::default();
         for ops in [&mut first, &mut second] {
             shape_piece("कि", &font, &fonts, None, Px(16.0), Px(0.0), &[], false, ops);
         }
@@ -2787,15 +2868,11 @@ mod tests {
         let glyphs: Vec<_> = ops
             .iter()
             .filter_map(|op| match op {
-                TextOperator::KernedGlyphs(items) => Some(items),
+                TextOperator::KernedGlyphs(range) => Some(&ops.glyphs[range.start as usize..range.end as usize]),
                 _ => None,
             })
             .flatten()
-            .filter_map(|item| match item {
-                KernedGlyphs::Glyphs(g) => Some(g.0.clone()),
-                _ => None,
-            })
-            .flatten()
+            .map(|g| g.glyph)
             .collect();
         let expected = [font.hb_font.get_nominal_glyph('ב').unwrap(), font.hb_font.get_nominal_glyph('א').unwrap()];
         assert_eq!(glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected);

@@ -18,6 +18,9 @@ position:fixed
 position:sticky
 z-index:
 
+# box model that is not implemented
+margin-trim:
+
 # painting that is not implemented
 opacity:
 box-shadow:

@@ -163,14 +163,14 @@ pub struct FontRun {
 impl TextFonts {
     /// Fonts for text without known runs: every cluster gets the font chosen for it.
     pub fn without_runs(key: FallbackKey) -> Self {
-        TextFonts { key, runs: Arc::from([]), letter_spacing: 0.0, orientation: None, features: Arc::from([]) }
+        TextFonts { key, runs: empty_runs(), letter_spacing: 0.0, orientation: None, features: empty_features() }
     }
 
     /// The same fonts for another text than the one they were chosen for: without the runs of
     /// that text, every cluster gets the font chosen for it. The spacing, the features and the
     /// orientation stay.
     pub fn for_other_text(mut self) -> Self {
-        self.runs = Arc::from([]);
+        self.runs = empty_runs();
         self
     }
 
@@ -477,6 +477,9 @@ pub struct FontResolver {
     /// The fallback font for a cluster in a font description.
     cluster_cache: HashMap<(FallbackKey, String, Script), Option<Arc<Font>>>,
     class_cache: HashMap<FallbackKey, Class>,
+    /// The key of a font description by the address of its style struct, which the elements
+    /// that inherit it share. The struct is kept so that its address stays the one of the key.
+    key_cache: HashMap<usize, (Arc<crate::style::properties::computed::Font>, FallbackKey)>,
     /// The colour emoji font, once it has been looked for.
     emoji_font: Option<Option<Arc<Font>>>,
     missing: MissingGlyphs,
@@ -512,7 +515,15 @@ impl FontResolver {
         text: &str,
         font_map: &mut FontMap,
     ) -> TextFonts {
-        self.ensure_coverage_for(FallbackKey::new(style), Some(style), font, text, font_map)
+        let key = match self.key_cache.get(&(Arc::as_ptr(&style.font) as usize)) {
+            Some((_, key)) => key.clone(),
+            None => {
+                let key = FallbackKey::new(style);
+                self.key_cache.insert(Arc::as_ptr(&style.font) as usize, (style.font.clone(), key.clone()));
+                key
+            }
+        };
+        self.ensure_coverage_for(key, Some(style), font, text, font_map)
     }
 
     /// Like [`ensure_coverage`](Self::ensure_coverage) for a font description that is not the
@@ -607,7 +618,8 @@ impl FontResolver {
         if runs.iter().all(|run| run.font == 0) {
             runs.clear();
         }
-        TextFonts { key, runs: runs.into(), letter_spacing: 0.0, orientation: None, features: Arc::from([]) }
+        let runs: Arc<[FontRun]> = if runs.is_empty() { empty_runs() } else { runs.into() };
+        TextFonts { key, runs, letter_spacing: 0.0, orientation: None, features: empty_features() }
     }
 
     /// The characters that could not be rendered with any font.
@@ -837,6 +849,18 @@ fn context_around(text: &str, byte_index: usize) -> String {
         .chars()
         .map(|c| if c.is_whitespace() { ' ' } else { c })
         .collect()
+}
+
+/// No runs: shared, since most texts are set in one font.
+fn empty_runs() -> Arc<[FontRun]> {
+    static EMPTY: std::sync::OnceLock<Arc<[FontRun]>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| Arc::from([])).clone()
+}
+
+/// No features: shared, like `empty_runs`.
+fn empty_features() -> Arc<[Feature]> {
+    static EMPTY: std::sync::OnceLock<Arc<[Feature]>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| Arc::from([])).clone()
 }
 
 fn format_font_family(families: &[FontFamily]) -> String {

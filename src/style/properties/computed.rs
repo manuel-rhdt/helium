@@ -427,7 +427,7 @@ use std::convert::{AsMut, AsRef};
 
 /// Contains the style structs and encompasses all the style information for
 /// an element.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ComputedValues {
     pub box_: Arc<Box>,
     pub position: Arc<Position>,
@@ -436,6 +436,25 @@ pub struct ComputedValues {
     pub background: Arc<Background>,
     pub page: Arc<Page>,
     pub math: Arc<Math>,
+}
+
+/// The default values share one set of style structs: an element allocates a style struct only
+/// when a declaration changes it (`Arc::make_mut` copies a shared struct on the first write).
+impl Default for ComputedValues {
+    fn default() -> Self {
+        static DEFAULT: std::sync::OnceLock<ComputedValues> = std::sync::OnceLock::new();
+        DEFAULT
+            .get_or_init(|| ComputedValues {
+                box_: Arc::new(Box::default()),
+                position: Arc::new(Position::default()),
+                font: Arc::new(Font::default()),
+                text: Arc::new(Text::default()),
+                background: Arc::new(Background::default()),
+                page: Arc::new(Page::default()),
+                math: Arc::new(Math::default()),
+            })
+            .clone()
+    }
 }
 
 impl AsRef<Box> for ComputedValues {
@@ -690,11 +709,25 @@ impl StyleBuilder {
             specified::PropertyDeclaration::CssWide(css_wide) => css_wide.resets_property("font-size"),
             _ => false,
         };
+        let sets_flow = |decl: &specified::PropertyDeclaration| match decl {
+            specified::PropertyDeclaration::Text(
+                specified::Text::Direction(_) | specified::Text::WritingMode(_),
+            ) => true,
+            specified::PropertyDeclaration::CssWide(css_wide) => {
+                css_wide.resets_property("direction") || css_wide.resets_property("writing-mode")
+            }
+            _ => false,
+        };
         // the font size that the declarations set, as if there were no other
         let mut probe = StyleBuilder::new(self.parent.clone());
         probe.is_root = self.is_root;
         for decl in declarations.clone().filter(|decl| sets_font_size(decl)) {
             probe.add_declaration(decl);
+        }
+        // The writing mode and the direction first: the logical properties are the physical ones
+        // of the flow that the element ends up with, wherever its declarations are.
+        for decl in declarations.clone().filter(|decl| sets_flow(decl)) {
+            self.add_declaration(decl);
         }
         let font = &probe.new_values.font;
         let (font_size, root_font_size) = (font.font_size, font.root_font_size);
@@ -752,6 +785,7 @@ pub struct Box {
     pub unicode_bidi: specified::UnicodeBidi,
     pub position: PositionSpec,
     pub vertical_align: VerticalAlign,
+    pub aspect_ratio: specified::AspectRatio,
     pub box_sizing: BoxSizing,
 
     pub flex_direction: FlexDirection,
@@ -759,6 +793,8 @@ pub struct Box {
     pub flex_grow: f32,
     pub flex_shrink: f32,
     pub flex_basis: GenericSize,
+    /// The position of a flex or grid item among its siblings
+    pub order: i32,
 
     pub justify_content: ContentAlignment,
     pub align_content: ContentAlignment,
@@ -789,12 +825,14 @@ impl Default for Box {
             unicode_bidi: Default::default(),
             position: Default::default(),
             vertical_align: Default::default(),
+            aspect_ratio: Default::default(),
             box_sizing: Default::default(),
             flex_direction: Default::default(),
             flex_wrap: Default::default(),
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: GenericSize::Auto,
+            order: 0,
             justify_content: Default::default(),
             align_content: Default::default(),
             justify_items: Default::default(),

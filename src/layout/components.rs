@@ -222,6 +222,17 @@ impl RelativeOffset {
     }
 }
 
+/// The size of a `<canvas>` in pixels, which is a replaced box with nothing drawn in it.
+#[derive(Debug, Copy, Clone)]
+pub struct CanvasSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Component for CanvasSize {
+    type Storage = DenseVecStorage<Self>;
+}
+
 /// The `vertical-align` of an inline-level box, with what is needed to resolve it against the
 /// parent box (CSS 2.2, 10.8.1).
 #[derive(Debug, Copy, Clone)]
@@ -574,35 +585,195 @@ impl Component for LineBreakPossibilities {
 #[derive(Debug, Clone)]
 pub struct Glyphs(pub Vec<GlyphIndex>);
 
-impl lemon_pdf::PdfFormat for Glyphs {
-    fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
-        use std::io::Write;
+/// Writes glyphs as a literal string of 16-bit glyph indices. A literal string is about half the
+/// size of a hex string. Only the bytes that are special inside a literal string need an escape.
+/// The string is written in chunks from a buffer on the stack: a document has a string for
+/// almost every word.
+fn write_glyph_string(
+    f: &mut lemon_pdf::object::Formatter,
+    glyphs: impl Iterator<Item = GlyphIndex>,
+) -> std::io::Result<()> {
+    use std::io::Write;
 
-        if !self.0.is_empty() {
-            // A literal string is about half the size of a hex string. Only the
-            // bytes that are special inside a literal string need an escape.
-            let mut bytes = Vec::with_capacity(self.0.len() * 2 + 2);
-            bytes.push(b'(');
-            for GlyphIndex(glyph) in &self.0 {
-                for byte in (*glyph as u16).to_be_bytes() {
-                    match byte {
-                        b'(' | b')' | b'\\' => bytes.extend_from_slice(&[b'\\', byte]),
-                        b'\r' => bytes.extend_from_slice(b"\\r"),
-                        _ => bytes.push(byte),
-                    }
+    let mut buffer = [0u8; 256];
+    let mut len = 0;
+    let mut open = false;
+    for GlyphIndex(glyph) in glyphs {
+        if !open {
+            buffer[0] = b'(';
+            len = 1;
+            open = true;
+        }
+        // a glyph takes at most four bytes, and the closing parenthesis one
+        if len + 5 > buffer.len() {
+            f.write_all(&buffer[..len])?;
+            len = 0;
+        }
+        for byte in (glyph as u16).to_be_bytes() {
+            match byte {
+                b'(' | b')' | b'\\' => {
+                    buffer[len] = b'\\';
+                    buffer[len + 1] = byte;
+                    len += 2;
+                }
+                b'\r' => {
+                    buffer[len] = b'\\';
+                    buffer[len + 1] = b'r';
+                    len += 2;
+                }
+                _ => {
+                    buffer[len] = byte;
+                    len += 1;
                 }
             }
-            bytes.push(b')');
-            f.write_all(&bytes)?;
         }
-        Ok(())
+    }
+    if open {
+        buffer[len] = b')';
+        f.write_all(&buffer[..len + 1])?;
+    }
+    Ok(())
+}
+
+impl lemon_pdf::PdfFormat for Glyphs {
+    fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
+        write_glyph_string(f, self.0.iter().copied())
     }
 }
 
-#[derive(Debug, Clone, PdfFormat)]
-pub enum KernedGlyphs {
-    Glyphs(Glyphs),
+/// A glyph of a `TJ` operator with the kern that goes in front of it, in tenths of a font unit
+/// (a thousandth of an em); zero for no kern. Kerns below a tenth are not worth writing.
+#[derive(Debug, Copy, Clone)]
+pub struct KernedGlyph {
+    pub glyph: GlyphIndex,
+    pub kern: i32,
+}
+
+/// The glyphs of a `TJ` operator: a range of [`TextOps::glyphs`], and the kern after the last one.
+#[derive(Debug, Copy, Clone)]
+pub struct GlyphRange {
+    pub start: u32,
+    pub end: u32,
+    pub trailing_kern: i32,
+}
+
+/// An element of the array of a `TJ` operator.
+#[derive(Debug, Copy, Clone)]
+pub enum KernedItem<'a> {
+    /// A string of glyphs that are not kerned.
+    Glyphs(&'a [KernedGlyph]),
     Kern(FontUnit),
+}
+
+impl GlyphRange {
+    /// Calls `f` for the elements of the array of the `TJ` operator, in order: a string of glyphs
+    /// ends where the next glyph has a kern.
+    pub fn for_each_item<'a>(self, glyphs: &'a [KernedGlyph], mut f: impl FnMut(KernedItem<'a>)) {
+        let run = &glyphs[self.start as usize..self.end as usize];
+        let mut from = 0;
+        for (index, glyph) in run.iter().enumerate() {
+            if glyph.kern != 0 {
+                if index > from {
+                    f(KernedItem::Glyphs(&run[from..index]));
+                }
+                f(KernedItem::Kern(FontUnit(glyph.kern as f64 / 10.0)));
+                from = index;
+            }
+        }
+        if run.len() > from {
+            f(KernedItem::Glyphs(&run[from..]));
+        }
+        if self.trailing_kern != 0 {
+            f(KernedItem::Kern(FontUnit(self.trailing_kern as f64 / 10.0)));
+        }
+    }
+
+    /// The elements of the operator as a PDF array.
+    pub fn array<'a>(self, glyphs: &'a [KernedGlyph]) -> KernedArray<'a> {
+        KernedArray { range: self, glyphs }
+    }
+}
+
+/// The operand of a `TJ` operator.
+#[derive(Debug)]
+pub struct KernedArray<'a> {
+    range: GlyphRange,
+    glyphs: &'a [KernedGlyph],
+}
+
+#[derive(Debug)]
+struct GlyphString<'a>(&'a [KernedGlyph]);
+
+impl lemon_pdf::PdfFormat for GlyphString<'_> {
+    fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
+        write_glyph_string(f, self.0.iter().map(|glyph| glyph.glyph))
+    }
+}
+
+impl lemon_pdf::PdfFormat for KernedArray<'_> {
+    fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
+        let mut array = Some(f.format_array());
+        self.range.for_each_item(self.glyphs, |item| {
+            let current = array.take().expect("the array is put back after every element");
+            array = Some(match item {
+                KernedItem::Glyphs(glyphs) => current.value(&GlyphString(glyphs)),
+                KernedItem::Kern(kern) => current.value(&kern),
+            });
+        });
+        array.expect("the array is put back after every element").finish()
+    }
+}
+
+/// The operators of a text and the glyphs of its `TJ` operators, which are ranges of one `Vec`:
+/// a `Vec` for every run of glyphs between two kerns was most of the memory of a long text.
+/// Dereferences to the operators.
+#[derive(Debug, Default, Clone)]
+pub struct TextOps {
+    ops: Vec<TextOperator>,
+    pub glyphs: Vec<KernedGlyph>,
+}
+
+impl std::ops::Deref for TextOps {
+    type Target = Vec<TextOperator>;
+    fn deref(&self) -> &Vec<TextOperator> {
+        &self.ops
+    }
+}
+
+impl std::ops::DerefMut for TextOps {
+    fn deref_mut(&mut self) -> &mut Vec<TextOperator> {
+        &mut self.ops
+    }
+}
+
+impl TextOps {
+    pub fn from_parts(ops: Vec<TextOperator>, glyphs: Vec<KernedGlyph>) -> Self {
+        TextOps { ops, glyphs }
+    }
+
+    pub fn into_parts(self) -> (Vec<TextOperator>, Vec<KernedGlyph>) {
+        (self.ops, self.glyphs)
+    }
+
+    /// Appends a `TJ` operator that shows one glyph.
+    pub fn push_glyph(&mut self, glyph: GlyphIndex) {
+        let start = self.glyphs.len() as u32;
+        self.glyphs.push(KernedGlyph { glyph, kern: 0 });
+        self.ops.push(TextOperator::KernedGlyphs(GlyphRange { start, end: start + 1, trailing_kern: 0 }));
+    }
+
+    /// Appends the operators of `other` and its glyphs.
+    pub fn append(&mut self, other: TextOps) {
+        let base = self.glyphs.len() as u32;
+        self.glyphs.extend(other.glyphs);
+        self.ops.extend(other.ops.into_iter().map(|mut op| {
+            if let TextOperator::KernedGlyphs(range) = &mut op {
+                range.start += base;
+                range.end += base;
+            }
+            op
+        }));
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -665,8 +836,8 @@ impl TransformMatrix {
 pub enum TextOperator {
     SetFont(String, PixelLength),
     SetColor(crate::style::properties::computed::RGBA),
-    Glyphs(Glyphs),
-    KernedGlyphs(Vec<KernedGlyphs>),
+    /// A `TJ` operator: glyphs, with kerns between some of them (see [`TextOps`]).
+    KernedGlyphs(GlyphRange),
     SetWordSpacing(PixelLength),
     /// Raises the following glyphs above the baseline (PDF text rise, `Ts`). Shaping uses it
     /// for glyphs that the font positions vertically, like marks and cursive attachments.
@@ -713,7 +884,7 @@ pub enum TextOperator {
 #[derive(Debug, Clone)]
 pub struct Paragraph {
     pub start_pos: (PixelLength, PixelLength),
-    pub ops: Vec<TextOperator>,
+    pub ops: TextOps,
     /// The colour glyphs of the text, painted over it.
     pub color_glyphs: Vec<PlacedColorGlyph>,
 }
@@ -722,7 +893,7 @@ impl Paragraph {
     pub fn new(start_x: PixelLength, start_y: PixelLength) -> Self {
         Paragraph {
             start_pos: (start_x, start_y),
-            ops: vec![],
+            ops: TextOps::default(),
             color_glyphs: vec![],
         }
     }
@@ -850,7 +1021,7 @@ pub struct PlacedColorGlyph {
 /// was at the start of the piece, on the baseline. Every producer of a [`Paragraph`] calls this
 /// for the text it shapes, and puts the result in [`Paragraph::color_glyphs`].
 pub fn take_color_glyphs(
-    ops: &mut Vec<TextOperator>,
+    ops: &mut TextOps,
     from: usize,
     origin: (PixelLength, PixelLength),
     color: crate::style::properties::computed::RGBA,

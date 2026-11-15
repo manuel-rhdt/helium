@@ -11,6 +11,7 @@
 
 mod collapse;
 mod page_groups;
+mod replaced;
 mod style;
 mod table;
 mod tree;
@@ -62,6 +63,7 @@ impl TaffyBlockLayout {
         world.register::<InlineFormattingContext>();
         world.register::<TextRun>();
         world.register::<crate::layout::components::VerticalAlignment>();
+        world.register::<crate::layout::components::CanvasSize>();
         world.register::<TableCellSpan>();
         world.register::<TableColumns>();
         world.entry::<TextList>().or_insert_with(Default::default);
@@ -78,6 +80,7 @@ impl TaffyBlockLayout {
         let mut inline_ctxs = world.write_storage::<InlineFormattingContext>();
         let mut intrinsic_sizes = world.write_storage::<IntrinsicSize>();
         let images = world.read_storage::<ImageBox>();
+        let canvases = world.read_storage::<crate::layout::components::CanvasSize>();
         let page_margins = world.read_resource::<crate::layout::pages::PageMargins>();
         let mut group_boxes = world.write_storage::<crate::layout::components::PageGroupBox>();
         let text_runs = world.read_storage::<TextRun>();
@@ -96,6 +99,7 @@ impl TaffyBlockLayout {
             inline_ctxs: &mut inline_ctxs,
             intrinsic_sizes: &mut intrinsic_sizes,
             images: &images,
+            canvases: &canvases,
             text_runs: &text_runs,
             aligns: &aligns,
             table_spans: &table_spans,

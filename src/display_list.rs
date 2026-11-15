@@ -1,6 +1,6 @@
 use crate::layout::components::ImageBox;
 use crate::layout::components::{
-    Decoration, DecorationFragment, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
+    Decoration, DecorationFragment, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator, TextOps,
     TransformMatrix, VectorGraphics, ZIndex,
 };
 use crate::layout::normal_formatting::Pages;
@@ -1199,41 +1199,47 @@ impl<'a> System<'a> for DisplayText {
     type SystemData = (
         Entities<'a>,
         ReadStorage<'a, Position>,
-        ReadStorage<'a, Paragraph>,
+        WriteStorage<'a, Paragraph>,
     );
 
     /// Paints the paragraphs of the page in the logical order of their content (the order of
     /// the structure tree), so that extractors that follow the content stream read the text in
     /// order. Formulas inside a line are painted where they appear in it (see
     /// [`TextOperator::Embed`]).
-    fn run(&mut self, (entities, positions, paragraphs): Self::SystemData) {
-        let on_page: Vec<(Entity, &Position, &Paragraph)> =
-            (&entities, &positions, &paragraphs, &self.bitset)
-                .join()
-                .map(|(entity, pos, paragraph, _)| (entity, pos, paragraph))
-                .collect();
+    ///
+    /// The paragraphs move from the world into the display list: the text of a document is
+    /// large, and the world does not need it afterwards.
+    fn run(&mut self, (entities, positions, mut paragraphs): Self::SystemData) {
+        let on_page: Vec<Entity> = (&entities, &positions, &paragraphs, &self.bitset)
+            .join()
+            .map(|(entity, ..)| entity)
+            .collect();
 
         let embedded: std::collections::HashSet<Entity> = on_page
             .iter()
-            .flat_map(|(_, _, paragraph)| paragraph.ops.iter())
+            .filter_map(|&entity| paragraphs.get(entity))
+            .flat_map(|paragraph| paragraph.ops.iter())
             .filter_map(|op| match op {
                 TextOperator::Embed { entity, .. } => Some(*entity),
                 _ => None,
             })
             .collect();
 
-        let mut ordered: Vec<(Option<(u32, u32)>, Entity, &Position, Paragraph)> = on_page
-            .iter()
-            .filter(|(entity, _, _)| !embedded.contains(entity))
-            .map(|&(entity, pos, paragraph)| {
-                let paragraph = resolve_embeds(paragraph, &paragraphs, &self.bitset);
-                (logical_position(&paragraph), entity, pos, paragraph)
-            })
-            .collect();
+        let mut ordered: Vec<(Option<(u32, u32)>, Entity, &Position, Paragraph)> = vec![];
+        for entity in on_page {
+            if embedded.contains(&entity) {
+                continue;
+            }
+            let (Some(pos), Some(paragraph)) = (positions.get(entity), paragraphs.remove(entity)) else {
+                continue;
+            };
+            let paragraph = resolve_embeds(paragraph, &mut paragraphs, &self.bitset);
+            ordered.push((logical_position(&paragraph), entity, pos, paragraph));
+        }
         // content without a tag (artifacts like running headers) first, in their old order
         ordered.sort_by_key(|(key, ..)| *key);
 
-        for (_, entity, pos, paragraph) in ordered {
+        for (_, entity, pos, mut paragraph) in ordered {
             // The z of a box is its depth in the box tree. Like the inline content of a stacking
             // context in CSS (CSS 2.1 appendix E), the text goes over the backgrounds and borders
             // of all boxes, in tree order rather than by depth. The page margin boxes are a
@@ -1244,7 +1250,7 @@ impl<'a> System<'a> for DisplayText {
                 ZIndex(i64::MAX - 1)
             };
             // the colour glyphs go over the text of the paragraph
-            let color_glyphs = paragraph.color_glyphs.clone();
+            let color_glyphs = std::mem::take(&mut paragraph.color_glyphs);
             self.display_list
                 .append(DisplayItem::Paragraph(paragraph), entity, z);
             for glyph in color_glyphs {
@@ -1273,10 +1279,10 @@ fn logical_position(paragraph: &Paragraph) -> Option<(u32, u32)> {
 }
 
 /// Replaces the [`TextOperator::Embed`] placeholders of a paragraph by the operators of the
-/// embedded paragraphs.
+/// embedded paragraphs, which move out of `paragraphs`.
 fn resolve_embeds(
-    paragraph: &Paragraph,
-    paragraphs: &ReadStorage<Paragraph>,
+    paragraph: Paragraph,
+    paragraphs: &mut WriteStorage<Paragraph>,
     page: &specs::BitSet,
 ) -> Paragraph {
     if !paragraph
@@ -1284,29 +1290,26 @@ fn resolve_embeds(
         .iter()
         .any(|op| matches!(op, TextOperator::Embed { .. }))
     {
-        return paragraph.clone();
+        return paragraph;
     }
-    let mut ops = Vec::with_capacity(paragraph.ops.len());
-    let mut color_glyphs = paragraph.color_glyphs.clone();
-    for op in &paragraph.ops {
+    let Paragraph { start_pos, ops: old, mut color_glyphs } = paragraph;
+    let (old_ops, glyphs) = old.into_parts();
+    let mut ops = TextOps::from_parts(Vec::with_capacity(old_ops.len()), glyphs);
+    for op in old_ops {
         match op {
-            &TextOperator::Embed { entity, x, y } => {
-                if page.contains(entity.id()) {
-                    if let Some(embedded) = paragraphs.get(entity) {
-                        ops.extend(embedded.ops.iter().cloned());
-                        color_glyphs.extend(embedded.color_glyphs.iter().cloned());
-                    }
+            TextOperator::Embed { entity, x, y } => {
+                if page.contains(entity.id())
+                    && let Some(embedded) = paragraphs.remove(entity)
+                {
+                    ops.append(embedded.ops);
+                    color_glyphs.extend(embedded.color_glyphs);
                 }
                 ops.push(TextOperator::SetTransform(TransformMatrix::translation(x, y)));
             }
-            op => ops.push(op.clone()),
+            op => ops.push(op),
         }
     }
-    Paragraph {
-        start_pos: paragraph.start_pos,
-        ops,
-        color_glyphs,
-    }
+    Paragraph { start_pos, ops, color_glyphs }
 }
 
 /// Paints the images of `<img>` elements, into their content boxes.
