@@ -692,6 +692,14 @@ impl GlyphRange {
     pub fn array<'a>(self, glyphs: &'a [KernedGlyph]) -> KernedArray<'a> {
         KernedArray { range: self, glyphs }
     }
+
+    /// The glyphs as one string, if they have no kerns: a `Tj` operator is enough for them, which
+    /// is shorter than a `TJ` array with one string.
+    pub fn plain_string<'a>(self, glyphs: &'a [KernedGlyph]) -> Option<GlyphString<'a>> {
+        let run = &glyphs[self.start as usize..self.end as usize];
+        (self.trailing_kern == 0 && !run.is_empty() && run.iter().all(|glyph| glyph.kern == 0))
+            .then_some(GlyphString(run))
+    }
 }
 
 /// The operand of a `TJ` operator.
@@ -701,8 +709,9 @@ pub struct KernedArray<'a> {
     glyphs: &'a [KernedGlyph],
 }
 
+/// A string of glyphs as the operand of a `Tj` operator.
 #[derive(Debug)]
-struct GlyphString<'a>(&'a [KernedGlyph]);
+pub struct GlyphString<'a>(&'a [KernedGlyph]);
 
 impl lemon_pdf::PdfFormat for GlyphString<'_> {
     fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {

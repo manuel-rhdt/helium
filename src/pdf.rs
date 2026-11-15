@@ -323,8 +323,16 @@ fn paint_items(
                         }
                         &TextOperator::KernedGlyphs(range) => {
                             marked.before_content(page_context, tagged)?;
-                            page_context.push_operand(range.array(&par.ops.glyphs))?;
-                            page_context.apply_operator("TJ")?;
+                            match range.plain_string(&par.ops.glyphs) {
+                                Some(string) => {
+                                    page_context.push_operand(string)?;
+                                    page_context.apply_operator("Tj")?;
+                                }
+                                None => {
+                                    page_context.push_operand(range.array(&par.ops.glyphs))?;
+                                    page_context.apply_operator("TJ")?;
+                                }
+                            }
                         }
                         &TextOperator::NewLine { x_offset, leading } => {
                             page_context
