@@ -8,7 +8,7 @@
 //! the margin.
 
 use super::FontMap;
-use super::components::{PageGeometry, Paragraph, Position, TextOperator, ZIndex};
+use super::components::{PageGeometry, Paragraph, PlacedColorGlyph, Position, TextOperator, ZIndex, take_color_glyphs};
 use super::inline::shape_piece;
 use super::pages::{PageContext, PageMargins, Pages, normalize};
 use crate::style::parse::{ContentItem, CounterName, CounterStyle, MarginBoxKind};
@@ -190,11 +190,14 @@ impl<'a> System<'a> for MarginBoxPaint {
                     Some(if page_margins.rtl { Level::rtl() } else { Level::ltr() }),
                 );
                 let mut width = Px(0.0);
+                // relative to the start of the text on the baseline until the box is placed
+                let mut color_glyphs = Vec::new();
                 for paragraph in &info.paragraphs {
                     let (levels, runs) = info.visual_runs(paragraph, paragraph.range.clone());
                     for run in runs {
                         let run_rtl = levels[run.start].is_rtl();
-                        width += shape_piece(
+                        let ops_before = ops.len();
+                        let run_width = shape_piece(
                             &text[run],
                             font,
                             &margin_box.fallback,
@@ -205,6 +208,13 @@ impl<'a> System<'a> for MarginBoxPaint {
                             run_rtl,
                             &mut ops,
                         );
+                        color_glyphs.extend(take_color_glyphs(
+                            &mut ops,
+                            ops_before,
+                            (width, Px(0.0)),
+                            margin_box.color,
+                        ));
+                        width += run_width;
                     }
                 }
                 ops.push(TextOperator::EndMarkedContent);
@@ -251,6 +261,14 @@ impl<'a> System<'a> for MarginBoxPaint {
                         Paragraph {
                             start_pos: (x, y + ascent),
                             ops,
+                            color_glyphs: color_glyphs
+                                .into_iter()
+                                .map(|glyph| PlacedColorGlyph {
+                                    x: glyph.x + x,
+                                    baseline: glyph.baseline + y + ascent,
+                                    ..glyph
+                                })
+                                .collect(),
                         },
                         &mut paragraphs,
                     )

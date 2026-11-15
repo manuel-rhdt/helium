@@ -19,6 +19,29 @@ pub fn needs_font(ch: char) -> bool {
             | '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}' | '\u{FEFF}'))
 }
 
+/// Whether the grapheme cluster is presented as an emoji (UTS #51, 4.1): it has the emoji
+/// presentation selector U+FE0F, a keycap, a flag or a ZWJ sequence, or its first character has
+/// `Emoji_Presentation` by default; and it is not set in the text style with U+FE0E.
+pub fn is_emoji_cluster(cluster: &str) -> bool {
+    use unicode_properties::emoji::{EmojiStatus, UnicodeEmoji};
+    let mut chars = cluster.chars();
+    let Some(first) = chars.next() else { return false };
+    let rest = chars.as_str();
+    if rest.contains('\u{FE0E}') {
+        return false;
+    }
+    if rest.contains('\u{FE0F}') || rest.contains('\u{20E3}') {
+        return first.is_emoji_char() || first.is_ascii_digit() || first == '#' || first == '*';
+    }
+    matches!(
+        first.emoji_status(),
+        EmojiStatus::EmojiPresentation
+            | EmojiStatus::EmojiPresentationAndModifierBase
+            | EmojiStatus::EmojiPresentationAndEmojiComponent
+            | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent
+    )
+}
+
 /// A grapheme cluster of a text and the script it is itemized as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cluster<'a> {
@@ -212,5 +235,20 @@ mod tests {
         // keep theirs
         assert_eq!(scripts("\u{FF71}")[0], Script::Katakana);
         assert_eq!(scripts("ب\u{FF0C}ب")[0], Script::Arabic);
+    }
+}
+
+#[cfg(test)]
+mod emoji_tests {
+    use super::is_emoji_cluster;
+
+    #[test]
+    fn emoji_presentation_follows_uts_51() {
+        for emoji in ["😀", "🎉", "❤\u{FE0F}", "👍🏽", "🇩🇪", "👨\u{200D}👩\u{200D}👧", "1\u{FE0F}\u{20E3}", "⌚"] {
+            assert!(is_emoji_cluster(emoji), "{emoji:?}");
+        }
+        for text in ["a", "1", "#", "❤", "☃", "❤\u{FE0E}", "©", "→", ""] {
+            assert!(!is_emoji_cluster(text), "{text:?}");
+        }
     }
 }

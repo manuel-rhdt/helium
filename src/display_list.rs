@@ -239,6 +239,15 @@ pub struct BlendGroup {
 }
 
 #[derive(Debug, Clone)]
+pub struct ColorGlyphItem {
+    pub origin: Point,
+    pub size: PixelLength,
+    pub font: String,
+    pub glyph: crate::layout::text::font::GlyphIndex,
+    pub color: RGBA,
+}
+
+#[derive(Debug, Clone)]
 pub enum DisplayItem {
     LineString {
         points: Vec<Point>,
@@ -266,6 +275,9 @@ pub enum DisplayItem {
     },
     Color(RGBA),
     StrokeColor(RGBA),
+    /// A colour glyph (an emoji) painted from the `COLR` table of its font, whose origin is on
+    /// the baseline at the point.
+    ColorGlyph(Box<ColorGlyphItem>),
     Text(Point, PixelLength, String, Glyphs),
     Paragraph(Paragraph),
     Translate(PixelLength, PixelLength),
@@ -940,8 +952,23 @@ impl<'a> System<'a> for DisplayText {
             } else {
                 ZIndex(i64::MAX - 1)
             };
+            // the colour glyphs go over the text of the paragraph
+            let color_glyphs = paragraph.color_glyphs.clone();
             self.display_list
-                .append(DisplayItem::Paragraph(paragraph), entity, z)
+                .append(DisplayItem::Paragraph(paragraph), entity, z);
+            for glyph in color_glyphs {
+                self.display_list.append(
+                    DisplayItem::ColorGlyph(Box::new(ColorGlyphItem {
+                        origin: Point { x: glyph.x, y: glyph.baseline },
+                        size: glyph.size,
+                        font: glyph.font,
+                        glyph: glyph.glyph,
+                        color: glyph.color,
+                    })),
+                    entity,
+                    z,
+                );
+            }
         }
     }
 }
@@ -969,12 +996,14 @@ fn resolve_embeds(
         return paragraph.clone();
     }
     let mut ops = Vec::with_capacity(paragraph.ops.len());
+    let mut color_glyphs = paragraph.color_glyphs.clone();
     for op in &paragraph.ops {
         match op {
             &TextOperator::Embed { entity, x, y } => {
                 if page.contains(entity.id()) {
                     if let Some(embedded) = paragraphs.get(entity) {
                         ops.extend(embedded.ops.iter().cloned());
+                        color_glyphs.extend(embedded.color_glyphs.iter().cloned());
                     }
                 }
                 ops.push(TextOperator::SetTransform(TransformMatrix::translation(x, y)));
@@ -985,6 +1014,7 @@ fn resolve_embeds(
     Paragraph {
         start_pos: paragraph.start_pos,
         ops,
+        color_glyphs,
     }
 }
 

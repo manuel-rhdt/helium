@@ -33,12 +33,16 @@
 //! query so that the output does not depend on the order fontconfig happens to sort fonts in, as
 //! far as possible.
 //!
+//! Emoji (UTS #51 presentation, see `segment::is_emoji_cluster`) take a colour emoji font before
+//! all of this: an installed font with `COLR` glyphs, else Noto Color Emoji, which is built into
+//! Helium (`EMBEDDED_FONTS`). Bitmap emoji fonts are not used.
+//!
 //! Characters that no font covers are collected in the `MissingGlyphs` resource and reported
 //! to the user (see `MissingGlyphs::report`).
 
-use super::font::{Font, system_font, use_system_fonts};
+use super::font::{Font, color_emoji_font, system_font, use_system_fonts};
 use super::fallback_data::*;
-use super::segment::{clusters, needs_font};
+use super::segment::{clusters, is_emoji_cluster, needs_font};
 use crate::layout::FontMap;
 use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, Language,
@@ -182,11 +186,14 @@ fn script_run_fonts(
             candidates.push(index);
         }
     }
+    // an emoji keeps the font that was chosen for it; it does not take part in choosing the font
+    // of the run
+    let is_emoji = |cluster: &super::segment::Cluster<'_>| is_emoji_cluster(cluster.text);
     let covered = |candidate: u16| {
         let font = set.font_at(primary, candidate);
         clusters
             .iter()
-            .filter(|cluster| font.covers_cluster(cluster.text))
+            .filter(|cluster| !is_emoji(cluster) && font.covers_cluster(cluster.text))
             .count()
     };
     let mut best = (0, covered(0));
@@ -200,7 +207,15 @@ fn script_run_fonts(
     clusters
         .iter()
         .zip(own)
-        .map(|(cluster, own)| if font.covers_cluster(cluster.text) { best.0 } else { own })
+        .map(|(cluster, own)| {
+            if is_emoji(cluster) {
+                own
+            } else if font.covers_cluster(cluster.text) {
+                best.0
+            } else {
+                own
+            }
+        })
         .collect()
 }
 
@@ -442,6 +457,8 @@ pub struct FontResolver {
     /// The fallback font for a cluster in a font description.
     cluster_cache: HashMap<(FallbackKey, String, Script), Option<Arc<Font>>>,
     class_cache: HashMap<FallbackKey, Class>,
+    /// The colour emoji font, once it has been looked for.
+    emoji_font: Option<Option<Arc<Font>>>,
     missing: MissingGlyphs,
 }
 
@@ -478,13 +495,24 @@ impl FontResolver {
         let key = FallbackKey::new(style);
         let all_clusters = clusters(text);
         for cluster in &all_clusters {
-            if !cluster.text.chars().any(needs_font) || font.covers_cluster(cluster.text) {
+            if !cluster.text.chars().any(needs_font) {
+                continue;
+            }
+            // An emoji is painted with a colour emoji font even if the font of the text has
+            // a (monochrome) glyph for it, unless the font of the text is one itself.
+            let emoji_font = if is_emoji_cluster(cluster.text) && !font.has_color_glyphs() {
+                self.emoji_font(cluster.text, font_map)
+            } else {
+                None
+            };
+            if emoji_font.is_none() && font.covers_cluster(cluster.text) {
                 continue;
             }
             let cache_key = (key.clone(), cluster.text.to_owned(), cluster.script);
-            let fallback = match self.cluster_cache.get(&cache_key) {
-                Some(fallback) => fallback.clone(),
-                None => {
+            let fallback = match (emoji_font, self.cluster_cache.get(&cache_key)) {
+                (Some(emoji_font), _) => Some(emoji_font),
+                (None, Some(fallback)) => fallback.clone(),
+                (None, None) => {
                     let fallback = self.find_fallback(cluster.text, cluster.script, &key, font, font_map);
                     self.cluster_cache.insert(cache_key, fallback.clone());
                     fallback
@@ -556,6 +584,18 @@ impl FontResolver {
             .unwrap_or(Class::Sans);
         self.class_cache.insert(key.clone(), class);
         class
+    }
+
+    /// The installed colour emoji font, if it covers the emoji `cluster`.
+    fn emoji_font(&mut self, cluster: &str, font_map: &mut FontMap) -> Option<Arc<Font>> {
+        let font = self
+            .emoji_font
+            .get_or_insert_with(|| {
+                // an installed emoji font if there is one, else the one built into Helium
+                color_emoji_font().map(|font| register_font(font_map, font))
+            })
+            .clone()?;
+        font.covers_cluster(cluster).then_some(font)
     }
 
     /// The font for the cluster, a pure function of the font description and the cluster: the
@@ -1798,6 +1838,11 @@ mod tests {
             chosen.extend(selected(vec![named("TeX Gyre Termes"), FontFamily::Serif], "", false, false, &ch.to_string()));
         }
 
+        // emoji are set in the colour emoji font, whatever the design of the text
+        for families in &designs {
+            chosen.extend(selected(families.clone(), "", false, false, "😀 🇩🇪 👨\u{200D}👩\u{200D}👧"));
+        }
+
         // DejaVu Sans, in both weights
         let text = first_only_covered_by(&faces, "DejaVuSans").unwrap().to_string();
         for bold in [false, true] {
@@ -1812,6 +1857,18 @@ mod tests {
         assert!(missing.is_empty(), "bundled fonts that are never selected as a fallback: {missing:?}");
     }
 
+
+    /// An emoji gets the colour emoji font even if the text font has a glyph for its base
+    /// character, and a character in text presentation does not.
+    #[test]
+    fn emoji_are_set_in_the_colour_emoji_font() {
+        let families = vec![named("TeX Gyre Termes"), FontFamily::Serif];
+        for emoji in ["😀", "🇩🇪", "👨\u{200D}👩\u{200D}👧", "❤\u{FE0F}", "1\u{FE0F}\u{20E3}"] {
+            assert_eq!(selected(families.clone(), "", false, false, emoji), ["NotoColorEmoji"], "{emoji:?}");
+        }
+        // the text presentation of a character stays with the font of the text
+        assert!(!selected(families, "", false, false, "☃ ✓").contains(&"NotoColorEmoji".to_owned()));
+    }
 
     // -- Chinese, Japanese and Korean text
 

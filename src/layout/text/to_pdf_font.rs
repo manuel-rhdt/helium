@@ -70,7 +70,7 @@ impl Font {
         {
             // Layout tables are not needed in a PDF.
             let mut drop = input.drop_table_set_mut();
-            for tag in [b"GSUB", b"GPOS", b"GDEF", b"MATH"] {
+            for tag in [b"GSUB", b"GPOS", b"GDEF", b"MATH", b"COLR", b"CPAL", b"SVG "] {
                 drop.insert(harfbuzz_rs::Tag::from(tag));
             }
         }

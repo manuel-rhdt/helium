@@ -598,6 +598,7 @@ dependencies = [
  "thiserror",
  "ttf-parser",
  "unicode-bidi",
+ "unicode-properties",
  "unicode-script",
  "unicode-segmentation",
  "unicode-vo",

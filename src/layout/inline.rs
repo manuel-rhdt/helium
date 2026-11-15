@@ -1,4 +1,4 @@
-use super::components::{self, EntityHrefs, Hyperlink, Hyperlinks, Paragraph, TextOperator};
+use super::components::{self, EntityHrefs, Hyperlink, Hyperlinks, Paragraph, TextOperator, take_color_glyphs};
 use crate::tagging::{ContentTag, StructNodeId, StructureTree};
 use super::{
     FontMap,
@@ -738,34 +738,34 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         let cluster = glyph_info.cluster as usize;
                         if other_breaks.peek() == Some(&cluster) {
                             other_breaks.next();
-                            if !wraps {
-                                continue;
+                            // (the glyph still advances the pen when there is no break here)
+                            if wraps {
+                                // Justification stretches the gaps next to CJK characters. Not at
+                                // a change of the bidi level, where the gap would be between two
+                                // pieces of the line (see `shape_piece`).
+                                let inter_letter = is_justified_between(&text_run.text, cluster)
+                                    && !levels
+                                        .iter()
+                                        .any(|&(start, end, _)| start == cluster || end == cluster);
+                                break_points.push(BreakPoint {
+                                    entity,
+                                    char_index: cluster,
+                                    advance_before: advance,
+                                    advance_after: advance,
+                                    forced: false,
+                                    space: false,
+                                    inter_letter,
+                                    hyphen: false,
+                                    hyphen_width: Px(0.0),
+                                    glue_stretch: if inter_letter {
+                                        text_run.font_size / 8.0
+                                    } else {
+                                        Px(0.0)
+                                    },
+                                    glue_shrink: Px(0.0),
+                                    penalty: 0,
+                                });
                             }
-                            // Justification stretches the gaps next to CJK characters. Not at
-                            // a change of the bidi level, where the gap would be between two
-                            // pieces of the line (see `shape_piece`).
-                            let inter_letter = is_justified_between(&text_run.text, cluster)
-                                && !levels
-                                    .iter()
-                                    .any(|&(start, end, _)| start == cluster || end == cluster);
-                            break_points.push(BreakPoint {
-                                entity,
-                                char_index: cluster,
-                                advance_before: advance,
-                                advance_after: advance,
-                                forced: false,
-                                space: false,
-                                inter_letter,
-                                hyphen: false,
-                                hyphen_width: Px(0.0),
-                                glue_stretch: if inter_letter {
-                                    text_run.font_size / 8.0
-                                } else {
-                                    Px(0.0)
-                                },
-                                glue_shrink: Px(0.0),
-                                penalty: 0,
-                            });
                         }
                         // a break inside a cluster (e.g. a ligature) is not possible
                         while other_breaks.peek().is_some_and(|&index| index <= cluster) {
@@ -1303,6 +1303,7 @@ impl<'a> System<'a> for ListMarkerCreator {
                 TextOperator::SetFont(marker.font_name.clone(), marker.font_size),
                 TextOperator::SetColor(marker.color),
             ];
+            let ops_before = ops.len();
             let width = shape_piece(
                 &marker.text,
                 font,
@@ -1320,6 +1321,8 @@ impl<'a> System<'a> for ListMarkerCreator {
                 ops.push(TextOperator::EndMarkedContent);
             }
             let gap = marker.font_size * 0.4;
+            let start_pos = (item_x - gap - width, line_pos.y + baseline);
+            let color_glyphs = take_color_glyphs(&mut ops, ops_before, start_pos, marker.color);
             entities
                 .build_entity()
                 .with(
@@ -1332,8 +1335,9 @@ impl<'a> System<'a> for ListMarkerCreator {
                 )
                 .with(
                     Paragraph {
-                        start_pos: (item_x - gap - width, line_pos.y + baseline),
+                        start_pos,
                         ops,
+                        color_glyphs,
                     },
                     &mut paragraphs,
                 )
@@ -1530,6 +1534,7 @@ impl<'a> System<'a> for LineBoxCreator {
             }
 
             let mut ops: Vec<TextOperator> = vec![];
+            let mut color_glyphs: Vec<components::PlacedColorGlyph> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
             let mut previous_color: Option<RGBA> = None;
             let mut paragraph_pos: Option<components::Position> = None;
@@ -1588,6 +1593,7 @@ impl<'a> System<'a> for LineBoxCreator {
                                 Paragraph {
                                     start_pos: paragraph_start,
                                     ops: ops.clone(),
+                                    color_glyphs: std::mem::take(&mut color_glyphs),
                                 },
                                 &mut paragraphs,
                             )
@@ -1705,6 +1711,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             baseline_x: Px(line_origin.0),
                             start_y: line_pos.y + piece_start,
                         });
+                        let ops_before = ops.len();
                         piece_width += shape_piece_in_flow(
                             characters,
                             font,
@@ -1717,6 +1724,13 @@ impl<'a> System<'a> for LineBoxCreator {
                             vertical,
                             &mut ops,
                         );
+                        // the colour glyphs are painted over the text, at their own positions
+                        color_glyphs.extend(take_color_glyphs(
+                            &mut ops,
+                            ops_before,
+                            (line_pos.x + piece_start, line_pos.y + line.baseline),
+                            run.color,
+                        ));
                         if hyphen && !rtl {
                             ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
                             piece_width +=
@@ -1894,6 +1908,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         Paragraph {
                             start_pos: paragraph_start,
                             ops,
+                            color_glyphs,
                         },
                         &mut paragraphs,
                     )
@@ -2145,6 +2160,15 @@ pub(super) fn shape_piece_in_flow(
             ops.push(TextOperator::SetRise(font_size * (rise.0 as f32 / 1000.0)));
         }
         out.glyph(glyph.glyph);
+        if vertical.is_none() && glyph_font.is_color_glyph(glyph.glyph) {
+            ops.push(TextOperator::ColorGlyph {
+                font: glyph_font.postscript_name(),
+                glyph: glyph.glyph,
+                size: font_size,
+                dx: Px(glyph.x.0 as f32 * font_size.0 / 1000.0),
+                rise: Px(glyph.rise.0 as f32 * font_size.0 / 1000.0),
+            });
+        }
         pen = FontUnit(glyph.x.0 + glyph_font.advance(glyph.glyph).0);
     }
     if open_cluster.is_some() {

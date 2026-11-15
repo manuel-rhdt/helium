@@ -88,6 +88,8 @@ const FONTS: &[Spec] = &[
     all("NotoSansSymbols-Regular.ttf"),
     all("NotoSansSymbols2-Regular.ttf"),
     all("NotoSansMath-Regular.ttf"),
+    // Colour emoji, painted from the `COLR` table (the SVG table is stripped from the source).
+    all("NotoColorEmoji-COLRv1.ttf"),
     // CJK
     // One face per style suffices: all faces of the collections have the same glyphs and the
     // `locl` feature picks the variants of the language (ja, ko, zh-Hans, zh-Hant), so this

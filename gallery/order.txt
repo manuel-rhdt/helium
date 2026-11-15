@@ -8,3 +8,4 @@ scripts
 design
 figures
 poster
+emoji

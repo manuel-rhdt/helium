@@ -168,3 +168,19 @@ fn inline_blocks_do_not_wrap_either() {
     assert!(ys(&wrapping).len() >= 2);
     assert_eq!(ys(&nowrap).len(), 1);
 }
+
+/// Text with a break opportunity between its letters (CJK, emoji) still advances over every glyph:
+/// a `nowrap` box that is sized by its contents is as wide as all of the text.
+#[test]
+fn nowrap_text_with_breaks_between_letters_keeps_its_width() {
+    let one = dump(
+        "nowrap_cjk_one",
+        "<div style=\"display:flex;width:400px\"><div style=\"background:#00ff00;font-size:30px;white-space:nowrap\">中</div></div>",
+    );
+    let four = dump(
+        "nowrap_cjk_four",
+        "<div style=\"display:flex;width:400px\"><div style=\"background:#00ff00;font-size:30px;white-space:nowrap\">中中中中</div></div>",
+    );
+    let width = |dump: &Value| rects_with(dump, [0, 255, 0])[0]["width"].as_f64().unwrap();
+    assert!((width(&four) - 4.0 * width(&one)).abs() < 0.5, "{} vs {}", width(&four), width(&one));
+}
