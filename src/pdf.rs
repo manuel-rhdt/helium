@@ -513,7 +513,11 @@ pub fn write_pdf(
         std::rc::Rc::new(std::cell::RefCell::new(color_glyph::ColorGlyphs::new(&print_pages.font_map)));
 
     let mut font_map = HashMap::new();
-    for (font_name, font) in &print_pages.font_map {
+    // in the order of their names, not of the hash map: the numbers of the objects in the file
+    // must not depend on the random seed of the process
+    let mut fonts: Vec<_> = print_pages.font_map.iter().collect();
+    fonts.sort_by(|(a, _), (b, _)| a.cmp(b));
+    for (font_name, font) in fonts {
         if !font.glyph_advances.lock().is_empty() {
             log::info!("Embedding font {} into PDF file.", font_name);
             let font = font.embed_into_pdf(&mut context, !no_filter)?;
