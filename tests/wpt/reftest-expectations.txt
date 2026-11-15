@@ -200,6 +200,7 @@ css/CSS2/normal-flow/block-in-inline-nested-002.xht
 css/CSS2/normal-flow/block-in-inline-percents-001.xht
 css/CSS2/normal-flow/block-in-inline-whitespace-001a.xht
 css/CSS2/normal-flow/block-non-replaced-height-005.xht
+css/CSS2/normal-flow/block-non-replaced-width-004.xht
 css/CSS2/normal-flow/block-replaced-height-002.xht
 css/CSS2/normal-flow/block-replaced-height-004.xht
 css/CSS2/normal-flow/block-replaced-height-005.xht

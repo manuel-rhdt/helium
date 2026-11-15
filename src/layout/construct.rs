@@ -1370,7 +1370,13 @@ impl EntityConstructor {
         let has_block_level_elements = block_level_elements
             .iter()
             .any(|elem| !matches!(elem, BlockLevelElement::Absolute(_)));
-        if !has_block_level_elements {
+        // A flex or grid container without content in the flow (only out-of-flow children, or
+        // none) is still a container: its tracks give it a size and its out-of-flow children are
+        // placed in them.
+        let is_empty_container = style.box_.display.is_flex_or_grid()
+            && inline_level_elements.is_empty()
+            && replaced_text.is_none();
+        if !has_block_level_elements && !is_empty_container {
             // no block-level elements were found, so we create a inline_formatting_context
             if inline_level_elements.is_empty()
                 && let Some(text) = replaced_text

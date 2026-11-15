@@ -1490,21 +1490,36 @@ impl<'a> System<'a> for PlaceInlineBlocks {
         for group in order {
             let owner = groups.groups[group].owner.unwrap();
             let (dx, dy, page) = placements[&owner];
-            for &entity in &groups.groups[group].entities {
-                if let Some(pos) = positions.get_mut(entity) {
-                    pos.x += dx;
-                    pos.y += dy;
-                    pos.page = page;
+            // the entities of the box, and of the absolutely positioned boxes in it (those
+            // have no owner: their containing block is the box or a box in it)
+            let mut moving = vec![group];
+            let mut next = 0;
+            while let Some(&current) = moving.get(next) {
+                next += 1;
+                for &entity in &groups.groups[current].entities {
+                    if let Some(pos) = positions.get_mut(entity) {
+                        pos.x += dx;
+                        pos.y += dy;
+                        pos.page = page;
+                    }
                 }
-            }
-            for (child, other) in groups.groups.iter().enumerate() {
-                if other.parent != Some(group) || child == group {
-                    continue;
-                }
-                if let Some(placement) = other.owner.and_then(|owner| placements.get_mut(&owner)) {
-                    placement.0 += dx;
-                    placement.1 += dy;
-                    placement.2 = page;
+                for (child, other) in groups.groups.iter().enumerate() {
+                    if other.parent != Some(current) || child == current {
+                        continue;
+                    }
+                    match other.owner {
+                        // (a group that is anchored to a box is placed with that box)
+                        None if other.anchor.is_some() => {}
+                        None => moving.push(child),
+                        Some(owner) => {
+                            // an inline-block box in the box moves with it
+                            if let Some(placement) = placements.get_mut(&owner) {
+                                placement.0 += dx;
+                                placement.1 += dy;
+                                placement.2 = page;
+                            }
+                        }
+                    }
                 }
             }
         }
