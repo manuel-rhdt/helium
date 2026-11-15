@@ -43,6 +43,7 @@ into Helium, and these fonts are not.
 
 `masonry.html` sets the same specimens as tiles of their natural height, packed into columns with
 a flex container (`flex-direction: column; flex-wrap: wrap; justify-content: space-between`), so
-that there is no empty space under the short ones. The order runs down the columns, from the left.
+that there is no empty space under the short ones. There are six columns on each page, so the
+tiles are wider and show more text than in the grid. The order runs down the columns, from the left.
 The page break between the two pages is chosen from the measured heights of the tiles.
 `scripts-poster-masonry.pdf` is the result.
