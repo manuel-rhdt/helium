@@ -166,6 +166,14 @@ impl TextFonts {
         TextFonts { key, runs: Arc::from([]), letter_spacing: 0.0, orientation: None, features: Arc::from([]) }
     }
 
+    /// The same fonts for another text than the one they were chosen for: without the runs of
+    /// that text, every cluster gets the font chosen for it. The spacing, the features and the
+    /// orientation stay.
+    pub fn for_other_text(mut self) -> Self {
+        self.runs = Arc::from([]);
+        self
+    }
+
     pub fn runs(&self) -> &[FontRun] {
         &self.runs
     }

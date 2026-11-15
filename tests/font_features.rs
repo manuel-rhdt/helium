@@ -139,6 +139,10 @@ fn invalid_values_are_ignored() {
 
 /// The text operator of the margin box of a page with `style` for its `@top-center`.
 fn margin_text(name: &str, style: &str) -> String {
+    margin_text_of(name, "Head", style)
+}
+
+fn margin_text_of(name: &str, content: &str, style: &str) -> String {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("font_features__{}.html", name));
     let output = dir.join(format!("font_features__{}.pdf", name));
@@ -146,8 +150,8 @@ fn margin_text(name: &str, style: &str) -> String {
         &input,
         format!(
             "<style>@page{{width:200pt;height:200pt;margin:40pt;\
-             @top-center{{content:\"Head\";font-family:'TeX Gyre Termes';{}}}}}</style><p>x</p>",
-            style
+             @top-center{{content:\"{}\";font-family:'TeX Gyre Termes';{}}}}}</style><p>x</p>",
+            content, style
         ),
     )
     .unwrap();
@@ -174,4 +178,12 @@ fn margin_boxes_use_the_features_and_the_letter_spacing_of_their_style() {
     // the spacing is a kern after every glyph
     assert!(!plain.contains(" -416.7"), "{plain}");
     assert_eq!(spaced.matches("-416.7").count(), 4, "{spaced}");
+}
+
+#[test]
+fn margin_boxes_apply_text_transform() {
+    let upper = margin_text_of("margin_upper", "HEAD", "");
+    let transformed = margin_text_of("margin_transformed", "Head", "text-transform:uppercase");
+    assert_eq!(upper, transformed);
+    assert_ne!(upper, margin_text_of("margin_untransformed", "Head", ""));
 }

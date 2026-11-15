@@ -8,14 +8,14 @@
 //! the margin.
 
 use super::FontMap;
-use super::components::{PageGeometry, Paragraph, PlacedColorGlyph, Position, TextOperator, ZIndex, take_color_glyphs};
-use super::inline::shape_piece;
+use super::components::{PageGeometry, Paragraph, PlacedColorGlyph, Position, TextFace, TextOperator, ZIndex};
+use super::inline::{ShapedLine, shape_line};
 use super::pages::{PageContext, PageMargins, Pages, normalize};
 use crate::style::parse::{ContentItem, CounterName, CounterStyle, MarginBoxKind};
 use std::collections::{HashMap, HashSet};
-use unicode_bidi::{BidiInfo, Level};
 use std::sync::Arc;
-use crate::style::properties::computed::{PixelLength as Px, RGBA, TextAlign};
+use crate::style::properties::computed::{Language, PixelLength as Px, TextAlign};
+use crate::style::properties::specified::TextTransform;
 use specs::{Entities, Read, ReadExpect, System, WriteStorage};
 
 /// A margin box whose style and font are resolved.
@@ -23,10 +23,11 @@ use specs::{Entities, Read, ReadExpect, System, WriteStorage};
 pub struct ResolvedMarginBox {
     pub kind: MarginBoxKind,
     pub content: Vec<ContentItem>,
-    pub font_name: String,
-    pub font_size: Px,
-    pub color: RGBA,
-    pub fallback: crate::layout::text::fallback::TextFonts,
+    /// What the text is set in. Its fallback fonts are the ones of every cluster: the text is
+    /// put together when the number of the page is known.
+    pub face: TextFace,
+    pub text_transform: TextTransform,
+    pub lang: Language,
     pub text_align: TextAlign,
 }
 
@@ -173,50 +174,24 @@ impl<'a> System<'a> for MarginBoxPaint {
             let area_left = margin_left;
             let area_width = geometry.width - margin_left - margin_right;
             for margin_box in margin_boxes.for_page(&context) {
-                let text = content_text(&margin_box.content, page + 1, num_pages);
+                let mut text = content_text(&margin_box.content, page + 1, num_pages);
+                if let Some(transformed) = crate::layout::text::transform::apply(
+                    &text,
+                    margin_box.text_transform,
+                    &margin_box.lang,
+                    &mut false,
+                ) {
+                    text = transformed;
+                }
                 if text.is_empty() {
                     continue;
                 }
-                let font = &font_map[&margin_box.font_name];
-                let mut ops = vec![
-                    TextOperator::SetFont(margin_box.font_name.clone(), margin_box.font_size),
-                    TextOperator::SetColor(margin_box.color),
-                ];
-                ops.insert(0, TextOperator::BeginArtifact);
-                // The text is reordered by the bidirectional algorithm: right-to-left runs are
-                // shaped right-to-left, and the runs are drawn in visual order.
-                let info = BidiInfo::new(
-                    &text,
-                    Some(if page_margins.rtl { Level::rtl() } else { Level::ltr() }),
-                );
-                let mut width = Px(0.0);
+                let face = &margin_box.face;
+                let font = &font_map[&face.font_name];
                 // relative to the start of the text on the baseline until the box is placed
-                let mut color_glyphs = Vec::new();
-                for paragraph in &info.paragraphs {
-                    let (levels, runs) = info.visual_runs(paragraph, paragraph.range.clone());
-                    for run in runs {
-                        let run_rtl = levels[run.start].is_rtl();
-                        let ops_before = ops.len();
-                        let run_width = shape_piece(
-                            &text[run],
-                            font,
-                            &margin_box.fallback,
-                            None,
-                            margin_box.font_size,
-                            Px(0.0),
-                            &[],
-                            run_rtl,
-                            &mut ops,
-                        );
-                        color_glyphs.extend(take_color_glyphs(
-                            &mut ops,
-                            ops_before,
-                            (width, Px(0.0)),
-                            margin_box.color,
-                        ));
-                        width += run_width;
-                    }
-                }
+                let ShapedLine { mut ops, width, color_glyphs } =
+                    shape_line(&text, font, face, page_margins.rtl);
+                ops.insert(0, TextOperator::BeginArtifact);
                 ops.push(TextOperator::EndMarkedContent);
 
                 let x = match margin_box.text_align.resolve(page_margins.rtl) {
@@ -227,8 +202,8 @@ impl<'a> System<'a> for MarginBoxPaint {
                     }
                 };
 
-                let ascent = font.scale_to_px(font.ascent(), margin_box.font_size);
-                let descent = font.scale_to_px(font.descent(), margin_box.font_size).abs();
+                let ascent = font.scale_to_px(font.ascent(), face.font_size);
+                let descent = font.scale_to_px(font.descent(), face.font_size).abs();
                 let height = ascent + descent;
                 let (margin_top, margin_height) = match margin_box.kind {
                     MarginBoxKind::TopLeft | MarginBoxKind::TopCenter | MarginBoxKind::TopRight => {
