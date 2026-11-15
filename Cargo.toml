@@ -24,7 +24,6 @@ thiserror = "^1"
 env_logger = "0.8"
 cssparser-color = "0.6"
 precomputed-hash = "0.1"
-imbl = "7"
 smallvec = "1.16.3"
 hyphenation = { version = "0.8.4", features = ["embed_all"] }
 unicode-bidi = "0.3"
