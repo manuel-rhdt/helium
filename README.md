@@ -74,7 +74,9 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `@page` and its margin boxes, to the initial font size).
 - **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`,
   `table` and the table
-  parts, `list-item`, `none`), `aspect-ratio` (also for the images and `<canvas>` boxes, which are blank and 300 by 150 pixels
+  parts, `list-item`, `none`), `order` of flex and grid items, `inset` and the logical properties (`margin-inline-start`,
+  `padding-block`, `inset-inline`, `inline-size`, ... without the logical `border-*`; they follow the
+  `writing-mode` and `direction` of the box itself), `aspect-ratio` (also for the images and `<canvas>` boxes, which are blank and 300 by 150 pixels
   unless their attributes say otherwise), `vertical-align` (on inline boxes, and `top`, `middle` and `bottom` in table cells; the baselines of
   the cells in a row are not aligned), `position: absolute` and `position: relative` (`left`, `right`,
   `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in

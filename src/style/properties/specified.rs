@@ -244,6 +244,7 @@ pub enum PropertyDeclaration<'a> {
     Background(Background),
     Page(Page),
     Math(Math),
+    Logical(super::logical::Logical),
     CssWide(CssWideDeclaration),
 }
 
@@ -275,6 +276,14 @@ pub enum Position<'a> {
     Bottom(AutoOrQuantityOrPercentage),
     #[property]
     Left(AutoOrQuantityOrPercentage),
+    /// `inset: <top> <right>? <bottom>? <left>?`
+    /// https://www.w3.org/TR/css-position-3/#propdef-inset
+    #[property]
+    #[shorthand("top", method = "top")]
+    #[shorthand("bottom", method = "bottom")]
+    #[shorthand("left", method = "left")]
+    #[shorthand("right", method = "right")]
+    Inset(List<'a, AutoOrQuantityOrPercentage>),
 
     #[property]
     #[shorthand("margin-top", method = "top")]
@@ -519,6 +528,10 @@ pub enum Box {
     #[shorthand("flex-shrink", method = "shrink")]
     #[shorthand("flex-basis", method = "basis")]
     Flex(FlexShorthand),
+
+    /// https://www.w3.org/TR/css-flexbox-1/#order-property
+    #[property]
+    Order(i32),
 
     // Box alignment: https://www.w3.org/TR/css-align-3/
     #[property]

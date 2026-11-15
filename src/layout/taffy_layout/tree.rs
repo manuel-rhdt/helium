@@ -232,6 +232,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
                         if is_table {
                             self.build_table(id);
                         }
+                        self.apply_order(id);
                         self.prepare_right_to_left(id);
                     }
                 }
@@ -257,6 +258,36 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             }
         }
         root
+    }
+
+    /// Puts the items of a flex or grid container in the order that `order` gives them: the items
+    /// with a smaller `order` come first, those with the same one stay in document order. (The
+    /// out-of-flow children are no items and stay where they are.)
+    fn apply_order(&mut self, id: NodeId) {
+        let is_container = self
+            .computed_values
+            .get(self.node(id).entity)
+            .is_some_and(|style| style.box_.display.is_flex_or_grid());
+        if !is_container {
+            return;
+        }
+        let children = self.node(id).children.clone();
+        let order = |tree: &Self, child: NodeId| {
+            tree.computed_values.get(tree.node(child).entity).map_or(0, |style| style.box_.order)
+        };
+        let slots: Vec<usize> = (0..children.len())
+            .filter(|&index| self.node(children[index]).style.position != taffy::Position::Absolute)
+            .collect();
+        let mut items: Vec<NodeId> = slots.iter().map(|&index| children[index]).collect();
+        if items.iter().all(|&item| order(self, item) == 0) {
+            return;
+        }
+        items.sort_by_key(|&item| order(self, item));
+        let mut children = children;
+        for (&slot, item) in slots.iter().zip(items) {
+            children[slot] = item;
+        }
+        self.node_mut(id).children = children;
     }
 
     /// Prepares a right-to-left box with block-level children (a block, flex or grid container,
