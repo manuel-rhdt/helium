@@ -788,6 +788,6 @@ pub struct TransformBox {
     pub parent: Option<Entity>,
     pub transform: crate::style::properties::transform::Transform,
     pub origin: crate::style::properties::transform::TransformOrigin,
-    /// For the lengths in `em`.
-    pub font_size: PixelLength,
+    /// For the lengths in `em` and `rem`.
+    pub font_size: crate::style::properties::computed::FontSizes,
 }

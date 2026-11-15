@@ -150,34 +150,63 @@ impl FlowConstructor {
                     .as_ref()
                     .is_some_and(|style| style.box_.display.is_flex_or_grid());
                 let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
-                // The cascade applies rules in ascending specificity order; the stable sort keeps
-                // the source order of rules with equal specificity, so later rules still win.
+                // the root element is the one without a parent element (its parent is the document)
+                let is_root = element_ref
+                    .as_node()
+                    .parent()
+                    .map_or(true, |parent| parent.into_element_ref().is_none());
+                if is_root {
+                    style_builder = style_builder.root();
+                }
+                // The cascade applies the declarations in ascending order of priority: those of
+                // the user agent, of the author's rules, and of the `style` attribute, then the
+                // `!important` ones of the author and finally the ones of the user agent. Rules
+                // of one origin go by specificity; the stable sort keeps the source order of rules
+                // with equal specificity, so later rules still win.
                 let mut matched_rules: Vec<_> = self
                     .styles
                     .rules_iter()
-                    .filter_map(|rule| {
+                    .enumerate()
+                    .filter_map(|(index, rule)| {
                         rule.matching_specificity(element_ref)
-                            .map(|specificity| (specificity, rule))
+                            .map(|specificity| (self.styles.is_user_agent_rule(index), specificity, rule))
                     })
                     .collect();
-                matched_rules.sort_by_key(|&(specificity, _)| specificity);
-                for (_, rule) in &matched_rules {
-                    let properties = &rule.properties;
-                    for declaration in properties.declarations() {
-                        style_builder.add_declaration(declaration);
-                    }
-                }
-                // declarations in the `style` attribute override all matched rules
+                matched_rules.sort_by_key(|&(user_agent, specificity, _)| (!user_agent, specificity));
                 let inline_style = element_ref
                     .attributes
                     .borrow()
                     .get(&QualName::new(None, ns!(), local_name!("style")))
                     .map(|attr| PropertyDeclarationBlock::parse_inline(&attr.value));
-                if let Some(block) = &inline_style {
-                    for declaration in block.declarations() {
-                        style_builder.add_declaration(declaration);
+                let mut cascade = vec![];
+                for (user_agent, _, rule) in &matched_rules {
+                    if *user_agent {
+                        cascade.extend(rule.properties.normal_declarations());
                     }
                 }
+                for (user_agent, _, rule) in &matched_rules {
+                    if !*user_agent {
+                        cascade.extend(rule.properties.normal_declarations());
+                    }
+                }
+                // declarations in the `style` attribute override all matched rules
+                if let Some(block) = &inline_style {
+                    cascade.extend(block.normal_declarations());
+                }
+                for (user_agent, _, rule) in &matched_rules {
+                    if !*user_agent {
+                        cascade.extend(rule.properties.important_declarations());
+                    }
+                }
+                if let Some(block) = &inline_style {
+                    cascade.extend(block.important_declarations());
+                }
+                for (user_agent, _, rule) in &matched_rules {
+                    if *user_agent {
+                        cascade.extend(rule.properties.important_declarations());
+                    }
+                }
+                style_builder.apply_cascade(cascade.iter().copied());
                 let mut style = style_builder.build();
                 if parent_is_flex_or_grid {
                     style.blockify();
@@ -765,7 +794,7 @@ impl EntityConstructor {
                     parent: parent_scope,
                     transform: style.box_.transform.clone(),
                     origin: style.box_.transform_origin,
-                    font_size: style.font.font_size,
+                    font_size: (&*style.font).into(),
                 },
             );
             scopes.scope.insert(entity, entity);
