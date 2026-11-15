@@ -8,7 +8,7 @@ use crate::style::properties::computed::{ComputedValues, PixelLength as Px, RGBA
 use crate::style::properties::specified::{Direction, UnicodeBidi};
 
 use crate::display_list::Rect;
-use crate::layout::text::{is_invisible_formatting, shape, shape_directed_into, shape_with_levels};
+use crate::layout::text::{is_invisible_formatting, shape_directed_into, shape_with_levels, with_shaped};
 
 use components::{GlyphRange, GraphicsOp, IntrinsicSize, KernedGlyph, Position, TextOps};
 use hyphenation::{Hyphenator, Language, Load, Standard};
@@ -864,12 +864,12 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                     };
                     if !hyphenation.is_empty() {
-                        let hyphen_width = shape("-", font, &text_run.face.fallback, None)
-                            .iter()
-                            .map(|(position, _)| {
-                                font.scale_to_px(position.x_advance, text_run.face.font_size)
-                            })
-                            .fold(Px(0.0), |sum, width| sum + width);
+                        let hyphen_width = with_shaped("-", font, &text_run.face.fallback, None, |glyphs| {
+                            glyphs
+                                .iter()
+                                .map(|(position, _)| font.scale_to_px(position.x_advance, text_run.face.font_size))
+                                .fold(Px(0.0), |sum, width| sum + width)
+                        });
                         // The width of the text in front of a glyph, from the shaping of the
                         // whole run above: `(cluster, width of all glyphs before it)`.
                         let mut prefix_widths = Vec::with_capacity(shaped.len());
@@ -901,12 +901,14 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 index + prefix[index..].chars().next().map_or(1, char::len_utf8)
                             });
                             let prefix_width = width_before(word_start)
-                                + shape(&prefix[word_start..], font, &text_run.face.fallback, Some(word_start))
-                                    .iter()
-                                    .map(|(position, _)| {
-                                        font.scale_to_px(position.x_advance, text_run.face.font_size)
-                                    })
-                                    .fold(Px(0.0), |sum, width| sum + width);
+                                + with_shaped(&prefix[word_start..], font, &text_run.face.fallback, Some(word_start), |glyphs| {
+                                    glyphs
+                                        .iter()
+                                        .map(|(position, _)| {
+                                            font.scale_to_px(position.x_advance, text_run.face.font_size)
+                                        })
+                                        .fold(Px(0.0), |sum, width| sum + width)
+                                });
                             // The line after the break starts with the rest of the word, shaped
                             // alone too (its first glyph is not kerned with the last one of the
                             // line before, and a ligature across the break is split). The rest
@@ -916,12 +918,20 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 + text_run.text[char_index..]
                                     .find(char::is_whitespace)
                                     .unwrap_or(text_run.text.len() - char_index);
-                            let suffix_width = shape(&text_run.text[char_index..word_end], font, &text_run.face.fallback, Some(char_index))
-                                .iter()
-                                .map(|(position, _)| {
-                                    font.scale_to_px(position.x_advance, text_run.face.font_size)
-                                })
-                                .fold(Px(0.0), |sum, width| sum + width);
+                            let suffix_width = with_shaped(
+                                &text_run.text[char_index..word_end],
+                                font,
+                                &text_run.face.fallback,
+                                Some(char_index),
+                                |glyphs| {
+                                    glyphs
+                                        .iter()
+                                        .map(|(position, _)| {
+                                            font.scale_to_px(position.x_advance, text_run.face.font_size)
+                                        })
+                                        .fold(Px(0.0), |sum, width| sum + width)
+                                },
+                            );
                             let word_end_width = width_before(word_end);
                             break_points.push(BreakPoint {
                                 entity,

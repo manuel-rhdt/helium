@@ -157,6 +157,8 @@ struct Scratch {
     buffer: Option<UnicodeBuffer>,
     features: Vec<harfbuzz_rs::Feature>,
     spans: Vec<Span>,
+    /// The glyphs of the text that `with_shaped` measures.
+    glyphs: Vec<(GlyphPosition, GlyphInfo)>,
 }
 
 thread_local! {
@@ -176,6 +178,23 @@ pub fn shape_directed(
     let mut glyphs = Vec::new();
     shape_directed_into(text, font, fonts, at, rtl, &mut glyphs);
     glyphs
+}
+
+/// Shapes `text` like [`shape`] and calls `f` with the glyphs, for measuring text: the glyphs are
+/// in a buffer that is reused, so that measuring does not allocate. `f` must not shape text.
+pub fn with_shaped<R>(
+    text: &str,
+    font: &Font,
+    fonts: &TextFonts,
+    at: Option<usize>,
+    f: impl FnOnce(&[(GlyphPosition, GlyphInfo)]) -> R,
+) -> R {
+    let mut glyphs = SCRATCH.with(|scratch| std::mem::take(&mut scratch.borrow_mut().glyphs));
+    glyphs.clear();
+    shape_directed_into(text, font, fonts, at, false, &mut glyphs);
+    let result = f(&glyphs);
+    SCRATCH.with(|scratch| scratch.borrow_mut().glyphs = glyphs);
+    result
 }
 
 /// [`shape_directed`], appending the glyphs to `out`, whose capacity is reused.
