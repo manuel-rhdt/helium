@@ -127,8 +127,6 @@ css/CSS2/margin-padding-clear/margin-bottom-applies-to-008.xht
 css/CSS2/margin-padding-clear/margin-bottom-applies-to-013.xht
 css/CSS2/margin-padding-clear/margin-bottom-applies-to-015.xht
 css/CSS2/margin-padding-clear/margin-collapse-101.xht
-css/CSS2/margin-padding-clear/margin-collapse-115.xht
-css/CSS2/margin-padding-clear/margin-collapse-116.xht
 css/CSS2/margin-padding-clear/margin-collapse-156.xht
 css/CSS2/margin-padding-clear/margin-collapse-min-height-002.xht
 css/CSS2/margin-padding-clear/margin-inline-001.xht
@@ -411,7 +409,6 @@ css/css-lists/list-style-type-decimal-vertical-lr.html
 css/css-lists/list-style-type-decimal-vertical-rl.html
 css/css-lists/outside-marker-alignment-with-block-content.html
 css/css-lists/outside-marker-with-text-indent.html
-css/css-values/attr-in-slotted.html
 css/css-values/attr-namespace-non-existing.html
 css/css-values/attr-namespace-valid.xhtml
 css/css-values/calc-size/calc-size-flex-008.html
