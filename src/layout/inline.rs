@@ -1053,6 +1053,9 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     index += 1;
                 }
             }
+            // the vector grew by doubling: give back the unused capacity, the context keeps
+            // its break points until its line boxes are made
+            break_points.shrink_to_fit();
         }
     }
 }
@@ -1609,7 +1612,7 @@ pub struct LineBoxCreator;
 impl<'a> System<'a> for LineBoxCreator {
     type SystemData = (
         Entities<'a>,
-        ReadStorage<'a, InlineFormattingContext>,
+        WriteStorage<'a, InlineFormattingContext>,
         ReadStorage<'a, components::TextRun>,
         ReadStorage<'a, components::IntrinsicSize>,
         ReadStorage<'a, ComputedValues>,
@@ -1628,7 +1631,7 @@ impl<'a> System<'a> for LineBoxCreator {
         &mut self,
         (
             entities,
-            inline_formatting_contexts,
+            mut inline_formatting_contexts,
             text_runs,
             intrinsic_sizes,
             computed_values,
@@ -1643,7 +1646,16 @@ impl<'a> System<'a> for LineBoxCreator {
             structure,
         ): Self::SystemData,
     ) {
-        for ifc in inline_formatting_contexts.join() {
+        // The break points are only needed to make the line boxes of their context. They are
+        // freed as soon as it is done (when the next context starts), so that they are not alive
+        // together with the text of all the other contexts.
+        let contexts: Vec<Entity> = (&entities, &inline_formatting_contexts).join().map(|(entity, _)| entity).collect();
+        let mut previous: Option<Entity> = None;
+        for context in contexts {
+            if let Some(done) = previous.replace(context) {
+                inline_formatting_contexts.get_mut(done).expect("the context exists").break_points = Vec::new();
+            }
+            let ifc = inline_formatting_contexts.get(context).expect("the context exists");
             let InlineFormattingContext {
                 break_points,
                 lines,
@@ -2087,6 +2099,9 @@ impl<'a> System<'a> for LineBoxCreator {
                     )
                     .build();
             }
+        }
+        if let Some(done) = previous {
+            inline_formatting_contexts.get_mut(done).expect("the context exists").break_points = Vec::new();
         }
     }
 }
