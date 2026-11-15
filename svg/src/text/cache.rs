@@ -22,6 +22,8 @@ pub(crate) struct FontCache {
     pub(crate) fontdb: Arc<Database>,
     pub(crate) resolved: HashMap<Font, Arc<ResolvedFont>>,
     pub(crate) shaper: Option<Arc<dyn TextShaper>>,
+    /// The metrics of the faces that glyphs come from, by ID (see [`Self::resolved_by_id`]).
+    by_id: HashMap<ID, Option<Arc<ResolvedFont>>>,
     // `None` marks faces that failed to load, so they are not read again.
     loaded: HashMap<ID, Option<LoadedFont>>,
     outlines: HashMap<(ID, GlyphId), Option<tiny_skia_path::Path>>,
@@ -49,11 +51,22 @@ impl LoadedFont {
 }
 
 impl FontCache {
+    /// The metrics of the face `id`, read once.
+    pub(crate) fn resolved_by_id(&mut self, id: ID) -> Option<Arc<ResolvedFont>> {
+        if let Some(font) = self.by_id.get(&id) {
+            return font.clone();
+        }
+        let font = super::layout::resolve_font(id, &[], self).map(Arc::new);
+        self.by_id.insert(id, font.clone());
+        font
+    }
+
     pub(crate) fn new(fontdb: Arc<Database>, shaper: Option<Arc<dyn TextShaper>>) -> Self {
         Self {
             fontdb,
             resolved: HashMap::new(),
             shaper,
+            by_id: HashMap::new(),
             loaded: HashMap::new(),
             outlines: HashMap::new(),
         }

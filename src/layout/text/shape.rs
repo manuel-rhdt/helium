@@ -179,10 +179,11 @@ fn shape_runs(
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     let lang = &fonts.key.lang;
     let ligatures = fonts.letter_spacing == 0.0;
+    let toggles = Toggles { small_caps: fonts.small_caps, no_kerning: fonts.no_kerning };
     let set = font.fallback_set(&fonts.key);
     if set.fonts.is_empty() && text.is_ascii() && fonts.orientation.is_none() {
         // the script is guessed
-        return shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false);
+        return shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false, toggles);
     }
     let fallbacks = &set.fonts;
 
@@ -227,6 +228,7 @@ fn shape_runs(
                 rtl,
                 ligatures,
                 was_upright,
+                toggles,
             ));
             run_start = cluster.start;
         }
@@ -243,9 +245,17 @@ fn shape_runs(
             rtl,
             ligatures,
             upright,
+            toggles,
         ));
     }
     result
+}
+
+/// The optional OpenType features that a text turns on or off (the text of SVG images).
+#[derive(Clone, Copy)]
+struct Toggles {
+    small_caps: bool,
+    no_kerning: bool,
 }
 
 /// The character of a cluster that consists of a single white space character.
@@ -274,6 +284,7 @@ fn shape_run(
     rtl: bool,
     ligatures: bool,
     upright: bool,
+    toggles: Toggles,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     shape_single(
         text,
@@ -285,6 +296,7 @@ fn shape_run(
         rtl,
         ligatures,
         upright,
+        toggles,
     )
 }
 
@@ -301,6 +313,7 @@ fn shape_single(
     rtl: bool,
     ligatures: bool,
     upright: bool,
+    toggles: Toggles,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     // The direction is always set: harfbuzz would otherwise guess it from the script, so that
     // e.g. Hebrew text in a left-to-right run would be shaped right-to-left. The script (for
@@ -345,6 +358,12 @@ fn shape_single(
     }
     if upright {
         features.extend(vertical);
+    }
+    if toggles.small_caps {
+        features.push(harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('s', 'm', 'c', 'p'), 1, ..));
+    }
+    if toggles.no_kerning {
+        features.push(harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('k', 'e', 'r', 'n'), 0, ..));
     }
     let result = hb_shape(&font.hb_font, buffer, &features);
 

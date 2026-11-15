@@ -56,7 +56,7 @@ impl LoadedImage {
 /// The shaper of the text of SVG images, shared by all of them so that it keeps the fonts it has
 /// loaded.
 fn shaper() -> std::sync::Arc<dyn usvg::TextShaper> {
-    static SHAPER: std::sync::OnceLock<std::sync::Arc<crate::svg_text::HarfbuzzShaper>> =
+    static SHAPER: std::sync::OnceLock<std::sync::Arc<crate::svg_text::HeliumShaper>> =
         std::sync::OnceLock::new();
     SHAPER.get_or_init(Default::default).clone()
 }
@@ -70,6 +70,16 @@ fn svg_options(base_dir: &Path) -> usvg::Options<'static> {
     options.fontdb = crate::layout::text::font::svg_font_database();
     options.font_family = "serif".to_owned();
     options.text_shaper = Some(shaper());
+    // the font of a text is the one that the document would choose for it
+    options.font_resolver.select_font = Box::new(|font, _| {
+        let mut families = crate::svg_text::helium_families(font);
+        families.push(crate::style::properties::computed::FontFamily::SansSerif);
+        crate::layout::text::font::system_font_id(
+            &families,
+            &crate::style::properties::computed::FontWeight(f32::from(font.weight())),
+            &crate::svg_text::helium_style(font),
+        )
+    });
     // the size of an SVG that has none, like the default object size of CSS
     options.default_size = usvg::Size::from_wh(300.0, 150.0).unwrap();
     options.image_href_resolver.resolve_string = {

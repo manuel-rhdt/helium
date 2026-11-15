@@ -20,13 +20,16 @@ pub struct GlyphId(pub u32);
 
 /// A glyph that the [`TextShaper`] made, in logical order of the text it shaped.
 ///
-/// All values are in font units.
+/// All values are in font units of the font of the glyph.
 #[derive(Copy, Clone, Debug)]
 pub struct ShapedGlyph {
     /// The byte offset in the shaped text of the cluster that the glyph belongs to.
     pub cluster: usize,
     /// The glyph in the font.
     pub glyph_id: u32,
+    /// The face of the font database that the glyph is from. It is the requested face, unless the
+    /// shaper chooses fallback fonts (see [`TextShaper::resolves_fallback`]).
+    pub font: ID,
     /// How far the glyph is moved horizontally from the pen.
     pub x_offset: i32,
     /// How far the glyph is moved vertically from the pen.
@@ -35,26 +38,40 @@ pub struct ShapedGlyph {
     pub x_advance: i32,
 }
 
+/// What a [`TextShaper`] shapes: a text, written in one direction, and the font for it.
+#[derive(Debug)]
+pub struct ShapeRequest<'a> {
+    /// The face of the font database that was chosen for the text, which is the face `index` of
+    /// the font file `data`.
+    pub id: ID,
+    pub data: &'a [u8],
+    pub index: u32,
+    /// The font that the text asked for: the families, weight and style, which a shaper that
+    /// chooses fallback fonts needs.
+    pub font: &'a Font,
+    pub text: &'a str,
+    pub rtl: bool,
+    /// Turns the OpenType feature `smcp` on.
+    pub small_caps: bool,
+    /// Whether the OpenType feature `kern` is on.
+    pub kerning: bool,
+}
+
 /// Shapes text: turns a string and a font into positioned glyphs.
 ///
 /// This fork does not shape text itself; the caller provides the shaper, so that the text of
 /// SVG images is shaped by the same code and with the same fonts as the text around it.
 pub trait TextShaper: Send + Sync + std::fmt::Debug {
-    /// Shapes `text`, which is written in one direction (`rtl`), with the face `index` of the
-    /// font file `data`, which is the face `id` of the font database. The glyphs are returned
-    /// in the visual order of the text (left to right), each with the byte offset of its
-    /// cluster in `text`. `small_caps` and `kerning` turn the OpenType features `smcp` and
-    /// `kern` on and off.
-    fn shape(
-        &self,
-        id: ID,
-        data: &[u8],
-        index: u32,
-        text: &str,
-        rtl: bool,
-        small_caps: bool,
-        kerning: bool,
-    ) -> Option<Vec<ShapedGlyph>>;
+    /// Shapes the text of the request. The glyphs are returned in the visual order of the text
+    /// (left to right), each with the byte offset of its cluster in the text and its font.
+    fn shape(&self, request: &ShapeRequest<'_>) -> Option<Vec<ShapedGlyph>>;
+
+    /// Whether the shaper chooses the fonts for the characters that the requested font has no
+    /// glyphs for, and returns glyphs of other fonts. If not, the fork looks for fallback fonts
+    /// in the font database itself, and a glyph with the id 0 is a missing one.
+    fn resolves_fallback(&self) -> bool {
+        false
+    }
 }
 
 /// A shorthand for [FontResolver]'s font selection function.

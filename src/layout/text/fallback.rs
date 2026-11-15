@@ -84,6 +84,13 @@ impl FallbackKey {
         }
     }
 
+    /// The key of a text that is not part of the document (the text of an SVG image), from its
+    /// parts.
+    pub fn from_parts(lang: Language, families: Vec<FontFamily>, weight: FontWeight, style: FontStyle) -> Self {
+        let descriptor = format!("{}|{:?}|{:?}", format_font_family(&families), weight, style);
+        FallbackKey { lang, families: families.into(), weight, style, descriptor: descriptor.into() }
+    }
+
     fn id(&self) -> (&Language, &str) {
         (&self.lang, &self.descriptor)
     }
@@ -137,6 +144,10 @@ pub struct TextFonts {
     /// stand upright are shaped with the vertical forms of the font (see
     /// [`crate::layout::writing_mode::is_upright`]).
     pub orientation: Option<crate::style::properties::specified::TextOrientation>,
+    /// The OpenType feature `smcp` is on (the text of SVG images).
+    pub small_caps: bool,
+    /// The OpenType feature `kern` is off (the text of SVG images).
+    pub no_kerning: bool,
 }
 
 /// The bytes `start..end` of a text are rendered with the font with the index `font` (as in
@@ -151,7 +162,7 @@ pub struct FontRun {
 impl TextFonts {
     /// Fonts for text without known runs: every cluster gets the font chosen for it.
     pub fn without_runs(key: FallbackKey) -> Self {
-        TextFonts { key, runs: Arc::from([]), letter_spacing: 0.0, orientation: None }
+        TextFonts { key, runs: Arc::from([]), letter_spacing: 0.0, orientation: None, small_caps: false, no_kerning: false }
     }
 
     pub fn runs(&self) -> &[FontRun] {
@@ -492,7 +503,30 @@ impl FontResolver {
         text: &str,
         font_map: &mut FontMap,
     ) -> TextFonts {
-        let key = FallbackKey::new(style);
+        self.ensure_coverage_for(FallbackKey::new(style), Some(style), font, text, font_map)
+    }
+
+    /// Like [`ensure_coverage`](Self::ensure_coverage) for a font description that is not the
+    /// style of a box (the text of SVG images). The characters that no font covers are not
+    /// recorded as missing: there is no style to report them with.
+    pub fn ensure_coverage_for_key(
+        &mut self,
+        key: FallbackKey,
+        font: &Font,
+        text: &str,
+        font_map: &mut FontMap,
+    ) -> TextFonts {
+        self.ensure_coverage_for(key, None, font, text, font_map)
+    }
+
+    fn ensure_coverage_for(
+        &mut self,
+        key: FallbackKey,
+        style: Option<&ComputedValues>,
+        font: &Font,
+        text: &str,
+        font_map: &mut FontMap,
+    ) -> TextFonts {
         let all_clusters = clusters(text);
         for cluster in &all_clusters {
             if !cluster.text.chars().any(needs_font) {
@@ -531,7 +565,9 @@ impl FontResolver {
             }
             for (offset, ch) in cluster.text.char_indices() {
                 if needs_font(ch) && !chosen.covers(ch) {
-                    self.missing.record(ch, font, style, text, cluster.start + offset);
+                    if let Some(style) = style {
+                        self.missing.record(ch, font, style, text, cluster.start + offset);
+                    }
                 }
             }
         }
@@ -562,7 +598,7 @@ impl FontResolver {
         if runs.iter().all(|run| run.font == 0) {
             runs.clear();
         }
-        TextFonts { key, runs: runs.into(), letter_spacing: 0.0, orientation: None }
+        TextFonts { key, runs: runs.into(), letter_spacing: 0.0, orientation: None, small_caps: false, no_kerning: false }
     }
 
     /// The characters that could not be rendered with any font.
@@ -1315,6 +1351,8 @@ mod tests {
             ]),
             letter_spacing: 0.0,
             orientation: None,
+            small_caps: false,
+            no_kerning: false,
         };
         assert_eq!(fonts.font_at(0), Some(0));
         assert_eq!(fonts.font_at(2), Some(0));
