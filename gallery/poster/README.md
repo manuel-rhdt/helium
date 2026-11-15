@@ -46,4 +46,6 @@ a flex container (`flex-direction: column; flex-wrap: wrap; justify-content: spa
 that there is no empty space under the short ones. There are six columns on each page, so the
 tiles are wider and show more text than in the grid. The order runs down the columns, from the left.
 The page break between the two pages is chosen from the measured heights of the tiles.
-`scripts-poster-masonry.pdf` is the result.
+The text of each specimen and its label are tinted by the date of the script, from umber for the
+oldest through brick, plum and indigo to teal for the newest, darkened towards the ink so that
+the text stays as dark as before. `scripts-poster-masonry.pdf` is the result.
