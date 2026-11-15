@@ -180,17 +180,25 @@ fn shape_runs(
     let lang = &fonts.key.lang;
     let ligatures = fonts.letter_spacing == 0.0;
     let set = font.fallback_set(&fonts.key);
-    if set.fonts.is_empty() && text.is_ascii() {
+    if set.fonts.is_empty() && text.is_ascii() && fonts.orientation.is_none() {
         // the script is guessed
-        return shape_single(text, font, lang, None, 0, 0, rtl, ligatures);
+        return shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false);
     }
     let fallbacks = &set.fonts;
 
     let mut result = Vec::with_capacity(text.len());
     let mut run_start = 0;
     // The font index and the script of the current run
-    let mut run: Option<(u16, Script)> = None;
+    let mut run: Option<(u16, Script, bool)> = None;
     for cluster in clusters(text) {
+        // in vertical lines: whether the characters stand upright, which changes their glyphs
+        let upright = fonts.orientation.is_some_and(|orientation| {
+            cluster
+                .text
+                .chars()
+                .next()
+                .is_some_and(|ch| crate::layout::writing_mode::is_upright(ch, orientation))
+        });
         let from_runs = at
             .and_then(|at| fonts.font_at(at + cluster.start))
             .filter(|&index| index as usize <= fallbacks.len());
@@ -198,7 +206,7 @@ fn shape_runs(
             (Some(index), _) => index,
             // Spaces stay in the current run (if its font has them) so that a run of fallback
             // characters is not split at every space.
-            (None, Some((current, _)))
+            (None, Some((current, _, _)))
                 if single_space(cluster.text)
                     .is_some_and(|space| font_at(font, fallbacks, current).covers(space)) =>
             {
@@ -206,8 +214,8 @@ fn shape_runs(
             }
             (None, _) => set.index_for(font, cluster.text, cluster.script),
         };
-        if let Some((current, script)) = run
-            && (current != ch_font || script != cluster.script)
+        if let Some((current, script, was_upright)) = run
+            && (current != ch_font || script != cluster.script || was_upright != upright)
         {
             result.extend(shape_run(
                 &text[run_start..cluster.start],
@@ -218,21 +226,23 @@ fn shape_runs(
                 (current, script),
                 rtl,
                 ligatures,
+                was_upright,
             ));
             run_start = cluster.start;
         }
-        run = Some((ch_font, cluster.script));
+        run = Some((ch_font, cluster.script, upright));
     }
-    if let Some(current) = run {
+    if let Some((index, script, upright)) = run {
         result.extend(shape_run(
             &text[run_start..],
             run_start,
             font,
             lang,
             fallbacks,
-            current,
+            (index, script),
             rtl,
             ligatures,
+            upright,
         ));
     }
     result
@@ -263,6 +273,7 @@ fn shape_run(
     (font_index, script): (u16, Script),
     rtl: bool,
     ligatures: bool,
+    upright: bool,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     shape_single(
         text,
@@ -273,6 +284,7 @@ fn shape_run(
         font_index,
         rtl,
         ligatures,
+        upright,
     )
 }
 
@@ -288,6 +300,7 @@ fn shape_single(
     font_index: u16,
     rtl: bool,
     ligatures: bool,
+    upright: bool,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     // The direction is always set: harfbuzz would otherwise guess it from the script, so that
     // e.g. Hebrew text in a left-to-right run would be shaped right-to-left. The script (for
@@ -320,8 +333,20 @@ fn shape_single(
         harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('l', 'i', 'g', 'a'), 0, ..),
         harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('c', 'l', 'i', 'g'), 0, ..),
     ];
-    let features: &[harfbuzz_rs::Feature] = if ligatures { &[] } else { &no_ligatures };
-    let result = hb_shape(&font.hb_font, buffer, features);
+    // Characters that stand upright in vertical lines use the glyphs that the font has for them
+    // (rotated punctuation, small kana, ...).
+    let vertical = [
+        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('v', 'e', 'r', 't'), 1, ..),
+        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('v', 'r', 't', '2'), 1, ..),
+    ];
+    let mut features: Vec<harfbuzz_rs::Feature> = vec![];
+    if !ligatures {
+        features.extend(no_ligatures);
+    }
+    if upright {
+        features.extend(vertical);
+    }
+    let result = hb_shape(&font.hb_font, buffer, &features);
 
     let scale = |val| FontUnit(val as f64 * (1000f64 / font.upem as f64));
 

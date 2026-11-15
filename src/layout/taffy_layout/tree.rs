@@ -26,7 +26,8 @@ use crate::layout::inline::InlineFormattingContext;
 use crate::layout::normal_formatting::BlockFormattingContext;
 use crate::style::properties::computed::{ComputedValues, PixelLength};
 
-use super::style::{is_out_of_flow, taffy_style};
+use super::style::{is_out_of_flow, taffy_style_in};
+use crate::layout::writing_mode::Flow;
 use super::table::{GridTracks, TableStructure};
 use taffy::DetailedGridInfo;
 
@@ -48,7 +49,17 @@ pub(super) enum Content {
 #[derive(Debug)]
 pub(super) struct Node {
     pub entity: Entity,
+    /// The style in the logical axes of the flow of the node (see `flow`): the one that the
+    /// box is laid out with, as a container and as an item of a container of the same flow.
     pub style: taffy::Style,
+    /// The flow of the content of the box: `writing-mode`.
+    pub flow: Flow,
+    /// Whether the flow of the box is vertical when the one of its parent is horizontal, or the
+    /// other way round: an orthogonal flow. It is laid out on its own, with the available space
+    /// of its parent turned around, and its parent sees it with `item_style`.
+    pub orthogonal: bool,
+    /// The style of an orthogonal flow in the logical axes of its parent.
+    pub item_style: Option<taffy::Style>,
     pub content: Content,
     /// The children of the node in document order, including the out-of-flow ones. A node with
     /// inline content only has out-of-flow children.
@@ -101,15 +112,51 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         &mut self.nodes[usize::from(id)]
     }
 
+    /// The style of a box as an item of its parent: in the logical axes of the parent.
+    fn item_style(&self, id: NodeId) -> &taffy::Style {
+        let node = self.node(id);
+        node.item_style.as_ref().unwrap_or(&node.style)
+    }
+
+    /// Finds the orthogonal flows in the tree below `id` (which is laid out in `parent`'s flow):
+    /// a box whose flow is vertical in a horizontal one, or horizontal in a vertical one.
+    pub(super) fn mark_orthogonal(&mut self, id: NodeId, parent: Flow) {
+        let flow = self.node(id).flow;
+        if flow.is_vertical() != parent.is_vertical() {
+            let entity = self.node(id).entity;
+            let item = self
+                .computed_values
+                .get(entity)
+                .map(|style| taffy_style_in(style, parent));
+            let node = self.node_mut(id);
+            node.orthogonal = true;
+            node.item_style = item;
+        }
+        for child in self.node(id).children.clone() {
+            self.mark_orthogonal(child, flow);
+        }
+        // the `inline-block` boxes of the lines of the box
+        for atom in self.node(id).atoms.clone() {
+            self.mark_orthogonal(atom, flow);
+        }
+    }
+
     pub(super) fn new_node(&mut self, entity: Entity, content: Content) -> NodeId {
+        let flow = self
+            .computed_values
+            .get(entity)
+            .map_or(Flow::default(), |style| Flow::from(style.text.writing_mode));
         let style = self
             .computed_values
             .get(entity)
-            .map(taffy_style)
+            .map(|style| taffy_style_in(style, flow))
             .unwrap_or_default();
         self.nodes.push(Node {
             entity,
             style,
+            flow,
+            orthogonal: false,
+            item_style: None,
             content,
             children: vec![],
             atoms: vec![],
@@ -211,7 +258,8 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             style.text.direction == crate::style::properties::specified::Direction::Rtl
         });
         let has_block_children = matches!(node.content, Content::Blocks | Content::Table);
-        if !rtl || !has_block_children {
+        // in a vertical flow, `direction` would run the lines upwards, which is not supported
+        if !rtl || !has_block_children || node.flow.is_vertical() {
             return;
         }
         self.node_mut(id).mirror_rtl = true;
@@ -273,7 +321,9 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             node.style.item_is_replaced = replaced;
             // An image keeps its proportions when only one of its sides is given.
             if let Some((width, height)) = image.filter(|&(w, h)| w > 0.0 && h > 0.0) {
-                node.style.aspect_ratio = Some(width / height);
+                // the ratio of the logical sides: turned around in a vertical flow
+                let (inline, block) = node.flow.swap((width, height));
+                node.style.aspect_ratio = Some(inline / block);
             }
             return;
         };
@@ -353,7 +403,7 @@ impl HeliumTree<'_, '_> {
     ///
     /// https://www.w3.org/TR/CSS22/visudet.html#inlineblock-width
     fn layout_atom(&mut self, atom: NodeId, line_width: f32) {
-        let style = &self.node(atom).style;
+        let style = self.item_style(atom);
         // `auto` margins are 0
         let margin = style.margin.resolve_or_zero(Some(line_width), calc);
         let available = (line_width - margin.horizontal_axis_sum()).max(0.0);
@@ -415,7 +465,7 @@ impl HeliumTree<'_, '_> {
             );
         }
 
-        let style = &self.node(atom).style;
+        let style = self.item_style(atom);
         let layout = Layout {
             location: Point {
                 x: margin.left,
@@ -593,6 +643,8 @@ impl HeliumTree<'_, '_> {
             }
             (w, h)
         });
+        // the size of an image is physical: in a vertical flow the width is the block size
+        let image = image.map(|size| node.flow.swap(size));
         let intrinsic = if image.is_some() {
             None
         } else {
@@ -611,6 +663,39 @@ impl HeliumTree<'_, '_> {
         }
         output
     }
+}
+
+/// The input of the layout of an orthogonal flow, seen from the flow itself: the axes turned
+/// around.
+fn transpose_input(inputs: LayoutInput) -> LayoutInput {
+    fn swap<T>(size: Size<T>) -> Size<T> {
+        Size { width: size.height, height: size.width }
+    }
+    LayoutInput {
+        run_mode: inputs.run_mode,
+        sizing_mode: inputs.sizing_mode,
+        axis: match inputs.axis {
+            RequestedAxis::Horizontal => RequestedAxis::Vertical,
+            RequestedAxis::Vertical => RequestedAxis::Horizontal,
+            RequestedAxis::Both => RequestedAxis::Both,
+        },
+        known_dimensions: swap(inputs.known_dimensions),
+        known_dimensions_are_definite: swap(inputs.known_dimensions_are_definite),
+        parent_size: swap(inputs.parent_size),
+        available_space: swap(inputs.available_space),
+        // an orthogonal flow is a formatting context of its own: nothing collapses through it
+        vertical_margins_are_collapsible: Line::FALSE,
+    }
+}
+
+/// The result of the layout of an orthogonal flow, seen from its parent.
+fn transpose_output(output: &mut LayoutOutput) {
+    output.size = Size { width: output.size.height, height: output.size.width };
+    // the baselines and the margins are in the axes of the flow
+    output.baselines = Baselines::NONE;
+    output.top_margin = taffy::CollapsibleMarginSet::ZERO;
+    output.bottom_margin = taffy::CollapsibleMarginSet::ZERO;
+    output.margins_can_collapse_through = false;
 }
 
 // --- Taffy traits ---
@@ -665,6 +750,10 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
             return compute_hidden_layout(self, id);
         }
         compute_cached_layout(self, id, inputs, |tree, id, inputs| {
+            // An orthogonal flow is laid out in its own axes: its parent's available space is
+            // turned around, and so is the result.
+            let orthogonal = tree.node(id).orthogonal;
+            let inputs = if orthogonal { transpose_input(inputs) } else { inputs };
             let mut output = match tree.node(id).content {
                 Content::Blocks => {
                     let output = match tree.node(id).style.display {
@@ -685,6 +774,9 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
             if inputs.run_mode == RunMode::PerformLayout {
                 compute_oof_layout(tree, id, &mut output);
             }
+            if orthogonal {
+                transpose_output(&mut output);
+            }
             output
         })
     }
@@ -697,7 +789,7 @@ impl LayoutContainingBlock for HeliumTree<'_, '_> {
         Self: 't;
 
     fn get_oof_item_style(&self, id: NodeId) -> Self::OofItemStyle<'_> {
-        &self.node(id).style
+        self.item_style(id)
     }
 
     fn clear_hoisted_children(&mut self, id: NodeId) {
@@ -738,7 +830,7 @@ impl LayoutBlockContainer for HeliumTree<'_, '_> {
     }
 
     fn get_block_child_style(&self, id: NodeId) -> Self::BlockItemStyle<'_> {
-        &self.node(id).style
+        self.item_style(id)
     }
 }
 
@@ -757,7 +849,7 @@ impl LayoutFlexboxContainer for HeliumTree<'_, '_> {
     }
 
     fn get_flexbox_child_style(&self, id: NodeId) -> Self::FlexboxItemStyle<'_> {
-        &self.node(id).style
+        self.item_style(id)
     }
 }
 
@@ -776,7 +868,7 @@ impl LayoutGridContainer for HeliumTree<'_, '_> {
     }
 
     fn get_grid_child_style(&self, id: NodeId) -> Self::GridItemStyle<'_> {
-        &self.node(id).style
+        self.item_style(id)
     }
 
     fn set_detailed_grid_info(&mut self, id: NodeId, info: DetailedGridInfo<String>) {

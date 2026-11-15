@@ -642,7 +642,7 @@ impl<'world> System<'world> for Paginator {
         for group in absolute_groups
             .groups
             .iter()
-            .filter(|group| group.owner.is_none())
+            .filter(|group| group.owner.is_none() && group.anchor.is_none())
         {
             let page = group
                 .containing_block

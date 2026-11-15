@@ -683,6 +683,10 @@ pub struct AbsoluteGroup {
     pub owner: Option<Entity>,
     /// The group that was open when this group was created.
     pub parent: Option<usize>,
+    /// The box that the group is the content of, which is a leaf of the main flow (an orthogonal
+    /// flow), and where its content box was when the group was written. The group moves to
+    /// the final place of the box when it is known.
+    pub anchor: Option<(Entity, taffy::geometry::Point<f32>)>,
 }
 
 /// All groups of absolutely positioned boxes. A group always comes after the group of its

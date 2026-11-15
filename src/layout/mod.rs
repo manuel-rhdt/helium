@@ -15,6 +15,7 @@ pub(crate) mod paragraph;
 mod relative_positioning;
 mod taffy_layout;
 pub mod text;
+pub mod writing_mode;
 
 use crate::PixelLength;
 use crate::layout::components::{
@@ -339,6 +340,7 @@ pub fn layout(
     let mut place_inline_blocks = inline::PlaceInlineBlocks;
     place_inline_blocks.setup(&mut layout_context);
     place_inline_blocks.run_now(&layout_context);
+    writing_mode::PlaceAnchoredGroups.run_now(&layout_context);
 
     let mut line_box_creator = inline::LineBoxCreator;
     line_box_creator.setup(&mut layout_context);
@@ -483,6 +485,7 @@ fn run_island_passes(world: &mut World, width: PixelLength, height: PixelLength)
     let mut place_inline_blocks = inline::PlaceInlineBlocks;
     place_inline_blocks.setup(world);
     place_inline_blocks.run_now(world);
+    writing_mode::PlaceAnchoredGroups.run_now(world);
 
     let mut line_box_creator = inline::LineBoxCreator;
     line_box_creator.setup(world);

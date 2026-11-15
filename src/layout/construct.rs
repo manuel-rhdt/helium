@@ -810,6 +810,9 @@ impl EntityConstructor {
         if font_size > 0.0 {
             fonts.letter_spacing = style.text.letter_spacing.0 / font_size * 1000.0;
         }
+        if style.text.writing_mode != crate::style::properties::specified::WritingMode::HorizontalTb {
+            fonts.orientation = Some(style.text.text_orientation);
+        }
         fonts
     }
 
