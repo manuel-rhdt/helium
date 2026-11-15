@@ -5,8 +5,14 @@
 //! PDF has an equivalent for is drawn as vector graphics: paths with fills and strokes, solid
 //! colors, linear and radial gradients (also with the repeat and reflect spread methods),
 //! patterns, clip paths, masks, group opacity, blend modes and embedded JPEG and PNG images.
-//! Text is drawn as outlines (`usvg` converts it). Filters are not supported and are ignored;
-//! neither is the opacity of gradient stops.
+//! Text is shown with the embedded fonts of the document where possible. Filters are not
+//! supported and are ignored; neither is the opacity of gradient stops.
+//!
+//! The output is kept small: the writer tracks the graphics state, so colors, alpha values and
+//! line styles are only set when they change and paths need no `q`/`Q` of their own; groups with
+//! opacity, masks or blend modes only become a form (a transparency group) where the result
+//! depends on it; gradient fills share one shading per gradient; masks, tiling patterns and
+//! images that are used again are written once.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Result;
@@ -17,7 +23,7 @@ use lemon_pdf::graphics_state::{BlendMode, ExtGState, FillRule, LineCap, LineJoi
 use lemon_pdf::image::{ColorSpace, ImageXObject};
 use lemon_pdf::object::IndirectReference;
 use lemon_pdf::shading::{
-    AxialShading, Circle, ColorStop, Gradient, Point, RadialShading, Rgb, ShadingPattern,
+    AxialShading, Circle, ColorStop, Gradient, Point, RadialShading, Rgb, Shading, ShadingPattern,
 };
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::content::PageContext;
@@ -30,6 +36,46 @@ use crate::image::RasterImage;
 /// The most repetitions of a gradient that are written out (spread methods `repeat` and
 /// `reflect`).
 const MAX_PERIODS: i64 = 256;
+
+/// The most children of a group with opacity that are checked for overlapping (see
+/// `SvgWriter::is_flat`).
+const MAX_FLAT_CHILDREN: usize = 128;
+
+/// A color of the graphics state, as far as the writer knows it.
+#[derive(Clone, PartialEq)]
+enum PaintKey {
+    Rgb([u8; 3]),
+    Pattern(lemon_pdf::object::Name),
+}
+
+/// What the writer knows of the graphics state of the content stream it is writing (`None` is
+/// unknown). `q` and `Q` push and pop it, like in the stream.
+#[derive(Clone, Default)]
+struct Tracked {
+    fill: Option<PaintKey>,
+    stroke: Option<PaintKey>,
+    fill_alpha: Option<f64>,
+    stroke_alpha: Option<f64>,
+    width: Option<f32>,
+    cap: Option<usvg::LineCap>,
+    join: Option<usvg::LineJoin>,
+    miter: Option<f32>,
+    /// The dash array and the phase; an empty array is a solid line.
+    dash: Option<(Vec<f32>, f32)>,
+}
+
+impl Tracked {
+    /// The state at the start of a form or pattern: opaque and solid. (The colors and line
+    /// widths are inherited from where the form is painted, so they are not known.)
+    fn start() -> Self {
+        Tracked {
+            fill_alpha: Some(1.0),
+            stroke_alpha: Some(1.0),
+            dash: Some((Vec::new(), 0.0)),
+            ..Tracked::default()
+        }
+    }
+}
 
 /// Writes the SVG images of a document. Raster images that are used by several SVG images are
 /// embedded once.
@@ -49,6 +95,16 @@ pub struct SvgWriter {
     /// The colour glyphs (emoji) of the document, which `pdf::color_glyph` paints for the text of
     /// the page too.
     color_glyphs: std::rc::Rc<std::cell::RefCell<crate::pdf::color_glyph::ColorGlyphs>>,
+    /// The graphics states of the content streams that are being written (the innermost last);
+    /// each has one entry per `q` that is open.
+    states: Vec<Vec<Tracked>>,
+    /// The opacity of the groups that are drawn without a transparency group of their own: it
+    /// multiplies the opacity of what they contain.
+    alpha: f64,
+    /// The tiling patterns and masks of the tree that is being written, by the address of the
+    /// `usvg` object (and the transformation for the patterns), for the ones that are used again.
+    tilings: HashMap<(usize, [u32; 6]), IndirectReference<lemon_pdf::pattern::TilingPattern>>,
+    masks: HashMap<usize, FormReference>,
 }
 
 fn matrix(t: Transform) -> Matrix {
@@ -115,25 +171,25 @@ fn emit_path(c: &mut PageContext<'_, '_, '_>, path: &tiny_skia_path::Path, t: Tr
     Ok(())
 }
 
-/// Sets the line width, caps, joins and dashes of a stroke.
-fn stroke_style(c: &mut PageContext<'_, '_, '_>, stroke: &usvg::Stroke) -> Result<()> {
-    c.line_width(Pt(f64::from(stroke.width().get())))?;
-    c.line_cap(match stroke.linecap() {
-        usvg::LineCap::Butt => LineCap::Butt,
-        usvg::LineCap::Round => LineCap::Round,
-        usvg::LineCap::Square => LineCap::ProjectingSquare,
-    })?;
-    c.line_join(match stroke.linejoin() {
-        usvg::LineJoin::Miter | usvg::LineJoin::MiterClip => LineJoin::Miter,
-        usvg::LineJoin::Round => LineJoin::Round,
-        usvg::LineJoin::Bevel => LineJoin::Bevel,
-    })?;
-    c.miter_limit(f64::from(stroke.miterlimit().get()))?;
-    if let Some(dashes) = stroke.dasharray() {
-        let dashes: Vec<Pt> = dashes.iter().map(|&d| Pt(f64::from(d))).collect();
-        c.dash_pattern(&dashes, Pt(f64::from(stroke.dashoffset())))?;
+/// Whether the path is made of straight segments that all lie on one line, so that it encloses
+/// nothing. (Some viewers paint a hairline for the fill of such a path.)
+fn is_line(path: &tiny_skia_path::Path) -> bool {
+    let mut points = path.points().iter().copied();
+    let Some(first) = points.next() else {
+        return true;
+    };
+    if path.segments().any(|segment| matches!(segment, PathSegment::QuadTo(..) | PathSegment::CubicTo(..))) {
+        return false;
     }
-    Ok(())
+    let Some(second) = points.clone().find(|p| *p != first) else {
+        return true;
+    };
+    let (dx, dy) = (second.x - first.x, second.y - first.y);
+    let length_squared = dx * dx + dy * dy;
+    points.all(|p| {
+        let cross = dx * (p.y - first.y) - dy * (p.x - first.x);
+        cross * cross <= 1e-10 * length_squared * length_squared
+    })
 }
 
 fn fill_rule(rule: usvg::FillRule) -> FillRule {
@@ -185,6 +241,10 @@ impl SvgWriter {
             font_names: HashMap::new(),
             fonts: HashMap::new(),
             color_glyphs: Default::default(),
+            states: Vec::new(),
+            alpha: 1.0,
+            tilings: HashMap::new(),
+            masks: HashMap::new(),
         }
     }
 
@@ -215,6 +275,119 @@ impl SvgWriter {
         self.islands.insert(handle, form);
     }
 
+    /// The state of the content stream that is being written.
+    fn state(&mut self) -> &mut Tracked {
+        self.states
+            .last_mut()
+            .and_then(|stack| stack.last_mut())
+            .expect("a content stream is being written")
+    }
+
+    /// Runs `write`, which writes a form or pattern (a content stream with a graphics state of
+    /// its own), with the state of a new content stream.
+    fn in_stream<T>(&mut self, write: impl FnOnce(&mut Self) -> T) -> T {
+        self.states.push(vec![Tracked::start()]);
+        let outer = std::mem::replace(&mut self.alpha, 1.0);
+        let result = write(self);
+        self.alpha = outer;
+        self.states.pop();
+        result
+    }
+
+    /// `q`
+    fn save(&mut self, c: &mut PageContext<'_, '_, '_>) -> Result<()> {
+        c.save_graphics_state()?;
+        let state = self.state().clone();
+        self.states.last_mut().expect("a content stream is being written").push(state);
+        Ok(())
+    }
+
+    /// `Q`
+    fn restore(&mut self, c: &mut PageContext<'_, '_, '_>) -> Result<()> {
+        self.states.last_mut().expect("a content stream is being written").pop();
+        c.restore_graphics_state()
+    }
+
+    fn set_paint_key(&mut self, c: &mut PageContext<'_, '_, '_>, key: PaintKey, stroke: bool) -> Result<()> {
+        let state = self.state();
+        let known = if stroke { &mut state.stroke } else { &mut state.fill };
+        if known.as_ref() == Some(&key) {
+            return Ok(());
+        }
+        *known = Some(key.clone());
+        match (key, stroke) {
+            (PaintKey::Rgb([r, g, b]), false) => {
+                c.device_rgb_fill_color(channel(r), channel(g), channel(b))
+            }
+            (PaintKey::Rgb([r, g, b]), true) => {
+                c.device_rgb_stroke_color(channel(r), channel(g), channel(b))
+            }
+            (PaintKey::Pattern(name), false) => c.set_fill_pattern(&name),
+            (PaintKey::Pattern(name), true) => c.set_stroke_pattern(&name),
+        }
+    }
+
+    fn set_color(&mut self, c: &mut PageContext<'_, '_, '_>, color: usvg::Color, stroke: bool) -> Result<()> {
+        self.set_paint_key(c, PaintKey::Rgb([color.red, color.green, color.blue]), stroke)
+    }
+
+    /// Sets the opacity of fills (and text, images and forms) or strokes.
+    fn set_alpha(&mut self, c: &mut PageContext<'_, '_, '_>, alpha: f64, stroke: bool) -> Result<()> {
+        let state = self.state();
+        let known = if stroke { &mut state.stroke_alpha } else { &mut state.fill_alpha };
+        if *known == Some(alpha) {
+            return Ok(());
+        }
+        *known = Some(alpha);
+        if stroke {
+            c.set_stroke_alpha(alpha)
+        } else {
+            c.set_fill_alpha(alpha)
+        }
+    }
+
+    /// Sets the line width, caps, joins and dashes of a stroke.
+    fn set_stroke_style(&mut self, c: &mut PageContext<'_, '_, '_>, stroke: &usvg::Stroke) -> Result<()> {
+        let state = self.state();
+        let width = stroke.width().get();
+        if state.width != Some(width) {
+            state.width = Some(width);
+            c.line_width(Pt(f64::from(width)))?;
+        }
+        let state = self.state();
+        if state.cap != Some(stroke.linecap()) {
+            state.cap = Some(stroke.linecap());
+            c.line_cap(match stroke.linecap() {
+                usvg::LineCap::Butt => LineCap::Butt,
+                usvg::LineCap::Round => LineCap::Round,
+                usvg::LineCap::Square => LineCap::ProjectingSquare,
+            })?;
+        }
+        let state = self.state();
+        if state.join != Some(stroke.linejoin()) {
+            state.join = Some(stroke.linejoin());
+            c.line_join(match stroke.linejoin() {
+                usvg::LineJoin::Miter | usvg::LineJoin::MiterClip => LineJoin::Miter,
+                usvg::LineJoin::Round => LineJoin::Round,
+                usvg::LineJoin::Bevel => LineJoin::Bevel,
+            })?;
+        }
+        let state = self.state();
+        let miter = stroke.miterlimit().get();
+        if state.miter != Some(miter) {
+            state.miter = Some(miter);
+            c.miter_limit(f64::from(miter))?;
+        }
+        let state = self.state();
+        let dash = (stroke.dasharray().map(<[f32]>::to_vec).unwrap_or_default(), stroke.dashoffset());
+        if state.dash.as_ref() != Some(&dash) {
+            let dashes: Vec<Pt> = dash.0.iter().map(|&d| Pt(f64::from(d))).collect();
+            c.dash_pattern(&dashes, Pt(f64::from(dash.1)))?;
+            state.dash = Some(dash);
+        }
+        Ok(())
+    }
+
     fn warn(&mut self, message: &'static str) {
         if self.warned.insert(message) {
             log::warn!("SVG: {}", message);
@@ -231,8 +404,82 @@ impl SvgWriter {
         let size = tree.size();
         let bbox = [Pt(0.0), Pt(0.0), Pt(f64::from(size.width())), Pt(f64::from(size.height()))];
         let filter = self.filter;
-        context.write_form(bbox, None, filter, |form| {
-            self.draw_group(form, tree.root(), Transform::identity())
+        // the addresses of the objects of an earlier tree may be used again
+        self.tilings.clear();
+        self.masks.clear();
+        let form = context.write_form(bbox, None, filter, |form| {
+            self.in_stream(|this| this.draw_group(form, tree.root(), Transform::identity()))
+        });
+        self.tilings.clear();
+        self.masks.clear();
+        form
+    }
+
+    /// Whether the group can be painted without a transparency group although it has an opacity,
+    /// a mask or a blend mode. That is the case if everything in it is painted once and in a
+    /// single operation, and nothing overlaps: opacity, mask and blend mode of the group then
+    /// give the same result when they are applied to every object on its own. It holds for a
+    /// group with a single path (with a fill or a stroke, not both), and for paths and images
+    /// whose bounding boxes are apart.
+    fn is_flat(group: &usvg::Group) -> bool {
+        fn collect(group: &usvg::Group, boxes: &mut Vec<usvg::tiny_skia_path::Rect>) -> bool {
+            for child in group.children() {
+                let bounds = match child {
+                    Node::Path(path) => {
+                        if !path.is_visible() {
+                            continue;
+                        }
+                        if path.fill().is_some() && path.stroke().is_some() {
+                            return false;
+                        }
+                        path.abs_stroke_bounding_box()
+                    }
+                    Node::Image(image) => {
+                        if !image.is_visible() {
+                            continue;
+                        }
+                        match image.kind() {
+                            usvg::ImageKind::JPEG(_) | usvg::ImageKind::PNG(_) => {
+                                Some(image.abs_bounding_box())
+                            }
+                            _ => return false,
+                        }
+                    }
+                    Node::Group(inner) => {
+                        let plain = inner.filters().is_empty()
+                            && inner.opacity().get() >= 1.0
+                            && inner.mask().is_none()
+                            && inner.blend_mode() == usvg::BlendMode::Normal;
+                        if !plain || !collect(inner, boxes) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    Node::Text(_) | Node::Foreign(_) => return false,
+                };
+                match bounds {
+                    Some(bounds) => boxes.push(bounds),
+                    None => return false,
+                }
+                if boxes.len() > MAX_FLAT_CHILDREN {
+                    return false;
+                }
+            }
+            true
+        }
+        let mut boxes = Vec::new();
+        if !collect(group, &mut boxes) {
+            return false;
+        }
+        // a margin for the antialiased edges
+        const MARGIN: f32 = 0.5;
+        boxes.iter().enumerate().all(|(i, a)| {
+            boxes[i + 1..].iter().all(|b| {
+                a.right() + MARGIN <= b.left()
+                    || b.right() + MARGIN <= a.left()
+                    || a.bottom() + MARGIN <= b.top()
+                    || b.bottom() + MARGIN <= a.top()
+            })
         })
     }
 
@@ -256,14 +503,45 @@ impl SvgWriter {
                 BlendMode::Normal
             }
         };
-        let layer = opacity < 1.0 || group.mask().is_some() || blend != BlendMode::Normal;
+        let effects = opacity < 1.0 || group.mask().is_some() || blend != BlendMode::Normal;
+        let flat = effects && Self::is_flat(group);
 
-        c.save_graphics_state()?;
+        // a group that changes nothing in the graphics state needs no `q` and `Q`; the opacity of
+        // a flat group is the writer's own business
+        let scoped = !group.transform().is_identity()
+            || group.clip_path().is_some()
+            || (effects && (!flat || group.mask().is_some() || blend != BlendMode::Normal));
+        if scoped {
+            self.save(c)?;
+        }
         concat(c, group.transform())?;
         if let Some(clip) = group.clip_path() {
             self.apply_clip(c, clip, Transform::identity())?;
         }
-        if layer {
+        if flat {
+            // the mask and blend mode stay in the graphics state; the opacity is the one of
+            // everything that is drawn
+            if group.mask().is_some() || blend != BlendMode::Normal {
+                let mut state = ExtGState::new();
+                if blend != BlendMode::Normal {
+                    state = state.with_blend_mode(blend);
+                }
+                if let Some(mask) = group.mask() {
+                    let mask_form = self.write_mask(c, mask)?;
+                    state = state.with_soft_mask(match mask.kind() {
+                        usvg::MaskType::Luminance => SoftMask::luminosity(mask_form),
+                        usvg::MaskType::Alpha => SoftMask::alpha(mask_form),
+                    });
+                }
+                c.apply_ext_gstate(state)?;
+            }
+            let outer = self.alpha;
+            self.alpha *= opacity;
+            for child in group.children() {
+                self.draw_node(c, child, ctm)?;
+            }
+            self.alpha = outer;
+        } else if effects {
             // the group is composited as a whole: opacity, mask and blend mode apply to the
             // result and not to the children
             if let Some(bbox) = group.layer_bounding_box() {
@@ -278,10 +556,12 @@ impl SvgWriter {
                     Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
                     filter,
                     |form| {
-                        for child in group.children() {
-                            self.draw_node(form, child, Transform::identity())?;
-                        }
-                        Ok(())
+                        self.in_stream(|this| {
+                            for child in group.children() {
+                                this.draw_node(form, child, Transform::identity())?;
+                            }
+                            Ok(())
+                        })
                     },
                 )?;
                 let mut state = ExtGState::new();
@@ -307,16 +587,23 @@ impl SvgWriter {
                 self.draw_node(c, child, ctm)?;
             }
         }
-        c.restore_graphics_state()
+        if scoped {
+            self.restore(c)?;
+        }
+        Ok(())
     }
 
     /// The group of a soft mask: the content of the mask in the coordinate system that is
-    /// current while the mask is applied.
+    /// current while the mask is applied. A mask that several groups use is written once.
     fn write_mask(
         &mut self,
         c: &mut PageContext<'_, '_, '_>,
         mask: &usvg::Mask,
     ) -> Result<FormReference> {
+        let address = mask as *const usvg::Mask as usize;
+        if let Some(&form) = self.masks.get(&address) {
+            return Ok(form);
+        }
         let rect = mask.rect();
         let bbox = [
             Pt(f64::from(rect.left())),
@@ -329,17 +616,21 @@ impl SvgWriter {
             usvg::MaskType::Alpha => ColorSpace::DeviceRGB,
         });
         let filter = self.filter;
-        c.pdf_context.write_form(bbox, Some(group), filter, |form| {
-            if let Some(inner) = mask.mask() {
-                // a mask of the mask: it limits the content that makes the mask
-                let inner_form = self.write_mask(form, inner)?;
-                form.apply_ext_gstate(ExtGState::new().with_soft_mask(match inner.kind() {
-                    usvg::MaskType::Luminance => SoftMask::luminosity(inner_form),
-                    usvg::MaskType::Alpha => SoftMask::alpha(inner_form),
-                }))?;
-            }
-            self.draw_group(form, mask.root(), Transform::identity())
-        })
+        let form = c.pdf_context.write_form(bbox, Some(group), filter, |form| {
+            self.in_stream(|this| {
+                if let Some(inner) = mask.mask() {
+                    // a mask of the mask: it limits the content that makes the mask
+                    let inner_form = this.write_mask(form, inner)?;
+                    form.apply_ext_gstate(ExtGState::new().with_soft_mask(match inner.kind() {
+                        usvg::MaskType::Luminance => SoftMask::luminosity(inner_form),
+                        usvg::MaskType::Alpha => SoftMask::alpha(inner_form),
+                    }))?;
+                }
+                this.draw_group(form, mask.root(), Transform::identity())
+            })
+        })?;
+        self.masks.insert(address, form);
+        Ok(form)
     }
 
     /// Intersects the clipping path with `clip`, whose coordinates are transformed by `t`
@@ -431,6 +722,7 @@ impl SvgWriter {
         if !self.is_plain_text(text) {
             self.draw_group(c, text.flattened(), ctm)?;
             // the outlines have nothing for the colour glyphs
+            self.set_alpha(c, self.alpha, false)?;
             for span in text.layouted().iter().filter(|span| span.visible) {
                 let color = match span.fill.as_ref().map(|fill| fill.paint()) {
                     Some(usvg::Paint::Color(color)) => *color,
@@ -504,29 +796,23 @@ impl SvgWriter {
         };
         let font_size = f64::from(span.font_size.get());
         for &mode in passes {
-            c.save_graphics_state()?;
+            self.save(c)?;
             if let (Some(fill), true) = (fill, mode != 1) {
-                let Rgb(r, g, b) = match fill.paint() {
-                    usvg::Paint::Color(color) => rgb(*color),
-                    _ => unreachable!("plain text has plain colors"),
+                let usvg::Paint::Color(color) = fill.paint() else {
+                    unreachable!("plain text has plain colors")
                 };
-                c.device_rgb_fill_color(r, g, b)?;
-                let opacity = f64::from(fill.opacity().get());
-                if opacity < 1.0 {
-                    c.set_fill_alpha(opacity)?;
-                }
+                self.set_color(c, *color, false)?;
+                self.set_alpha(c, self.alpha * f64::from(fill.opacity().get()), false)?;
+            } else {
+                self.set_alpha(c, self.alpha, false)?;
             }
             if let (Some(stroke), true) = (stroke, mode != 0) {
-                let Rgb(r, g, b) = match stroke.paint() {
-                    usvg::Paint::Color(color) => rgb(*color),
-                    _ => unreachable!("plain text has plain colors"),
+                let usvg::Paint::Color(color) = stroke.paint() else {
+                    unreachable!("plain text has plain colors")
                 };
-                c.device_rgb_stroke_color(r, g, b)?;
-                let opacity = f64::from(stroke.opacity().get());
-                if opacity < 1.0 {
-                    c.set_stroke_alpha(opacity)?;
-                }
-                stroke_style(c, stroke)?;
+                self.set_color(c, *color, true)?;
+                self.set_alpha(c, self.alpha * f64::from(stroke.opacity().get()), true)?;
+                self.set_stroke_style(c, stroke)?;
             }
             c.begin_text()?;
             c.push_operand(mode)?;
@@ -556,7 +842,7 @@ impl SvgWriter {
                     self.paint_color_glyphs(c, span, *color)?;
                 }
             }
-            c.restore_graphics_state()?;
+            self.restore(c)?;
         }
         Ok(())
     }
@@ -568,7 +854,14 @@ impl SvgWriter {
             return Ok(());
         };
         let rect = foreign.rect();
-        c.save_graphics_state()?;
+        self.save(c)?;
+        // the content is painted with the state it finds: opaque and with solid lines
+        self.set_alpha(c, self.alpha, false)?;
+        self.set_alpha(c, self.alpha, true)?;
+        if self.state().dash != Some((Vec::new(), 0.0)) {
+            c.dash_pattern(&[], Pt(0.0))?;
+            self.state().dash = Some((Vec::new(), 0.0));
+        }
         c.rect(
             Pt(f64::from(rect.x())),
             Pt(f64::from(rect.y())),
@@ -583,7 +876,7 @@ impl SvgWriter {
         concat(c, Transform::from_row(k, 0.0, 0.0, -k, rect.x(), rect.y() + rect.height()))?;
         let key = c.add_xobject(form);
         c.draw_xobject(&key)?;
-        c.restore_graphics_state()
+        self.restore(c)
     }
 
     fn draw_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
@@ -592,105 +885,105 @@ impl SvgWriter {
         }
         let stroke_first = path.paint_order() == usvg::PaintOrder::StrokeAndFill;
         for stroke in if stroke_first { [true, false] } else { [false, true] } {
-            c.save_graphics_state()?;
             if stroke {
                 self.stroke_path(c, path, ctm)?;
             } else {
                 self.fill_path(c, path, ctm)?;
             }
-            c.restore_graphics_state()?;
         }
         Ok(())
     }
 
-    fn fill_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<bool> {
+    fn fill_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
         let Some(fill) = path.fill() else {
-            return Ok(false);
+            return Ok(());
         };
-        if !self.set_paint(c, fill.paint(), f64::from(fill.opacity().get()), path, ctm, false)? {
-            return Ok(false);
+        if is_line(path.data()) {
+            // a line has no inside
+            return Ok(());
         }
-        emit_path(c, path.data(), Transform::identity())?;
-        c.fill_path_with_rule(fill_rule(fill.rule()))?;
-        Ok(true)
-    }
-
-    fn stroke_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<bool> {
-        let Some(stroke) = path.stroke() else {
-            return Ok(false);
-        };
-        if !self.set_paint(c, stroke.paint(), f64::from(stroke.opacity().get()), path, ctm, true)? {
-            return Ok(false);
-        }
-        stroke_style(c, stroke)?;
-        emit_path(c, path.data(), Transform::identity())?;
-        c.stroke_path()?;
-        Ok(true)
-    }
-
-    /// Makes the fill (or stroke) color of the graphics state the paint. Returns false if
-    /// there is nothing to paint.
-    fn set_paint(
-        &mut self,
-        c: &mut PageContext<'_, '_, '_>,
-        paint: &usvg::Paint,
-        opacity: f64,
-        path: &usvg::Path,
-        ctm: Transform,
-        stroke: bool,
-    ) -> Result<bool> {
+        let opacity = self.alpha * f64::from(fill.opacity().get());
         if opacity <= 0.0 {
-            return Ok(false);
+            return Ok(());
         }
-        if opacity < 1.0 {
-            if stroke {
-                c.set_stroke_alpha(opacity)?;
-            } else {
-                c.set_fill_alpha(opacity)?;
-            }
-        }
-        match paint {
+        match fill.paint() {
             usvg::Paint::Color(color) => {
-                let Rgb(r, g, b) = rgb(*color);
-                if stroke {
-                    c.device_rgb_stroke_color(r, g, b)?;
-                } else {
-                    c.device_rgb_fill_color(r, g, b)?;
-                }
+                self.set_alpha(c, opacity, false)?;
+                self.set_color(c, *color, false)?;
+                emit_path(c, path.data(), Transform::identity())?;
+                c.fill_path_with_rule(fill_rule(fill.rule()))
             }
-            usvg::Paint::LinearGradient(gradient) => {
-                let Some(pattern) = self.linear_gradient(gradient, path, ctm) else {
-                    return Ok(false);
+            usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
+                let Some((shading, transform)) = self.gradient(fill.paint(), path) else {
+                    return Ok(());
                 };
-                let key = c.add_shading_pattern(pattern);
-                if stroke {
-                    c.set_stroke_pattern(&key)?;
-                } else {
-                    c.set_fill_pattern(&key)?;
-                }
+                // The path is the clipping path of the shading. The shading is the same for
+                // all paths with the same gradient (the transformation puts it in place), so
+                // it is written once.
+                self.set_alpha(c, opacity, false)?;
+                self.save(c)?;
+                emit_path(c, path.data(), Transform::identity())?;
+                c.clip(fill_rule(fill.rule()))?;
+                c.end_path()?;
+                concat(c, transform)?;
+                let key = c.add_shading(shading);
+                c.paint_shading(&key)?;
+                self.restore(c)
             }
-            usvg::Paint::RadialGradient(gradient) => {
-                let Some(pattern) = self.radial_gradient(gradient, path, ctm) else {
-                    return Ok(false);
+            usvg::Paint::Pattern(pattern) => {
+                self.set_alpha(c, opacity, false)?;
+                let tiling = self.tiling_pattern(c, pattern, ctm)?;
+                let key = c.add_tiling_pattern(tiling);
+                self.set_paint_key(c, PaintKey::Pattern(key), false)?;
+                emit_path(c, path.data(), Transform::identity())?;
+                c.fill_path_with_rule(fill_rule(fill.rule()))
+            }
+        }
+    }
+
+    fn stroke_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
+        let Some(stroke) = path.stroke() else {
+            return Ok(());
+        };
+        let opacity = self.alpha * f64::from(stroke.opacity().get());
+        if opacity <= 0.0 {
+            return Ok(());
+        }
+        match stroke.paint() {
+            usvg::Paint::Color(color) => self.set_color(c, *color, true)?,
+            usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
+                // strokes cannot be clipping paths: the shading is the color of a pattern
+                let Some((shading, transform)) = self.gradient(stroke.paint(), path) else {
+                    return Ok(());
                 };
+                let pattern = ShadingPattern::new(shading).with_matrix(matrix(ctm.pre_concat(transform)));
                 let key = c.add_shading_pattern(pattern);
-                if stroke {
-                    c.set_stroke_pattern(&key)?;
-                } else {
-                    c.set_fill_pattern(&key)?;
-                }
+                self.set_paint_key(c, PaintKey::Pattern(key), true)?;
             }
             usvg::Paint::Pattern(pattern) => {
                 let tiling = self.tiling_pattern(c, pattern, ctm)?;
                 let key = c.add_tiling_pattern(tiling);
-                if stroke {
-                    c.set_stroke_pattern(&key)?;
-                } else {
-                    c.set_fill_pattern(&key)?;
-                }
+                self.set_paint_key(c, PaintKey::Pattern(key), true)?;
             }
         }
-        Ok(true)
+        self.set_alpha(c, opacity, true)?;
+        self.set_stroke_style(c, stroke)?;
+        emit_path(c, path.data(), Transform::identity())?;
+        c.stroke_path()
+    }
+
+    /// The shading of a gradient and the transformation from its coordinates to the current
+    /// ones, or `None` if there is nothing to paint.
+    fn gradient(&mut self, paint: &usvg::Paint, path: &usvg::Path) -> Option<(Shading, Transform)> {
+        match paint {
+            usvg::Paint::LinearGradient(gradient) => {
+                self.linear_gradient(gradient, path).map(|shading| (shading, gradient.transform()))
+            }
+            usvg::Paint::RadialGradient(gradient) => {
+                self.radial_gradient(gradient, path).map(|shading| (shading, gradient.transform()))
+            }
+            _ => None,
+        }
     }
 
     /// The color stops of a gradient over the parameter range `from..to` (the gradient itself
@@ -764,8 +1057,7 @@ impl SvgWriter {
         &mut self,
         gradient: &usvg::LinearGradient,
         path: &usvg::Path,
-        ctm: Transform,
-    ) -> Option<ShadingPattern> {
+    ) -> Option<Shading> {
         let base: &usvg::BaseGradient = gradient;
         let (x1, y1, x2, y2) = (
             f64::from(gradient.x1()),
@@ -790,15 +1082,14 @@ impl SvgWriter {
             Point::new(x1 + to_f * dx, y1 + to_f * dy),
             &function,
         );
-        Some(ShadingPattern::new(shading).with_matrix(matrix(ctm.pre_concat(base.transform()))))
+        Some(shading.into())
     }
 
     fn radial_gradient(
         &mut self,
         gradient: &usvg::RadialGradient,
         path: &usvg::Path,
-        ctm: Transform,
-    ) -> Option<ShadingPattern> {
+    ) -> Option<Shading> {
         let base: &usvg::BaseGradient = gradient;
         let (cx, cy, r) = (
             f64::from(gradient.cx()),
@@ -837,17 +1128,16 @@ impl SvgWriter {
             Circle { x: Pt(cx), y: Pt(cy), radius: Pt(fr + to as f64 * (r - fr)) },
             &function,
         );
-        Some(ShadingPattern::new(shading).with_matrix(matrix(ctm.pre_concat(base.transform()))))
+        Some(shading.into())
     }
 
     /// A shading that has the color of the last stop everywhere.
-    fn last_stop_pattern(&mut self, base: &usvg::BaseGradient) -> Option<ShadingPattern> {
+    fn last_stop_pattern(&mut self, base: &usvg::BaseGradient) -> Option<Shading> {
         let color = rgb(base.stops().last()?.color());
         let function = Gradient::new(&[ColorStop::new(0.0, color), ColorStop::new(1.0, color)])
             .ok()?
             .extended();
-        let shading = AxialShading::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &function);
-        Some(ShadingPattern::new(shading))
+        Some(AxialShading::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &function).into())
     }
 
     fn tiling_pattern(
@@ -862,15 +1152,25 @@ impl SvgWriter {
         let t = ctm
             .pre_concat(pattern.transform())
             .pre_translate(rect.x(), rect.y());
+        // many paths often share a pattern
+        let key = (
+            pattern as *const usvg::Pattern as usize,
+            [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f32::to_bits),
+        );
+        if let Some(&known) = self.tilings.get(&key) {
+            return Ok(known);
+        }
         let filter = self.filter;
-        c.pdf_context.write_tiling_pattern(
+        let tiling = c.pdf_context.write_tiling_pattern(
             [Pt(0.0), Pt(0.0), Pt(width), Pt(height)],
             Pt(width),
             Pt(height),
             matrix(t),
             filter,
-            |cell| self.draw_group(cell, pattern.root(), Transform::identity()),
-        )
+            |cell| self.in_stream(|this| this.draw_group(cell, pattern.root(), Transform::identity())),
+        )?;
+        self.tilings.insert(key, tiling);
+        Ok(tiling)
     }
 
     fn draw_image(&mut self, c: &mut PageContext<'_, '_, '_>, image: &usvg::Image, ctm: Transform) -> Result<()> {
@@ -883,12 +1183,12 @@ impl SvgWriter {
             usvg::ImageKind::JPEG(data) | usvg::ImageKind::PNG(data) => data,
             usvg::ImageKind::SVG(tree) => {
                 // a nested SVG image: its contents, clipped to its size
-                c.save_graphics_state()?;
+                self.save(c)?;
                 c.rect(Pt(0.0), Pt(0.0), Pt(width), Pt(height))?;
                 c.clip(FillRule::NonZero)?;
                 c.end_path()?;
                 self.draw_group(c, tree.root(), ctm)?;
-                return c.restore_graphics_state();
+                return self.restore(c);
             }
             usvg::ImageKind::GIF(_) | usvg::ImageKind::WEBP(_) => {
                 self.warn("GIF and WebP images are not supported");
@@ -930,10 +1230,11 @@ impl SvgWriter {
             return Ok(());
         };
         let name = c.add_xobject(reference);
-        c.save_graphics_state()?;
+        self.save(c)?;
+        self.set_alpha(c, self.alpha, false)?;
         // the unit square of an image has its top at y = 1, SVG has the top at y = 0
         concat(c, Transform::from_row(width as f32, 0.0, 0.0, -(height as f32), 0.0, height as f32))?;
         c.draw_xobject(&name)?;
-        c.restore_graphics_state()
+        self.restore(c)
     }
 }

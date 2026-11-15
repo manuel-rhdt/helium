@@ -405,7 +405,7 @@ fn what_an_svg_draws() {
         <rect width=\"20\" height=\"10\" fill=\"url(#r)\"/>\
         <rect y=\"10\" width=\"20\" height=\"10\" fill=\"url(#q)\"/>\
         <rect x=\"20\" width=\"20\" height=\"10\" fill=\"url(#p)\" clip-path=\"url(#c)\"/>\
-        <g opacity=\"0.5\" mask=\"url(#m)\"><rect x=\"20\" y=\"10\" width=\"20\" height=\"10\" stroke=\"#00f\" stroke-dasharray=\"2 1\" fill=\"none\"/></g>\
+        <g opacity=\"0.5\" mask=\"url(#m)\"><rect x=\"20\" y=\"10\" width=\"20\" height=\"10\" stroke=\"#00f\" stroke-dasharray=\"2 1\" fill=\"#ff0\"/></g>\
         <text x=\"1\" y=\"19\" font-size=\"6\" font-family=\"sans-serif\">Aa</text>";
     let r = render("svg_features", &format!("{PAGE}<img src=\"{}\">", svg_uri(&svg(body))));
     assert_eq!(r.images.len(), 1, "{}", r.log);
@@ -415,7 +415,8 @@ fn what_an_svg_draws() {
     assert_eq!(count(&r.pdf, "/PatternType 1"), 1);
     // the clip path
     assert!(r.pdf.contains("W n"), "{}", r.pdf);
-    // the opacity of the group applies to the group as a whole, through a transparency group
+    // the opacity of the group applies to the group as a whole, through a transparency group (the
+    // path has a fill and a stroke, which overlap)
     assert!(r.pdf.contains("/S /Transparency"));
     assert!(r.pdf.contains("/ca 0.5"));
     assert!(r.pdf.contains("/Luminosity"));
