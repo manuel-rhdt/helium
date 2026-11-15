@@ -1402,9 +1402,12 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                 let flow = ifc.flow;
                 let line_size = flow.swap((line_pos.width, line_pos.height)).0;
                 // `position: relative` moves the box after it is placed
-                let shift = |atom: Entity| match relative_offsets.get(atom) {
-                    Some(offset) if !flow.is_vertical() => offset.resolve(line_size, ifc.base_rtl),
-                    _ => (Px(0.0), Px(0.0)),
+                let shift = |atom: Entity| {
+                    relative_offsets
+                        .get(atom)
+                        .map_or((Px(0.0), Px(0.0)), |offset| {
+                            offset.resolve_in_line(flow, line_size, ifc.base_rtl)
+                        })
                 };
                 let place = |along: Px, baseline: Px, height: Px| {
                     if flow.is_vertical() {
@@ -1681,11 +1684,21 @@ impl<'a> System<'a> for LineBoxCreator {
                     // that are atomic inlines (those are shifted when they are placed); the
                     // space that they take up on the line stays. (Not in vertical text: the text
                     // matrix is turned there.)
-                    let (shift_x, shift_y) = match relative_offsets.get(entity) {
-                        Some(offset) if !flow.is_vertical() => offset.resolve(line_size, ifc.base_rtl),
-                        _ => (Px(0.0), Px(0.0)),
+                    let (physical_x, physical_y) = relative_offsets
+                        .get(entity)
+                        .map_or((Px(0.0), Px(0.0)), |offset| {
+                            offset.resolve_in_line(flow, line_size, ifc.base_rtl)
+                        });
+                    // the same move along the line and across it: along the line is to the
+                    // right (down in vertical text) and across it is down (to the right)
+                    let (shift_x, shift_y) = if flow.is_vertical() {
+                        (physical_y, Px(0.0) - physical_x)
+                    } else {
+                        (physical_x, physical_y)
                     };
                     let shifted = shift_x != Px(0.0) || shift_y != Px(0.0);
+                    // the move across the line, in physical terms
+                    let cross_shift = if flow.is_vertical() { physical_x } else { physical_y };
                     let tag = text_runs
                         .get(entity)
                         .and_then(|_| structure.content_tag(entity, piece.start));
@@ -1768,7 +1781,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         color_glyphs.extend(take_color_glyphs(
                             &mut ops,
                             ops_before,
-                            (line_pos.x + piece_start + shift_x, line_pos.y + line.baseline + shift_y),
+                            (line_pos.x + piece_start + physical_x, line_pos.y + line.baseline + physical_y),
                             run.face.color,
                         ));
                         if hyphen && !rtl {
@@ -1801,8 +1814,8 @@ impl<'a> System<'a> for LineBoxCreator {
                                 height: Px(0.0),
                                 ..line_pos
                             };
-                            let x = line_pos.x + advance + shift_x;
-                            let baseline = line_pos.y + line.baseline + shift_y;
+                            let x = line_pos.x + advance + physical_x;
+                            let baseline = line_pos.y + line.baseline + physical_y;
                             for ((offset, thickness), enabled) in
                                 decoration_lines(run.face.font_size, run.decoration)
                             {
@@ -1814,10 +1827,10 @@ impl<'a> System<'a> for LineBoxCreator {
                                 // is to the left
                                 let line_op = if flow.is_vertical() {
                                     GraphicsOp::Line {
-                                        from_x: Px(line_origin.0) - offset,
-                                        from_y: line_pos.y + advance,
-                                        to_x: Px(line_origin.0) - offset,
-                                        to_y: line_pos.y + advance + piece_width,
+                                        from_x: Px(line_origin.0) - offset + physical_x,
+                                        from_y: line_pos.y + advance + physical_y,
+                                        to_x: Px(line_origin.0) - offset + physical_x,
+                                        to_y: line_pos.y + advance + physical_y + piece_width,
                                         thickness,
                                     }
                                 } else {
@@ -1875,8 +1888,8 @@ impl<'a> System<'a> for LineBoxCreator {
                                 .insert(
                                     entity,
                                     Position {
-                                        x: line_pos.x + advance,
-                                        y: line_pos.y + line.baseline - baseline,
+                                        x: line_pos.x + advance + physical_x,
+                                        y: line_pos.y + line.baseline - baseline + physical_y,
                                         width,
                                         height,
                                         ..paragraph_pos.unwrap()
@@ -1900,7 +1913,7 @@ impl<'a> System<'a> for LineBoxCreator {
                                     if interval.0 == href
                                         && interval.1 == node
                                         && interval.3 == piece_start + shift_x
-                                        && interval.4 == shift_y =>
+                                        && interval.4 == cross_shift =>
                                 {
                                     interval.3 = advance + shift_x;
                                 }
@@ -1909,7 +1922,7 @@ impl<'a> System<'a> for LineBoxCreator {
                                     node,
                                     piece_start + shift_x,
                                     advance + shift_x,
-                                    shift_y,
+                                    cross_shift,
                                 )),
                             }
                         }
@@ -1933,7 +1946,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         page: line_pos.page,
                         rect: if flow.is_vertical() {
                             Rect {
-                                x: line_pos.x,
+                                x: line_pos.x + down,
                                 y: line_pos.y + start,
                                 width: line_pos.width,
                                 height: end - start,

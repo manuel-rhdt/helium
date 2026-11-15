@@ -1220,6 +1220,7 @@ impl EntityConstructor {
         inline_formatting_contexts: &mut WriteStorage<InlineFormattingContext>,
         block_formatting_contexts: &mut WriteStorage<BlockFormattingContext>,
         relative_offsets: &mut WriteStorage<components::RelativeOffset>,
+        math_nodes: &specs::ReadStorage<MathNode>,
     ) {
         let push_block =
             |ble: &mut Vec<BlockLevelElement>,
@@ -1307,8 +1308,13 @@ impl EntityConstructor {
                         inline_formatting_contexts,
                         block_formatting_contexts,
                         relative_offsets,
+                        math_nodes,
                     );
                 } else {
+                    // a formula is placed on the line as a whole, like an `inline-block`
+                    if let Some(style) = child_style.filter(|_| math_nodes.contains(elem)) {
+                        shift_relatively(relative_offsets, &[elem], style);
+                    }
                     inline_level_elements.push(elem);
                 }
             }
@@ -1331,6 +1337,7 @@ impl EntityConstructor {
         let mut inline_formatting_contexts = self.world.write_storage::<InlineFormattingContext>();
         let mut computed_values = self.world.write_storage::<ComputedValues>();
         let mut relative_offsets = self.world.write_storage::<components::RelativeOffset>();
+        let math_nodes = self.world.read_storage::<MathNode>();
 
         let LayoutEntity(entity) = node.layout_entity().unwrap();
 
@@ -1353,6 +1360,7 @@ impl EntityConstructor {
             &mut inline_formatting_contexts,
             &mut block_formatting_contexts,
             &mut relative_offsets,
+            &math_nodes,
         );
 
         let has_block_level_elements = block_level_elements
@@ -1454,6 +1462,10 @@ impl EntityConstructor {
                 continue;
             }
 
+            // a formula is placed on the line as a whole, like an `inline-block`
+            if self.world.read_storage::<MathNode>().contains(child_entity) {
+                self.shift_relatively(&[child_entity], &child_style);
+            }
             inline_formatting_context.elements.push(child_entity);
         }
 

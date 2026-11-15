@@ -74,8 +74,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `@page` and its margin boxes, to the initial font size).
 - **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `grid`, `table` and the table
   parts, `list-item`, `none`), `position: absolute` and `position: relative` (`left`, `right`,
-  `top` and `bottom` move the box after layout, also inline boxes and `inline-block` boxes; in vertical
-  text and on formulas the offsets are ignored), block, inline, flexbox
+  `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in
+  vertical text too; percentages of `left`/`right` in vertical lines count as `auto`), block, inline, flexbox
   (`flex-*`, `gap`, `justify-*`, `align-*`) and grid (`grid-template-*`, `grid-auto-*`,
   `grid-column`, `grid-row`) layout, tables (`border-collapse`, `border-spacing`).
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
