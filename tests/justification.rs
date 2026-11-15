@@ -112,3 +112,43 @@ fn a_last_line_that_fits_only_with_shrunken_spaces_is_shrunk() {
     let given_up = tightening(&tight) - tightening(&fits);
     assert!((given_up - shrink / 16.0 * 1000.0).abs() < 20.0, "{given_up}");
 }
+
+/// The mean adjustment (thousandths of an em) of every line of a paragraph that is stretched or
+/// shrunk, over all pages: the same for lines with the same content.
+fn mean_adjustments(html: &str, name: &str) -> Vec<f64> {
+    let dump = dump(name, html);
+    let mut means = vec![];
+    for text in dump["paint"]["text"].as_array().unwrap() {
+        let mut lines = vec![vec![]];
+        for op in text["ops"].as_array().unwrap() {
+            match op["op"].as_str().unwrap() {
+                "newline" => lines.push(vec![]),
+                "kerned" => lines
+                    .last_mut()
+                    .unwrap()
+                    .extend(op["items"].as_array().unwrap().iter().filter_map(Value::as_f64)),
+                _ => {}
+            }
+        }
+        means.extend(lines.iter().filter(|line| !line.is_empty()).map(|line| line.iter().sum::<f64>() / line.len() as f64));
+    }
+    means
+}
+
+#[test]
+fn the_end_of_a_very_long_paragraph_is_justified_like_its_start() {
+    // Every full line holds the same words, so every line takes the same stretch. The positions
+    // along a paragraph reach tens of thousands of pixels, where summing the glyph widths in
+    // single precision drifted by pixels: the lines at the end were measured wrongly and
+    // overflowed or fell short.
+    let text = vec!["alpha"; 4000].join(" ");
+    let means = mean_adjustments(
+        &format!(r#"<p style="width: 300px; text-align: justify; margin: 0">{text}</p>"#),
+        "long",
+    );
+    assert!(means.len() > 400, "{}", means.len());
+    // without the first and the last line
+    let full = &means[1..means.len() - 1];
+    let (low, high) = full.iter().fold((f64::MAX, f64::MIN), |(low, high), x| (low.min(*x), high.max(*x)));
+    assert!(high - low < 1.0, "the adjustments of the lines range from {low} to {high}");
+}

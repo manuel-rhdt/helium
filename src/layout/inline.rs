@@ -661,7 +661,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 penalty: 0,
             });
 
-            let mut advance = Px(0.0);
+            let mut advance = Pen::default();
 
             for (index, &entity) in elements.iter().enumerate() {
                 let element_start = advance;
@@ -693,8 +693,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             break_points.push(BreakPoint {
                                 entity,
                                 char_index: break_index,
-                                advance_before: advance,
-                                advance_after: advance,
+                                advance_before: advance.px(),
+                                advance_after: advance.px(),
                                 forced: true,
                                 space: false,
                                 inter_letter: false,
@@ -717,7 +717,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             glyph_widths.push((segment_start + info.cluster as usize, width));
                             advance += width;
                         }
-                        push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start);
+                        push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start.px());
                         continue;
                     }
                     let shaped = shape_with_levels(&text_run.text, 0, levels, font, &text_run.face.fallback);
@@ -756,8 +756,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 break_points.push(BreakPoint {
                                     entity,
                                     char_index: cluster,
-                                    advance_before: advance,
-                                    advance_after: advance,
+                                    advance_before: advance.px(),
+                                    advance_after: advance.px(),
                                     forced: false,
                                     space: false,
                                     inter_letter,
@@ -791,8 +791,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             break_points.push(BreakPoint {
                                 entity,
                                 char_index: glyph_info.cluster as usize + ws_len,
-                                advance_before,
-                                advance_after,
+                                advance_before: advance_before.px(),
+                                advance_after: advance_after.px(),
                                 forced: false,
                                 space: true,
                                 inter_letter: false,
@@ -853,12 +853,12 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         // The width of the text in front of a glyph, from the shaping of the
                         // whole run above: `(cluster, width of all glyphs before it)`.
                         let mut prefix_widths = Vec::with_capacity(shaped.len());
-                        let mut width = Px(0.0);
+                        let mut width = Pen::default();
                         for (position, glyph_info) in &shaped {
-                            prefix_widths.push((glyph_info.cluster as usize, width));
+                            prefix_widths.push((glyph_info.cluster as usize, width.px()));
                             width += font.scale_to_px(position.x_advance, text_run.face.font_size);
                         }
-                        let run_width = width;
+                        let run_width = width.px();
                         // Clusters are monotone, so the width in front of a cluster boundary is
                         // found by a binary search.
                         let width_before = |char_index: usize| {
@@ -887,11 +887,27 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                         font.scale_to_px(position.x_advance, text_run.face.font_size)
                                     })
                                     .fold(Px(0.0), |sum, width| sum + width);
+                            // The line after the break starts with the rest of the word, shaped
+                            // alone too (its first glyph is not kerned with the last one of the
+                            // line before, and a ligature across the break is split). The rest
+                            // is measured back from the end of the word in the shaping of the
+                            // whole run, so that the widths of the two lines add up to it.
+                            let word_end = char_index
+                                + text_run.text[char_index..]
+                                    .find(char::is_whitespace)
+                                    .unwrap_or(text_run.text.len() - char_index);
+                            let suffix_width = shape(&text_run.text[char_index..word_end], font, &text_run.face.fallback, Some(char_index))
+                                .iter()
+                                .map(|(position, _)| {
+                                    font.scale_to_px(position.x_advance, text_run.face.font_size)
+                                })
+                                .fold(Px(0.0), |sum, width| sum + width);
+                            let word_end_width = width_before(word_end);
                             break_points.push(BreakPoint {
                                 entity,
                                 char_index,
-                                advance_before: run_start_advance + prefix_width,
-                                advance_after: run_start_advance + prefix_width,
+                                advance_before: (run_start_advance + prefix_width).px(),
+                                advance_after: (run_start_advance + (word_end_width - suffix_width)).px(),
                                 forced: false,
                                 space: false,
                                 inter_letter: false,
@@ -903,19 +919,19 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             });
                         }
                     }
-                    push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start);
+                    push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start.px());
                 } else if let Some(intrinsic_size) = intrinsic_sizes.get(entity) {
                     advance += intrinsic_size.width().unwrap_or_default();
-                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
+                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start.px());
                     if let Some(run) = bidi_runs.last_mut().filter(|run| run.element == index) {
-                        run.advance_end = advance;
+                        run.advance_end = advance.px();
                     }
                 } else if computed_values
                     .get(entity)
                     .map_or(false, |style| style.box_.display.is_atomic_inline())
                 {
                     // the width is only known once the box has been laid out
-                    atom_offsets.push((entity, advance));
+                    atom_offsets.push((entity, advance.px()));
                     // A line may break in front of and behind an inline-level box even if there
                     // is no space next to it. The break in front is at the end of the previous
                     // element if that already provides a break there.
@@ -938,16 +954,16 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         .is_none_or(|style| style.text.white_space.wraps());
                     if wraps
                         && index > 0
-                        && break_points.last().is_some_and(|last| last.advance_after != advance)
+                        && break_points.last().is_some_and(|last| last.advance_after != advance.px())
                     {
-                        break_points.push(atom_break(ATOM_BREAK_BEFORE, advance));
+                        break_points.push(atom_break(ATOM_BREAK_BEFORE, advance.px()));
                     }
                     if wraps && index + 1 < elements.len() {
-                        break_points.push(atom_break(ATOM_BREAK_AFTER, advance));
+                        break_points.push(atom_break(ATOM_BREAK_AFTER, advance.px()));
                     }
-                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
+                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start.px());
                 } else {
-                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start);
+                    push_bidi_runs(bidi_runs, index, runs_of(index), &[], element_start.px());
                 }
                 if let Some(style) = computed_values.get(entity) {
                     if style.text.line_break
@@ -956,8 +972,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         break_points.push(BreakPoint {
                             entity,
                             char_index: 0,
-                            advance_before: advance,
-                            advance_after: advance,
+                            advance_before: advance.px(),
+                            advance_after: advance.px(),
                             forced: true,
                             space: false,
                             inter_letter: false,
@@ -982,8 +998,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             break_points.push(BreakPoint {
                 entity: last_entity,
                 char_index,
-                advance_before: advance,
-                advance_after: advance,
+                advance_before: advance.px(),
+                advance_after: advance.px(),
                 forced: false,
                 space: false,
                 inter_letter: false,
@@ -1936,6 +1952,34 @@ fn decoration_lines(
 /// The text of an inserted hyphen as far as extraction is concerned: a hyphen that exists only
 /// because of a line break must not be taken for a hyphen of the word.
 const SOFT_HYPHEN: &str = "\u{AD}";
+
+/// The position of the pen along a paragraph while its break points are computed. A paragraph
+/// can be tens of thousands of pixels long, where an `f32` is only precise to a few thousandths
+/// of a pixel; summing the width of thousands of glyphs in it drifts by pixels (the same
+/// glyphs round the same way every time). The sum is kept in `f64`; the break points get the
+/// rounded position.
+#[derive(Debug, Copy, Clone, Default)]
+struct Pen(f64);
+
+impl Pen {
+    fn px(self) -> Px {
+        Px(self.0 as f32)
+    }
+}
+
+impl std::ops::AddAssign<Px> for Pen {
+    fn add_assign(&mut self, width: Px) {
+        self.0 += f64::from(width.0);
+    }
+}
+
+impl std::ops::Add<Px> for Pen {
+    type Output = Pen;
+
+    fn add(self, width: Px) -> Pen {
+        Pen(self.0 + f64::from(width.0))
+    }
+}
 
 /// A text that is set on one line in one go.
 pub(super) struct ShapedLine {
