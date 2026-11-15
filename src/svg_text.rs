@@ -48,7 +48,14 @@ pub fn helium_families(font: &usvg::Font) -> Vec<FontFamily> {
             usvg::FontFamily::Monospace => FontFamily::Monospace,
             // the document has no families for these: the closest generic ones
             usvg::FontFamily::Cursive | usvg::FontFamily::Fantasy => FontFamily::SansSerif,
-            usvg::FontFamily::Named(name) => FontFamily::Named(name.clone()),
+            // the family for text without a `font-family` is a name (`Options::font_family`), which
+            // can be a generic family
+            usvg::FontFamily::Named(name) => match name.to_ascii_lowercase().as_str() {
+                "serif" => FontFamily::Serif,
+                "sans-serif" | "cursive" | "fantasy" => FontFamily::SansSerif,
+                "monospace" => FontFamily::Monospace,
+                _ => FontFamily::Named(name.clone()),
+            },
         })
         .collect()
 }
