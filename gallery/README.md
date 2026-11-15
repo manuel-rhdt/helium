@@ -9,7 +9,7 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 | `letter/` | letterhead, a different first page, running headers, hyphenated justified text |
 | `report/` | a cover card, linked contents, a JPEG figure, data table, a flexbox bar chart, code |
 | `math-notes/` | MathML: integrals, sums, matrices, theorem boxes, numbered equations, an SVG plot |
-| `book/` | a trade paperback: facing pages, running heads, chapter openings; real small capitals and old-style folios from the font's OpenType features |
+| `book/` | a whole novel as a trade paperback: all 61 chapters of Pride and Prejudice (368 pages), facing pages, running heads, linked contents, chapter openings and headings in real small capitals, old-style folios |
 | `poetry/` | verse on small pages |
 | `scripts/` | one sentence in 30 languages and more than 20 scripts |
 | `figures/` | a one-page figure sheet: inline SVG with the CSS of the page, MathML labels and equation cards inside of the figures (`foreignObject`), an icon sprite, patterns, markers, gradients |
