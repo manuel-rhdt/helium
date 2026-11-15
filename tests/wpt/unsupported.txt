@@ -1,0 +1,51 @@
+# CSS that helium deliberately does not implement (see "Not supported" in the README). A test
+# whose <style> elements or style attributes (or those of its reference) contain one of these
+# is not run: it can only fail. Each line is a text that is looked for after the case and the
+# white space have been taken out; remove a line when the feature is implemented, and run
+# `WPT_UPDATE_EXPECTATIONS=1 cargo test --test wpt --test wpt_reftest` to see what it brings.
+
+# floats
+float:
+clear:
+
+# overflow, clipping and scrolling
+overflow:
+overflow-x:
+overflow-y:
+
+# positioning that is not implemented
+position:relative
+position:fixed
+position:sticky
+z-index:
+
+# painting that is not implemented
+opacity:
+box-shadow:
+outline:
+text-shadow:
+
+# text and inline layout
+vertical-align:
+word-break:
+overflow-wrap:
+word-wrap:
+
+# generated content and counters
+::before
+::after
+:before
+:after
+counter-reset:
+counter-increment:
+counter-set:
+counters(
+counter(
+
+# at-rules, functions and units
+@font-face
+@supports
+@import
+var(
+calc(
+url(

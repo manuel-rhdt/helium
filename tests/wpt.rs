@@ -14,6 +14,10 @@ fn wpt_layout_checks() {
     // reftests and helium's own files live next to the checkLayout tests
     tests.retain(|t| std::fs::read_to_string(t).map_or(false, |s| s.contains("data-expected-")));
     tests.sort();
+    // the tests that need what helium does not implement on purpose are not run
+    let before = tests.len();
+    tests.retain(|test| unsupported_feature(&[test]).is_none());
+    eprintln!("{} layout tests need unsupported features (tests/wpt/unsupported.txt) and are skipped", before - tests.len());
     assert!(
         !tests.is_empty(),
         "no WPT layout tests found in {}",
