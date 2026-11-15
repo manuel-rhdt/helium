@@ -326,10 +326,48 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             // An image keeps its proportions when only one of its sides is given.
             // (when both are given, the ratio has nothing to do: it would only raise the minimum
             // size that an `auto` minimum takes from it)
+            // With nothing but the size of the image, the ratio would only be applied to the
+            // border box, which has the padding and border in one axis only: a box that is wider
+            // by the padding on the right would be taller by it too.
+            // A length for one side of a content box gives the other side directly: taffy
+            // would apply the ratio to the border box.
+            if let Some((width, height)) = image.filter(|&(w, h)| w > 0.0 && h > 0.0) {
+                if node.style.box_sizing == taffy::BoxSizing::ContentBox && !node.flow.is_vertical() {
+                    let length = |dimension: taffy::Dimension| {
+                        let raw = dimension.into_raw();
+                        (raw.tag() == taffy::CompactLength::LENGTH_TAG).then(|| raw.value())
+                    };
+                    let (known_width, known_height) =
+                        (length(node.style.size.width), length(node.style.size.height));
+                    let (inline, block) = node.flow.swap((width, height));
+                    match (known_width, known_height) {
+                        (Some(w), None) if node.style.size.height.is_auto() => {
+                            node.style.size.height = taffy::Dimension::length(w * block / inline);
+                        }
+                        (None, Some(h)) if node.style.size.width.is_auto() => {
+                            node.style.size.width = taffy::Dimension::length(h * inline / block);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             let sizes_given = !node.style.size.width.is_auto() && !node.style.size.height.is_auto();
+            let constrained = !node.style.size.width.is_auto()
+                || !node.style.size.height.is_auto()
+                || !node.style.min_size.width.is_auto()
+                || !node.style.min_size.height.is_auto()
+                || !node.style.max_size.width.is_auto()
+                || !node.style.max_size.height.is_auto();
+            let nonzero = |lp: taffy::style::LengthPercentage| {
+                let raw = lp.into_raw();
+                raw.tag() != taffy::CompactLength::LENGTH_TAG || raw.value() != 0.0
+            };
+            let has_edges = [node.style.padding, node.style.border].iter().any(|edges| {
+                [edges.left, edges.right, edges.top, edges.bottom].into_iter().any(nonzero)
+            });
             if let Some((width, height)) = image
                 .filter(|&(w, h)| w > 0.0 && h > 0.0)
-                .filter(|_| !sizes_given)
+                .filter(|_| !sizes_given && (constrained || !has_edges))
             {
                 // the ratio of the logical sides: turned around in a vertical flow
                 let (inline, block) = node.flow.swap((width, height));

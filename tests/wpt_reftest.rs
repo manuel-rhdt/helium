@@ -145,6 +145,27 @@ fn is_blank(pages: &[Page]) -> bool {
     pages.iter().all(|page| page.pixels.iter().all(|&channel| channel >= 250))
 }
 
+/// Whether the pixel at `index` of `a` is like one of the pixels around it in `b`. The edges of
+/// an image are drawn to whole pixels and the edges of a filled rectangle are antialiased, so the
+/// same box differs by a pixel at its fractional position (the margins of the page are 2.5 cm).
+fn matches_nearby(a: &Page, b: &Page, index: usize) -> bool {
+    let (x, y) = ((index % a.width) as isize, (index / a.width) as isize);
+    let pixel = &a.pixels[index * 3..index * 3 + 3];
+    for dy in -1..=1isize {
+        for dx in -1..=1isize {
+            let (nx, ny) = (x + dx, y + dy);
+            if nx < 0 || ny < 0 || nx >= b.width as isize || ny >= b.height as isize {
+                continue;
+            }
+            let at = (ny as usize * b.width + nx as usize) * 3;
+            if pixel.iter().zip(&b.pixels[at..at + 3]).all(|(p, q)| p.abs_diff(*q) <= FUZZ) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn run_reftest(test: &Path, expected: &Result<Vec<Page>, String>) -> Result<(), String> {
     let actual = render(test)?;
     let expected = expected.as_ref().map_err(|why| format!("the reference: {}", why))?;
@@ -172,7 +193,10 @@ fn run_reftest(test: &Path, expected: &Result<Vec<Page>, String>) -> Result<(), 
         let mut differing = 0;
         let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
         for (index, (p, q)) in a.pixels.chunks(3).zip(b.pixels.chunks(3)).enumerate() {
-            if p.iter().zip(q).any(|(x, y)| x.abs_diff(*y) > FUZZ) {
+            if p.iter().zip(q).any(|(x, y)| x.abs_diff(*y) > FUZZ)
+                && !matches_nearby(a, b, index)
+                && !matches_nearby(b, a, index)
+            {
                 differing += 1;
                 let (x, y) = (index % a.width, index / a.width);
                 (left, top, right, bottom) = (left.min(x), top.min(y), right.max(x), bottom.max(y));

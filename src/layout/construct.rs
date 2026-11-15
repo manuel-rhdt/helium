@@ -945,6 +945,10 @@ impl EntityConstructor {
                     // an inline replaced element is placed on a line as a whole
                     Arc::make_mut(&mut style.box_).display = Display::InlineBlock;
                 }
+                // an image is content: the white space after it is not at the start of the line
+                if image.is_some() && style.box_.display == Display::InlineBlock {
+                    self.trim_next_inline_whitespace = false;
+                }
                 let entity = self.build_default_entity(style);
                 {
                     let mut canvas = self.world.write_resource::<components::CanvasEntities>();

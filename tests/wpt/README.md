@@ -20,7 +20,9 @@ script modifies the document before calling `checkLayout` are not vendored.
 `tests/wpt_reftest.rs` runs every test that has a `<link rel="match" href="...">`. The test and its
 reference are turned into PDFs, which `pdftoppm` (poppler-utils, which has to be installed)
 rasterizes at 96 dpi, so that a pixel is a CSS pixel. The pages must have the same size and no
-pixel may differ by more than 24 in a channel. A test must also not paint pure red, following the
+pixel may differ by more than 24 in a channel from the pixels around it in the other page (an
+image is drawn to whole pixels and a filled rectangle is antialiased, and the margins of the page,
+2.5 cm, are not whole pixels). A test must also not paint pure red, following the
 WPT convention that red means failure, and not be blank. Expected failures are in
 `reftest-expectations.txt`; `cargo test --test wpt_reftest` prints why each one differs (how many
 pixels, and where).

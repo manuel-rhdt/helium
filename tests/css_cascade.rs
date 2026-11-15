@@ -314,3 +314,46 @@ fn an_image_with_both_sizes_has_them_whatever_its_proportions() {
     // the height of the div is that of the image: 1px, not the 200px that its proportions give
     assert_eq!(b[0].1, 1.0);
 }
+
+fn black_png(name: &str) {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    std::fs::copy(
+        common::wpt_root().join("css/CSS2/normal-flow/support/black96x96.png"),
+        dir.join(name),
+    )
+    .unwrap();
+}
+
+#[test]
+fn the_padding_of_an_image_on_one_side_does_not_change_its_other_side() {
+    black_png("css_cascade__black2.png");
+    for css in ["padding-right:5px", "border-left:5px solid", "padding-right:5px;width:50px", "padding-bottom:5px;height:50px"] {
+        let b = boxes(
+            "image_padding",
+            &format!(
+                "<style>div{{display:inline-block}} img{{display:block;{css}}}</style>\
+                 <div><img src=\"css_cascade__black2.png\" width=\"96\" height=\"96\"></div>"
+            ),
+        );
+        let (width, height) = b[0];
+        // the box of the div is the one of the image, with its padding and border
+        let (expected_width, expected_height) = match css {
+            "padding-right:5px" | "border-left:5px solid" => (101.0, 96.0),
+            "padding-right:5px;width:50px" => (55.0, 50.0),
+            _ => (50.0, 55.0),
+        };
+        assert_eq!((width, height), (expected_width, expected_height), "{css}");
+    }
+}
+
+#[test]
+fn white_space_between_two_images_is_kept() {
+    black_png("css_cascade__black3.png");
+    let b = boxes(
+        "image_space",
+        "<style>div{display:inline-block}</style>\
+         <div><img src=\"css_cascade__black3.png\" width=\"40\" height=\"40\"> \
+         <img src=\"css_cascade__black3.png\" width=\"40\" height=\"40\"></div>",
+    );
+    assert!(b[0].0 > 80.5, "the two images and the space: {}", b[0].0);
+}
