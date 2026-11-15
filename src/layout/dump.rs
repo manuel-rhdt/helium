@@ -180,6 +180,14 @@ fn push_rects(entity: specs::Entity, world: &World, rects: &mut Vec<String>) {
         };
         // the background is painted below the borders
         push(deco.background_color, x, y, width, height);
+        // an image of one opaque colour is painted like a box of that colour
+        if let Some(image) = world.read_storage::<crate::layout::components::ImageBox>().get(entity) {
+            if let crate::image::LoadedImage::Raster(raster) = &*image.image {
+                if let Some([red, green, blue]) = raster.uniform_color() {
+                    push(RGBA::new(red, green, blue, 255), pos.x.0, pos.y.0, pos.width.0, pos.height.0);
+                }
+            }
+        }
         if let Some(edges) = deco.collapsed {
             // the borders of a table with collapsing borders are centered on the edges of the
             // border box (see `DisplayDecoration`)

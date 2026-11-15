@@ -74,6 +74,15 @@ impl Styles {
     }
 
     pub fn parse_css(&mut self, input: &str) {
+        // The content of a `<style>` of an XHTML document may be wrapped in a CDATA section,
+        // which the HTML parser keeps as text.
+        let unwrapped;
+        let input = if input.contains("<![CDATA[") {
+            unwrapped = input.replace("<![CDATA[", "").replace("]]>", "");
+            &unwrapped
+        } else {
+            input
+        };
         let mut parser = Parser::new(input);
         let mut top_level = TopLevelParser { media: self.media };
 

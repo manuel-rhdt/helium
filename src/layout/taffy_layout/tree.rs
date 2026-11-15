@@ -304,6 +304,10 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             }
             let x = node.layout.location.x;
             node.layout.location.x = content_left + content_right - x - node.layout.size.width;
+            // the margins were swapped for the layout (`prepare_right_to_left`): the used values
+            // are the ones of the sides that they are on now
+            let margin = &mut node.layout.margin;
+            std::mem::swap(&mut margin.left, &mut margin.right);
         }
     }
 
@@ -320,7 +324,13 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             node.content = Content::Replaced;
             node.style.item_is_replaced = replaced;
             // An image keeps its proportions when only one of its sides is given.
-            if let Some((width, height)) = image.filter(|&(w, h)| w > 0.0 && h > 0.0) {
+            // (when both are given, the ratio has nothing to do: it would only raise the minimum
+            // size that an `auto` minimum takes from it)
+            let sizes_given = !node.style.size.width.is_auto() && !node.style.size.height.is_auto();
+            if let Some((width, height)) = image
+                .filter(|&(w, h)| w > 0.0 && h > 0.0)
+                .filter(|_| !sizes_given)
+            {
                 // the ratio of the logical sides: turned around in a vertical flow
                 let (inline, block) = node.flow.swap((width, height));
                 node.style.aspect_ratio = Some(inline / block);
