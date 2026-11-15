@@ -1368,7 +1368,7 @@ impl<'a> System<'a> for ListMarkerCreator {
                 .with(
                     Paragraph {
                         start_pos,
-                        ops: ops.into(),
+                        ops,
                         color_glyphs,
                     },
                     &mut paragraphs,
@@ -1714,7 +1714,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             .with(
                                 Paragraph {
                                     start_pos: paragraph_start,
-                                    ops: std::mem::take(&mut ops).into(),
+                                    ops: std::mem::take(&mut ops),
                                     color_glyphs: std::mem::take(&mut color_glyphs),
                                 },
                                 &mut paragraphs,
@@ -2080,7 +2080,7 @@ impl<'a> System<'a> for LineBoxCreator {
                     .with(
                         Paragraph {
                             start_pos: paragraph_start,
-                            ops: ops.into(),
+                            ops,
                             color_glyphs,
                         },
                         &mut paragraphs,

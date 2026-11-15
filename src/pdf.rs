@@ -301,7 +301,7 @@ fn paint_items(
                 page_context.set_position(x.into(), y.into())?;
                 let mut marked = MarkedContent::default();
 
-                for op in par.ops.iter() {
+                for op in &par.ops {
                     match op {
                         TextOperator::SetFont(font_name, size) => {
                             // A font that draws no glyph anywhere is not embedded (e.g.
