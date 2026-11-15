@@ -176,3 +176,90 @@ fn an_em_length_uses_the_font_size_of_a_later_rule_of_the_same_element() {
     );
     assert_eq!(b, [(40.0, 40.0)]);
 }
+
+#[test]
+fn media_print_rules_apply() {
+    let w = widths(
+        "media_print",
+        "<style>div{width:10px} @media print{div{width:20px}} @media screen{div{width:30px}} \
+         @media all{div{height:7px}}</style><div></div>",
+    );
+    assert_eq!(w, [20.0]);
+}
+
+#[test]
+fn media_rules_follow_the_cascade_like_other_rules() {
+    // the rule in the block is later, but less specific
+    let w = widths(
+        "media_cascade",
+        "<style>#a{width:10px} @media print{div{width:20px !important}} div{width:30px}</style>\
+         <div id=a></div>",
+    );
+    assert_eq!(w, [20.0]);
+}
+
+#[test]
+fn media_queries_are_evaluated_for_the_page() {
+    // an A4 page is 793.7 CSS pixels wide
+    let w = widths(
+        "media_size",
+        "<style>div{width:1px}\
+         @media (min-width: 700px) and (max-width: 800px){div{width:2px}}\
+         @media (min-width: 900px){div{width:3px}}\
+         @media (orientation: landscape){div{width:4px}}\
+         @media not print{div{width:5px}}\
+         @media screen, (min-height: 1000px){div{height:6px}}</style><div></div>",
+    );
+    assert_eq!(w, [2.0]);
+    let (_, height) = boxes(
+        "media_size_h",
+        "<style>@media screen, (min-height: 1000px){div{height:6px}}</style><div></div>",
+    )[0];
+    assert_eq!(height, 6.0);
+}
+
+#[test]
+fn media_blocks_nest() {
+    let w = widths(
+        "media_nested",
+        "<style>@media print{@media (min-width: 100px){div{width:20px}} @media screen{div{width:30px}}}\
+         @media screen{@media print{div{width:40px}}}</style><div></div>",
+    );
+    assert_eq!(w, [20.0]);
+}
+
+#[test]
+fn a_page_rule_inside_a_media_block_applies() {
+    let (b, _) = boxes_and_log(
+        "media_page",
+        "<style>@media print{@page{margin:0;width:300px;height:400px}} div{width:100%}</style><div></div>",
+    );
+    assert_eq!(b[0].0, 300.0);
+}
+
+#[test]
+fn a_style_sheet_for_another_medium_is_not_read() {
+    let w = widths(
+        "media_attribute",
+        "<style media=screen>div{width:10px}</style>\
+         <style media=print>div{height:20px}</style>\
+         <style media=\"(min-width: 9999px)\">div{height:30px}</style>\
+         <style media=\"\">div{margin:0}</style>\
+         <div></div>",
+    );
+    assert_ne!(w, [10.0]);
+    let b = boxes(
+        "media_attribute_h",
+        "<style media=screen>div{height:10px}</style><style media=print>div{width:20px}</style><div></div>",
+    );
+    assert_eq!(b, [(20.0, 0.0)]);
+}
+
+#[test]
+fn a_media_rule_that_is_not_valid_is_skipped_with_its_block() {
+    let w = widths(
+        "media_invalid",
+        "<style>@media ((( {div{width:10px}} div{height:5px}</style><div></div>",
+    );
+    assert_ne!(w, [10.0]);
+}
