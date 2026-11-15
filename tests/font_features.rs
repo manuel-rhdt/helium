@@ -136,3 +136,42 @@ fn invalid_values_are_ignored() {
     assert!(differ(w[1], w[3]), "{w:?}");
     assert!(!differ(w[2], w[3]), "{w:?}");
 }
+
+/// The text operator of the margin box of a page with `style` for its `@top-center`.
+fn margin_text(name: &str, style: &str) -> String {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join(format!("font_features__{}.html", name));
+    let output = dir.join(format!("font_features__{}.pdf", name));
+    std::fs::write(
+        &input,
+        format!(
+            "<style>@page{{width:200pt;height:200pt;margin:40pt;\
+             @top-center{{content:\"Head\";font-family:'TeX Gyre Termes';{}}}}}</style><p>x</p>",
+            style
+        ),
+    )
+    .unwrap();
+    let out = common::helium()
+        .unwrap()
+        .args(["--no-compression", "--no-system-fonts"])
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let pdf = String::from_utf8_lossy(&std::fs::read(output).unwrap()).into_owned();
+    let start = pdf.find("/Artifact << /Type /Pagination >> BDC").expect(&pdf);
+    pdf[start..start + pdf[start..].find(" EMC").unwrap()].to_string()
+}
+
+#[test]
+fn margin_boxes_use_the_features_and_the_letter_spacing_of_their_style() {
+    let plain = margin_text("margin_plain", "");
+    let caps = margin_text("margin_caps", "font-variant-caps:small-caps");
+    let spaced = margin_text("margin_spaced", "letter-spacing:5pt");
+    // small capitals are other glyphs
+    assert_ne!(plain, caps);
+    // the spacing is a kern after every glyph
+    assert!(!plain.contains(" -416.7"), "{plain}");
+    assert_eq!(spaced.matches("-416.7").count(), 4, "{spaced}");
+}

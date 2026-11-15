@@ -291,7 +291,10 @@ impl FlowConstructor {
                 let fallback = self
                     .entity_constructor
                     .ensure_coverage(&style, &font, &static_text);
-                let fallback = TextFonts::without_runs(fallback.key);
+                let mut spaced = TextFonts::without_runs(fallback.key);
+                spaced.letter_spacing = fallback.letter_spacing;
+                spaced.features = fallback.features;
+                let fallback = spaced;
                 let font_name = font.postscript_name();
                 resolved.push(ResolvedMarginBox {
                     kind,
