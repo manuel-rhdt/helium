@@ -1356,20 +1356,10 @@ pub(crate) fn shape_text(
                 break 'outer;
             }
 
-            // We assume, that shaping with an any font will produce the same amount of glyphs.
-            // This is incorrect, but good enough for now.
-            if glyphs.len() != fallback_glyphs.len() {
-                break 'outer;
-            }
-
-            // TODO: Replace clusters and not glyphs. This should be more accurate.
-
-            // Copy new glyphs.
-            for i in 0..glyphs.len() {
-                if glyphs[i].is_missing() && !fallback_glyphs[i].is_missing() {
-                    glyphs[i] = fallback_glyphs[i].clone();
-                }
-            }
+            // Replace the clusters that have a missing glyph by the glyphs that the new font has for
+            // the same bytes of the text. The fonts can make different numbers of glyphs for a
+            // cluster: an emoji sequence is one glyph in an emoji font and several in another.
+            replace_missing_clusters(&mut glyphs, &fallback_glyphs);
 
             // Remember this font.
             used_fonts.push(fallback_font.id);
@@ -1392,6 +1382,44 @@ pub(crate) fn shape_text(
     }
 
     glyphs
+}
+
+/// Replaces the clusters of `glyphs` that have a missing glyph by the glyphs of `fallback` (the
+/// text shaped with another font) that belong to the same bytes of the text, if the other font
+/// has all of them.
+fn replace_missing_clusters(glyphs: &mut Vec<Glyph>, fallback: &[Glyph]) {
+    let mut starts: Vec<usize> = glyphs.iter().map(|glyph| glyph.byte_idx.value()).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    let end_of = |start: usize| starts.iter().copied().find(|&s| s > start).unwrap_or(usize::MAX);
+
+    let mut result = Vec::with_capacity(glyphs.len());
+    let mut i = 0;
+    while i < glyphs.len() {
+        // the glyphs of one cluster are next to each other
+        let start = glyphs[i].byte_idx.value();
+        let mut j = i;
+        while j < glyphs.len() && glyphs[j].byte_idx.value() == start {
+            j += 1;
+        }
+        let cluster = &glyphs[i..j];
+        if cluster.iter().any(Glyph::is_missing) {
+            let range = start..end_of(start);
+            let replacement: Vec<Glyph> = fallback
+                .iter()
+                .filter(|glyph| range.contains(&glyph.byte_idx.value()))
+                .cloned()
+                .collect();
+            if !replacement.is_empty() && replacement.iter().all(|glyph| !glyph.is_missing()) {
+                result.extend(replacement);
+                i = j;
+                continue;
+            }
+        }
+        result.extend_from_slice(cluster);
+        i = j;
+    }
+    *glyphs = result;
 }
 
 /// Converts a text into a list of glyph IDs.
