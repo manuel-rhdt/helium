@@ -3,6 +3,7 @@
 # Helium uses the fonts installed on the system (there is no @font-face yet).
 set -eu
 dest="${1:-$HOME/.fonts/helium-poster}"
+here="$(cd "$(dirname "$0")" && pwd)"
 base=https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts
 mkdir -p "$dest"
 for family in \
@@ -126,5 +127,7 @@ curl -fsSL -o "$dest/NotoSerifJP-Regular.otf" https://raw.githubusercontent.com/
 curl -fsSL -o "$dest/NotoSerifKR-Regular.otf" https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/SubsetOTF/KR/NotoSerifKR-Regular.otf
 curl -fsSL -o "$dest/GentiumBookPlus-Regular.ttf" https://raw.githubusercontent.com/google/fonts/main/ofl/gentiumbookplus/GentiumBookPlus-Regular.ttf
 curl -fsSL -o "$dest/Gulzar-Regular.ttf" https://raw.githubusercontent.com/google/fonts/main/ofl/gulzar/Gulzar-Regular.ttf
+# Meltho East Syriac Adiabene (Beth Mardutho licence, unmodified copy kept in fonts/)
+cp "$here/fonts/SyrCOMAdiabene.otf" "$dest/"
 fc-cache -f "$dest" 2>/dev/null || true
 echo "installed $(ls "$dest" | wc -l) fonts in $dest"
