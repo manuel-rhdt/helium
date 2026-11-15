@@ -1,4 +1,12 @@
-# h
+# Known failures of the vendored web-platform-tests reftests, one path per line (relative to
+# tests/wpt). A test listed here must keep failing: once helium passes it, the runner asks for its
+# removal. Run `cargo test --test wpt_reftest` to see why a test fails.
+
+# `vertical-align: top` is not supported: the image is on the baseline of its line
+css/CSS2/normal-flow/height-003.xht
+
+# float and overflow
+css/CSS2/normal-flow/max-width-106.xht
 
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-001.xht
@@ -567,7 +575,6 @@ css/CSS2/normal-flow/clearance-covers-the-margin-of-a-collapsed-through-block-in
 css/CSS2/normal-flow/cross-domain-iframe-paint-order.sub.html
 css/CSS2/normal-flow/height-001.xht
 css/CSS2/normal-flow/height-002.xht
-css/CSS2/normal-flow/height-003.xht
 css/CSS2/normal-flow/height-004.xht
 css/CSS2/normal-flow/height-005.xht
 css/CSS2/normal-flow/height-006.xht
@@ -859,7 +866,6 @@ css/CSS2/normal-flow/max-width-102.xht
 css/CSS2/normal-flow/max-width-103.xht
 css/CSS2/normal-flow/max-width-104.xht
 css/CSS2/normal-flow/max-width-105.xht
-css/CSS2/normal-flow/max-width-106.xht
 css/CSS2/normal-flow/max-width-107.xht
 css/CSS2/normal-flow/max-width-110.xht
 css/CSS2/normal-flow/max-width-applies-to-001.xht
