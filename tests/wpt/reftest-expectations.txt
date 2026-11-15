@@ -245,7 +245,6 @@ css/CSS2/normal-flow/height-084.xht
 css/CSS2/normal-flow/height-089.xht
 css/CSS2/normal-flow/height-inherit-001.xht
 css/CSS2/normal-flow/height-percentage-003.xht
-css/CSS2/normal-flow/inline-block-non-replaced-height-002.xht
 css/CSS2/normal-flow/inline-block-non-replaced-width-004.xht
 css/CSS2/normal-flow/inline-block-replaced-height-002.xht
 css/CSS2/normal-flow/inline-block-replaced-height-004.xht

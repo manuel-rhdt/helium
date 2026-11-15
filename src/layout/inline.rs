@@ -392,12 +392,7 @@ impl InlineFormattingContext {
             .map(|window| {
                 let (baseline, height) =
                     self.line_height(window[0], window[1], text_runs, intrinsic_sizes, aligns);
-                if height == Px(0.0) {
-                    return Err(format!(
-                        "line between break points {} and {} has zero height",
-                        window[0], window[1]
-                    ));
-                }
+                // a line can have no height (see `line_height`)
                 Ok(MeasuredLine {
                     from_break: window[0],
                     to_break: window[1],
@@ -530,7 +525,8 @@ impl InlineFormattingContext {
             }
         }
 
-        assert!(max_ascent + max_descent != Px(0.0));
+        // The line has no height if the font size and the line height of everything on it are
+        // zero (`font-size: 0` is used for spacers). That is what browsers do too.
         (max_ascent, max_ascent + max_descent)
     }
 }
