@@ -75,10 +75,16 @@ pub(super) struct Node {
     pub table: Option<Box<TableStructure>>,
     /// The tracks of a grid container after layout.
     pub grid_tracks: Option<GridTracks>,
+    /// What the grid layout found out about a grid container: the grid areas that the out-of-flow
+    /// boxes of the grid are placed in.
+    pub detailed: taffy::DetailedLayoutInfo<String>,
     /// Whether the in-flow children are laid out from right to left: the node is a block, flex or
     /// grid container or a table with `direction: rtl`. Taffy only lays out left to right, so the
     /// layout is mirrored afterwards (see [`HeliumTree::mirror_children`]).
     pub mirror_rtl: bool,
+    /// Whether the left and right insets and margins of this out-of-flow box were swapped, because
+    /// its parent is mirrored: the box is mirrored with the layout of its containing block.
+    pub mirrored_oof: bool,
     /// The borders of a cell, row, row group or table of a table with collapsing borders (see
     /// [`super::collapse`]).
     pub collapsed: Option<crate::layout::components::EdgeValues<crate::layout::components::CollapsedEdge>>,
@@ -164,7 +170,9 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             hoisted: vec![],
             table: None,
             grid_tracks: None,
+            detailed: taffy::DetailedLayoutInfo::None,
             mirror_rtl: false,
+            mirrored_oof: false,
             collapsed: None,
             cache: Cache::new(),
             layout: Layout::new(),
@@ -263,11 +271,24 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             return;
         }
         self.node_mut(id).mirror_rtl = true;
+        let container_positioned = self.node(id).style.position != taffy::Position::Static;
         for child in self.node(id).children.clone() {
-            let style = &mut self.node_mut(child).style;
-            if style.position != taffy::Position::Absolute {
-                std::mem::swap(&mut style.margin.left, &mut style.margin.right);
+            let node = self.node_mut(child);
+            let style = &mut node.style;
+            if style.position == taffy::Position::Absolute {
+                // The box is laid out left to right and mirrored with its containing block (see
+                // `mirror_hoisted`), so what is physical swaps sides. Its grid area and its
+                // static position are logical and need no change. That only works when the
+                // container is the containing block of the box; otherwise it is laid out as
+                // before, in the frame of the box that is.
+                if container_positioned {
+                    std::mem::swap(&mut style.margin.left, &mut style.margin.right);
+                    std::mem::swap(&mut style.inset.left, &mut style.inset.right);
+                    node.mirrored_oof = true;
+                }
+                continue;
             }
+            std::mem::swap(&mut style.margin.left, &mut style.margin.right);
             // the offset of a relatively positioned box is mirrored with the layout, too
             if style.position == taffy::Position::Relative {
                 std::mem::swap(&mut style.inset.left, &mut style.inset.right);
@@ -310,6 +331,30 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             node.layout.location.x = content_left + content_right - x - node.layout.size.width;
             // the margins were swapped for the layout (`prepare_right_to_left`): the used values
             // are the ones of the sides that they are on now
+            let margin = &mut node.layout.margin;
+            std::mem::swap(&mut margin.left, &mut margin.right);
+        }
+    }
+
+    /// Mirrors the out-of-flow boxes that a right-to-left container is the containing block of
+    /// and that were prepared for it (see `Node::mirrored_oof`) in its padding box.
+    pub(super) fn mirror_hoisted(&mut self, id: NodeId, width: f32) {
+        if !self.node(id).mirror_rtl {
+            return;
+        }
+        let style = &self.node(id).style;
+        let border = |lp: taffy::style::LengthPercentage| {
+            let raw = lp.into_raw();
+            if raw.tag() == taffy::CompactLength::LENGTH_TAG { raw.value() } else { 0.0 }
+        };
+        let left = border(style.border.left);
+        let right = width - border(style.border.right);
+        for child in self.node(id).hoisted.clone() {
+            let node = self.node_mut(child);
+            if !node.mirrored_oof {
+                continue;
+            }
+            node.layout.location.x = left + right - node.layout.location.x - node.layout.size.width;
             let margin = &mut node.layout.margin;
             std::mem::swap(&mut margin.left, &mut margin.right);
         }
@@ -825,6 +870,7 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
             // lay out the out-of-flow boxes this node is the containing block of
             if inputs.run_mode == RunMode::PerformLayout {
                 compute_oof_layout(tree, id, &mut output);
+                tree.mirror_hoisted(id, output.size.width);
             }
             if orthogonal {
                 transpose_output(&mut output);
@@ -842,6 +888,10 @@ impl LayoutContainingBlock for HeliumTree<'_, '_> {
 
     fn get_oof_item_style(&self, id: NodeId) -> Self::OofItemStyle<'_> {
         self.item_style(id)
+    }
+
+    fn get_detailed_layout_info(&self, id: NodeId) -> &taffy::DetailedLayoutInfo<String> {
+        &self.node(id).detailed
     }
 
     fn clear_hoisted_children(&mut self, id: NodeId) {
@@ -924,10 +974,12 @@ impl LayoutGridContainer for HeliumTree<'_, '_> {
     }
 
     fn set_detailed_grid_info(&mut self, id: NodeId, info: DetailedGridInfo<String>) {
-        self.node_mut(id).grid_tracks = Some(GridTracks {
-            rows: info.rows.positions,
-            columns: info.columns.positions,
+        let node = self.node_mut(id);
+        node.grid_tracks = Some(GridTracks {
+            rows: info.rows.positions.clone(),
+            columns: info.columns.positions.clone(),
         });
+        node.detailed = taffy::DetailedLayoutInfo::Grid(Box::new(info));
     }
 }
 
