@@ -516,7 +516,7 @@ pub fn write_pdf(
     for (font_name, font) in &print_pages.font_map {
         if !font.glyph_advances.lock().is_empty() {
             log::info!("Embedding font {} into PDF file.", font_name);
-            let font = font.embed_into_pdf(&mut context)?;
+            let font = font.embed_into_pdf(&mut context, !no_filter)?;
             let font: IndirectReference<lemon_pdf::font::Font> = context.write_object(font)?;
             font_map.insert(font_name.clone(), font);
         }

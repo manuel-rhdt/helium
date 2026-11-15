@@ -31,6 +31,15 @@ enum FontProgramRef {
     Cff(IndirectReference<FontFile3>),
 }
 
+/// A stream of `bytes`, deflated if `compress`.
+fn stream<D>(dict: D, bytes: &[u8], compress: bool) -> std::io::Result<Stream<D>> {
+    if compress {
+        Stream::deflated(dict, bytes)
+    } else {
+        Ok(Stream::new(dict, bytes.to_vec()))
+    }
+}
+
 impl Font {
     pub fn is_truetype(&self) -> bool {
         self.hb_font.face().table_with_tag(b"glyf").is_some()
@@ -117,14 +126,14 @@ impl Font {
             .collect()
     }
 
-    /// Builds the `FontFile2`/`FontFile3` stream from the font file bytes.
-    fn pdf_font_stream(&self, font_file: &[u8]) -> Result<FontProgram> {
+    /// Builds the `FontFile2`/`FontFile3` stream from the font file bytes, deflated if `compress`.
+    fn pdf_font_stream(&self, font_file: &[u8], compress: bool) -> Result<FontProgram> {
         if self.is_truetype() {
             // FontFile2: a complete TrueType sfnt.
             let dict = TrueTypeFontFileDict {
                 length1: font_file.len(),
             };
-            Ok(FontProgram::TrueType(Stream::new(dict, font_file.to_vec())))
+            Ok(FontProgram::TrueType(stream(dict, font_file, compress)?))
         } else {
             // FontFile3 / CIDFontType0C: the bare CFF table.
             let face = harfbuzz_rs::Face::from_bytes(font_file, 0);
@@ -142,7 +151,7 @@ impl Font {
             let dict = FontFile3Dict {
                 subtype: FontFile3Subtype::CIDFontType0C,
             };
-            Ok(FontProgram::Cff(Stream::new(dict, cff_data.to_vec())))
+            Ok(FontProgram::Cff(stream(dict, &cff_data, compress)?))
         }
     }
 
@@ -226,10 +235,13 @@ impl Font {
         map
     }
 
-    pub fn embed_into_pdf(&self, pdf_context: &mut DocumentContext) -> Result<PdfFont> {
+    /// Writes the font into the document. The font program and the `ToUnicode` map are deflated
+    /// if `compress`: every viewer reads Flate, and the font programs are most of a document
+    /// that has text in many scripts.
+    pub fn embed_into_pdf(&self, pdf_context: &mut DocumentContext, compress: bool) -> Result<PdfFont> {
         let font_file = self.embedded_font_bytes()?;
         let name = format!("{}+{}", self.subset_tag(), self.postscript_name());
-        let font_data = match self.pdf_font_stream(&font_file)? {
+        let font_data = match self.pdf_font_stream(&font_file, compress)? {
             FontProgram::TrueType(stream) => FontProgramRef::TrueType(pdf_context.write_object(stream)?),
             FontProgram::Cff(stream) => FontProgramRef::Cff(pdf_context.write_object(stream)?),
         };
@@ -367,7 +379,7 @@ CMapName currentdict /CMap defineresource pop
 end
 end"
         )?;
-        let to_unicode_stream = Stream::new(ToUnicodeCMapDict {}, to_unicode_stream);
+        let to_unicode_stream = stream(ToUnicodeCMapDict {}, &to_unicode_stream, compress)?;
         let to_unicode_stream = pdf_context.write_object(to_unicode_stream)?;
 
         let base_name = if self.is_truetype() {
