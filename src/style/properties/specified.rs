@@ -716,7 +716,9 @@ pub enum Display {
     Inline,
     InlineBlock,
     Flex,
+    InlineFlex,
     Grid,
+    InlineGrid,
     // https://www.w3.org/TR/CSS22/tables.html#table-display
     Table,
     InlineTable,
@@ -759,10 +761,14 @@ impl Display {
         )
     }
 
-    /// Whether the box is an atomic inline-level box (`inline-block` and `inline-table`), whose
-    /// contents are laid out on their own and which is placed on a line as a whole.
+    /// Whether the box is an atomic inline-level box (`inline-block`, `inline-table`,
+    /// `inline-flex` and `inline-grid`), whose contents are laid out on their own and which is
+    /// placed on a line as a whole.
     pub fn is_atomic_inline(self) -> bool {
-        matches!(self, Display::InlineBlock | Display::InlineTable)
+        matches!(
+            self,
+            Display::InlineBlock | Display::InlineTable | Display::InlineFlex | Display::InlineGrid
+        )
     }
 
     /// Whether the box is a table (`table` or `inline-table`).
@@ -785,9 +791,13 @@ impl Display {
         matches!(self, Display::TableColumn | Display::TableColumnGroup)
     }
 
-    /// Whether the box is a flex or grid container, whose children are flex or grid items.
+    /// Whether the box is a flex or grid container (also an inline one), whose children are flex
+    /// or grid items.
     pub fn is_flex_or_grid(self) -> bool {
-        matches!(self, Display::Flex | Display::Grid)
+        matches!(
+            self,
+            Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid
+        )
     }
 }
 

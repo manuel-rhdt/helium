@@ -1019,7 +1019,11 @@ impl EntityConstructor {
                         Some(node)
                             if matches!(
                                 node.style().box_.display,
-                                Display::Inline | Display::InlineBlock | Display::InlineTable
+                                Display::Inline
+                                    | Display::InlineBlock
+                                    | Display::InlineTable
+                                    | Display::InlineFlex
+                                    | Display::InlineGrid
                             ) => {}
                         _ => self.trim_next_inline_whitespace = true,
                     };
