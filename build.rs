@@ -4,14 +4,21 @@
 //! are tens of megabytes), so they are subset here with harfbuzz: the CJK fonts to the characters
 //! of the legacy national standards (GB 2312, Big5 level 1, JIS X 0208, KS X 1001; see
 //! `resources/fonts/cjk-charset.txt`) plus kana and punctuation, all other fonts only lose their
-//! hinting. The result is written to `OUT_DIR` and listed in `bundled_fonts.rs`, which is
-//! included by `src/layout/text/font.rs`.
+//! hinting. The same goes for the Latin, Greek, Cyrillic and math fonts of `resources/fonts`.
+//!
+//! Every subset is deflated and written to `OUT_DIR`; `bundled_fonts.rs` lists the compressed
+//! fonts together with the metadata that `fontdb` would read from them (families, weight, style),
+//! so that registering the fonts at start-up does not have to inflate any of them. The file is
+//! included by `src/layout/text/font.rs`, which inflates a font when it is first used.
 
 use harfbuzz_rs::subset::{SubsetFlags, SubsetInput};
 use harfbuzz_rs::Face;
+use flate2::write::DeflateEncoder;
+use flate2::Compression;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Which characters of the source font to keep.
@@ -24,25 +31,48 @@ enum Keep {
 }
 
 struct Spec {
-    /// File in `resources/fonts/src`.
+    /// File in `resources/fonts` (or in `resources/fonts/src` for the Noto fonts).
     source: &'static str,
+    /// The name of the constant with the index of this font in `BUNDLED_FONTS`, if any.
+    constant: Option<&'static str>,
     /// Face index in a font collection.
     face: u32,
     keep: Keep,
 }
 
 const fn all(source: &'static str) -> Spec {
-    Spec { source, face: 0, keep: Keep::All }
+    Spec { source, constant: None, face: 0, keep: Keep::All }
+}
+
+const fn named(source: &'static str, constant: &'static str) -> Spec {
+    Spec { source, constant: Some(constant), face: 0, keep: Keep::All }
 }
 
 const fn cjk(source: &'static str, face: u32) -> Spec {
-    Spec { source, face, keep: Keep::Cjk }
+    Spec { source, constant: None, face, keep: Keep::Cjk }
 }
 
 /// The first face of the Noto CJK collections (Japanese).
 const JP: u32 = 0;
 
 const FONTS: &[Spec] = &[
+    // Free, metric-compatible stand-ins for Helvetica, Times and Courier (TeX Gyre Heros,
+    // Termes and Cursor) and the OpenType math fonts. The order is the order in which the fonts
+    // are registered: the fonts registered first win ties in font matching.
+    all("texgyreheros-regular.otf"),
+    all("texgyreheros-bold.otf"),
+    all("texgyreheros-italic.otf"),
+    all("texgyreheros-bolditalic.otf"),
+    all("texgyretermes-regular.otf"),
+    all("texgyretermes-bold.otf"),
+    all("texgyretermes-italic.otf"),
+    all("texgyretermes-bolditalic.otf"),
+    all("texgyrecursor-regular.otf"),
+    all("texgyrecursor-bold.otf"),
+    all("texgyrecursor-italic.otf"),
+    all("texgyrecursor-bolditalic.otf"),
+    all("latinmodern-math.otf"),
+    all("STIXTwoMath-Regular.ttf"),
     // Arabic script: Naskh for serif text, Sans for the rest, Nastaliq for Urdu.
     all("NotoNaskhArabic-Regular.ttf"),
     all("NotoNaskhArabic-Bold.ttf"),
@@ -96,7 +126,13 @@ const FONTS: &[Spec] = &[
     // face is a stand-in for all of the regional Noto CJK families.
     cjk("NotoSansCJK-Regular.ttc", JP),
     cjk("NotoSansCJK-Bold.ttc", JP),
+    // The fallback for everything the other fonts do not cover.
+    named("DejaVuSans.ttf", "DEJAVU_REGULAR"),
+    named("DejaVuSans-Bold.ttf", "DEJAVU_BOLD"),
 ];
+
+/// Fonts whose deflated size is more than this fraction of their size are not compressed.
+const MAX_RATIO: f64 = 0.75;
 
 /// Blocks that are kept in the CJK fonts in addition to the characters of the charset file.
 const CJK_BLOCKS: &[(u32, u32)] = &[
@@ -119,30 +155,74 @@ const CJK_BLOCKS: &[(u32, u32)] = &[
 
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let src = root.join("resources/fonts/src");
-    let charset_path = root.join("resources/fonts/cjk-charset.txt");
+    let fonts = root.join("resources/fonts");
+    let charset_path = fonts.join("cjk-charset.txt");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("fonts");
     let _ = fs::remove_dir_all(&out);
     fs::create_dir_all(&out).unwrap();
 
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed={}", src.display());
+    println!("cargo:rerun-if-changed={}", fonts.display());
     println!("cargo:rerun-if-changed={}", charset_path.display());
 
     let charset: Vec<char> = fs::read_to_string(&charset_path).unwrap().chars().filter(|c| !c.is_whitespace()).collect();
 
-    let mut list = String::from("pub(crate) const EMBEDDED_FONTS: &[&[u8]] = &[\n");
-    for spec in FONTS {
+    let mut list = String::from("pub(crate) static BUNDLED_FONTS: [EmbeddedFont; FONTS] = [\n");
+    let mut constants = String::new();
+    for (i, spec) in FONTS.iter().enumerate() {
         let stem = Path::new(spec.source).file_stem().unwrap().to_str().unwrap();
-        let name = format!("{stem}-{}.otf", spec.face);
-        let target = out.join(&name);
-        let data = fs::read(src.join(spec.source)).unwrap_or_else(|e| panic!("{}: {e}", spec.source));
+        let target = out.join(format!("{stem}-{}.z", spec.face));
+        let path = [fonts.join(spec.source), fonts.join("src").join(spec.source)]
+            .into_iter()
+            .find(|path| path.exists())
+            .unwrap_or_else(|| panic!("{}: not found", spec.source));
+        let data = fs::read(path).unwrap();
         let subset = subset(&data, spec, &charset).unwrap_or_else(|| panic!("cannot subset {}", spec.source));
-        fs::write(&target, subset).unwrap();
-        writeln!(list, "    include_bytes!({:?}),", target.display().to_string()).unwrap();
+        let info = face_info(&subset).unwrap_or_else(|| panic!("cannot read {}", spec.source));
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::best());
+        encoder.write_all(&subset).unwrap();
+        let deflated = encoder.finish().unwrap();
+        // Inflating takes time (about 25 ms for 5 MB) that is only worth spending where it saves
+        // much: fonts that hardly shrink (the CJK fonts) are stored as they are.
+        let deflate = (deflated.len() as f64) < MAX_RATIO * subset.len() as f64;
+        fs::write(&target, if deflate { &deflated } else { &subset }).unwrap();
+        writeln!(
+            list,
+            "    EmbeddedFont::new(include_bytes!({:?}), {}, {deflate}, {info}),",
+            target.display().to_string(),
+            subset.len()
+        )
+        .unwrap();
+        if let Some(name) = spec.constant {
+            writeln!(constants, "pub(crate) const {name}: usize = {i};").unwrap();
+        }
     }
     list.push_str("];\n");
+    writeln!(list, "const FONTS: usize = {};", FONTS.len()).unwrap();
+    list.push_str(&constants);
     fs::write(out.join("bundled_fonts.rs"), list).unwrap();
+}
+
+/// The metadata of a font as `fontdb` reads it, as the source of an `EmbeddedFaceInfo`.
+fn face_info(data: &[u8]) -> Option<String> {
+    let mut db = fontdb::Database::new();
+    db.load_font_data(data.to_vec());
+    let mut faces = db.faces();
+    let face = faces.next()?;
+    if faces.next().is_some() {
+        return None;
+    }
+    let families: Vec<String> =
+        face.families.iter().map(|(name, language)| format!("({name:?}, fontdb::Language::{language:?})")).collect();
+    Some(format!(
+        "EmbeddedFaceInfo {{ families: &[{}], post_script_name: {:?}, style: fontdb::Style::{:?}, weight: {}, stretch: fontdb::Stretch::{:?}, monospaced: {} }}",
+        families.join(", "),
+        face.post_script_name,
+        face.style,
+        face.weight.0,
+        face.stretch,
+        face.monospaced,
+    ))
 }
 
 fn subset(data: &[u8], spec: &Spec, charset: &[char]) -> Option<Vec<u8>> {

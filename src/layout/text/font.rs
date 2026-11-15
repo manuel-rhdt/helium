@@ -108,46 +108,17 @@ impl Clone for Font {
     }
 }
 
-/// The fonts built into Helium. They are used when no installed font matches the style, so
-/// that there always is a font that can be embedded.
-const BUNDLED_REGULAR: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSans.ttf");
-const BUNDLED_BOLD: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSans-Bold.ttf");
-
-// `EMBEDDED_FONTS`: the Noto fonts for the scripts that DejaVu Sans lacks, subset by `build.rs`.
+// `BUNDLED_FONTS`: the fonts built into Helium, deflated and described by `build.rs`: the
+// TeX Gyre fonts (free, metric-compatible stand-ins for the Helvetica, Times and Courier families
+// of the PDF standard fonts, so that the generic families and the standard font names resolve
+// without any installed fonts), the OpenType math fonts (Latin Modern Math and STIX Two Math,
+// used for MathML when `font-family` does not name a font with a `MATH` table), the Noto fonts
+// for the scripts that DejaVu Sans lacks and DejaVu Sans, which is used when no installed font
+// matches the style, so that there always is a font that can be embedded.
+use super::embedded::{EmbeddedFaceInfo, EmbeddedFont};
 include!(concat!(env!("OUT_DIR"), "/fonts/bundled_fonts.rs"));
 
-/// Free, metric-compatible stand-ins for the Helvetica, Times and Courier families of the PDF
-/// standard fonts (TeX Gyre Heros, Termes and Cursor), always available through the font
-/// database so that the generic families and the standard font names resolve without any
-/// installed fonts.
-macro_rules! tex_gyre {
-    ($($file:literal),* $(,)?) => {
-        &[$(include_bytes!(concat!("../../../resources/fonts/", $file))),*]
-    };
-}
-const TEX_GYRE: &[&[u8]] = tex_gyre![
-    "texgyreheros-regular.otf",
-    "texgyreheros-bold.otf",
-    "texgyreheros-italic.otf",
-    "texgyreheros-bolditalic.otf",
-    "texgyretermes-regular.otf",
-    "texgyretermes-bold.otf",
-    "texgyretermes-italic.otf",
-    "texgyretermes-bolditalic.otf",
-    "texgyrecursor-regular.otf",
-    "texgyrecursor-bold.otf",
-    "texgyrecursor-italic.otf",
-    "texgyrecursor-bolditalic.otf",
-];
-
-/// The OpenType math fonts (Latin Modern Math and STIX Two Math), used for MathML when
-/// `font-family` does not name a font with a `MATH` table.
-const MATH_FONTS: &[&[u8]] = &[
-    include_bytes!("../../../resources/fonts/latinmodern-math.otf"),
-    include_bytes!("../../../resources/fonts/STIXTwoMath-Regular.ttf"),
-];
-
-/// Families of `MATH_FONTS` in order of preference.
+/// The families of the math fonts in order of preference.
 const MATH_FAMILIES: &[&str] = &["Latin Modern Math", "STIX Two Math"];
 
 /// Names of the PDF standard fonts and their common look-alikes, with the bundled family that
@@ -200,15 +171,9 @@ impl Font {
 
     /// The font built into Helium (DejaVu Sans) in the given weight.
     pub fn bundled(weight: &FontWeight) -> Self {
-        static REGULAR: OnceLock<Arc<Vec<u8>>> = OnceLock::new();
-        static BOLD: OnceLock<Arc<Vec<u8>>> = OnceLock::new();
         // the closer of the two weights, a tie goes to the heavier one like in font matching
-        let bytes = if weight.0 >= 550.0 {
-            BOLD.get_or_init(|| Arc::new(BUNDLED_BOLD.to_vec()))
-        } else {
-            REGULAR.get_or_init(|| Arc::new(BUNDLED_REGULAR.to_vec()))
-        };
-        Font::load(bytes.clone(), 0).expect("the bundled fonts are valid")
+        let font = if weight.0 >= 550.0 { DEJAVU_BOLD } else { DEJAVU_REGULAR };
+        Font::load(BUNDLED_FONTS[font].data().clone(), 0).expect("the bundled fonts are valid")
     }
 
     /// Whether the font has colour glyphs painted from the `COLR` table.
@@ -405,6 +370,18 @@ pub(crate) fn svg_font_database() -> Arc<fontdb::Database> {
     DATABASE.get_or_init(|| Arc::new(system_fonts().clone())).clone()
 }
 
+/// The built-in fonts in the font database, by ID.
+static BUNDLED_IDS: OnceLock<HashMap<fontdb::ID, &'static EmbeddedFont>> = OnceLock::new();
+
+/// The data and the face index of a face of the font database. The built-in fonts share their
+/// inflated data, the data of other fonts is copied.
+fn face_data(db: &fontdb::Database, id: fontdb::ID) -> Option<(Arc<Vec<u8>>, u32)> {
+    if let Some(font) = BUNDLED_IDS.get().and_then(|ids| ids.get(&id)) {
+        return Some((font.data().clone(), 0));
+    }
+    db.with_face_data(id, |data, index| (Arc::new(data.to_vec()), index))
+}
+
 /// The fonts installed on the system (unless disabled, see `use_system_fonts`) and the fonts
 /// built into Helium, scanned once.
 fn system_fonts() -> &'static fontdb::Database {
@@ -419,10 +396,11 @@ fn system_fonts() -> &'static fontdb::Database {
         }
         // Loaded after the system fonts so that installed fonts win ties; the bundled
         // families are only used when asked for by name or when nothing else matches.
-        let dejavu: &[&[u8]] = &[BUNDLED_REGULAR, BUNDLED_BOLD];
-        for data in TEX_GYRE.iter().chain(MATH_FONTS).chain(EMBEDDED_FONTS).chain(dejavu) {
-            db.load_font_source(fontdb::Source::Binary(Arc::new(*data)));
+        let mut ids = HashMap::new();
+        for font in &BUNDLED_FONTS {
+            ids.insert(db.push_face_info(font.face_info()), font);
         }
+        let _ = BUNDLED_IDS.set(ids);
         // `fontdb` names fixed families for the generic ones, which are rarely installed on
         // Linux; use what the system prefers, or else the bundled TeX Gyre family. DejaVu is
         // what fontconfig answers on an unconfigured system, so it is not taken as a
@@ -479,12 +457,9 @@ pub(crate) fn color_emoji_font() -> Option<Font> {
                 db.faces()
                     .filter(|face| face.families.iter().any(|(name, _)| name.eq_ignore_ascii_case(family)))
                     .find_map(|face| {
-                        db.with_face_data(face.id, |data, index| {
-                            let colr = ttf_parser::Face::parse(data, index)
-                                .is_ok_and(|face| face.tables().colr.is_some());
-                            colr.then(|| (Arc::new(data.to_vec()), index))
-                        })
-                        .flatten()
+                        let (data, index) = face_data(db, face.id)?;
+                        let colr = ttf_parser::Face::parse(&data, index).is_ok_and(|face| face.tables().colr.is_some());
+                        colr.then_some((data, index))
                     })
             })
         })
@@ -537,8 +512,8 @@ pub(crate) fn system_font(
     style: &FontStyle,
 ) -> Option<Font> {
     let id = system_font_id(families, weight, style)?;
-    let (data, index) = system_fonts().with_face_data(id, |data, index| (data.to_vec(), index))?;
-    Font::load(Arc::new(data), index)
+    let (data, index) = face_data(system_fonts(), id)?;
+    Font::load(data, index)
 }
 
 /// The face of the font database of the SVG images that is `font`, if the font is in it: fonts
@@ -633,10 +608,9 @@ mod tests {
 
     #[test]
     fn embedded_fonts_cover_the_major_scripts() {
-        use super::EMBEDDED_FONTS;
-        let fonts: Vec<Font> = EMBEDDED_FONTS
+        let fonts: Vec<Font> = super::BUNDLED_FONTS
             .iter()
-            .map(|data| Font::load(std::sync::Arc::new(data.to_vec()), 0).expect("embedded fonts are valid"))
+            .map(|font| Font::load(font.data().clone(), 0).expect("embedded fonts are valid"))
             .collect();
         for ch in "中漢字あカ한ع پ ٹ ی ת क ব த ไ ລ ក မ ა ա አ ∑ ♥".chars().filter(|c| !c.is_whitespace()) {
             assert!(fonts.iter().any(|font| font.covers(ch)), "no embedded font covers {ch}");
@@ -690,6 +664,5 @@ mod tests {
 }
 #[cfg(test)]
 pub(super) fn bundled_font_data() -> Vec<Vec<u8>> {
-    let dejavu: &[&[u8]] = &[BUNDLED_REGULAR, BUNDLED_BOLD];
-    TEX_GYRE.iter().chain(MATH_FONTS).chain(EMBEDDED_FONTS).chain(dejavu).map(|d| d.to_vec()).collect()
+    BUNDLED_FONTS.iter().map(|font| font.data().to_vec()).collect()
 }

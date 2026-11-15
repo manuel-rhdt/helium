@@ -1,3 +1,4 @@
+mod embedded;
 pub mod fallback;
 mod fallback_data;
 pub mod font;
