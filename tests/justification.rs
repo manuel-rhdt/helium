@@ -69,3 +69,46 @@ fn a_line_break_at_the_end_of_a_paragraph_does_not_stretch_the_line() {
     );
     assert!(stretch_per_line(&dump)[0] < 20.0);
 }
+
+/// The sum of the adjustments (thousandths of an em) that move a glyph to the left: kerning and
+/// the narrower spaces of a line whose spaces are shrunk.
+fn tightening(dump: &Value) -> f64 {
+    dump["paint"]["text"][0]["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|op| op["op"] == "kerned")
+        .flat_map(|op| op["items"].as_array().unwrap())
+        .filter_map(Value::as_f64)
+        .filter(|adjustment| *adjustment > 0.0)
+        .sum()
+}
+
+/// The width of the `<span>` in the dump of a layout, in CSS pixels.
+fn span_width(node: &Value) -> Option<f64> {
+    if node["tag"] == "span" {
+        return node["border_box"]["width"].as_f64();
+    }
+    node["children"].as_array()?.iter().find_map(span_width)
+}
+
+#[test]
+fn a_last_line_that_fits_only_with_shrunken_spaces_is_shrunk() {
+    const SENTENCE: &str = "“And which of the two do you call my little recent piece of modesty?”";
+    let probe = dump(
+        "shrink_probe",
+        &format!(r#"<span style="display: inline-block; white-space: nowrap">{SENTENCE}</span>"#),
+    );
+    let natural = span_width(&probe["document"]).unwrap();
+    // 6 px narrower than the text: the line breaking lets the spaces shrink to make it one line
+    let shrink = 6.0;
+    let html = |width: f64| {
+        format!(r#"<p style="width: {width}px; text-align: justify; margin: 0">{SENTENCE}</p>"#)
+    };
+    let fits = dump("shrink_fits", &html(natural + 100.0));
+    let tight = dump("shrink_tight", &html(natural - shrink));
+    assert_eq!(stretch_per_line(&tight).len(), 1, "one line");
+    // the 6 px are 6 / 16 em, or 375 thousandths, which the spaces give up
+    let given_up = tightening(&tight) - tightening(&fits);
+    assert!((given_up - shrink / 16.0 * 1000.0).abs() < 20.0, "{given_up}");
+}
