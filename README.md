@@ -49,7 +49,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   sheets and the fonts of the page (selectors can reach from the page into it), and drawn with
   the transformations, clip paths and masks of the SVG around it, so diagram labels can be
   formulas; it can contain `<svg>` again. Not supported: filters (ignored), the opacity of
-  gradient stops, GIF and WebP inside of SVG, `!important` in the CSS of SVG elements, a
+  gradient stops, GIF and WebP inside of SVG, `!important` in the `style` attribute of SVG
+  elements (it does not win over one in a style sheet), a
   `foreignObject` in an SVG file (`<img src="x.svg">`: the content needs the document),
   hyperlinks and tags (accessibility structure) inside of a `foreignObject`.
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
@@ -59,7 +60,17 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 ## CSS
 
 - **Box model:** `width`, `height`, `min-`/`max-` width and height, `box-sizing`, `margin`,
-  `padding`, `border` (width, color and `solid` style, per side), `border-radius`, `top`/`right`/`bottom`/`left`.
+  `padding`, `border` (width, color and style, per side), `border-radius`, `top`/`right`/`bottom`/`left`.
+  All border styles are painted (`dotted`, `dashed`, `double`, `groove`, `ridge`, `inset`,
+  `outset`, `hidden`), except that a border with rounded corners draws `dotted`, `dashed`,
+  `double`, `groove` and `ridge` as one solid line (`inset` and `outset` keep their two tones);
+  in tables with collapsing borders they follow the conflict resolution of CSS 2.2.
+- **Cascade:** specificity, `!important`, the origins (user agent, author, `style` attribute),
+  and `@media` rules and the `media` attribute of `<style>` and `<link>` for the medium
+  `print`. The size features (`width`, `height`, `orientation`, ...) are evaluated against the
+  default page (A4, also when the document is cropped), not against `@page { size }`; `(hover)`, `(pointer)` and
+  similar features say that there is no pointer. `rem` is relative to the root element (in
+  `@page` and its margin boxes, to the initial font size).
 - **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `grid`, `table` and the table
   parts, `list-item`, `none`), `position: absolute`, block, inline, flexbox
   (`flex-*`, `gap`, `justify-*`, `align-*`) and grid (`grid-template-*`, `grid-auto-*`,
@@ -137,9 +148,9 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 ## Not supported
 
-Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`, `@media`,
-`@supports`, `@import`, `!important`, `var()`, `calc()`, `overflow`, `float`, `position:
+Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`,
+`@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
 relative`/`fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
-`outline`, border styles other than `solid`, `vertical-align`, `word-break`/`overflow-wrap`,
-`counter-*` and `::before`/`::after`, `rem`/`vw`/`vh` and other units, scripting, and form
+`outline`, `vertical-align`, `word-break`/`overflow-wrap`,
+`counter-*` and `::before`/`::after`, `vw`/`vh`, `ex`/`ch` and other units, scripting, and form
 interaction.

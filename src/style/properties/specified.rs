@@ -1689,10 +1689,45 @@ impl UnicodeBidi {
     }
 }
 
-#[derive(Debug, Copy, Clone, PropertyValue)]
+/// https://www.w3.org/TR/css-backgrounds-3/#border-style
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
 pub enum BorderStyle {
     None,
+    /// Like `none`, but wins over the other borders in the conflicts of collapsed borders.
+    Hidden,
+    Dotted,
+    Dashed,
     Solid,
+    Double,
+    Groove,
+    Ridge,
+    Inset,
+    Outset,
+}
+
+impl BorderStyle {
+    /// Whether the border takes space and is painted: with the style `none` or `hidden` its
+    /// width is zero.
+    pub fn is_visible(self) -> bool {
+        !matches!(self, BorderStyle::None | BorderStyle::Hidden)
+    }
+
+    /// The rank of the style in the conflicts of collapsed borders of the same width and of the
+    /// same kind of box: the greater one wins.
+    /// https://www.w3.org/TR/CSS22/tables.html#border-conflict-resolution
+    pub fn collapse_rank(self) -> u8 {
+        match self {
+            BorderStyle::None | BorderStyle::Hidden => 0,
+            BorderStyle::Inset => 1,
+            BorderStyle::Groove => 2,
+            BorderStyle::Outset => 3,
+            BorderStyle::Ridge => 4,
+            BorderStyle::Dotted => 5,
+            BorderStyle::Dashed => 6,
+            BorderStyle::Solid => 7,
+            BorderStyle::Double => 8,
+        }
+    }
 }
 
 impl Default for BorderStyle {
