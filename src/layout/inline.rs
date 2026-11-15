@@ -1496,6 +1496,7 @@ impl<'a> System<'a> for LineBoxCreator {
         WriteStorage<'a, components::Position>,
         WriteStorage<'a, Paragraph>,
         WriteStorage<'a, components::VectorGraphics>,
+        WriteStorage<'a, components::ColorGlyph>,
         Read<'a, FontMap>,
         Read<'a, StructureTree>,
     );
@@ -1513,6 +1514,7 @@ impl<'a> System<'a> for LineBoxCreator {
             mut positions,
             mut paragraphs,
             mut graphics,
+            mut color_glyphs,
             font_map,
             structure,
         ): Self::SystemData,
@@ -1705,6 +1707,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             baseline_x: Px(line_origin.0),
                             start_y: line_pos.y + piece_start,
                         });
+                        let ops_before = ops.len();
                         piece_width += shape_piece_in_flow(
                             characters,
                             font,
@@ -1717,6 +1720,39 @@ impl<'a> System<'a> for LineBoxCreator {
                             vertical,
                             &mut ops,
                         );
+                        // the colour glyphs are painted by themselves, at their own positions
+                        let mut index = ops_before;
+                        while index < ops.len() {
+                            if !matches!(ops[index], TextOperator::ColorGlyph { .. }) {
+                                index += 1;
+                                continue;
+                            }
+                            let TextOperator::ColorGlyph { font, glyph, size, dx, rise } =
+                                ops.remove(index)
+                            else {
+                                unreachable!()
+                            };
+                            let page_pos = components::Position {
+                                y: line_pos.y,
+                                height: Px(0.0),
+                                ..line_pos
+                            };
+                            entities
+                                .build_entity()
+                                .with(page_pos, &mut positions)
+                                .with(
+                                    components::ColorGlyph {
+                                        font,
+                                        glyph,
+                                        size,
+                                        x: line_pos.x + piece_start + dx,
+                                        baseline: line_pos.y + line.baseline - rise,
+                                        color: run.color,
+                                    },
+                                    &mut color_glyphs,
+                                )
+                                .build();
+                        }
                         if hyphen && !rtl {
                             ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
                             piece_width +=
@@ -2145,6 +2181,15 @@ pub(super) fn shape_piece_in_flow(
             ops.push(TextOperator::SetRise(font_size * (rise.0 as f32 / 1000.0)));
         }
         out.glyph(glyph.glyph);
+        if vertical.is_none() && glyph_font.is_color_glyph(glyph.glyph) {
+            ops.push(TextOperator::ColorGlyph {
+                font: glyph_font.postscript_name(),
+                glyph: glyph.glyph,
+                size: font_size,
+                dx: Px(glyph.x.0 as f32 * font_size.0 / 1000.0),
+                rise: Px(glyph.rise.0 as f32 * font_size.0 / 1000.0),
+            });
+        }
         pen = FontUnit(glyph.x.0 + glyph_font.advance(glyph.glyph).0);
     }
     if open_cluster.is_some() {

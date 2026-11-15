@@ -45,7 +45,9 @@ impl FallbackSet {
     /// The index (as in `GlyphInfo::font`) of the font for `cluster` in `script`: `0` for
     /// `primary` if it covers the cluster or no fallback font was chosen.
     pub(crate) fn index_for(&self, primary: &Font, cluster: &str, script: Script) -> u16 {
-        if primary.covers_cluster(cluster) {
+        // an emoji has the font that was chosen for it even if the primary font has a glyph
+        let emoji = !primary.color && super::segment::is_emoji_cluster(cluster);
+        if !emoji && primary.covers_cluster(cluster) {
             return 0;
         }
         match self.choices.get(cluster) {
@@ -75,6 +77,10 @@ pub struct Font {
     /// The bytes of the font file and the index of the face in it.
     pub(crate) data: Arc<Vec<u8>>,
     pub(crate) index: u32,
+    /// Whether the font has colour glyphs that are painted from a `COLR` table (emoji fonts).
+    /// Their base glyphs have no outline of their own: the glyph in the text only advances the
+    /// pen, and `pdf::color_glyph` paints the layers.
+    pub(crate) color: bool,
     /// Fonts that provide the clusters this font has no glyphs for, for text of each font
     /// description (`FallbackKey`: the `font-family` list, weight, style and language), which
     /// decides the fallback fonts.
@@ -94,6 +100,7 @@ impl Clone for Font {
             to_unicode_fallback: Mutex::new(self.to_unicode_fallback.lock().clone()),
             data: self.data.clone(),
             index: self.index,
+            color: self.color,
             hb_font: self.hb_font.clone(),
             postscript_name: self.postscript_name.clone(),
             fallbacks: RwLock::new(self.fallbacks.read().clone()),
@@ -167,7 +174,9 @@ impl Font {
             .or_else(|| name_of(&hb_face, sys::HB_OT_NAME_ID_FULL_NAME))
             .or_else(|| name_of(&hb_face, sys::HB_OT_NAME_ID_FONT_FAMILY))?;
         let hb_font = HbFont::new(hb_face).into();
+        let color = ttf_parser::Face::parse(&data, index).is_ok_and(|face| face.tables().colr.is_some());
         Some(Font {
+            color,
             upem,
             glyph_advances: Default::default(),
             to_unicode: Default::default(),
@@ -200,6 +209,18 @@ impl Font {
             REGULAR.get_or_init(|| Arc::new(BUNDLED_REGULAR.to_vec()))
         };
         Font::load(bytes.clone(), 0).expect("the bundled fonts are valid")
+    }
+
+    /// Whether the font has colour glyphs painted from the `COLR` table.
+    pub fn has_color_glyphs(&self) -> bool {
+        self.color
+    }
+
+    /// Whether `glyph` is painted from the `COLR` table.
+    pub fn is_color_glyph(&self, glyph: GlyphIndex) -> bool {
+        self.color
+            && ttf_parser::Face::parse(&self.data, self.index)
+                .is_ok_and(|face| face.is_color_glyph(ttf_parser::GlyphId(glyph.0 as u16)))
     }
 
     /// Whether this font has a glyph for `ch`.
@@ -391,6 +412,41 @@ fn system_fonts() -> &'static fontdb::Database {
         }
         db
     })
+}
+
+/// The families of the colour emoji fonts that are painted from a `COLR` table, in the order of
+/// preference. Bitmap emoji fonts are not drawn (see `pdf::color_glyph`).
+const EMOJI_FAMILIES: &[&str] = &[
+    "Noto Color Emoji",
+    "Twemoji Mozilla",
+    "Twitter Color Emoji",
+    "Segoe UI Emoji",
+    "EmojiOne Color",
+    "Fluent Emoji Color",
+];
+
+/// An installed colour emoji font with `COLR` glyphs. A system can have the same family as a
+/// bitmap font too (the `CBDT` build of Noto Color Emoji), which has to be skipped.
+pub(crate) fn color_emoji_font() -> Option<Font> {
+    static FOUND: OnceLock<Option<(Arc<Vec<u8>>, u32)>> = OnceLock::new();
+    let (data, index) = FOUND
+        .get_or_init(|| {
+            let db = system_fonts();
+            EMOJI_FAMILIES.iter().find_map(|family| {
+                db.faces()
+                    .filter(|face| face.families.iter().any(|(name, _)| name.eq_ignore_ascii_case(family)))
+                    .find_map(|face| {
+                        db.with_face_data(face.id, |data, index| {
+                            let colr = ttf_parser::Face::parse(data, index)
+                                .is_ok_and(|face| face.tables().colr.is_some());
+                            colr.then(|| (Arc::new(data.to_vec()), index))
+                        })
+                        .flatten()
+                    })
+            })
+        })
+        .clone()?;
+    Font::load(data, index)
 }
 
 /// The installed font that best matches the first available of `families`.

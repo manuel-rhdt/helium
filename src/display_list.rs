@@ -239,6 +239,15 @@ pub struct BlendGroup {
 }
 
 #[derive(Debug, Clone)]
+pub struct ColorGlyphItem {
+    pub origin: Point,
+    pub size: PixelLength,
+    pub font: String,
+    pub glyph: crate::layout::text::font::GlyphIndex,
+    pub color: RGBA,
+}
+
+#[derive(Debug, Clone)]
 pub enum DisplayItem {
     LineString {
         points: Vec<Point>,
@@ -266,6 +275,9 @@ pub enum DisplayItem {
     },
     Color(RGBA),
     StrokeColor(RGBA),
+    /// A colour glyph (an emoji) painted from the `COLR` table of its font, whose origin is on
+    /// the baseline at the point.
+    ColorGlyph(Box<ColorGlyphItem>),
     Text(Point, PixelLength, String, Glyphs),
     Paragraph(Paragraph),
     Translate(PixelLength, PixelLength),
@@ -887,6 +899,36 @@ impl<'a> System<'a> for DisplayDecoration {
     }
 }
 
+/// Paints the colour glyphs of the page over its text.
+pub struct DisplayColorGlyphs {
+    pub display_list: DisplayList,
+    pub bitset: specs::BitSet,
+}
+
+impl<'a> System<'a> for DisplayColorGlyphs {
+    type SystemData = (
+        Entities<'a>,
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, crate::layout::components::ColorGlyph>,
+    );
+
+    fn run(&mut self, (entities, positions, glyphs): Self::SystemData) {
+        for (entity, pos, glyph, _) in (&entities, &positions, &glyphs, &self.bitset).join() {
+            self.display_list.append(
+                DisplayItem::ColorGlyph(Box::new(ColorGlyphItem {
+                    origin: Point { x: glyph.x, y: glyph.baseline },
+                    size: glyph.size,
+                    font: glyph.font.clone(),
+                    glyph: glyph.glyph,
+                    color: glyph.color,
+                })),
+                entity,
+                pos.z,
+            );
+        }
+    }
+}
+
 pub struct DisplayText {
     pub display_list: DisplayList,
     pub bitset: specs::BitSet,
@@ -1120,6 +1162,7 @@ impl<'a> System<'a> for ContentRectCalculator {
 pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
     <DisplayText as System>::SystemData::setup(world);
     <DisplayVectorGraphics as System>::SystemData::setup(world);
+    <DisplayColorGlyphs as System>::SystemData::setup(world);
     <DisplayImages as System>::SystemData::setup(world);
 
     let pages = world.read_resource::<Option<Pages>>();
@@ -1204,6 +1247,13 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
             bitset,
         };
         text_builder.run_now(world);
+        let mut color_glyph_builder = DisplayColorGlyphs {
+            display_list: text_builder.display_list,
+            bitset: text_builder.bitset,
+        };
+        color_glyph_builder.run_now(world);
+        text_builder.display_list = color_glyph_builder.display_list;
+        text_builder.bitset = color_glyph_builder.bitset;
         let mut display_list = text_builder.display_list;
         {
             let scopes = world.read_resource::<crate::layout::components::TransformScopes>();

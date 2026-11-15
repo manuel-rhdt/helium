@@ -512,6 +512,17 @@ pub enum TextOperator {
         x_offset: PixelLength,
         leading: PixelLength,
     },
+    /// A glyph that is painted from the `COLR` table of its font (a colour emoji) instead of being
+    /// drawn as text: `dx` is where the pen is, from the start of the piece, and `rise` the height
+    /// above the baseline. The text only advances over the glyph; `LineBoxCreator` takes these
+    /// operators out and places a [`ColorGlyph`] at the absolute position of the glyph.
+    ColorGlyph {
+        font: String,
+        glyph: crate::layout::text::font::GlyphIndex,
+        size: PixelLength,
+        dx: PixelLength,
+        rise: PixelLength,
+    },
     /// The place of an atomic inline (a formula) whose own [`Paragraph`] is painted here, so
     /// that the content stream follows the logical order of the text. The embedded operators
     /// position their glyphs absolutely; afterwards the text line matrix is set back to `(x, y)`
@@ -638,6 +649,23 @@ pub struct MathBox {
 }
 
 impl Component for MathBox {
+    type Storage = DenseVecStorage<Self>;
+}
+
+/// A colour glyph (an emoji of a font with a `COLR` table) at the absolute position of its
+/// origin on the baseline. It is painted over the text, whose glyph for it is empty.
+#[derive(Debug, Clone)]
+pub struct ColorGlyph {
+    pub font: String,
+    pub glyph: crate::layout::text::font::GlyphIndex,
+    pub size: PixelLength,
+    pub x: PixelLength,
+    pub baseline: PixelLength,
+    /// The colour of the text, for the layers of the glyph that use it.
+    pub color: crate::style::properties::computed::RGBA,
+}
+
+impl Component for ColorGlyph {
     type Storage = DenseVecStorage<Self>;
 }
 

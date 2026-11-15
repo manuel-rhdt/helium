@@ -9,6 +9,7 @@ use lemon_pdf::object::{ByteString, IndirectReference, Name, TextString};
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::{DocumentContext, Page, Pt, Version};
 
+mod color_glyph;
 mod gradient;
 
 use std::collections::HashMap;
@@ -90,6 +91,8 @@ fn paint_items(
     filter: Option<StreamFilter>,
     font_map: &HashMap<String, IndirectReference<lemon_pdf::font::Font>>,
     images: &HashMap<*const crate::image::LoadedImage, Embedded>,
+    color_fonts: &HashMap<String, std::sync::Arc<crate::layout::text::font::Font>>,
+    color_forms: &mut color_glyph::ColorGlyphForms,
     tagged: bool,
     recorder: &mut Option<TagRecorder>,
     page_index: usize,
@@ -171,6 +174,31 @@ fn paint_items(
                     lemon_pdf::graphics_state::FillRule::NonZero
                 };
                 page_context.fill_path_with_rule(rule)?;
+                page_context.apply_operator("EMC")?;
+            }
+            DisplayItem::ColorGlyph(item) => {
+                let Some(font) = color_fonts.get(&item.font) else { continue };
+                let Some(form) =
+                    color_forms.form(page_context, &item.font, font, item.glyph, item.color, filter)?
+                else {
+                    continue;
+                };
+                // the form is in font units, with y up
+                let scale = Pt::from(item.size).0 / f64::from(font.upem);
+                page_context.push_operand(RawPdf("/Artifact".into()))?;
+                page_context.apply_operator("BMC")?;
+                page_context.save_graphics_state()?;
+                page_context.concatenate_matrix(
+                    scale,
+                    0.0,
+                    0.0,
+                    scale,
+                    Pt::from(item.origin.x),
+                    Pt::from(page_height - item.origin.y),
+                )?;
+                let key = page_context.add_xobject(form);
+                page_context.draw_xobject(&key)?;
+                page_context.restore_graphics_state()?;
                 page_context.apply_operator("EMC")?;
             }
             DisplayItem::Gradient(resolved) => {
@@ -360,6 +388,8 @@ fn paint_items(
                         TextOperator::EndMarkedContent => {
                             marked.end(page_context)?;
                         }
+                        // painted by itself, at its position (see `DisplayItem::ColorGlyph`)
+                        TextOperator::ColorGlyph { .. } => {}
                         &TextOperator::SetRise(rise) => {
                             page_context.push_operand(Pt::from(rise))?;
                             page_context.apply_operator("Ts")?;
@@ -473,6 +503,16 @@ pub fn write_pdf(
         .map(|_| context.create_reference())
         .collect();
 
+    // the fonts whose glyphs are painted from the `COLR` table, and the forms that were written
+    // for those glyphs
+    let color_fonts: HashMap<String, std::sync::Arc<crate::layout::text::font::Font>> = print_pages
+        .font_map
+        .iter()
+        .filter(|(_, font)| font.has_color_glyphs())
+        .map(|(name, font)| (name.clone(), font.clone()))
+        .collect();
+    let mut color_forms = color_glyph::ColorGlyphForms::default();
+
     let mut font_map = HashMap::new();
     for (font_name, font) in &print_pages.font_map {
         if !font.glyph_advances.lock().is_empty() {
@@ -506,6 +546,8 @@ pub fn write_pdf(
                     page_filter,
                     &font_map,
                     &images,
+                    &color_fonts,
+                    &mut color_forms,
                     false,
                     &mut None,
                     0,
@@ -560,6 +602,8 @@ pub fn write_pdf(
                 filter,
                 &font_map,
                 &images,
+                &color_fonts,
+                &mut color_forms,
                 tagged,
                 &mut recorder,
                 page_index,

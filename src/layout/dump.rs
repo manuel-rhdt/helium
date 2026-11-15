@@ -294,6 +294,9 @@ fn op_json(op: &TextOperator) -> String {
         TextOperator::BeginActualText(text) => {
             format!("{{\"op\": \"actual_text\", \"text\": {}}}", json_string(text))
         }
+        TextOperator::ColorGlyph { glyph, .. } => {
+            format!("{{\"op\": \"color_glyph\", \"glyph\": {}}}", glyph.0)
+        }
         TextOperator::BeginArtifact => "{\"op\": \"artifact\"}".to_string(),
         TextOperator::BeginTag(tag) => format!(
             "{{\"op\": \"tag\", \"node\": {}, \"slot\": {}, \"offset\": {}}}",
