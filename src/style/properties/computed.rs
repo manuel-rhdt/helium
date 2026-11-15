@@ -46,6 +46,20 @@ pub fn opaque(red: u8, green: u8, blue: u8) -> Color {
 
 pub type CssFloat = f32;
 
+/// The font sizes that lengths are relative to: `em` is the font size of the element (of its
+/// parent for `font-size` itself), `rem` that of the root element.
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
+pub struct FontSizes {
+    pub font: PixelLength,
+    pub root: PixelLength,
+}
+
+impl From<&Font> for FontSizes {
+    fn from(font: &Font) -> Self {
+        FontSizes { font: font.font_size, root: font.root_font_size }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
 pub struct PixelLength(pub CssFloat);
 
@@ -69,17 +83,18 @@ impl PixelLength {
     }
 
     #[inline]
-    pub fn from_val_unit(val: f32, unit: super::specified::Unit, font_size: PixelLength) -> Self {
+    pub fn from_val_unit(val: f32, unit: super::specified::Unit, sizes: FontSizes) -> Self {
         use super::specified::Unit;
 
         match unit {
             Unit::Px => Self(val),
-            Unit::Cm => Self::from_val_unit(val / 2.54, Unit::In, font_size),
+            Unit::Cm => Self::from_val_unit(val / 2.54, Unit::In, sizes),
             Unit::Pt => Self::from_pt(val),
-            Unit::Pc => Self::from_val_unit(val * 12.0, Unit::Pt, font_size),
-            Unit::Em => val * font_size,
-            Unit::Mm => Self::from_val_unit(0.1 * val, Unit::Cm, font_size),
-            Unit::In => Self::from_val_unit(val * 72.0, Unit::Pt, font_size),
+            Unit::Pc => Self::from_val_unit(val * 12.0, Unit::Pt, sizes),
+            Unit::Em => val * sizes.font,
+            Unit::Rem => val * sizes.root,
+            Unit::Mm => Self::from_val_unit(0.1 * val, Unit::Cm, sizes),
+            Unit::In => Self::from_val_unit(val * 72.0, Unit::Pt, sizes),
         }
     }
 }
@@ -219,7 +234,7 @@ impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage 
                 LengthPercentage::PixelLength(PixelLength::from_val_unit(
                     *value,
                     *unit,
-                    style.font.font_size,
+                    (&*style.font).into(),
                 ))
             }
             QuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
@@ -270,7 +285,7 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
                 value,
                 unit,
             }) => GenericSize::LengthPercentage(LengthPercentage::PixelLength(
-                PixelLength::from_val_unit(*value, *unit, style.font.font_size),
+                PixelLength::from_val_unit(*value, *unit, (&*style.font).into()),
             )),
         }
     }
@@ -290,7 +305,7 @@ impl super::ComputedValue<specified::NoneOrQuantityOrPercentage> for GenericSize
                 value,
                 unit,
             }) => GenericSize::LengthPercentage(LengthPercentage::PixelLength(
-                PixelLength::from_val_unit(*value, *unit, style.font.font_size),
+                PixelLength::from_val_unit(*value, *unit, (&*style.font).into()),
             )),
         }
     }
@@ -565,6 +580,8 @@ pub struct StyleBuilder {
     parent_font_size: PixelLength,
     /// Set when the winning `font-size` declaration is `math`.
     font_size_is_math: bool,
+    /// Whether the style is the one of the root element: its font size is the one of `rem`.
+    is_root: bool,
 }
 
 impl StyleBuilder {
@@ -612,10 +629,18 @@ impl StyleBuilder {
             parent_math_style: inherited_values.math.math_style,
             parent_font_size,
             font_size_is_math: false,
+            is_root: false,
             new_values: inherited,
             parent,
             is_display_none: inherited_values.box_.display == Display::None,
         }
+    }
+
+    /// The style of the root element of the document: its font size is the one of `rem`, for
+    /// the element itself too (a `font-size` in `rem` of the root refers to the initial one).
+    pub fn root(mut self) -> Self {
+        self.is_root = true;
+        self
     }
 
     /// Resolves `math-depth` relative to the parent element.
@@ -643,9 +668,57 @@ impl StyleBuilder {
                 self.font_size_is_math = false;
             }
             css_wide.apply(&mut self.new_values, &self.parent);
-            return;
+        } else {
+            decl.apply_to(&mut self.new_values);
         }
-        decl.apply_to(&mut self.new_values)
+        self.update_root_font_size();
+    }
+
+    /// Applies the declarations of the cascade, in the order of its priority. The lengths in `em`
+    /// are relative to the font size that the cascade ends up with, wherever the declaration of
+    /// the font size is: only the font size itself is relative to the one of the parent.
+    pub fn apply_cascade<'a>(
+        &mut self,
+        declarations: impl Iterator<Item = &'a specified::PropertyDeclaration<'a>> + Clone,
+    ) {
+        let sets_font_size = |decl: &specified::PropertyDeclaration| match decl {
+            specified::PropertyDeclaration::Font(
+                specified::Font::FontSize(_) | specified::Font::Font(_),
+            ) => true,
+            specified::PropertyDeclaration::CssWide(css_wide) => css_wide.resets_property("font-size"),
+            _ => false,
+        };
+        // the font size that the declarations set, as if there were no other
+        let mut probe = StyleBuilder::new(self.parent.clone());
+        probe.is_root = self.is_root;
+        for decl in declarations.clone().filter(|decl| sets_font_size(decl)) {
+            probe.add_declaration(decl);
+        }
+        let font = &probe.new_values.font;
+        let (font_size, root_font_size) = (font.font_size, font.root_font_size);
+        let inherited = (self.new_values.font.font_size, self.new_values.font.root_font_size);
+        for decl in declarations {
+            let own = sets_font_size(decl);
+            let font = Arc::make_mut(&mut self.new_values.font);
+            if own {
+                (font.font_size, font.root_font_size) = inherited;
+            } else {
+                (font.font_size, font.root_font_size) = (font_size, root_font_size);
+            }
+            self.add_declaration(decl);
+            let font = Arc::make_mut(&mut self.new_values.font);
+            if own {
+                (font.font_size, font.root_font_size) = (font_size, root_font_size);
+            }
+        }
+    }
+
+    /// The root element is the reference of `rem`, also for its own lengths.
+    fn update_root_font_size(&mut self) {
+        if self.is_root && self.new_values.font.root_font_size != self.new_values.font.font_size {
+            let font_size = self.new_values.font.font_size;
+            Arc::make_mut(&mut self.new_values.font).root_font_size = font_size;
+        }
     }
 
     /// `font-size: math`: scale the parent's font size by the change in
@@ -662,6 +735,7 @@ impl StyleBuilder {
     pub fn build(mut self) -> ComputedValues {
         self.resolve_math_depth();
         self.resolve_font_size_math();
+        self.update_root_font_size();
         self.new_values.fixup();
         if self.is_display_none {
             AsMut::<Box>::as_mut(&mut self.new_values).display = Display::None;
@@ -803,6 +877,8 @@ pub struct Font {
     pub font_style: FontStyle,
     pub font_weight: FontWeight,
     pub font_size: PixelLength,
+    /// The font size of the root element, for `rem`. It is inherited like the font size.
+    pub root_font_size: PixelLength,
     pub line_height: LineHeight,
     pub color: Color,
     pub list_style_type: specified::ListStyleType,
@@ -874,6 +950,7 @@ impl Default for Font {
             font_style: FontStyle::default(),
             font_weight: FontWeight::default(),
             font_size: PixelLength::from_pt(12.0),
+            root_font_size: PixelLength::from_pt(12.0),
             line_height: LineHeight::default(),
             color: opaque(0, 0, 0),
             list_style_type: Default::default(),
@@ -912,7 +989,7 @@ impl ComputedValue<specified::NormalOrQuantity> for PixelLength {
         match spec {
             specified::NormalOrQuantity::Normal => PixelLength(0.0),
             specified::NormalOrQuantity::Quantity(q) => {
-                PixelLength::from_val_unit(q.value, q.unit, style.font.font_size)
+                PixelLength::from_val_unit(q.value, q.unit, (&*style.font).into())
             }
         }
     }
@@ -928,7 +1005,7 @@ pub struct BorderSpacing {
 impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
     fn from_specified(spec: &specified::BorderSpacing, style: &ComputedValues) -> Self {
         let length = |q: specified::Quantity| {
-            PixelLength::from_val_unit(q.value, q.unit, style.font.font_size)
+            PixelLength::from_val_unit(q.value, q.unit, (&*style.font).into())
         };
         BorderSpacing {
             horizontal: length(spec.horizontal),
@@ -983,7 +1060,7 @@ pub enum PageSize {
 impl ComputedValue<specified::PageSize> for PageSize {
     fn from_specified(spec: &specified::PageSize, style: &ComputedValues) -> Self {
         let px = |q: specified::Quantity| {
-            PixelLength::from_val_unit(q.value, q.unit, style.font.font_size)
+            PixelLength::from_val_unit(q.value, q.unit, (&*style.font).into())
         };
         match *spec {
             specified::PageSize::Auto => PageSize::Auto,
@@ -997,8 +1074,8 @@ impl ComputedValue<specified::PageSize> for PageSize {
             specified::PageSize::Keywords { name: Some(name), landscape } => {
                 let (width, height, unit) = name.dimensions();
                 let (width, height) = (
-                    PixelLength::from_val_unit(width, unit, style.font.font_size),
-                    PixelLength::from_val_unit(height, unit, style.font.font_size),
+                    PixelLength::from_val_unit(width, unit, (&*style.font).into()),
+                    PixelLength::from_val_unit(height, unit, (&*style.font).into()),
                 );
                 if landscape == Some(true) {
                     PageSize::Dimensions { width: height, height: width }

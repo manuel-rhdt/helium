@@ -1127,6 +1127,8 @@ pub enum Unit {
     Pt,
     Pc,
     Em,
+    /// The font size of the root element.
+    Rem,
     In,
 }
 
@@ -1146,6 +1148,7 @@ impl FromStr for Unit {
             "pt" => Ok(Unit::Pt),
             "pc" => Ok(Unit::Pc),
             "em" => Ok(Unit::Em),
+            "rem" => Ok(Unit::Rem),
             "mm" => Ok(Unit::Mm),
             "in" => Ok(Unit::In),
             _ => Err(()),
@@ -1398,7 +1401,7 @@ impl ComputedValue<BorderWidth> for super::computed::PixelLength {
             BorderWidth::Medium => PixelLength(3.0),
             BorderWidth::Thick => PixelLength(5.0),
             &BorderWidth::Quantity(Quantity { value, unit }) => {
-                PixelLength::from_val_unit(value, unit, style.font.font_size)
+                PixelLength::from_val_unit(value, unit, (&*style.font).into())
             }
         }
     }
@@ -1420,7 +1423,7 @@ impl ComputedValue<FontSize> for super::computed::PixelLength {
     fn from_specified(font_size: &FontSize, style: &super::computed::ComputedValues) -> Self {
         match *font_size {
             FontSize::Quantity(Quantity { value, unit }) => {
-                PixelLength::from_val_unit(value, unit, style.font.font_size)
+                PixelLength::from_val_unit(value, unit, (&*style.font).into())
             }
             FontSize::Percentage(percentage) => percentage.0 * style.font.font_size,
             FontSize::Smaller => 0.8 * style.font.font_size,

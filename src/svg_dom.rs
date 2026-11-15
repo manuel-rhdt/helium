@@ -191,7 +191,7 @@ fn declarations(node: &DomRef, styles: &Styles) -> Vec<CssDeclaration> {
         .map(|declaration| CssDeclaration {
             name: declaration.name.clone(),
             value: declaration.value.clone(),
-            important: false,
+            important: declaration.important,
         })
         .collect()
 }

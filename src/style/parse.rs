@@ -100,6 +100,11 @@ impl Styles {
         }
     }
 
+    /// Whether the rule at `index` of `rules_iter` comes from the user agent style sheet.
+    pub fn is_user_agent_rule(&self, index: usize) -> bool {
+        index < self.user_agent_rules
+    }
+
     pub fn rules_iter(&self) -> impl DoubleEndedIterator<Item = &QualifiedRule> {
         self.rules.iter()
     }
@@ -287,12 +292,21 @@ impl QualifiedRule {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawDeclaration {
     pub name: String,
+    /// The text of the value, without a trailing `!important`.
     pub value: String,
+    pub important: bool,
+}
+
+/// A declaration and whether it is `!important`.
+#[derive(Debug)]
+pub struct ParsedDeclaration {
+    declaration: PropertyDeclaration<'static>,
+    important: bool,
 }
 
 #[derive(Debug, Default)]
 pub struct PropertyDeclarationBlock {
-    declarations: Vec<PropertyDeclaration<'static>>,
+    declarations: Vec<ParsedDeclaration>,
     raw: Vec<RawDeclaration>,
 }
 
@@ -331,16 +345,44 @@ impl PropertyDeclarationBlock {
         &self.raw
     }
 
+    /// The declarations that are not `!important`, in the order to apply them: `font-size`
+    /// first, so that the lengths in `em` of the other declarations are relative to it.
+    pub fn normal_declarations(&self) -> impl Iterator<Item = &PropertyDeclaration<'_>> {
+        self.ordered(false)
+    }
+
+    /// The `!important` declarations, in the order to apply them.
+    pub fn important_declarations(&self) -> impl Iterator<Item = &PropertyDeclaration<'_>> {
+        self.ordered(true)
+    }
+
+    /// All declarations in the order to apply them: the ones that are not `!important`, then the
+    /// ones that are, so that the latter win within the block. The cascade of several rules
+    /// applies the two kinds in separate passes.
     pub fn declarations(&self) -> impl Iterator<Item = &PropertyDeclaration<'_>> {
-        let iter1 = self.declarations.iter().filter(|decl| match decl {
-            PropertyDeclaration::Font(Font::FontSize(_)) => true,
-            _ => false,
-        });
-        let iter2 = self.declarations.iter().filter(|decl| match decl {
-            PropertyDeclaration::Font(Font::FontSize(_)) => false,
-            _ => true,
-        });
-        iter1.chain(iter2)
+        self.normal_declarations().chain(self.important_declarations())
+    }
+
+    pub fn has_important(&self) -> bool {
+        self.declarations.iter().any(|declaration| declaration.important)
+    }
+
+    fn ordered(&self, important: bool) -> impl Iterator<Item = &PropertyDeclaration<'_>> {
+        let is_font_size = |decl: &PropertyDeclaration| {
+            matches!(decl, PropertyDeclaration::Font(Font::FontSize(_)))
+        };
+        let of_kind = move |parsed: &&ParsedDeclaration| parsed.important == important;
+        let first = self
+            .declarations
+            .iter()
+            .filter(of_kind)
+            .filter(move |parsed| is_font_size(&parsed.declaration));
+        let rest = self
+            .declarations
+            .iter()
+            .filter(of_kind)
+            .filter(move |parsed| !is_font_size(&parsed.declaration));
+        first.chain(rest).map(|parsed| &parsed.declaration)
     }
 }
 
@@ -437,7 +479,7 @@ struct PageBody {
 }
 
 enum PageBodyItem {
-    Declaration(PropertyDeclaration<'static>),
+    Declaration(ParsedDeclaration),
     Content(Vec<ContentItem>),
     MarginBox(MarginBoxRule),
 }
@@ -558,7 +600,9 @@ impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
         if name.eq_ignore_ascii_case("content") {
             return Ok(PageBodyItem::Content(parse_content(input)?));
         }
-        let declaration = parse_property(name, input)?;
+        let declaration =
+            input.parse_until_before(cssparser::Delimiter::Bang, |input| parse_property(name, input))?;
+        let important = input.try_parse(cssparser::parse_important).is_ok();
         // `auto` is not a valid page margin (CSS Paged Media 3, § 7.1). It would resolve to a
         // margin of zero and silently remove the page margin, so the declaration is rejected and
         // the default margin from the user agent stylesheet stays in effect.
@@ -567,7 +611,7 @@ impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
                 kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue),
             });
         }
-        Ok(PageBodyItem::Declaration(declaration))
+        Ok(PageBodyItem::Declaration(ParsedDeclaration { declaration, important }))
     }
 }
 
@@ -835,7 +879,7 @@ struct StyleDeclarationParser {
 }
 
 impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
-    type Declaration = PropertyDeclaration<'static>;
+    type Declaration = ParsedDeclaration;
     type Error = StyleParseError;
 
     fn parse_value<'t>(
@@ -848,12 +892,27 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
         let state = input.state();
         let start = input.position();
         while input.next_including_whitespace_and_comments().is_ok() {}
-        self.raw.push(RawDeclaration {
-            name: name.to_string(),
-            value: input.slice_from(start).trim().to_owned(),
-        });
+        let text = input.slice_from(start).trim();
+        let (text, important) = split_important(text);
+        self.raw.push(RawDeclaration { name: name.to_string(), value: text.to_owned(), important });
         input.reset(&state);
-        parse_property(name, input)
+        // the value ends at `!important`
+        let declaration =
+            input.parse_until_before(cssparser::Delimiter::Bang, |input| parse_property(name, input))?;
+        let important = input.try_parse(cssparser::parse_important).is_ok();
+        Ok(ParsedDeclaration { declaration, important })
+    }
+}
+
+/// Splits `!important` off the end of the text of a value.
+fn split_important(text: &str) -> (&str, bool) {
+    let Some(bang) = text.rfind('!') else {
+        return (text, false);
+    };
+    if text[bang + 1..].trim().eq_ignore_ascii_case("important") {
+        (text[..bang].trim_end(), true)
+    } else {
+        (text, false)
     }
 }
 
@@ -870,17 +929,17 @@ fn parse_property<'i>(
 
 impl<'i> AtRuleParser<'i> for StyleDeclarationParser {
     type Prelude = ();
-    type AtRule = PropertyDeclaration<'static>;
+    type AtRule = ParsedDeclaration;
     type Error = StyleParseError;
 }
 
 impl<'i> QualifiedRuleParser<'i> for StyleDeclarationParser {
     type Prelude = ();
-    type QualifiedRule = PropertyDeclaration<'static>;
+    type QualifiedRule = ParsedDeclaration;
     type Error = StyleParseError;
 }
 
-impl<'i> RuleBodyItemParser<'i, PropertyDeclaration<'static>, StyleParseError>
+impl<'i> RuleBodyItemParser<'i, ParsedDeclaration, StyleParseError>
     for StyleDeclarationParser
 {
     fn parse_declarations(&self) -> bool {

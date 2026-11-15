@@ -216,7 +216,7 @@ impl Transform {
         y: f32,
         width: f32,
         height: f32,
-        font_size: PixelLength,
+        font_size: super::computed::FontSizes,
     ) -> Option<Matrix> {
         if self.0.is_empty() {
             return None;
@@ -255,6 +255,7 @@ impl Transform {
 
 #[cfg(test)]
 mod tests {
+    use crate::style::properties::computed::FontSizes;
     use super::*;
 
     fn parse<'i, T: PropertyValue<'i, Error = StyleParseError>>(css: &'i str) -> Option<T> {
@@ -281,7 +282,7 @@ mod tests {
     fn the_origin_is_the_center_by_default() {
         let t: Transform = parse("scale(2)").unwrap();
         // a 100 x 50 box at (10, 20) is scaled around (60, 45)
-        let m = t.matrix(&TransformOrigin::default(), 10.0, 20.0, 100.0, 50.0, PixelLength(16.0)).unwrap();
+        let m = t.matrix(&TransformOrigin::default(), 10.0, 20.0, 100.0, 50.0, FontSizes { font: PixelLength(16.0), root: PixelLength(16.0) }).unwrap();
         assert!(close(m, [2.0, 0.0, 0.0, 2.0, -60.0, -45.0]));
     }
 
@@ -300,7 +301,7 @@ mod tests {
         // translate(10px) then rotate: the point is rotated first, then moved
         let t: Transform = parse("translate(10px, 0) rotate(90deg)").unwrap();
         let origin = TransformOrigin { x: QuantityOrPercentage::Percentage(Percentage(0.0)), y: QuantityOrPercentage::Percentage(Percentage(0.0)) };
-        let m = t.matrix(&origin, 0.0, 0.0, 0.0, 0.0, PixelLength(16.0)).unwrap();
+        let m = t.matrix(&origin, 0.0, 0.0, 0.0, 0.0, FontSizes { font: PixelLength(16.0), root: PixelLength(16.0) }).unwrap();
         // (1, 0) -> (0, 1) -> (10, 1)
         let [a, b, c, d, e, f] = m;
         assert!(((a * 1.0 + c * 0.0 + e) - 10.0).abs() < 1e-4);
