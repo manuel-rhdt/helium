@@ -68,7 +68,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **Cascade:** specificity, `!important`, the origins (user agent, author, `style` attribute),
   and `@media` rules and the `media` attribute of `<style>` and `<link>` for the medium
   `print`. The size features (`width`, `height`, `orientation`, ...) are evaluated against the
-  default page (A4, also when the document is cropped), not against `@page { size }`; `(hover)`, `(pointer)` and
+  size of the page (the `@page` size, which may itself be set in a `@media` block; the style
+  sheets are read again when the size they set differs from the one assumed); `(hover)`, `(pointer)` and
   similar features say that there is no pointer. `rem` is relative to the root element (in
   `@page` and its margin boxes, to the initial font size).
 - **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `grid`, `table` and the table

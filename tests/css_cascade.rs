@@ -263,3 +263,28 @@ fn a_media_rule_that_is_not_valid_is_skipped_with_its_block() {
     );
     assert_ne!(w, [10.0]);
 }
+
+#[test]
+fn media_queries_follow_the_size_of_the_page() {
+    let doc = |size: &str| {
+        format!(
+            "<style>@page{{size:{size};margin:0}} div{{width:1px}} \
+             @media (min-width: 500px){{div{{width:2px}}}} \
+             @media (orientation: landscape){{div{{height:3px}}}}</style><div></div>"
+        )
+    };
+    assert_eq!(boxes("page_a4", &doc("a4")), [(2.0, 0.0)]);
+    assert_eq!(boxes("page_small", &doc("300px 400px")), [(1.0, 0.0)]);
+    assert_eq!(boxes("page_landscape", &doc("a4 landscape")), [(2.0, 3.0)]);
+    assert_eq!(boxes("page_narrow", &doc("200px 100px")), [(1.0, 3.0)]);
+}
+
+#[test]
+fn the_page_size_may_be_set_inside_a_media_block() {
+    let b = boxes(
+        "page_in_media",
+        "<style>@media print{@page{size:300px 300px;margin:0}} \
+         @media (max-width: 400px){div{width:7px}}</style><div></div>",
+    );
+    assert_eq!(b, [(7.0, 0.0)]);
+}

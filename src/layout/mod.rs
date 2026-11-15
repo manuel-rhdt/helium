@@ -163,6 +163,40 @@ pub fn resolve_hyperlink_destinations(world: &mut World, dom: &DomRef) {
     }
 }
 
+/// The style of the page: what the `@page` rules without a selector set.
+fn page_style(styles: &crate::style::parse::Styles) -> crate::style::properties::computed::ComputedValues {
+    let mut style_builder = StyleBuilder::new(Default::default());
+    for rule in styles.rules_iter() {
+        if rule.page_selector() == Some(&crate::style::parse::PageSelector::any()) {
+            for declaration in rule.properties.declarations() {
+                style_builder.add_declaration(declaration);
+            }
+        }
+    }
+    style_builder.build()
+}
+
+/// The size of a page: `size` replaces the default size and the `width` and `height` of the page.
+fn page_box(
+    style: &crate::style::properties::computed::ComputedValues,
+    device: Device,
+) -> (PixelLength, PixelLength) {
+    let (mut width, mut height) = (
+        style.position.width.absolute(device.width, device.width),
+        style.position.height.absolute(device.width, device.width),
+    );
+    match style.page.size {
+        PageSize::Auto => {}
+        PageSize::Dimensions { width: w, height: h } => (width, height) = (w, h),
+        PageSize::Orientation { landscape } => {
+            if (width < height) == landscape {
+                (width, height) = (height, width);
+            }
+        }
+    }
+    (width, height)
+}
+
 pub fn layout(
     dom: DomRef,
     device: Device,
@@ -174,8 +208,23 @@ pub fn layout(
 
     let mut time_before = Instant::now();
     let mut flow_constructor = FlowConstructor::new(world, stylesheet_base_dir.to_path_buf());
-    flow_constructor.styles.set_media(device.into());
-    dom.traverse(&mut construct::StylesheetReader(&mut flow_constructor));
+    // The media queries are evaluated for the page, whose size the style sheets may set (even
+    // in a `@media` block): read them again for the size they ended up with, until it is stable.
+    let mut media = crate::style::media::MediaEnv::from(device);
+    for _ in 0..3 {
+        flow_constructor.styles.set_media(media);
+        dom.traverse(&mut construct::StylesheetReader(&mut flow_constructor));
+        if crop {
+            break;
+        }
+        let (width, height) = page_box(&page_style(&flow_constructor.styles), device);
+        let found = crate::style::media::MediaEnv { width: width.0, height: height.0 };
+        if (found.width - media.width).abs() < 0.01 && (found.height - media.height).abs() < 0.01 {
+            break;
+        }
+        media = found;
+        flow_constructor.styles.clear_author_rules();
+    }
     dom.traverse(&mut flow_constructor);
     info!("TIMED: construct {:?}", time_before.elapsed());
 
@@ -183,15 +232,7 @@ pub fn layout(
     //     .unwrap();
 
     // get page style
-    let mut style_builder = StyleBuilder::new(Default::default());
-    for rule in flow_constructor.styles.rules_iter() {
-        if rule.page_selector() == Some(&crate::style::parse::PageSelector::any()) {
-            for declaration in rule.properties.declarations() {
-                style_builder.add_declaration(declaration);
-            }
-        }
-    }
-    let style = style_builder.build();
+    let style = page_style(&flow_constructor.styles);
 
     // Page margins cannot be negative: a negative margin would move the content, and with it
     // the text, off the page where it is silently lost. Clamp instead of rendering a blank
@@ -209,20 +250,7 @@ pub fn layout(
         page_width = PixelLength(0.0);
         page_height = PixelLength(0.0);
     } else {
-        // `size` replaces the default size and the `width` and `height` of the page
-        let (mut width, mut height) = (
-            style.position.width.absolute(device.width, device.width),
-            style.position.height.absolute(device.width, device.width),
-        );
-        match style.page.size {
-            PageSize::Auto => {}
-            PageSize::Dimensions { width: w, height: h } => (width, height) = (w, h),
-            PageSize::Orientation { landscape } => {
-                if (width < height) == landscape {
-                    (width, height) = (height, width);
-                }
-            }
-        }
+        let (width, height) = page_box(&style, device);
         page_width = width;
         page_height = height;
         margin = EdgeValues {
