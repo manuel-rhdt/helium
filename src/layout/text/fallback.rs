@@ -1838,6 +1838,11 @@ mod tests {
             chosen.extend(selected(vec![named("TeX Gyre Termes"), FontFamily::Serif], "", false, false, &ch.to_string()));
         }
 
+        // emoji are set in the colour emoji font, whatever the design of the text
+        for families in &designs {
+            chosen.extend(selected(families.clone(), "", false, false, "😀 🇩🇪 👨\u{200D}👩\u{200D}👧"));
+        }
+
         // DejaVu Sans, in both weights
         let text = first_only_covered_by(&faces, "DejaVuSans").unwrap().to_string();
         for bold in [false, true] {
@@ -1852,6 +1857,18 @@ mod tests {
         assert!(missing.is_empty(), "bundled fonts that are never selected as a fallback: {missing:?}");
     }
 
+
+    /// An emoji gets the colour emoji font even if the text font has a glyph for its base
+    /// character, and a character in text presentation does not.
+    #[test]
+    fn emoji_are_set_in_the_colour_emoji_font() {
+        let families = vec![named("TeX Gyre Termes"), FontFamily::Serif];
+        for emoji in ["😀", "🇩🇪", "👨\u{200D}👩\u{200D}👧", "❤\u{FE0F}", "1\u{FE0F}\u{20E3}"] {
+            assert_eq!(selected(families.clone(), "", false, false, emoji), ["NotoColorEmoji"], "{emoji:?}");
+        }
+        // the text presentation of a character stays with the font of the text
+        assert!(!selected(families, "", false, false, "☃ ✓").contains(&"NotoColorEmoji".to_owned()));
+    }
 
     // -- Chinese, Japanese and Korean text
 
