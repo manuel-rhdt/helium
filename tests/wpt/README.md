@@ -17,13 +17,13 @@ script modifies the document before calling `checkLayout` are not vendored.
 
 ## Reftests
 
-`tests/wpt_reftest.rs` runs every test that has a `<link rel="match" href="...">`. Helium cannot
-rasterize, so the test and its reference are compared through the `paint` section of
-`helium --dump-layout`: the regions that the solid rectangles (backgrounds, borders and images of one
-colour) paint, with later rectangles covering earlier ones, and the positioned glyph runs must
-agree within 0.5px (a box with borders is one region, like a box of the same size). A test must also not paint anything pure red, following the WPT
-convention that red means failure. Expected failures are in
-`reftest-expectations.txt`; `cargo test --test wpt_reftest` prints why each one differs.
+`tests/wpt_reftest.rs` runs every test that has a `<link rel="match" href="...">`. The test and its
+reference are turned into PDFs, which `pdftoppm` (poppler-utils, which has to be installed)
+rasterizes at 96 dpi, so that a pixel is a CSS pixel. The pages must have the same size and no
+pixel may differ by more than 24 in a channel. A test must also not paint pure red, following the
+WPT convention that red means failure, and not be blank. Expected failures are in
+`reftest-expectations.txt`; `cargo test --test wpt_reftest` prints why each one differs (how many
+pixels, and where).
 
 ## Fonts
 
