@@ -46,6 +46,9 @@ pub struct SvgWriter {
     /// font database of the SVG images, and the embedded font (with its units per em).
     font_names: crate::svg_text::SvgFontNames,
     fonts: HashMap<String, (IndirectReference<lemon_pdf::font::Font>, u32)>,
+    /// The colour glyphs (emoji) of the document, which `pdf::color_glyph` paints for the text of
+    /// the page too.
+    color_glyphs: std::rc::Rc<std::cell::RefCell<crate::pdf::color_glyph::ColorGlyphs>>,
 }
 
 fn matrix(t: Transform) -> Matrix {
@@ -181,7 +184,17 @@ impl SvgWriter {
             islands: HashMap::new(),
             font_names: HashMap::new(),
             fonts: HashMap::new(),
+            color_glyphs: Default::default(),
         }
+    }
+
+    /// Tells the writer the colour glyphs of the document, so that the images share the forms of
+    /// the glyphs with the page.
+    pub fn set_color_glyphs(
+        &mut self,
+        color_glyphs: std::rc::Rc<std::cell::RefCell<crate::pdf::color_glyph::ColorGlyphs>>,
+    ) {
+        self.color_glyphs = color_glyphs;
     }
 
     /// Tells the writer which fonts of the document show the text of SVG images: `names` maps the
@@ -494,6 +507,35 @@ impl SvgWriter {
                 c.draw_cid_glyphs([glyph.id.0 as u16])?;
             }
             c.end_text()?;
+            // Colour glyphs (emoji) have no outline to fill: the text above only advances over
+            // them and gives their text; their layers are painted as a form at the glyph.
+            if let (Some(fill), true) = (fill, mode != 1) {
+                let color = match fill.paint() {
+                    usvg::Paint::Color(color) => *color,
+                    _ => unreachable!("plain text has plain colors"),
+                };
+                let color = crate::style::properties::computed::RGBA {
+                    red: color.red,
+                    green: color.green,
+                    blue: color.blue,
+                    alpha: 255,
+                };
+                for glyph in &span.positioned_glyphs {
+                    let name = &self.font_names[&glyph.font];
+                    // the matrix of an outline: font units with y up to the coordinates of the text
+                    let t = glyph.outline_transform();
+                    let matrix = [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from);
+                    let filter = self.filter;
+                    self.color_glyphs.borrow_mut().paint(
+                        c,
+                        name,
+                        crate::layout::text::font::GlyphIndex(glyph.id.0),
+                        color,
+                        matrix,
+                        filter,
+                    )?;
+                }
+            }
             c.restore_graphics_state()?;
         }
         Ok(())

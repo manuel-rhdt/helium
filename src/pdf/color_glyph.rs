@@ -18,6 +18,7 @@
 //! Glyphs are drawn in font units with the y axis up, which is what PDF has.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::io::{Error, ErrorKind};
 
 use lemon_pdf::Pt;
@@ -36,29 +37,76 @@ use ttf_parser::{GlyphId, OutlineBuilder, RgbaColor};
 use crate::layout::text::font::{Font, GlyphIndex};
 use crate::style::properties::computed::RGBA;
 
-/// The forms of the colour glyphs that were written, by font, glyph and text colour. `None` for a
-/// glyph that has nothing to paint.
+/// The colour glyphs of a document: the fonts that have them and the forms that were written for
+/// their glyphs (by font, glyph and text colour; `None` for a glyph that has nothing to paint).
+///
+/// This is the one place that paints colour glyphs. The text of the page and the text of SVG
+/// images both go through [`ColorGlyphs::paint`]; they only differ in the matrix that places a
+/// glyph.
 #[derive(Default)]
-pub struct ColorGlyphForms(HashMap<(String, u32, [u8; 4]), Option<FormReference>>);
+pub struct ColorGlyphs {
+    fonts: HashMap<String, Arc<Font>>,
+    forms: HashMap<(String, u32, [u8; 4]), Option<FormReference>>,
+}
 
-impl ColorGlyphForms {
-    /// The form of `glyph`, written if it is the first use.
-    pub fn form(
+impl ColorGlyphs {
+    /// The colour fonts among the fonts of a document.
+    pub fn new(font_map: &crate::layout::FontMap) -> Self {
+        ColorGlyphs {
+            fonts: font_map
+                .iter()
+                .filter(|(_, font)| font.has_color_glyphs())
+                .map(|(name, font)| (name.clone(), font.clone()))
+                .collect(),
+            forms: HashMap::new(),
+        }
+    }
+
+    /// Paints `glyph` of the font `name` (if it is a colour glyph) with its origin at `(x, y)`
+    /// in the units of the current user space, scaled to a font size of `size`.
+    pub fn paint_at(
         &mut self,
         context: &mut PageContext<'_, '_, '_>,
         name: &str,
-        font: &Font,
         glyph: GlyphIndex,
         color: RGBA,
+        (x, y): (Pt, Pt),
+        size: Pt,
         filter: Option<StreamFilter>,
-    ) -> Result<Option<FormReference>, Error> {
+    ) -> Result<(), Error> {
+        let Some(font) = self.fonts.get(name) else { return Ok(()) };
+        let scale = size.0 / f64::from(font.upem);
+        self.paint(context, name, glyph, color, [scale, 0.0, 0.0, scale, x.0, y.0], filter)
+    }
+
+    /// Paints `glyph` of the font `name` (if it is a colour glyph) with the matrix that maps the
+    /// font units (y up) to the current user space.
+    pub fn paint(
+        &mut self,
+        context: &mut PageContext<'_, '_, '_>,
+        name: &str,
+        glyph: GlyphIndex,
+        color: RGBA,
+        matrix: [f64; 6],
+        filter: Option<StreamFilter>,
+    ) -> Result<(), Error> {
+        let Some(font) = self.fonts.get(name).cloned() else { return Ok(()) };
         let key = (name.to_owned(), glyph.0, [color.red, color.green, color.blue, color.alpha]);
-        if let Some(form) = self.0.get(&key) {
-            return Ok(*form);
-        }
-        let form = write_glyph(context, font, glyph, color, filter)?;
-        self.0.insert(key, form);
-        Ok(form)
+        let form = match self.forms.get(&key) {
+            Some(form) => *form,
+            None => {
+                let form = write_glyph(context, &font, glyph, color, filter)?;
+                self.forms.insert(key, form);
+                form
+            }
+        };
+        let Some(form) = form else { return Ok(()) };
+        let [a, b, c, d, e, f] = matrix;
+        context.save_graphics_state()?;
+        context.concatenate_matrix(a, b, c, d, Pt(e), Pt(f))?;
+        let key = context.add_xobject(form);
+        context.draw_xobject(&key)?;
+        context.restore_graphics_state()
     }
 }
 
