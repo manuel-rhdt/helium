@@ -4,8 +4,122 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+/// The directory with the web-platform-tests: `tests/wpt`, or the one that the environment
+/// variable `WPT_ROOT` names (to try a larger copy of the tests without vendoring it).
 pub fn wpt_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wpt")
+    std::env::var_os("WPT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wpt"))
+}
+
+/// The fonts that the tests use (Ahem): always the vendored ones.
+pub fn wpt_fonts() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wpt/fonts")
+}
+
+/// Where the lists of known failures are.
+fn expectations_path(file: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wpt").join(file)
+}
+
+/// Whether the runners write the lists of known failures from what they find
+/// (`WPT_UPDATE_EXPECTATIONS=1`) instead of comparing with them.
+pub fn update_expectations() -> bool {
+    std::env::var_os("WPT_UPDATE_EXPECTATIONS").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Writes the list of known failures: the header (the comment lines at the start of the file)
+/// is kept.
+pub fn write_expectations(file: &str, failing: &BTreeSet<String>) {
+    let path = expectations_path(file);
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    // the header is the comment up to the first empty line
+    let keep: Vec<&str> = old.lines().collect();
+    let header_len = keep.iter().position(|line| line.trim().is_empty()).map_or(keep.len(), |at| at + 1);
+    let mut out: String = keep[..header_len].iter().map(|line| format!("{}\n", line)).collect();
+    // (the reasons that were written by hand stay where the entries they are for are)
+    let mut reasons = String::new();
+    let mut pending: Vec<&str> = vec![];
+    for line in keep[header_len..].iter() {
+        if line.starts_with('#') {
+            pending.push(line);
+        } else if line.trim().is_empty() {
+            pending.clear();
+        } else if failing.contains(line.trim()) && !pending.is_empty() {
+            for comment in pending.drain(..) {
+                reasons.push_str(comment);
+                reasons.push('\n');
+            }
+            reasons.push_str(line);
+            reasons.push_str("\n\n");
+        } else {
+            pending.clear();
+        }
+    }
+    let described: BTreeSet<&str> = reasons.lines().filter(|l| !l.starts_with('#') && !l.is_empty()).collect();
+    out.push_str(&reasons);
+    if failing.iter().any(|name| !described.contains(name.as_str())) {
+        out.push_str("# Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)\n");
+    }
+    for name in failing {
+        if !described.contains(name.as_str()) {
+            out.push_str(name);
+            out.push('\n');
+        }
+    }
+    std::fs::write(path, out).unwrap();
+}
+
+/// Runs `f` for every item on all the cores, and returns the results in the order of the items.
+pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    let results: Vec<std::sync::Mutex<Option<R>>> = items.iter().map(|_| Default::default()).collect();
+    let threads = std::thread::available_parallelism().map_or(2, |n| n.get());
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(item) = items.get(index) else { break };
+                *results[index].lock().unwrap() = Some(f(item));
+            });
+        }
+    });
+    results.into_iter().map(|r| r.into_inner().unwrap().unwrap()).collect()
+}
+
+/// Runs the command and kills it if it takes longer than `seconds`.
+pub fn output_within(mut cmd: std::process::Command, seconds: u64) -> Option<std::process::Output> {
+    use std::process::Stdio;
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
+    let (mut stdout, mut stderr) = (child.stdout.take()?, child.stderr.take()?);
+    let out_thread = std::thread::spawn(move || {
+        let mut buffer = vec![];
+        std::io::Read::read_to_end(&mut stdout, &mut buffer).ok();
+        buffer
+    });
+    let err_thread = std::thread::spawn(move || {
+        let mut buffer = vec![];
+        std::io::Read::read_to_end(&mut stderr, &mut buffer).ok();
+        buffer
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let status = loop {
+        if let Some(status) = child.try_wait().ok()? {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            child.kill().ok();
+            child.wait().ok();
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    Some(std::process::Output {
+        status,
+        stdout: out_thread.join().ok()?,
+        stderr: err_thread.join().ok()?,
+    })
 }
 
 pub fn collect_tests(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -32,7 +146,7 @@ pub fn test_name(test: &Path) -> String {
 
 /// Paths listed in an expectations file (blank lines and `#` comments are ignored).
 pub fn read_expectations(file: &str) -> BTreeSet<String> {
-    std::fs::read_to_string(wpt_root().join(file))
+    std::fs::read_to_string(expectations_path(file))
         .unwrap()
         .lines()
         .map(str::trim)

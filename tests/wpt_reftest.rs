@@ -17,16 +17,15 @@ use std::path::{Path, PathBuf};
 const TOLERANCE: f64 = 0.5;
 
 fn dump_layout(input: &Path) -> Result<Value, String> {
-    let output = common::helium()
-        .unwrap()
+    let mut command = common::helium().unwrap();
+    command
         .arg("--font-dir")
-        .arg(wpt_root().join("fonts"))
+        .arg(common::wpt_fonts())
         .arg("--dump-layout")
         .arg("-")
         .arg(input)
-        .arg(pdf_path(input))
-        .output()
-        .unwrap();
+        .arg(pdf_path(input));
+    let output = output_within(command, 30).ok_or("helium took too long")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
@@ -260,10 +259,21 @@ fn wpt_reftests() {
         wpt_root().display()
     );
 
+    let results = par_map(&tests, |test| run_reftest(test));
+    if update_expectations() {
+        let failing = tests
+            .iter()
+            .zip(&results)
+            .filter(|(_, result)| result.is_err())
+            .map(|(test, _)| test_name(test))
+            .collect();
+        write_expectations("reftest-expectations.txt", &failing);
+        return;
+    }
     let mut problems = stale_expectations(&known_failures);
-    for test in &tests {
+    for (test, result) in tests.iter().zip(results) {
         let name = test_name(test);
-        match (run_reftest(test), known_failures.contains(&name)) {
+        match (result, known_failures.contains(&name)) {
             (Ok(()), false) | (Err(_), true) => {}
             (Err(why), false) => problems.push(format!("FAIL {}: {}", name, why)),
             (Ok(()), true) => problems.push(format!(

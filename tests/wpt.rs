@@ -20,26 +20,37 @@ fn wpt_layout_checks() {
         wpt_root().display()
     );
 
-    let mut problems = stale_expectations(&known_failures);
-    for test in &tests {
-        let name = test_name(test);
-        let output = common::helium()
-            .unwrap()
-            .args(["--font-dir"])
-            .arg(wpt_root().join("fonts"))
+    let results = par_map(&tests, |test| {
+        let mut command = common::helium().unwrap();
+        command
+            .arg("--font-dir")
+            .arg(common::wpt_fonts())
             .arg("--check-layout")
             .arg(test)
-            .arg(pdf_path(test))
-            .output()
-            .unwrap();
-        match (output.status.success(), known_failures.contains(&name)) {
-            (true, false) | (false, true) => {}
-            (false, false) => problems.push(format!(
-                "FAIL {}\n{}",
-                name,
-                String::from_utf8_lossy(&output.stderr)
-            )),
-            (true, true) => problems.push(format!(
+            .arg(pdf_path(test));
+        match output_within(command, 30) {
+            Some(output) if output.status.success() => Ok(()),
+            Some(output) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
+            None => Err("helium took too long".to_owned()),
+        }
+    });
+    if update_expectations() {
+        let failing = tests
+            .iter()
+            .zip(&results)
+            .filter(|(_, result)| result.is_err())
+            .map(|(test, _)| test_name(test))
+            .collect();
+        write_expectations("expectations.txt", &failing);
+        return;
+    }
+    let mut problems = stale_expectations(&known_failures);
+    for (test, result) in tests.iter().zip(results) {
+        let name = test_name(test);
+        match (result, known_failures.contains(&name)) {
+            (Ok(()), false) | (Err(_), true) => {}
+            (Err(why), false) => problems.push(format!("FAIL {}\n{}", name, why)),
+            (Ok(()), true) => problems.push(format!(
                 "UNEXPECTED PASS {} (remove it from tests/wpt/expectations.txt)",
                 name
             )),
