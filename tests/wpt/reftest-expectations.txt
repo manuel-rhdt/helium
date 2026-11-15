@@ -36,6 +36,8 @@ css/CSS2/borders/border-bottom-width-applies-to-001.xht
 css/CSS2/borders/border-bottom-width-applies-to-002.xht
 css/CSS2/borders/border-bottom-width-applies-to-003.xht
 css/CSS2/borders/border-bottom-width-applies-to-004.xht
+css/CSS2/borders/border-bottom-width-applies-to-005.xht
+css/CSS2/borders/border-bottom-width-applies-to-006.xht
 css/CSS2/borders/border-bottom-width-applies-to-007.xht
 css/CSS2/borders/border-bottom-width-applies-to-009.xht
 css/CSS2/borders/border-bottom-width-applies-to-012.xht
@@ -67,6 +69,8 @@ css/CSS2/borders/border-left-width-applies-to-001.xht
 css/CSS2/borders/border-left-width-applies-to-002.xht
 css/CSS2/borders/border-left-width-applies-to-003.xht
 css/CSS2/borders/border-left-width-applies-to-004.xht
+css/CSS2/borders/border-left-width-applies-to-005.xht
+css/CSS2/borders/border-left-width-applies-to-006.xht
 css/CSS2/borders/border-left-width-applies-to-007.xht
 css/CSS2/borders/border-left-width-applies-to-009.xht
 css/CSS2/borders/border-left-width-applies-to-012.xht
@@ -93,6 +97,8 @@ css/CSS2/borders/border-right-width-applies-to-001.xht
 css/CSS2/borders/border-right-width-applies-to-002.xht
 css/CSS2/borders/border-right-width-applies-to-003.xht
 css/CSS2/borders/border-right-width-applies-to-004.xht
+css/CSS2/borders/border-right-width-applies-to-005.xht
+css/CSS2/borders/border-right-width-applies-to-006.xht
 css/CSS2/borders/border-right-width-applies-to-007.xht
 css/CSS2/borders/border-right-width-applies-to-009.xht
 css/CSS2/borders/border-right-width-applies-to-012.xht
@@ -132,6 +138,8 @@ css/CSS2/borders/border-top-width-applies-to-001.xht
 css/CSS2/borders/border-top-width-applies-to-002.xht
 css/CSS2/borders/border-top-width-applies-to-003.xht
 css/CSS2/borders/border-top-width-applies-to-004.xht
+css/CSS2/borders/border-top-width-applies-to-005.xht
+css/CSS2/borders/border-top-width-applies-to-006.xht
 css/CSS2/borders/border-top-width-applies-to-007.xht
 css/CSS2/borders/border-top-width-applies-to-009.xht
 css/CSS2/borders/border-top-width-applies-to-012.xht
@@ -324,7 +332,6 @@ css/CSS2/normal-flow/height-applies-to-016.xht
 css/CSS2/normal-flow/height-inherit-001.xht
 css/CSS2/normal-flow/height-percentage-002.xht
 css/CSS2/normal-flow/height-percentage-003.xht
-css/CSS2/normal-flow/height-percentage-005.xht
 css/CSS2/normal-flow/inline-block-non-replaced-width-001.xht
 css/CSS2/normal-flow/inline-block-non-replaced-width-002.xht
 css/CSS2/normal-flow/inline-block-non-replaced-width-003.xht
@@ -387,7 +394,6 @@ css/CSS2/normal-flow/max-height-applies-to-009.xht
 css/CSS2/normal-flow/max-height-applies-to-012.xht
 css/CSS2/normal-flow/max-height-applies-to-013.xht
 css/CSS2/normal-flow/max-height-applies-to-015.xht
-css/CSS2/normal-flow/max-height-percentage-003.xht
 css/CSS2/normal-flow/max-width-001.xht
 css/CSS2/normal-flow/max-width-002.xht
 css/CSS2/normal-flow/max-width-004.xht

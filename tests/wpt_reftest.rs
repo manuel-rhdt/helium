@@ -72,7 +72,11 @@ fn render(input: &Path) -> Result<Vec<Page>, String> {
     let pdf = dir.join(format!("{}.pdf", COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     let mut command = common::helium().unwrap();
     // (`--font-dir=` because the option takes several values, which would be the files)
-    command.arg(format!("--font-dir={}", common::wpt_fonts().display())).arg(input).arg(&pdf);
+    command
+        .arg(format!("--font-dir={}", common::wpt_fonts().display()))
+        .arg(format!("--resource-root={}", wpt_root().display()))
+        .arg(input)
+        .arg(&pdf);
     let output = output_within(command, 30).ok_or("helium took too long")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

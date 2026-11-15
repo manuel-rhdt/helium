@@ -27,8 +27,8 @@ fn wpt_layout_checks() {
     let results = par_map(&tests, |test| {
         let mut command = common::helium().unwrap();
         command
-            .arg("--font-dir")
-            .arg(common::wpt_fonts())
+            .arg(format!("--font-dir={}", common::wpt_fonts().display()))
+            .arg(format!("--resource-root={}", wpt_root().display()))
             .arg("--check-layout")
             .arg(test)
             .arg(pdf_path(test));
