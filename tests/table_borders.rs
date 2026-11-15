@@ -225,3 +225,85 @@ fn separated_borders_are_unchanged() {
     // every cell paints its own 4 borders
     assert_eq!(painted(&dump, [255, 0, 0]).len(), 16);
 }
+
+const PAIR: &str = r#"<table><tr><td id="a">a</td><td id="b">b</td></tr></table>"#;
+
+/// Whether the border between `a` and `b` is painted in the color.
+fn shared_edge_is(dump: &Value, color: [u64; 3]) -> bool {
+    let (bx, _, _, _) = border_box(dump, "b");
+    painted(dump, color).iter().any(|&(x, _, width, _)| close(x + width / 2.0, bx))
+}
+
+#[test]
+fn of_borders_of_one_width_the_style_that_is_listed_first_wins() {
+    // double, solid, dashed, dotted, ridge, outset, groove, inset
+    let styles = ["double", "solid", "dashed", "dotted", "ridge", "outset", "groove", "inset"];
+    for (i, winner) in styles.iter().enumerate() {
+        for loser in &styles[i + 1..] {
+            for swapped in [false, true] {
+                let (left, right) = if swapped { (loser, winner) } else { (winner, loser) };
+                let dump = dump(
+                    "style_rank",
+                    &format!(
+                        "table {{ border-collapse: collapse }} td {{ border: 4px solid rgb(0, 0, 255) }} \
+                         #a {{ border-right: 4px {left} rgb(255, 0, 0) }} \
+                         #b {{ border-left: 4px {right} rgb(0, 255, 0) }}"
+                    ),
+                    PAIR,
+                );
+                let (red_wins, green_wins) = (shared_edge_is(&dump, [255, 0, 0]), shared_edge_is(&dump, [0, 255, 0]));
+                let expected_red = !swapped;
+                assert!(
+                    red_wins == expected_red && green_wins == !expected_red,
+                    "{winner} should win against {loser} ({left} | {right}), red {red_wins}, green {green_wins}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_wider_border_wins_whatever_its_style() {
+    let dump = dump(
+        "wider_dotted",
+        "table { border-collapse: collapse } td { border: 1px solid rgb(0, 0, 255) } \
+         #a { border-right: 1px double rgb(255, 0, 0) } #b { border-left: 3px dotted rgb(0, 255, 0) }",
+        PAIR,
+    );
+    assert!(shared_edge_is(&dump, [0, 255, 0]));
+    assert!(!shared_edge_is(&dump, [255, 0, 0]));
+}
+
+#[test]
+fn a_hidden_border_wins_over_all_others_and_removes_the_border() {
+    for (left, right) in [("hidden", "solid"), ("solid", "hidden")] {
+        let dump = dump(
+            "hidden",
+            &format!(
+                "table {{ border-collapse: collapse }} td {{ border: 2px solid rgb(0, 0, 255) }} \
+                 #a {{ border-right: 9px {left} rgb(255, 0, 0) }} \
+                 #b {{ border-left: 9px {right} rgb(0, 255, 0) }}"
+            ),
+            PAIR,
+        );
+        assert!(!shared_edge_is(&dump, [255, 0, 0]), "{left} | {right}");
+        assert!(!shared_edge_is(&dump, [0, 255, 0]), "{left} | {right}");
+        assert!(!shared_edge_is(&dump, [0, 0, 255]), "{left} | {right}");
+        // no space is left for it either
+        let (ax, _, aw, _) = border_box(&dump, "a");
+        let (bx, _, _, _) = border_box(&dump, "b");
+        assert!(close(ax + aw, bx), "{left} | {right}");
+        assert!(close(element(&dump, "a")["border"]["right"].as_f64().unwrap(), 0.0), "{left} | {right}");
+    }
+}
+
+#[test]
+fn a_border_of_the_style_none_loses_to_any_other() {
+    let dump = dump(
+        "none",
+        "table { border-collapse: collapse } #a { border-right: 5px none rgb(255, 0, 0) } \
+         #b { border-left: 1px solid rgb(0, 255, 0) }",
+        PAIR,
+    );
+    assert!(shared_edge_is(&dump, [0, 255, 0]));
+}

@@ -311,6 +311,7 @@ pub struct Decoration {
     pub padding: EdgeValues<PixelLength>,
     pub border: EdgeValues<PixelLength>,
     pub border_color: EdgeValues<crate::style::properties::computed::RGBA>,
+    pub border_style: EdgeValues<crate::style::properties::specified::BorderStyle>,
     pub margin: EdgeValues<PixelLength>,
     pub background_color: crate::style::properties::computed::RGBA,
     /// The borders of a cell of a table with `border-collapse: collapse`, which are painted
@@ -355,6 +356,7 @@ impl CornerRadii {
 pub struct CollapsedEdge {
     pub width: PixelLength,
     pub color: crate::style::properties::computed::RGBA,
+    pub style: crate::style::properties::specified::BorderStyle,
     /// Whether this box paints the border.
     pub paint: bool,
     /// How far the line extends beyond the corners of the border box at its start (top or
@@ -371,6 +373,7 @@ impl Default for Decoration {
             border: Default::default(),
             margin: Default::default(),
             border_color: EdgeValues::all(RGBA::transparent()),
+            border_style: EdgeValues::all(Default::default()),
             background_color: RGBA::transparent(),
             collapsed: None,
             radius: Default::default(),

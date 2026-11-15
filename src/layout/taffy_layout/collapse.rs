@@ -2,10 +2,11 @@
 //!
 //! The borders of adjacent cells (and of the rows, row groups and the table next to them) are
 //! resolved into one border per edge of the table grid: the widest border wins; between borders
-//! of the same width, the one of a cell wins over the one of a row, which wins over the one of a
-//! row group and then of the table; between borders of the same kind, the one further to the
-//! top and to the left (to the right in right-to-left tables) wins. Only the styles `none` and
-//! `solid` are supported, so the rules about styles reduce to these.
+//! of the same width, `double` wins over `solid`, `dashed`, `dotted`, `ridge`, `outset`, `groove`
+//! and `inset` (in this order); the one of a cell wins over the one of a row, which wins over
+//! the one of a row group and then of the table; between borders of the same kind, the one
+//! further to the top and to the left (to the right in right-to-left tables) wins. A border
+//! with the style `hidden` wins over all others, and leaves no border.
 //!
 //! For the layout, each cell has half of the width of the borders on its edges as its border
 //! (the widest one if an edge of a spanning cell borders several others) and the table half of
@@ -25,7 +26,7 @@ use taffy::tree::NodeId;
 use crate::layout::components::{CollapsedEdge, EdgeValues};
 use crate::layout::inline_size::decoration_colors;
 use crate::style::properties::computed::{PixelLength as Px, RGBA};
-use crate::style::properties::specified::{BorderCollapse, Direction};
+use crate::style::properties::specified::{BorderCollapse, BorderStyle, Direction};
 
 use super::tree::HeliumTree;
 
@@ -53,33 +54,40 @@ enum Origin {
 struct Border {
     width: f32,
     color: Option<RGBA>,
+    style: BorderStyle,
 }
+
 
 /// Collects the borders that meet on an edge and picks the winner. The candidates are added in
 /// the order of preference among borders of the same width and origin.
 #[derive(Default)]
 struct Candidates {
-    best: Option<(f32, Origin, RGBA)>,
+    /// The width, the rank of the style, the origin, the color and the style of the best one.
+    best: Option<(f32, u8, Origin, RGBA, BorderStyle)>,
+    hidden: bool,
 }
 
 impl Candidates {
-    fn add(&mut self, (width, color): (f32, RGBA), origin: Origin) {
+    fn add(&mut self, (width, color, style): (f32, RGBA, BorderStyle), origin: Origin) {
+        self.hidden |= style == BorderStyle::Hidden;
+        let rank = style.collapse_rank();
         let better = match self.best {
             None => true,
-            Some((best_width, best_origin, _)) => {
-                width > best_width || (width == best_width && origin > best_origin)
+            Some((best_width, best_rank, best_origin, _, _)) => {
+                (width, rank, origin) > (best_width, best_rank, best_origin)
             }
         };
         if better {
-            self.best = Some((width, origin, color));
+            self.best = Some((width, rank, origin, color, style));
         }
     }
 
     fn border(&self) -> Border {
         match self.best {
-            Some((width, _, color)) if width > 0.0 => Border {
+            Some((width, _, _, color, style)) if width > 0.0 && !self.hidden => Border {
                 width,
                 color: Some(color),
+                style,
             },
             _ => Border::default(),
         }
@@ -103,17 +111,17 @@ impl HeliumTree<'_, '_> {
     }
 
     /// The width and color of the border of a box on one side.
-    fn border_of(&self, id: NodeId, side: Side) -> (f32, RGBA) {
+    fn border_of(&self, id: NodeId, side: Side) -> (f32, RGBA, BorderStyle) {
         let Some(style) = self.computed_values.get(self.node(id).entity) else {
-            return (0.0, RGBA::transparent());
+            return (0.0, RGBA::transparent(), BorderStyle::None);
         };
         let colors = decoration_colors(style).border_color;
         let position = &style.position;
         match side {
-            Side::Top => (position.border_top_width.0, colors.top),
-            Side::Bottom => (position.border_bottom_width.0, colors.bottom),
-            Side::Left => (position.border_left_width.0, colors.left),
-            Side::Right => (position.border_right_width.0, colors.right),
+            Side::Top => (position.border_top_width.0, colors.top, position.border_top_style),
+            Side::Bottom => (position.border_bottom_width.0, colors.bottom, position.border_bottom_style),
+            Side::Left => (position.border_left_width.0, colors.left, position.border_left_style),
+            Side::Right => (position.border_right_width.0, colors.right, position.border_right_style),
         }
     }
 
@@ -274,6 +282,7 @@ impl HeliumTree<'_, '_> {
         let edge = |border: Border, paint: bool, extend_start: f32, extend_end: f32| CollapsedEdge {
             width: Px(border.width),
             color: border.color.unwrap_or(RGBA::transparent()),
+            style: border.style,
             paint: paint && border.width > 0.0,
             extend_start: Px(extend_start),
             extend_end: Px(extend_end),

@@ -56,6 +56,12 @@ pub fn decoration_colors(
     deco.border_color.bottom = get_color(position.border_bottom_color);
     deco.border_color.left = get_color(position.border_left_color);
     deco.border_color.right = get_color(position.border_right_color);
+    deco.border_style = crate::layout::components::EdgeValues {
+        top: position.border_top_style,
+        bottom: position.border_bottom_style,
+        left: position.border_left_style,
+        right: position.border_right_style,
+    };
     deco.has_background_image = background
         .background_image
         .iter()

@@ -367,16 +367,16 @@ pub struct Position {
 
 impl Position {
     fn fixup(&mut self) {
-        if let BorderStyle::None = self.border_top_style {
+        if !self.border_top_style.is_visible() {
             self.border_top_width = PixelLength::default();
         }
-        if let BorderStyle::None = self.border_bottom_style {
+        if !self.border_bottom_style.is_visible() {
             self.border_bottom_width = PixelLength::default();
         }
-        if let BorderStyle::None = self.border_left_style {
+        if !self.border_left_style.is_visible() {
             self.border_left_width = PixelLength::default();
         }
-        if let BorderStyle::None = self.border_right_style {
+        if !self.border_right_style.is_visible() {
             self.border_right_width = PixelLength::default();
         }
     }

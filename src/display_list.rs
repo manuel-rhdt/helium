@@ -7,7 +7,7 @@ use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{ComputedValues, PixelLength, RGBA};
 use crate::style::properties::background::resolve_layer;
 use crate::style::properties::gradient::{BoxSize, Image, Position as BackgroundPosition, Resolved};
-use crate::style::properties::specified::BlendMode;
+use crate::style::properties::specified::{BlendMode, BorderStyle};
 
 use specs::prelude::*;
 use std::ops::Deref;
@@ -112,6 +112,140 @@ pub fn rounded_rect_path(rect: Rect, radii: [(PixelLength, PixelLength); 4]) -> 
         p(x0 + tl.0, y0),
     ));
     path.push(PathSegment::Close);
+    path
+}
+
+
+/// A side of a box, for the borders: where the outside is, and which tones of the colour the
+/// styles `inset`, `outset`, `groove` and `ridge` use (they are lit from the top left).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Side {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+impl Side {
+    /// The direction away from the box, in page coordinates (y grows downwards).
+    fn outward(self) -> (f32, f32) {
+        match self {
+            Side::Top => (0.0, -1.0),
+            Side::Right => (1.0, 0.0),
+            Side::Bottom => (0.0, 1.0),
+            Side::Left => (-1.0, 0.0),
+        }
+    }
+
+    fn is_top_left(self) -> bool {
+        matches!(self, Side::Top | Side::Left)
+    }
+}
+
+/// The two tones that the borders `inset`, `outset`, `groove` and `ridge` have: the light one
+/// and the dark one. A colour that is light enough is the light tone and the dark one is derived
+/// from it; for a dark colour it is the other way round, so that the tones still differ.
+fn border_tones(color: RGBA) -> (RGBA, RGBA) {
+    let value = color.red.max(color.green).max(color.blue) as f32 / 255.0;
+    let scale = |channel: u8, factor: f32| (channel as f32 * factor).round().clamp(0.0, 255.0) as u8;
+    let brighten = |channel: u8| (channel as f32 + (255.0 - channel as f32) * 0.4).round() as u8;
+    if value >= 0.5 {
+        // the dark tone takes a third of the value off, like the borders of the browsers do
+        let factor = ((value - 0.33) / value).max(0.0);
+        let dark = RGBA {
+            red: scale(color.red, factor),
+            green: scale(color.green, factor),
+            blue: scale(color.blue, factor),
+            ..color
+        };
+        (color, dark)
+    } else {
+        let light = RGBA {
+            red: brighten(color.red),
+            green: brighten(color.green),
+            blue: brighten(color.blue),
+            ..color
+        };
+        (light, color)
+    }
+}
+
+/// The colour that a side of a border with `style` is painted in, if it has only one: `inset`
+/// and `outset` borders are light on two sides and dark on the other two.
+fn single_tone(style: BorderStyle, side: Side, color: RGBA) -> RGBA {
+    let (light, dark) = border_tones(color);
+    match style {
+        BorderStyle::Inset => if side.is_top_left() { dark } else { light },
+        BorderStyle::Outset => if side.is_top_left() { light } else { dark },
+        _ => color,
+    }
+}
+
+/// A rectangle as a path.
+fn rect_subpath(x0: f32, y0: f32, x1: f32, y1: f32, path: &mut Vec<PathSegment>) {
+    let p = |x: f32, y: f32| Point::new(PixelLength(x), PixelLength(y));
+    path.push(PathSegment::MoveTo(p(x0, y0)));
+    path.push(PathSegment::LineTo(p(x1, y0)));
+    path.push(PathSegment::LineTo(p(x1, y1)));
+    path.push(PathSegment::LineTo(p(x0, y1)));
+    path.push(PathSegment::Close);
+}
+
+/// A circle as a path.
+fn circle_subpath(cx: f32, cy: f32, radius: f32, path: &mut Vec<PathSegment>) {
+    let p = |x: f32, y: f32| Point::new(PixelLength(x), PixelLength(y));
+    let k = radius * KAPPA;
+    path.push(PathSegment::MoveTo(p(cx + radius, cy)));
+    path.push(PathSegment::CurveTo(p(cx + radius, cy + k), p(cx + k, cy + radius), p(cx, cy + radius)));
+    path.push(PathSegment::CurveTo(p(cx - k, cy + radius), p(cx - radius, cy + k), p(cx - radius, cy)));
+    path.push(PathSegment::CurveTo(p(cx - radius, cy - k), p(cx - k, cy - radius), p(cx, cy - radius)));
+    path.push(PathSegment::CurveTo(p(cx + k, cy - radius), p(cx + radius, cy - k), p(cx + radius, cy)));
+    path.push(PathSegment::Close);
+}
+
+/// The dashes of a border from `a` to `b`, which are on an axis, as a path of rectangles of the
+/// given thickness, centered on the line. The dashes and the gaps between them are as long as
+/// the length of the line allows, with a dash at both ends.
+fn dashes_path(a: (f32, f32), b: (f32, f32), thickness: f32) -> Vec<PathSegment> {
+    let length = (b.0 - a.0).abs() + (b.1 - a.1).abs();
+    let dash = if thickness < 3.0 { 3.0 * thickness } else { 2.0 * thickness };
+    let wanted_gap = dash;
+    let count = (((length + wanted_gap) / (dash + wanted_gap)).round() as usize).max(1);
+    let (dash, gap) = if count == 1 {
+        (length, 0.0)
+    } else {
+        (dash, ((length - count as f32 * dash) / (count - 1) as f32).max(0.0))
+    };
+    let horizontal = a.1 == b.1;
+    let (min_x, min_y) = (a.0.min(b.0), a.1.min(b.1));
+    let half = thickness / 2.0;
+    let mut path = vec![];
+    for i in 0..count {
+        let from = i as f32 * (dash + gap);
+        let to = from + dash;
+        if horizontal {
+            rect_subpath(min_x + from, min_y - half, min_x + to, min_y + half, &mut path);
+        } else {
+            rect_subpath(min_x - half, min_y + from, min_x + half, min_y + to, &mut path);
+        }
+    }
+    path
+}
+
+/// The dots of a border from `a` to `b`, which are on an axis: circles as wide as the border
+/// that touch their neighbours' gaps of the same width.
+fn dots_path(a: (f32, f32), b: (f32, f32), thickness: f32) -> Vec<PathSegment> {
+    let length = (b.0 - a.0).abs() + (b.1 - a.1).abs();
+    let count = ((length / (2.0 * thickness)).round() as usize).max(1);
+    let pitch = length / count as f32;
+    let horizontal = a.1 == b.1;
+    let (min_x, min_y) = (a.0.min(b.0), a.1.min(b.1));
+    let mut path = vec![];
+    for i in 0..count {
+        let along = (i as f32 + 0.5) * pitch;
+        let (cx, cy) = if horizontal { (min_x + along, min_y) } else { (min_x, min_y + along) };
+        circle_subpath(cx, cy, thickness / 2.0, &mut path);
+    }
     path
 }
 
@@ -455,6 +589,136 @@ impl DisplayList {
         self.append(DisplayItem::Pop, entity, z);
     }
 
+
+
+    /// Paints a side of the border of a box as bands that end at the diagonals through the
+    /// corners, where the sides meet in different tones. `edges` are the sides of the border box
+    /// (`xmin`, `ymin`, `xmax`, `ymax`) and `widths` the widths of the borders (top, right,
+    /// bottom, left). The bands are the parts of the width of the side that are given as
+    /// fractions, from the outside to the inside, with the colour of each.
+    #[allow(clippy::too_many_arguments)]
+    fn border_bands(
+        &mut self,
+        side: Side,
+        edges: (PixelLength, PixelLength, PixelLength, PixelLength),
+        widths: (PixelLength, PixelLength, PixelLength, PixelLength),
+        bands: &[(f32, f32, RGBA)],
+        entity: Entity,
+        z: ZIndex,
+    ) {
+        let (xmin, ymin, xmax, ymax) = edges;
+        let (top, right, bottom, left) = widths;
+        // the corners of the box inside of the border edge, `f` of the way to the padding edge
+        let inset = |f: f32| (xmin + left * f, ymin + top * f, xmax - right * f, ymax - bottom * f);
+        for &(from, to, color) in bands {
+            let (x0, y0, x1, y1) = inset(from);
+            let (ix0, iy0, ix1, iy1) = inset(to);
+            let p = Point::new;
+            let quad = match side {
+                Side::Top => [p(x0, y0), p(x1, y0), p(ix1, iy0), p(ix0, iy0)],
+                Side::Right => [p(x1, y0), p(x1, y1), p(ix1, iy1), p(ix1, iy0)],
+                Side::Bottom => [p(x1, y1), p(x0, y1), p(ix0, iy1), p(ix1, iy1)],
+                Side::Left => [p(x0, y1), p(x0, y0), p(ix0, iy0), p(ix0, iy1)],
+            };
+            let path = vec![
+                PathSegment::MoveTo(quad[0]),
+                PathSegment::LineTo(quad[1]),
+                PathSegment::LineTo(quad[2]),
+                PathSegment::LineTo(quad[3]),
+                PathSegment::Close,
+            ];
+            self.append(DisplayItem::Push, entity, z);
+            self.append(DisplayItem::Color(color), entity, z);
+            self.append(DisplayItem::FillPath { path, even_odd: false }, entity, z);
+            self.append(DisplayItem::Pop, entity, z);
+        }
+    }
+
+    /// The bands of the border of one side of a box with the styles that have several (`double`,
+    /// `groove`, `ridge`) or two tones (`inset`, `outset`), as `border_bands` takes them, if the
+    /// style is one of these.
+    fn toned_bands(side: Side, width: PixelLength, color: RGBA, style: BorderStyle) -> Option<Vec<(f32, f32, RGBA)>> {
+        let (light, dark) = border_tones(color);
+        Some(match style {
+            BorderStyle::Double if width.0 >= 3.0 => vec![(0.0, 1.0 / 3.0, color), (2.0 / 3.0, 1.0, color)],
+            BorderStyle::Inset | BorderStyle::Outset => vec![(0.0, 1.0, single_tone(style, side, color))],
+            BorderStyle::Groove | BorderStyle::Ridge if width.0 >= 2.0 => {
+                let outer_is_dark = side.is_top_left() == (style == BorderStyle::Groove);
+                let (outer, inner) = if outer_is_dark { (dark, light) } else { (light, dark) };
+                vec![(0.0, 0.5, outer), (0.5, 1.0, inner)]
+            }
+            _ => return None,
+        })
+    }
+
+    /// Paints a straight border of `side` along the line from `start` to `end`, which is on an
+    /// axis, as wide as `width` and centered on the line, in the `style`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn border_line(
+        &mut self,
+        side: Side,
+        start: Point,
+        end: Point,
+        width: PixelLength,
+        color: RGBA,
+        style: BorderStyle,
+        entity: Entity,
+        z: ZIndex,
+    ) {
+        let w = width.0;
+        if w <= 0.0 || !style.is_visible() {
+            return;
+        }
+        let (nx, ny) = side.outward();
+        // a line moved by `offset` away from the box
+        let stroke = |this: &mut Self, offset: f32, thickness: f32, color: RGBA| {
+            let shift = |p: Point| Point::new(p.x + PixelLength(nx * offset), p.y + PixelLength(ny * offset));
+            this.stroked_line(shift(start), shift(end), PixelLength(thickness), color, entity, z);
+        };
+        let (a, b) = ((start.x.0, start.y.0), (end.x.0, end.y.0));
+        let (light, dark) = border_tones(color);
+        match style {
+            BorderStyle::None | BorderStyle::Hidden => {}
+            BorderStyle::Solid => stroke(self, 0.0, w, color),
+            // a third of the width for each line and for the gap, if that is wide enough to see
+            BorderStyle::Double if w >= 3.0 => {
+                stroke(self, w / 3.0, w / 3.0, color);
+                stroke(self, -w / 3.0, w / 3.0, color);
+            }
+            BorderStyle::Double => stroke(self, 0.0, w, color),
+            BorderStyle::Inset | BorderStyle::Outset => {
+                stroke(self, 0.0, w, single_tone(style, side, color))
+            }
+            // a groove is dark on the outside at the top and left, light on the outside at
+            // the bottom and right, and a ridge the other way round
+            BorderStyle::Groove | BorderStyle::Ridge => {
+                if w < 2.0 {
+                    stroke(self, 0.0, w, single_tone(
+                        if style == BorderStyle::Groove { BorderStyle::Inset } else { BorderStyle::Outset },
+                        side,
+                        color,
+                    ));
+                } else {
+                    let outer_is_dark = side.is_top_left() == (style == BorderStyle::Groove);
+                    let (outer, inner) = if outer_is_dark { (dark, light) } else { (light, dark) };
+                    stroke(self, w / 4.0, w / 2.0, outer);
+                    stroke(self, -w / 4.0, w / 2.0, inner);
+                }
+            }
+            BorderStyle::Dashed | BorderStyle::Dotted => {
+                let path = if style == BorderStyle::Dashed {
+                    dashes_path(a, b, w)
+                } else {
+                    dots_path(a, b, w)
+                };
+                self.append(DisplayItem::Push, entity, z);
+                self.append(DisplayItem::Color(color), entity, z);
+                self.append(DisplayItem::FillPath { path, even_odd: false }, entity, z);
+                self.append(DisplayItem::Pop, entity, z);
+            }
+        }
+    }
+
     /// Paints the background colour and the gradients, clipped to the (rounded) border box
     /// `clip`. The colour is only painted here when the gradients are blended; it is the
     /// caller's job otherwise.
@@ -747,6 +1011,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 border,
                 background_color,
                 border_color,
+                border_style,
                 collapsed,
                 ..
             } = deco;
@@ -781,6 +1046,15 @@ impl<'a> System<'a> for DisplayDecoration {
             if collapsed.is_none() && deco.radius.is_rounded() {
                 let outer = resolve_radii(&deco.radius, border_box.width, border_box.height);
                 if outer.iter().any(|&(rx, ry)| rx.0 > 0.0 && ry.0 > 0.0) {
+                    // the sides of a rounded border are filled with one colour: the styles that
+                    // have a pattern or two tones are drawn solid, `inset` and `outset` keep
+                    // their tones
+                    let border_color = EdgeValues {
+                        top: single_tone(border_style.top, Side::Top, border_color.top),
+                        bottom: single_tone(border_style.bottom, Side::Bottom, border_color.bottom),
+                        left: single_tone(border_style.left, Side::Left, border_color.left),
+                        right: single_tone(border_style.right, Side::Right, border_color.right),
+                    };
                     self.display_list.rounded_decoration(
                         border_box, outer, border, border_color, background_color, &gradients, entity, z,
                     );
@@ -827,12 +1101,12 @@ impl<'a> System<'a> for DisplayDecoration {
             if let Some(edges) = collapsed {
                 // the borders are centered on the edges of the border box
                 let lines = [
-                    (edges.top, (xmin, ymin), (xmax, ymin)),
-                    (edges.bottom, (xmin, ymax), (xmax, ymax)),
-                    (edges.left, (xmin, ymin), (xmin, ymax)),
-                    (edges.right, (xmax, ymin), (xmax, ymax)),
+                    (Side::Top, edges.top, (xmin, ymin), (xmax, ymin)),
+                    (Side::Bottom, edges.bottom, (xmin, ymax), (xmax, ymax)),
+                    (Side::Left, edges.left, (xmin, ymin), (xmin, ymax)),
+                    (Side::Right, edges.right, (xmax, ymin), (xmax, ymax)),
                 ];
-                for (edge, (x1, y1), (x2, y2)) in lines {
+                for (side, edge, (x1, y1), (x2, y2)) in lines {
                     if !edge.paint || edge.width <= Px(0.0) {
                         continue;
                     }
@@ -848,7 +1122,7 @@ impl<'a> System<'a> for DisplayDecoration {
                         )
                     };
                     self.display_list
-                        .stroked_line(start, end, edge.width, edge.color, entity, z);
+                        .border_line(side, start, end, edge.width, edge.color, edge.style, entity, z);
                 }
                 continue;
             }
@@ -858,42 +1132,59 @@ impl<'a> System<'a> for DisplayDecoration {
             let hbl = border.left / 2.0;
             let hbr = border.right / 2.0;
 
-            if border.top > Px(0.0) {
-                let pt1 = Point::new(xmin, ymin + hbt);
-                let pt2 = Point::new(xmax, ymin + hbt);
+            // the left and right borders of a pattern leave the corners to the top and the
+            // bottom, which would have dots and dashes on top of each other
+            let patterned = |style: BorderStyle| matches!(style, BorderStyle::Dashed | BorderStyle::Dotted);
+            let corner = |style: BorderStyle, width: Px| if patterned(style) { width } else { Px(0.0) };
 
-                self.display_list
-                    .stroked_line(pt1, pt2, border.top, border_color.top, entity, z);
-            }
-            if border.bottom > Px(0.0) {
-                let pt1 = Point::new(xmin, ymax - hbb);
-                let pt2 = Point::new(xmax, ymax - hbb);
-                self.display_list.stroked_line(
-                    pt1,
-                    pt2,
+            let edges = (xmin, ymin, xmax, ymax);
+            let widths = (border.top, border.right, border.bottom, border.left);
+            let sides = [
+                (
+                    Side::Top,
+                    Point::new(xmin, ymin + hbt),
+                    Point::new(xmax, ymin + hbt),
+                    border.top,
+                    border_color.top,
+                    border_style.top,
+                ),
+                (
+                    Side::Bottom,
+                    Point::new(xmin, ymax - hbb),
+                    Point::new(xmax, ymax - hbb),
                     border.bottom,
                     border_color.bottom,
-                    entity,
-                    z,
-                );
-            }
-            if border.left > Px(0.0) {
-                let pt1 = Point::new(xmin + hbl, ymin);
-                let pt2 = Point::new(xmin + hbl, ymax);
-                self.display_list
-                    .stroked_line(pt1, pt2, border.left, border_color.left, entity, z);
-            }
-            if border.right > Px(0.0) {
-                let pt1 = Point::new(xmax - hbr, ymin);
-                let pt2 = Point::new(xmax - hbr, ymax);
-                self.display_list.stroked_line(
-                    pt1,
-                    pt2,
+                    border_style.bottom,
+                ),
+                (
+                    Side::Left,
+                    Point::new(xmin + hbl, ymin + corner(border_style.left, border.top)),
+                    Point::new(xmin + hbl, ymax - corner(border_style.left, border.bottom)),
+                    border.left,
+                    border_color.left,
+                    border_style.left,
+                ),
+                (
+                    Side::Right,
+                    Point::new(xmax - hbr, ymin + corner(border_style.right, border.top)),
+                    Point::new(xmax - hbr, ymax - corner(border_style.right, border.bottom)),
                     border.right,
                     border_color.right,
-                    entity,
-                    z,
-                );
+                    border_style.right,
+                ),
+            ];
+            for (side, start, end, width, color, style) in sides {
+                if width <= Px(0.0) {
+                    continue;
+                }
+                match DisplayList::toned_bands(side, width, color, style) {
+                    Some(bands) => {
+                        self.display_list.border_bands(side, edges, widths, &bands, entity, z)
+                    }
+                    None => self
+                        .display_list
+                        .border_line(side, start, end, width, color, style, entity, z),
+                }
             }
         }
     }
