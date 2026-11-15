@@ -574,7 +574,7 @@ mod tests {
             assert!(font.covers_cluster(emoji), "{emoji}");
         }
         let glyph = font.hb_font.get_nominal_glyph('😀').unwrap();
-        assert!(font.is_color_glyph(GlyphIndex(glyph)));
+        assert!(font.is_color_glyph(super::GlyphIndex(glyph)));
     }
 
     #[test]

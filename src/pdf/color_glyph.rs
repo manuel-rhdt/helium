@@ -158,12 +158,11 @@ struct Collector<'f, 'a> {
     face: &'f ttf_parser::Face<'a>,
     outline: Vec<Segment>,
     stack: Vec<(Frame, Vec<Node>)>,
-    warned: bool,
 }
 
 impl<'f, 'a> Collector<'f, 'a> {
     fn new(face: &'f ttf_parser::Face<'a>) -> Self {
-        Collector { face, outline: Vec::new(), stack: vec![(Frame::Root, Vec::new())], warned: false }
+        Collector { face, outline: Vec::new(), stack: vec![(Frame::Root, Vec::new())] }
     }
 
     fn finish(mut self) -> Option<Vec<Node>> {
