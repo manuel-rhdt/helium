@@ -83,7 +83,7 @@ fn emoji_with_a_variation_selector_do_not_drop_the_fallback_of_the_other_emoji_i
     // replaces clusters, so the smiley next to it is found too
     let pdf = render(
         "svg_mixed",
-        "<svg width=\\"260\\" height=\\"60\\"><text x=\\"5\\" y=\\"40\\" font-size=\\"30\\" font-family=\\"serif\\">Hi 😀 🎉 ❤️ ab</text></svg>",
+        "<svg width=\"260\" height=\"60\"><text x=\"5\" y=\"40\" font-size=\"30\" font-family=\"serif\">Hi 😀 🎉 ❤️ ab</text></svg>",
     );
     let forms = pdf.windows(b"/Subtype /Form".len()).filter(|w| *w == b"/Subtype /Form").count();
     assert!(forms >= 3, "{forms} forms");
