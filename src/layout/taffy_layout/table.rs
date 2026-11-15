@@ -15,14 +15,15 @@
 //! tracks they span (see [`HeliumTree::place_table_parts`]), and the cells are moved to be
 //! relative to the row they are in, so the rest of the layout sees an ordinary box tree.
 //!
-//! Not supported yet: `vertical-align` in cells (their contents are at the top),
-//! `table-layout: fixed` and `caption-side`. Grid tracks share extra width equally
+//! `vertical-align` in cells puts their contents at the top, in the middle or at the bottom (see
+//! [`HeliumTree::align_cell_content`]); `baseline` counts as `top`, the baselines of the cells
+//! in a row are not aligned. Not supported yet: `table-layout: fixed` and `caption-side`. Grid tracks share extra width equally
 //! instead of in proportion to their contents. `border-collapse: collapse` is resolved in
 //! [`super::collapse`].
 //!
 //! https://www.w3.org/TR/CSS22/tables.html
 
-use taffy::compute_grid_layout;
+use taffy::{LayoutPartialTree, compute_grid_layout};
 use taffy::geometry::{Line, Point, Size};
 use taffy::style::{
     AvailableSpace, Dimension, GridTemplateComponent, LengthPercentageAuto, MaxTrackSizingFunction,
@@ -522,12 +523,74 @@ impl HeliumTree<'_, '_> {
         output
     }
 
+    /// Finds how far the content of a cell is moved down by `vertical-align`: the cell is as high
+    /// as its row, and its content is at the top, in the middle or at the bottom of the cell.
+    /// (`baseline` and the other values of the inline boxes count as `top`; the baselines of the
+    /// cells in a row are not aligned.) Not in vertical text, where the block axis is horizontal.
+    fn align_cell_content(&mut self, cell: NodeId) {
+        use crate::style::properties::computed::VerticalAlign;
+        self.node_mut(cell).content_shift = 0.0;
+        let entity = self.node(cell).entity;
+        let align = self
+            .computed_values
+            .get(entity)
+            .map_or(VerticalAlign::Baseline, |style| style.box_.vertical_align);
+        if !matches!(align, VerticalAlign::Middle | VerticalAlign::Bottom)
+            || self.node(cell).flow.is_vertical()
+        {
+            return;
+        }
+        let layout = self.node(cell).layout;
+        // The height of the cell for its content alone: the one that its own `height` and its
+        // row would give is not what the content needs.
+        let saved = self.node(cell).style.clone();
+        {
+            let node = self.node_mut(cell);
+            node.style.size.height = auto();
+            node.style.min_size.height = auto();
+            node.style.max_size.height = auto();
+            node.cache = taffy::tree::Cache::new();
+        }
+        let natural = self
+            .compute_child_layout(
+                cell,
+                LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    sizing_mode: SizingMode::InherentSize,
+                    axis: RequestedAxis::Vertical,
+                    known_dimensions: Size { width: Some(layout.size.width), height: None },
+                    known_dimensions_are_definite: Size { width: true, height: false },
+                    parent_size: Size { width: Some(layout.size.width), height: None },
+                    available_space: Size {
+                        width: AvailableSpace::Definite(layout.size.width),
+                        height: AvailableSpace::MaxContent,
+                    },
+                    vertical_margins_are_collapsible: Line::FALSE,
+                },
+            )
+            .size
+            .height;
+        {
+            let node = self.node_mut(cell);
+            node.style = saved;
+            node.cache = taffy::tree::Cache::new();
+        }
+        let extra = (layout.size.height - natural).max(0.0);
+        self.node_mut(cell).content_shift = match align {
+            VerticalAlign::Middle => extra / 2.0,
+            _ => extra,
+        };
+    }
+
     /// Gives the rows and row groups the boxes of their grid tracks and moves the cells into
     /// them.
     fn place_table_parts(&mut self, table: NodeId) {
         let Some(structure) = self.node_mut(table).table.take() else {
             return;
         };
+        for &(cell, _) in &structure.cells {
+            self.align_cell_content(cell);
+        }
         let tracks = self.node(table).grid_tracks.clone().unwrap_or_default();
         let first_row_track = structure.captions + usize::from(structure.leading_row_track);
         // the rows and columns of the table are between the empty tracks at the edges

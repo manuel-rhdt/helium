@@ -222,6 +222,93 @@ impl RelativeOffset {
     }
 }
 
+/// The `vertical-align` of an inline-level box, with what is needed to resolve it against the
+/// parent box (CSS 2.2, 10.8.1).
+#[derive(Debug, Copy, Clone)]
+pub struct AlignStep {
+    pub align: crate::style::properties::computed::VerticalAlign,
+    /// The `line-height` of the box, which percentages refer to.
+    pub line_height: PixelLength,
+    /// The ascent and descent of the box of the element (from its baseline to the top and
+    /// bottom of its line-height box). An `inline-block` box is as high as its margin box,
+    /// which is only known in the layout: it has `None`.
+    pub own: Option<(PixelLength, PixelLength)>,
+    /// The font of the parent: the ascent and descent of its content area, its x-height and its
+    /// size.
+    pub parent_ascent: PixelLength,
+    pub parent_descent: PixelLength,
+    pub parent_x_height: PixelLength,
+    pub parent_font_size: PixelLength,
+}
+
+/// The `vertical-align` of an inline box, which the content of the box takes along.
+#[derive(Debug, Copy, Clone)]
+pub struct ElementAlign(pub AlignStep);
+
+impl Component for ElementAlign {
+    type Storage = DenseVecStorage<Self>;
+}
+
+/// The `vertical-align` values of the inline boxes that a text run or an atomic inline-level box
+/// is in, the innermost first. The boxes are aligned in their parents, so the offsets add up.
+#[derive(Debug, Clone, Default)]
+pub struct VerticalAlignment(pub Vec<AlignStep>);
+
+impl Component for VerticalAlignment {
+    type Storage = DenseVecStorage<Self>;
+}
+
+/// Where a box goes on its line, after its `vertical-align` is resolved.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum LinePlacement {
+    /// Raised above the baseline of the line by this much (lowered if negative).
+    Raise(PixelLength),
+    /// The box (of this ascent and descent) is aligned with the top (or the bottom) of the line
+    /// box; what is in it is moved by `inner` in addition.
+    Top { inner: PixelLength, ascent: PixelLength, descent: PixelLength },
+    Bottom { inner: PixelLength, ascent: PixelLength, descent: PixelLength },
+}
+
+impl VerticalAlignment {
+    /// Resolves the alignment of an entity whose own box is `own` (ascent and descent).
+    pub fn place(&self, own: (PixelLength, PixelLength)) -> LinePlacement {
+        use crate::style::properties::computed::VerticalAlign;
+        // from the outermost box inwards: `raise` is the baseline of the box that is aligned
+        let mut raise = 0.0f32;
+        let mut line_aligned: Option<(bool, PixelLength, PixelLength)> = None;
+        for step in self.0.iter().rev() {
+            let (ascent, descent) = step.own.unwrap_or(own);
+            match step.align {
+                VerticalAlign::Baseline => {}
+                VerticalAlign::Sub => raise -= step.parent_font_size.0 * 0.2,
+                VerticalAlign::Super => raise += step.parent_font_size.0 / 3.0,
+                VerticalAlign::LengthPercentage(lp) => raise += lp.absolute(step.line_height).0,
+                // the middle of the box is at the baseline plus half the x-height of the parent
+                VerticalAlign::Middle => {
+                    raise += step.parent_x_height.0 / 2.0 - (ascent.0 - descent.0) / 2.0
+                }
+                VerticalAlign::TextTop => raise += step.parent_ascent.0 - ascent.0,
+                VerticalAlign::TextBottom => raise += descent.0 - step.parent_descent.0,
+                VerticalAlign::Top | VerticalAlign::Bottom => {
+                    // the baseline of this box is found from the line box; what is inside moves
+                    // relative to it
+                    line_aligned = Some((step.align == VerticalAlign::Top, ascent, descent));
+                    raise = 0.0;
+                }
+            }
+        }
+        match line_aligned {
+            None => LinePlacement::Raise(PixelLength(raise)),
+            Some((true, ascent, descent)) => {
+                LinePlacement::Top { inner: PixelLength(raise), ascent, descent }
+            }
+            Some((false, ascent, descent)) => {
+                LinePlacement::Bottom { inner: PixelLength(raise), ascent, descent }
+            }
+        }
+    }
+}
+
 /// The position of a box relative to the smallest containing stacking context.
 #[derive(Debug, Copy, Clone, Default)]
 pub struct StackingContextRelativePosition {

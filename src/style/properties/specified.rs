@@ -488,6 +488,9 @@ pub enum Box {
     UnicodeBidi(UnicodeBidi),
     #[property]
     Position(PositionSpec),
+    /// https://www.w3.org/TR/CSS22/visudet.html#propdef-vertical-align
+    #[property]
+    VerticalAlign(VerticalAlign),
     /// https://www.w3.org/TR/css-sizing-3/#box-sizing
     #[property]
     BoxSizing(BoxSizing),
@@ -1880,6 +1883,22 @@ impl<'a> List<'a, Border> {
             .next()
             .unwrap_or(Color::CurrentColor)
     }
+}
+
+/// `vertical-align`: how an inline-level box is aligned in its line, or the content of a table
+/// cell in the cell.
+#[derive(Debug, Copy, Clone, PropertyValue)]
+pub enum VerticalAlign {
+    /// Raises the box by the length, or by the percentage of the `line-height` of the box.
+    QuantityOrPercentage(QuantityOrPercentage),
+    Baseline,
+    Sub,
+    Super,
+    TextTop,
+    TextBottom,
+    Middle,
+    Top,
+    Bottom,
 }
 
 #[derive(Debug, Copy, Clone, PropertyValue)]

@@ -15,6 +15,8 @@ css/css-flexbox/flex-aspect-ratio-img-row-005.html
 css/css-flexbox/flex-aspect-ratio-img-row-013.html
 css/css-flexbox/flex-base-size-ignores-min-max-width-003.html
 css/css-flexbox/flex-basis-014.html
+css/css-flexbox/flex-container-max-content-002.tentative.html
+css/css-flexbox/flex-container-min-content-002.tentative.html
 css/css-flexbox/flex-flow-013.html
 css/css-flexbox/flex-item-percentage-height-img-001.html
 css/css-flexbox/flex-minimum-height-flex-items-012.html
@@ -24,6 +26,7 @@ css/css-flexbox/intrinsic-size/col-wrap-baseline-001.html
 css/css-flexbox/intrinsic-size/col-wrap-grid-item-001.html
 css/css-flexbox/orthogonal-writing-modes-and-intrinsic-sizing.html
 css/css-flexbox/percentage-heights-000.html
+css/css-flexbox/percentage-size-quirks-002.html
 css/css-flexbox/quirks-auto-block-size-with-percentage-item.html
 css/css-flexbox/relayout-image-load.html
 css/css-flexbox/svg-root-as-flex-item-007.html
@@ -36,6 +39,8 @@ css/css-grid/alignment/grid-column-axis-alignment-positioned-items-011.html
 css/css-grid/alignment/grid-column-axis-alignment-positioned-items-015.html
 css/css-grid/alignment/grid-column-axis-alignment-positioned-items-016.html
 css/css-grid/alignment/grid-fit-content-tracks-dont-stretch-001.html
+css/css-grid/alignment/grid-item-aspect-ratio-justify-self-001.html
+css/css-grid/alignment/grid-item-aspect-ratio-justify-self-002.html
 css/css-grid/alignment/grid-row-axis-alignment-positioned-items-003.html
 css/css-grid/alignment/grid-row-axis-alignment-positioned-items-004.html
 css/css-grid/alignment/grid-row-axis-alignment-positioned-items-009.html
@@ -105,6 +110,7 @@ css/css-sizing/stretch/flex-item-height-001.html
 css/css-sizing/stretch/flex-item-height-003.html
 css/css-sizing/stretch/flex-line-003.html
 css/css-sizing/stretch/flex-line-004.html
+css/css-sizing/stretch/flex-stretch-min-max-cross-001.html
 css/css-sizing/stretch/indefinite-1.html
 css/css-sizing/stretch/indefinite-2.html
 css/css-sizing/stretch/indefinite-3.html

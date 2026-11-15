@@ -74,7 +74,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `@page` and its margin boxes, to the initial font size).
 - **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`,
   `table` and the table
-  parts, `list-item`, `none`), `position: absolute` and `position: relative` (`left`, `right`,
+  parts, `list-item`, `none`), `vertical-align` (on inline boxes, and `top`, `middle` and `bottom` in table cells; the baselines of
+  the cells in a row are not aligned), `position: absolute` and `position: relative` (`left`, `right`,
   `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in
   vertical text too; percentages of `left`/`right` in vertical lines count as `auto`), block, inline, flexbox
   (`flex-*`, `gap`, `justify-*`, `align-*`) and grid (`grid-template-*`, `grid-auto-*`,
@@ -155,6 +156,6 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`,
 `@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
 fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
-`outline`, `vertical-align`, `word-break`/`overflow-wrap`,
+`outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `vw`/`vh`, `ex`/`ch` and other units, scripting, and form
 interaction.
