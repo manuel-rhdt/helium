@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Emoji specimen</title>
+<meta name="description" content="Colour emoji as vector graphics: sequences with skin tones, ZWJ families and professions, flags and keycaps, text and emoji presentation, emoji at any size, in running text, lists, tables and page footers.">
+<meta name="keywords" content="emoji, COLRv1, vector, Unicode, ZWJ sequences, gradients, transparency">
+<style>
+  @page { size: A4; margin: 20mm 18mm 22mm;
+    @bottom-left { content: "Emoji 🎨 painted from the COLRv1 table of the font"; font: 8pt sans-serif; color: #8a8f98; }
+    @bottom-right { content: "🌈 " counter(page); font: 8pt sans-serif; color: #8a8f98; } }
+  html { font-family: serif; font-size: 11pt; line-height: 1.55; color: #1f2230; }
+  body { margin: 0; }
+
+  .hero { display: flex; align-items: center; justify-content: space-between; gap: 18pt; padding: 20pt 26pt; border-radius: 14pt; color: #fff; background: linear-gradient(120deg, #0f3d5e 0%, #1c7a8c 50%, #f2a33a 100%); margin-bottom: 8pt; }
+  .hero > div:first-child { flex: 1 1 0; min-width: 0; }
+  .hero .k { font: 8pt sans-serif; letter-spacing: 3pt; text-transform: uppercase; color: #cdeef3; }
+  .hero h1 { font: bold 26pt/1.12 sans-serif; margin: 5pt 0 7pt; }
+  .hero p { margin: 0; font-size: 10.5pt; color: #e8f7f9; max-width: 105mm; }
+  .hero .big { flex: none; font-size: 54pt; line-height: 1; white-space: nowrap; }
+
+  h2 { font: bold 8.5pt sans-serif; letter-spacing: 2.2pt; text-transform: uppercase; color: #1c7a8c; margin: 13pt 0 6pt; padding-bottom: 3pt; border-bottom: 0.75pt solid #d3e4e7; break-after: avoid; }
+  p.note { margin: 0 0 7pt; font-size: 10pt; color: #4a5160; }
+  .row { display: flex; flex-wrap: wrap; gap: 4pt 6pt; align-items: center; }
+  .row.l { font-size: 25pt; line-height: 1.25; }
+  .row.m { font-size: 20pt; line-height: 1.25; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8pt; }
+  .card { background: #f3f8f9; border-radius: 8pt; padding: 9pt 11pt; border-left: 2.5pt solid #1c7a8c; }
+  .card .e { font-size: 23pt; line-height: 1.3; }
+  .card b { display: block; font: bold 8.5pt sans-serif; letter-spacing: .6pt; margin-top: 2pt; }
+  .card span { font: 7.5pt/1.4 sans-serif; color: #6b7280; }
+
+  .sizes { display: flex; align-items: flex-end; gap: 10pt; }
+  .sizes span { display: block; line-height: 1; }
+
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8pt; }
+  .pair div { border-radius: 8pt; padding: 9pt 12pt; }
+  .pair .text { background: #f3f4f6; }
+  .pair .emoji { background: #fdf3e3; }
+  .pair em { display: block; font: normal 7.5pt sans-serif; letter-spacing: 1.2pt; text-transform: uppercase; color: #6b7280; margin-bottom: 2pt; }
+  .pair .glyphs { font-size: 21pt; line-height: 1.3; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  th { text-align: left; font: bold 7.5pt sans-serif; letter-spacing: 1.4pt; text-transform: uppercase; color: #6b7280; padding: 0 6pt 4pt; border-bottom: 0.75pt solid #d3e4e7; }
+  td { padding: 5pt 6pt; border-bottom: 0.5pt solid #e5eef0; }
+  td.e { font-size: 17pt; line-height: 1.2; width: 14%; }
+  td.code { font: 8.5pt monospace; color: #4a5160; }
+
+  .tinted { display: flex; gap: 8pt; }
+  .tinted div { flex: 1; border-radius: 10pt; padding: 10pt 6pt; text-align: center; font-size: 24pt; line-height: 1.2; }
+  ul.todo { font-size: 11pt; padding-left: 18pt; margin: 0; }
+  ul.todo li { margin: 2pt 0; }
+  .quote { margin: 11pt 0 0; padding: 10pt 14pt; border-radius: 8pt; background: #fdf3e3; border-left: 2.5pt solid #f2a33a; font-size: 11pt; }
+  .quote b { display: block; font: bold 8pt sans-serif; letter-spacing: 1.6pt; text-transform: uppercase; color: #b9741a; margin-bottom: 3pt; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div>
+    <div class="k">Colour glyphs</div>
+    <h1>Emoji as vector graphics</h1>
+    <p>Every glyph is a graph of gradient fills, clips and blend modes read from the font and painted into the PDF, so it stays sharp at any size. The text underneath is still text.</p>
+  </div>
+  <div class="big">🦊🌸</div>
+</div>
+
+<h2>Faces and things</h2>
+<div class="row l">😀 😎 🥳 😴 🤔 🥹 😇 🤯 🫠 🙌 👏 🎉 🔥 ✨ 💡 🚀 🌍 🌈 ☀️ 🌙 🍉 🍕 🍜 ☕ 🎸 🎨 📚 🧪 🔭 🏔️ 🌊 🐙 🦉 🐢 🦋 🌻 🍄</div>
+
+<h2>Sequences</h2>
+<p class="note">Many emoji are several code points joined into one glyph. The font ligates them, the shaper picks the glyph and the page shows one picture.</p>
+<div class="cards">
+  <div class="card"><div class="e">👩‍🔬 🧑‍🚀 👨‍🍳</div><b>Professions</b><span>person + ZWJ + object</span></div>
+  <div class="card"><div class="e">👨‍👩‍👧 👩‍❤️‍👨</div><b>Families and couples</b><span>up to seven code points</span></div>
+  <div class="card"><div class="e">🏳️‍🌈 🏴‍☠️ 🐻‍❄️</div><b>Flags and animals</b><span>base emoji + ZWJ + symbol</span></div>
+</div>
+
+<h2>Skin tones</h2>
+<div class="row l">👍🏻 👍🏼 👍🏽 👍🏾 👍🏿 &nbsp; 👋🏻 👋🏼 👋🏽 👋🏾 👋🏿 &nbsp; 🧑🏽‍🎤 🧑🏿‍🌾</div>
+
+<h2>Flags and keycaps</h2>
+<p class="note">A flag is two regional indicator letters, a keycap is a character with U+FE0F and U+20E3.</p>
+<div class="row m">🇩🇪 🇯🇵 🇧🇷 🇰🇪 🇳🇿 🇮🇳 🇨🇦 🇪🇸 🇨🇭 🇦🇷 🇿🇦 🇮🇸 &nbsp; 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 🔟 #️⃣ *️⃣</div>
+
+<h2 style="break-before: page">Text or emoji?</h2>
+<p class="note">Unicode says which presentation a character gets: the U+FE0F selector asks for the emoji form, U+FE0E or nothing for the text form of the same character.</p>
+<div class="pair">
+  <div class="text"><em>Text presentation</em><div class="glyphs">❤ ☃ ✈ ✌ ☂ ⚽&#xFE0E;</div></div>
+  <div class="emoji"><em>Emoji presentation</em><div class="glyphs">❤&#xFE0F; ☃&#xFE0F; ✈&#xFE0F; ✌&#xFE0F; ☂&#xFE0F; ⚽</div></div>
+</div>
+
+<h2>Any size</h2>
+<div class="sizes"><span style="font-size:10pt">🐙</span><span style="font-size:16pt">🐙</span><span style="font-size:26pt">🐙</span><span style="font-size:38pt">🐙</span><span style="font-size:52pt">🐙</span><span style="font-size:76pt">🐙</span></div>
+
+<h2>In context</h2>
+<p>Emoji sit in the line like any other character: they take part in line breaking, justification and hyphenation. A sentence can end 🎉 or carry one in the middle, 🌱 grow where it is, and wrap onto the next line without any special handling. The same holds for headings, links and table cells.</p>
+<table>
+  <tr><th>Glyph</th><th>Name</th><th>Code points</th></tr>
+  <tr><td class="e">🧑‍🚀</td><td>astronaut</td><td class="code">U+1F9D1 U+200D U+1F680</td></tr>
+  <tr><td class="e">🇳🇿</td><td>flag: New Zealand</td><td class="code">U+1F1F3 U+1F1FF</td></tr>
+  <tr><td class="e">👍🏾</td><td>thumbs up, medium-dark skin</td><td class="code">U+1F44D U+1F3FE</td></tr>
+</table>
+
+<h2>On colour, and in lists</h2>
+<div class="tinted">
+  <div style="background:#10212e">🌙⭐</div>
+  <div style="background:#fff2d6">🌻🐝</div>
+  <div style="background:linear-gradient(135deg,#ffd1e8,#cdeafe)">🦄✨</div>
+  <div style="background:#1f2230;color:#fff">🤖💬</div>
+</div>
+
+<ul class="todo" style="margin-top: 9pt">
+  <li>🥐 Buy bread</li>
+  <li>📬 Post the letter</li>
+  <li>🧘 Ten quiet minutes</li>
+</ul>
+
+<div class="quote"><b>Text stays text</b>Select, search or copy: 🦊 is still U+1F98A in the PDF, and 👩‍🔬 is still three code points, not a picture of them.</div>
+
+</body>
+</html>

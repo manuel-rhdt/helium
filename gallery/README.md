@@ -14,6 +14,7 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 | `scripts/` | one sentence in 30 languages and more than 20 scripts |
 | `figures/` | a one-page figure sheet: inline SVG with the CSS of the page, MathML labels and equation cards inside of the figures (`foreignObject`), an icon sprite, patterns, markers, gradients |
 | `poster/` | a two-page A2 print of 123 writing systems, each in a real text; flexbox masonry, vertical `writing-mode` for Han, Japanese and Mongolian (needs extra fonts, which CI downloads) |
+| `emoji/` | colour emoji painted as vectors from the `COLR` table of the built-in Noto Color Emoji: ZWJ sequences, skin tones, flags and keycaps, text and emoji presentation, any size, tables, lists, page margins |
 | `design/` | gradients, blend modes, tiled patterns, rounded boxes, SVG images (clip path, mask, pattern, text), a dashboard |
 
 ## Build locally

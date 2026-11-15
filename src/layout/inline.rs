@@ -738,34 +738,34 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         let cluster = glyph_info.cluster as usize;
                         if other_breaks.peek() == Some(&cluster) {
                             other_breaks.next();
-                            if !wraps {
-                                continue;
+                            // (the glyph still advances the pen when there is no break here)
+                            if wraps {
+                                // Justification stretches the gaps next to CJK characters. Not at
+                                // a change of the bidi level, where the gap would be between two
+                                // pieces of the line (see `shape_piece`).
+                                let inter_letter = is_justified_between(&text_run.text, cluster)
+                                    && !levels
+                                        .iter()
+                                        .any(|&(start, end, _)| start == cluster || end == cluster);
+                                break_points.push(BreakPoint {
+                                    entity,
+                                    char_index: cluster,
+                                    advance_before: advance,
+                                    advance_after: advance,
+                                    forced: false,
+                                    space: false,
+                                    inter_letter,
+                                    hyphen: false,
+                                    hyphen_width: Px(0.0),
+                                    glue_stretch: if inter_letter {
+                                        text_run.font_size / 8.0
+                                    } else {
+                                        Px(0.0)
+                                    },
+                                    glue_shrink: Px(0.0),
+                                    penalty: 0,
+                                });
                             }
-                            // Justification stretches the gaps next to CJK characters. Not at
-                            // a change of the bidi level, where the gap would be between two
-                            // pieces of the line (see `shape_piece`).
-                            let inter_letter = is_justified_between(&text_run.text, cluster)
-                                && !levels
-                                    .iter()
-                                    .any(|&(start, end, _)| start == cluster || end == cluster);
-                            break_points.push(BreakPoint {
-                                entity,
-                                char_index: cluster,
-                                advance_before: advance,
-                                advance_after: advance,
-                                forced: false,
-                                space: false,
-                                inter_letter,
-                                hyphen: false,
-                                hyphen_width: Px(0.0),
-                                glue_stretch: if inter_letter {
-                                    text_run.font_size / 8.0
-                                } else {
-                                    Px(0.0)
-                                },
-                                glue_shrink: Px(0.0),
-                                penalty: 0,
-                            });
                         }
                         // a break inside a cluster (e.g. a ligature) is not possible
                         while other_breaks.peek().is_some_and(|&index| index <= cluster) {
