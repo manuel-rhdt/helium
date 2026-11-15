@@ -801,7 +801,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 [[package]]
 name = "lemon_pdf"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=master#0366522d1ed485f1ee1055b4590c6f66e82241eb"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=master#f8f36683c17cf7f624a58f41359e4777d2b53e35"
 dependencies = [
  "Inflector",
  "bitflags 2.13.2",
@@ -819,7 +819,7 @@ dependencies = [
 [[package]]
 name = "lemon_pdf_derive"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=master#0366522d1ed485f1ee1055b4590c6f66e82241eb"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=master#f8f36683c17cf7f624a58f41359e4777d2b53e35"
 dependencies = [
  "Inflector",
  "proc-macro2 0.4.30",
