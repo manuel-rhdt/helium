@@ -2380,6 +2380,7 @@ impl From<MathFamily> for MathFamily2 {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum PositionSpec {
     Static,
+    Relative,
     Absolute,
 }
 

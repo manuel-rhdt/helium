@@ -268,6 +268,10 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             if style.position != taffy::Position::Absolute {
                 std::mem::swap(&mut style.margin.left, &mut style.margin.right);
             }
+            // the offset of a relatively positioned box is mirrored with the layout, too
+            if style.position == taffy::Position::Relative {
+                std::mem::swap(&mut style.inset.left, &mut style.inset.right);
+            }
         }
     }
 

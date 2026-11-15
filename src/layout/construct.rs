@@ -779,6 +779,7 @@ impl EntityConstructor {
         world.register::<BlockFormattingContext>();
         world.register::<Position>();
         world.register::<components::TextRun>();
+        world.register::<components::RelativeOffset>();
         world.register::<components::ListMarker>();
         world.register::<components::Decoration>();
         world.register::<MathNode>();
@@ -1218,6 +1219,7 @@ impl EntityConstructor {
         computed_values: &mut WriteStorage<ComputedValues>,
         inline_formatting_contexts: &mut WriteStorage<InlineFormattingContext>,
         block_formatting_contexts: &mut WriteStorage<BlockFormattingContext>,
+        relative_offsets: &mut WriteStorage<components::RelativeOffset>,
     ) {
         let push_block =
             |ble: &mut Vec<BlockLevelElement>,
@@ -1254,6 +1256,9 @@ impl EntityConstructor {
 
             if display.is_atomic_inline() {
                 // an atomic inline-level box: its contents stay in its own formatting context
+                if let Some(style) = child_style {
+                    shift_relatively(relative_offsets, &[elem], style);
+                }
                 inline_level_elements.push(elem);
                 continue;
             }
@@ -1287,6 +1292,9 @@ impl EntityConstructor {
                     ..
                 }) = inline_formatting_contexts.remove(elem)
                 {
+                    if let Some(style) = child_style {
+                        shift_relatively(relative_offsets, &elements, style);
+                    }
                     block_level_elements
                         .extend(absolutes.into_iter().map(BlockLevelElement::Absolute));
                     Self::build_blocks(
@@ -1298,6 +1306,7 @@ impl EntityConstructor {
                         computed_values,
                         inline_formatting_contexts,
                         block_formatting_contexts,
+                        relative_offsets,
                     );
                 } else {
                     inline_level_elements.push(elem);
@@ -1321,6 +1330,7 @@ impl EntityConstructor {
         let mut block_formatting_contexts = self.world.write_storage::<BlockFormattingContext>();
         let mut inline_formatting_contexts = self.world.write_storage::<InlineFormattingContext>();
         let mut computed_values = self.world.write_storage::<ComputedValues>();
+        let mut relative_offsets = self.world.write_storage::<components::RelativeOffset>();
 
         let LayoutEntity(entity) = node.layout_entity().unwrap();
 
@@ -1342,6 +1352,7 @@ impl EntityConstructor {
             &mut computed_values,
             &mut inline_formatting_contexts,
             &mut block_formatting_contexts,
+            &mut relative_offsets,
         );
 
         let has_block_level_elements = block_level_elements
@@ -1400,6 +1411,10 @@ impl EntityConstructor {
         *root_node = RootNode(Some(entity));
     }
 
+    fn shift_relatively(&self, entities: &[Entity], style: &ComputedValues) {
+        shift_relatively(&mut self.world.write_storage(), entities, style);
+    }
+
     // called on bottom-up traversal
     fn build_inline_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
         let strut = self.strut(&node.style());
@@ -1419,6 +1434,7 @@ impl EntityConstructor {
 
             if child_style.box_.display.is_atomic_inline() {
                 inline_formatting_context.elements.push(child_entity);
+                self.shift_relatively(&[child_entity], &child_style);
                 continue;
             }
 
@@ -1429,6 +1445,8 @@ impl EntityConstructor {
                 ..
             }) = self.world.write_storage().remove(child_entity)
             {
+                // a relatively positioned inline box moves everything in it
+                self.shift_relatively(&elements, &child_style);
                 inline_formatting_context
                     .elements
                     .extend_from_slice(&elements);
@@ -1754,6 +1772,30 @@ fn foreign_sizes(group: &usvg::Group, islands: &mut [IslandSpec]) {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Gives the inline-level boxes and the text in a relatively positioned inline box the offsets
+/// of the box: it is not a box of the layout, so the line boxes move its content.
+fn shift_relatively(
+    offsets: &mut WriteStorage<components::RelativeOffset>,
+    entities: &[Entity],
+    style: &ComputedValues,
+) {
+    if style.box_.position != PositionSpec::Relative {
+        return;
+    }
+    let pos = &style.position;
+    let inset = components::Inset {
+        left: pos.left,
+        right: pos.right,
+        top: pos.top,
+        bottom: pos.bottom,
+    };
+    for &entity in entities {
+        if let Ok(entry) = offsets.entry(entity) {
+            entry.or_insert_with(Default::default).0.push(inset);
         }
     }
 }

@@ -1373,10 +1373,11 @@ impl<'a> System<'a> for PlaceInlineBlocks {
         Read<'a, components::AbsoluteGroups>,
         ReadStorage<'a, InlineFormattingContext>,
         ReadStorage<'a, IntrinsicSize>,
+        ReadStorage<'a, components::RelativeOffset>,
         WriteStorage<'a, Position>,
     );
 
-    fn run(&mut self, (groups, ifcs, intrinsic_sizes, mut positions): Self::SystemData) {
+    fn run(&mut self, (groups, ifcs, intrinsic_sizes, relative_offsets, mut positions): Self::SystemData) {
         const EPSILON: f32 = 0.01;
 
         // where the margin box of every box is, as (x, y, page)
@@ -1400,6 +1401,11 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                 // right, so the box hangs from there.
                 let flow = ifc.flow;
                 let line_size = flow.swap((line_pos.width, line_pos.height)).0;
+                // `position: relative` moves the box after it is placed
+                let shift = |atom: Entity| match relative_offsets.get(atom) {
+                    Some(offset) if !flow.is_vertical() => offset.resolve(line_size, ifc.base_rtl),
+                    _ => (Px(0.0), Px(0.0)),
+                };
                 let place = |along: Px, baseline: Px, height: Px| {
                     if flow.is_vertical() {
                         let right = line_pos.x + line_pos.width;
@@ -1421,7 +1427,8 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                             continue;
                         }
                         let (x, y) = place(offset, baseline, height);
-                        placements.insert(atom, (x, y, line_pos.page));
+                        let (dx, dy) = shift(atom);
+                        placements.insert(atom, (x + dx, y + dy, line_pos.page));
                     }
                     continue;
                 }
@@ -1452,7 +1459,8 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                         .count();
                     let along = (offset - from.advance_after) + word_spacing * spaces as f32;
                     let (x, y) = place(along, baseline, height);
-                    placements.insert(atom, (x, y, line_pos.page));
+                    let (dx, dy) = shift(atom);
+                    placements.insert(atom, (x + dx, y + dy, line_pos.page));
                 }
             }
         }
@@ -1509,6 +1517,7 @@ impl<'a> System<'a> for LineBoxCreator {
         ReadStorage<'a, components::TextRun>,
         ReadStorage<'a, components::IntrinsicSize>,
         ReadStorage<'a, ComputedValues>,
+        ReadStorage<'a, components::RelativeOffset>,
         Read<'a, EntityHrefs>,
         Write<'a, Hyperlinks>,
         WriteStorage<'a, components::Position>,
@@ -1526,6 +1535,7 @@ impl<'a> System<'a> for LineBoxCreator {
             text_runs,
             intrinsic_sizes,
             computed_values,
+            relative_offsets,
             entity_hrefs,
             mut hyperlinks,
             mut positions,
@@ -1557,9 +1567,9 @@ impl<'a> System<'a> for LineBoxCreator {
             let mut paragraph_start = (Px(0.0), Px(0.0));
 
             // The x-intervals on the current line of the hyperlinks that have text on it, as
-            // `(href, link node, start, end)`. Adjacent intervals of the same link are merged as
+            // `(href, link node, start, end, shift down)`. Adjacent intervals of the same link are merged as
             // the pieces of the line are visited from left to right.
-            let mut link_intervals: Vec<(&str, Option<StructNodeId>, Px, Px)> = Vec::new();
+            let mut link_intervals: Vec<(&str, Option<StructNodeId>, Px, Px, Px)> = Vec::new();
 
             // The tag of the open marked-content sequence and the end of the text it covers so
             // far. Consecutive pieces of the same text node share a sequence as long as they
@@ -1667,6 +1677,15 @@ impl<'a> System<'a> for LineBoxCreator {
                     // The x position of the current piece on the line, before its width is
                     // added to `advance`.
                     let piece_start = advance;
+                    // `position: relative` on an inline box moves the text in it, and the boxes
+                    // that are atomic inlines (those are shifted when they are placed); the
+                    // space that they take up on the line stays. (Not in vertical text: the text
+                    // matrix is turned there.)
+                    let (shift_x, shift_y) = match relative_offsets.get(entity) {
+                        Some(offset) if !flow.is_vertical() => offset.resolve(line_size, ifc.base_rtl),
+                        _ => (Px(0.0), Px(0.0)),
+                    };
+                    let shifted = shift_x != Px(0.0) || shift_y != Px(0.0);
                     let tag = text_runs
                         .get(entity)
                         .and_then(|_| structure.content_tag(entity, piece.start));
@@ -1704,6 +1723,13 @@ impl<'a> System<'a> for LineBoxCreator {
                         // the hyphen of a hyphenated word goes at its end
                         let hyphen = to_break.hyphen && Some(piece_index) == last_piece;
                         let mut piece_width = Px(0.0);
+                        if shifted && text_runs.get(entity).is_some() {
+                            ops.push(TextOperator::NewLine {
+                                x_offset: piece_start + shift_x - text_cursor,
+                                leading: shift_y,
+                            });
+                            text_cursor = piece_start + shift_x;
+                        }
                         if hyphen && rtl {
                             ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
                             piece_width +=
@@ -1742,7 +1768,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         color_glyphs.extend(take_color_glyphs(
                             &mut ops,
                             ops_before,
-                            (line_pos.x + piece_start, line_pos.y + line.baseline),
+                            (line_pos.x + piece_start + shift_x, line_pos.y + line.baseline + shift_y),
                             run.face.color,
                         ));
                         if hyphen && !rtl {
@@ -1761,14 +1787,22 @@ impl<'a> System<'a> for LineBoxCreator {
                             );
                             ops.push(TextOperator::EndMarkedContent);
                         }
+                        if shifted {
+                            // back to where the next piece starts
+                            ops.push(TextOperator::NewLine {
+                                x_offset: piece_width - shift_x,
+                                leading: Px(0.0) - shift_y,
+                            });
+                            text_cursor = piece_start + piece_width;
+                        }
                         if !run.decoration.is_none() && piece_width > Px(0.0) {
                             let page_pos = components::Position {
                                 y: line_pos.y,
                                 height: Px(0.0),
                                 ..line_pos
                             };
-                            let x = line_pos.x + advance;
-                            let baseline = line_pos.y + line.baseline;
+                            let x = line_pos.x + advance + shift_x;
+                            let baseline = line_pos.y + line.baseline + shift_y;
                             for ((offset, thickness), enabled) in
                                 decoration_lines(run.face.font_size, run.decoration)
                             {
@@ -1865,11 +1899,18 @@ impl<'a> System<'a> for LineBoxCreator {
                                 Some(interval)
                                     if interval.0 == href
                                         && interval.1 == node
-                                        && interval.3 == piece_start =>
+                                        && interval.3 == piece_start + shift_x
+                                        && interval.4 == shift_y =>
                                 {
-                                    interval.3 = advance;
+                                    interval.3 = advance + shift_x;
                                 }
-                                _ => link_intervals.push((href, node, piece_start, advance)),
+                                _ => link_intervals.push((
+                                    href,
+                                    node,
+                                    piece_start + shift_x,
+                                    advance + shift_x,
+                                    shift_y,
+                                )),
                             }
                         }
                     }
@@ -1884,7 +1925,7 @@ impl<'a> System<'a> for LineBoxCreator {
                 }
 
                 // Convert the intervals of this line into clickable areas for the hyperlinks.
-                for (href, node, start, end) in link_intervals.drain(..) {
+                for (href, node, start, end, down) in link_intervals.drain(..) {
                     if end <= start {
                         continue;
                     }
@@ -1900,7 +1941,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         } else {
                             Rect {
                                 x: line_pos.x + start,
-                                y: line_pos.y,
+                                y: line_pos.y + down,
                                 width: end - start,
                                 height: line.height,
                             }
