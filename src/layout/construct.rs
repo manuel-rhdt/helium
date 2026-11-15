@@ -711,7 +711,6 @@ impl EntityConstructor {
         world.register::<components::TextRun>();
         world.register::<components::ListMarker>();
         world.register::<components::Decoration>();
-        world.register::<components::ColorGlyph>();
         world.register::<MathNode>();
         world.register::<components::ImageBox>();
         world.register::<components::TableCellSpan>();

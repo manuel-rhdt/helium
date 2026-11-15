@@ -1,4 +1,4 @@
-use super::components::{self, EntityHrefs, Hyperlink, Hyperlinks, Paragraph, TextOperator};
+use super::components::{self, EntityHrefs, Hyperlink, Hyperlinks, Paragraph, TextOperator, take_color_glyphs};
 use crate::tagging::{ContentTag, StructNodeId, StructureTree};
 use super::{
     FontMap,
@@ -1303,6 +1303,7 @@ impl<'a> System<'a> for ListMarkerCreator {
                 TextOperator::SetFont(marker.font_name.clone(), marker.font_size),
                 TextOperator::SetColor(marker.color),
             ];
+            let ops_before = ops.len();
             let width = shape_piece(
                 &marker.text,
                 font,
@@ -1320,6 +1321,8 @@ impl<'a> System<'a> for ListMarkerCreator {
                 ops.push(TextOperator::EndMarkedContent);
             }
             let gap = marker.font_size * 0.4;
+            let start_pos = (item_x - gap - width, line_pos.y + baseline);
+            let color_glyphs = take_color_glyphs(&mut ops, ops_before, start_pos, marker.color);
             entities
                 .build_entity()
                 .with(
@@ -1332,8 +1335,9 @@ impl<'a> System<'a> for ListMarkerCreator {
                 )
                 .with(
                     Paragraph {
-                        start_pos: (item_x - gap - width, line_pos.y + baseline),
+                        start_pos,
                         ops,
+                        color_glyphs,
                     },
                     &mut paragraphs,
                 )
@@ -1496,7 +1500,6 @@ impl<'a> System<'a> for LineBoxCreator {
         WriteStorage<'a, components::Position>,
         WriteStorage<'a, Paragraph>,
         WriteStorage<'a, components::VectorGraphics>,
-        WriteStorage<'a, components::ColorGlyph>,
         Read<'a, FontMap>,
         Read<'a, StructureTree>,
     );
@@ -1514,7 +1517,6 @@ impl<'a> System<'a> for LineBoxCreator {
             mut positions,
             mut paragraphs,
             mut graphics,
-            mut color_glyphs,
             font_map,
             structure,
         ): Self::SystemData,
@@ -1532,6 +1534,7 @@ impl<'a> System<'a> for LineBoxCreator {
             }
 
             let mut ops: Vec<TextOperator> = vec![];
+            let mut color_glyphs: Vec<components::PlacedColorGlyph> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
             let mut previous_color: Option<RGBA> = None;
             let mut paragraph_pos: Option<components::Position> = None;
@@ -1590,6 +1593,7 @@ impl<'a> System<'a> for LineBoxCreator {
                                 Paragraph {
                                     start_pos: paragraph_start,
                                     ops: ops.clone(),
+                                    color_glyphs: std::mem::take(&mut color_glyphs),
                                 },
                                 &mut paragraphs,
                             )
@@ -1720,39 +1724,13 @@ impl<'a> System<'a> for LineBoxCreator {
                             vertical,
                             &mut ops,
                         );
-                        // the colour glyphs are painted by themselves, at their own positions
-                        let mut index = ops_before;
-                        while index < ops.len() {
-                            if !matches!(ops[index], TextOperator::ColorGlyph { .. }) {
-                                index += 1;
-                                continue;
-                            }
-                            let TextOperator::ColorGlyph { font, glyph, size, dx, rise } =
-                                ops.remove(index)
-                            else {
-                                unreachable!()
-                            };
-                            let page_pos = components::Position {
-                                y: line_pos.y,
-                                height: Px(0.0),
-                                ..line_pos
-                            };
-                            entities
-                                .build_entity()
-                                .with(page_pos, &mut positions)
-                                .with(
-                                    components::ColorGlyph {
-                                        font,
-                                        glyph,
-                                        size,
-                                        x: line_pos.x + piece_start + dx,
-                                        baseline: line_pos.y + line.baseline - rise,
-                                        color: run.color,
-                                    },
-                                    &mut color_glyphs,
-                                )
-                                .build();
-                        }
+                        // the colour glyphs are painted over the text, at their own positions
+                        color_glyphs.extend(take_color_glyphs(
+                            &mut ops,
+                            ops_before,
+                            (line_pos.x + piece_start, line_pos.y + line.baseline),
+                            run.color,
+                        ));
                         if hyphen && !rtl {
                             ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
                             piece_width +=
@@ -1930,6 +1908,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         Paragraph {
                             start_pos: paragraph_start,
                             ops,
+                            color_glyphs,
                         },
                         &mut paragraphs,
                     )

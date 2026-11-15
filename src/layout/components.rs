@@ -538,6 +538,8 @@ pub enum TextOperator {
 pub struct Paragraph {
     pub start_pos: (PixelLength, PixelLength),
     pub ops: Vec<TextOperator>,
+    /// The colour glyphs of the text, painted over it.
+    pub color_glyphs: Vec<PlacedColorGlyph>,
 }
 
 impl Paragraph {
@@ -545,6 +547,7 @@ impl Paragraph {
         Paragraph {
             start_pos: (start_x, start_y),
             ops: vec![],
+            color_glyphs: vec![],
         }
     }
 }
@@ -653,9 +656,10 @@ impl Component for MathBox {
 }
 
 /// A colour glyph (an emoji of a font with a `COLR` table) at the absolute position of its
-/// origin on the baseline. It is painted over the text, whose glyph for it is empty.
+/// origin on the baseline. It is painted over the text of its [`Paragraph`], where the glyph is
+/// empty and only advances the pen.
 #[derive(Debug, Clone)]
-pub struct ColorGlyph {
+pub struct PlacedColorGlyph {
     pub font: String,
     pub glyph: crate::layout::text::font::GlyphIndex,
     pub size: PixelLength,
@@ -665,8 +669,36 @@ pub struct ColorGlyph {
     pub color: crate::style::properties::computed::RGBA,
 }
 
-impl Component for ColorGlyph {
-    type Storage = DenseVecStorage<Self>;
+/// Takes the [`TextOperator::ColorGlyph`] operators that were appended to `ops` from index `from`
+/// (by `shape_piece`, for one piece of text) and returns them placed: `origin` is where the pen
+/// was at the start of the piece, on the baseline. Every producer of a [`Paragraph`] calls this
+/// for the text it shapes, and puts the result in [`Paragraph::color_glyphs`].
+pub fn take_color_glyphs(
+    ops: &mut Vec<TextOperator>,
+    from: usize,
+    origin: (PixelLength, PixelLength),
+    color: crate::style::properties::computed::RGBA,
+) -> Vec<PlacedColorGlyph> {
+    let mut placed = Vec::new();
+    let mut index = from;
+    while index < ops.len() {
+        if !matches!(ops[index], TextOperator::ColorGlyph { .. }) {
+            index += 1;
+            continue;
+        }
+        let TextOperator::ColorGlyph { font, glyph, size, dx, rise } = ops.remove(index) else {
+            unreachable!()
+        };
+        placed.push(PlacedColorGlyph {
+            font,
+            glyph,
+            size,
+            x: origin.0 + dx,
+            baseline: origin.1 - rise,
+            color,
+        });
+    }
+    placed
 }
 
 #[derive(Debug, Default)]
