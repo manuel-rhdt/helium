@@ -26,6 +26,12 @@ convention that red means failure. Because only rectangles and text are compared
 for example one filled box versus four border sides. Expected failures are in
 `reftest-expectations.txt`; `cargo test --test wpt_reftest` prints why each one differs.
 
+## Fonts
+
+`fonts/Ahem.ttf` (public domain) is the font that tests ask for with `font-family: Ahem`, whose glyphs
+are squares of the font size. The runners pass `--font-dir tests/wpt/fonts` to helium, which
+stands in for `/fonts/ahem.css` (`@font-face` is not supported).
+
 ## Inspecting the output
 
 Every test run also writes the PDF helium produced for each input (tests and references) to

@@ -66,6 +66,9 @@ struct Options {
     /// `HELIUM_NO_SYSTEM_FONTS` (to anything but `0`).
     #[structopt(long = "no-system-fonts")]
     no_system_fonts: bool,
+    /// A directory with fonts to use in addition to the others (can be given several times)
+    #[structopt(long = "font-dir", parse(from_os_str))]
+    font_dirs: Vec<PathBuf>,
     /// The input HTML file to process
     #[structopt(parse(from_os_str))]
     input: PathBuf,
@@ -87,6 +90,7 @@ fn main() -> Result<(), Error> {
     let no_system_fonts = opt.no_system_fonts
         || std::env::var_os("HELIUM_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0");
     layout::text::font::set_use_system_fonts(!no_system_fonts);
+    layout::text::font::set_font_dirs(opt.font_dirs.clone());
 
     let input_dir = opt
         .input
