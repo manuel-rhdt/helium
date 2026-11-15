@@ -19,11 +19,10 @@ script modifies the document before calling `checkLayout` are not vendored.
 
 `tests/wpt_reftest.rs` runs every test that has a `<link rel="match" href="...">`. Helium cannot
 rasterize, so the test and its reference are compared through the `paint` section of
-`helium --dump-layout`: the solid rectangles (backgrounds and borders) and the positioned glyph
-runs must agree within 0.5px. A test must also not paint anything pure red, following the WPT
-convention that red means failure. Because only rectangles and text are compared, a test fails
-(rather than passes) when the two documents paint the same pixels through different primitives,
-for example one filled box versus four border sides. Expected failures are in
+`helium --dump-layout`: the regions that the solid rectangles (backgrounds, borders and images of one
+colour) paint, with later rectangles covering earlier ones, and the positioned glyph runs must
+agree within 0.5px (a box with borders is one region, like a box of the same size). A test must also not paint anything pure red, following the WPT
+convention that red means failure. Expected failures are in
 `reftest-expectations.txt`; `cargo test --test wpt_reftest` prints why each one differs.
 
 ## Fonts

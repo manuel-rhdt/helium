@@ -135,6 +135,28 @@ pub struct RasterImage {
 }
 
 impl RasterImage {
+    /// The colour of the image if all of its pixels have the same opaque colour (a PNG file).
+    pub fn uniform_color(&self) -> Option<[u8; 3]> {
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(&self.data));
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+        let mut reader = decoder.read_info().ok()?;
+        let mut buffer = vec![0; reader.output_buffer_size()?];
+        let frame = reader.next_frame(&mut buffer).ok()?;
+        let channels = frame.color_type.samples();
+        let pixels = &buffer[..frame.buffer_size()];
+        let (first, rest) = pixels.split_at_checked(channels)?;
+        if !rest.chunks(channels).all(|pixel| pixel == first) {
+            return None;
+        }
+        match frame.color_type {
+            png::ColorType::Rgb => Some([first[0], first[1], first[2]]),
+            png::ColorType::Rgba if first[3] == 255 => Some([first[0], first[1], first[2]]),
+            png::ColorType::Grayscale => Some([first[0]; 3]),
+            png::ColorType::GrayscaleAlpha if first[1] == 255 => Some([first[0]; 3]),
+            _ => None,
+        }
+    }
+
     /// Checks that `data` is a JPEG or PNG file that can be embedded and reads its size.
     ///
     /// The format is recognized by the signature of the file, not by its name or MIME type.

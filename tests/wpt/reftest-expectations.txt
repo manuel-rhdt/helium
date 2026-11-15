@@ -2,12 +2,10 @@
 # tests/wpt). A test listed here must keep failing: once helium passes it, the runner asks for its
 # removal. Run `cargo test --test wpt_reftest` to see why a test fails.
 
+# `vertical-align: top` is not supported: the image is on the baseline of its line
 css/CSS2/normal-flow/height-003.xht
-css/CSS2/normal-flow/max-width-003.xht
-css/CSS2/normal-flow/min-width-003.xht
-css/CSS2/normal-flow/width-003.xht
-css/CSS2/normal-flow/blocks-011.xht
-# inline-block works, but the reference sets its style in a CDATA section
+
+# the space after the inline-block at the end of the line is painted as a glyph (invisible)
 css/CSS2/normal-flow/block-non-replaced-width-001.xht
 
 # the red box is covered by Ahem glyphs, but the comparison only sees rectangles and glyph

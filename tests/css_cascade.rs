@@ -288,3 +288,29 @@ fn the_page_size_may_be_set_inside_a_media_block() {
     );
     assert_eq!(b, [(7.0, 0.0)]);
 }
+
+#[test]
+fn a_style_sheet_in_a_cdata_section_is_read() {
+    let w = widths(
+        "cdata",
+        "<style type=\"text/css\"><![CDATA[\n div { width: 33px }\n ]]></style><div></div>",
+    );
+    assert_eq!(w, [33.0]);
+}
+
+#[test]
+fn an_image_with_both_sizes_has_them_whatever_its_proportions() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    std::fs::copy(
+        common::wpt_root().join("css/CSS2/normal-flow/support/black96x96.png"),
+        dir.join("css_cascade__black.png"),
+    )
+    .unwrap();
+    let b = boxes(
+        "image_sizes",
+        "<style>img{width:200px;height:1px;display:block}</style>\
+         <div><img src=\"css_cascade__black.png\"></div>",
+    );
+    // the height of the div is that of the image: 1px, not the 200px that its proportions give
+    assert_eq!(b[0].1, 1.0);
+}
