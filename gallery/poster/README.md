@@ -34,7 +34,7 @@ gallery/poster/fetch-fonts.sh            # downloads about 110 fonts into ~/.fon
 cargo run --release -- gallery/poster/index.html gallery/poster/scripts-poster.pdf
 ```
 
-Fonts: Noto Serif for the Indic, Southeast Asian, Caucasian and CJK scripts (Noto Serif CJK for Han, Japanese and Hangul), Amiri for Arabic, Gulzar for Nastaliq, Abyssinica SIL for Ethiopic, TeX Gyre Termes for Latin, Greek and Cyrillic, and Noto Sans for the scripts that have no serif design (all SIL OFL or GUST licensed).
+Fonts: Noto Serif for the Indic, Southeast Asian, Caucasian and CJK scripts (Noto Serif CJK for Han, Japanese and Hangul), Amiri for Arabic, Gulzar for Nastaliq, Abyssinica SIL for Ethiopic, Gentium Book Plus for Latin, Greek and Cyrillic (one design for all three), and Noto Sans for the scripts that have no serif design (all SIL OFL or GUST licensed).
 
 The print is not listed in `gallery/order.txt` because the gallery build only uses the fonts built
 into Helium, and these fonts are not.
