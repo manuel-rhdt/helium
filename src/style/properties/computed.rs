@@ -427,7 +427,7 @@ use std::convert::{AsMut, AsRef};
 
 /// Contains the style structs and encompasses all the style information for
 /// an element.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ComputedValues {
     pub box_: Arc<Box>,
     pub position: Arc<Position>,
@@ -436,6 +436,25 @@ pub struct ComputedValues {
     pub background: Arc<Background>,
     pub page: Arc<Page>,
     pub math: Arc<Math>,
+}
+
+/// The default values share one set of style structs: an element allocates a style struct only
+/// when a declaration changes it (`Arc::make_mut` copies a shared struct on the first write).
+impl Default for ComputedValues {
+    fn default() -> Self {
+        static DEFAULT: std::sync::OnceLock<ComputedValues> = std::sync::OnceLock::new();
+        DEFAULT
+            .get_or_init(|| ComputedValues {
+                box_: Arc::new(Box::default()),
+                position: Arc::new(Position::default()),
+                font: Arc::new(Font::default()),
+                text: Arc::new(Text::default()),
+                background: Arc::new(Background::default()),
+                page: Arc::new(Page::default()),
+                math: Arc::new(Math::default()),
+            })
+            .clone()
+    }
 }
 
 impl AsRef<Box> for ComputedValues {
