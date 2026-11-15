@@ -131,16 +131,22 @@ impl InlineFormattingContext {
 
     /// The extra space after every space on a justified line (all but the last line of a
     /// paragraph and the lines that end at a forced break, with `text-align: justify`), given
-    /// the width of the line box.
+    /// the width of the line box. A line that is not stretched but too wide, because the line
+    /// breaking let its spaces shrink to make it fit, shrinks its spaces too (a negative
+    /// extra space).
     pub fn word_spacing(&self, line_num: usize, line_width: Px) -> Px {
         let line = &self.lines[line_num];
         let num_spaces = self.space_count(line.from_break, line.to_break);
+        if self.text_align != TextAlign::Justify || num_spaces == 0 {
+            return Px(0.0);
+        }
         let is_last_line =
             line_num == self.lines.len() - 1 || self.break_points[line.to_break].forced;
-        if !is_last_line && self.text_align == TextAlign::Justify && num_spaces > 0 {
-            (line_width - self.content_width(line.from_break, line.to_break)) / num_spaces as f32
-        } else {
+        let slack = line_width - self.content_width(line.from_break, line.to_break);
+        if is_last_line && slack >= Px(0.0) {
             Px(0.0)
+        } else {
+            slack / num_spaces as f32
         }
     }
 
