@@ -124,6 +124,7 @@ curl -fsSL -o "$dest/AbyssinicaSIL-Regular.ttf" https://raw.githubusercontent.co
 curl -fsSL -o "$dest/NotoSerifTC-Regular.otf" https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/SubsetOTF/TC/NotoSerifTC-Regular.otf
 curl -fsSL -o "$dest/NotoSerifJP-Regular.otf" https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/SubsetOTF/JP/NotoSerifJP-Regular.otf
 curl -fsSL -o "$dest/NotoSerifKR-Regular.otf" https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/SubsetOTF/KR/NotoSerifKR-Regular.otf
+curl -fsSL -o "$dest/GentiumBookPlus-Regular.ttf" https://raw.githubusercontent.com/google/fonts/main/ofl/gentiumbookplus/GentiumBookPlus-Regular.ttf
 curl -fsSL -o "$dest/Gulzar-Regular.ttf" https://raw.githubusercontent.com/google/fonts/main/ofl/gulzar/Gulzar-Regular.ttf
 fc-cache -f "$dest" 2>/dev/null || true
 echo "installed $(ls "$dest" | wc -l) fonts in $dest"
