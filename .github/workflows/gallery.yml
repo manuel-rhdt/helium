@@ -26,11 +26,23 @@ jobs:
     - name: Cache cargo
       uses: Swatinem/rust-cache@v2
     # fontconfig: Helium's default features. poppler-utils: thumbnails and page counts.
-    # The documents use the fonts built into Helium, so no fonts are installed.
+    # Most documents use only the fonts built into Helium. The poster asks for the installed
+    # fonts (`gallery-fonts: system`) and needs about 115 more, which its script downloads.
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y libfontconfig1-dev poppler-utils
+    - name: Cache the fonts of the poster
+      id: poster-fonts
+      uses: actions/cache@v4
+      with:
+        path: ~/.fonts/helium-poster
+        key: poster-fonts-${{ hashFiles('gallery/poster/fetch-fonts.sh') }}
+    - name: Download the fonts of the poster
+      if: steps.poster-fonts.outputs.cache-hit != 'true'
+      run: sh gallery/poster/fetch-fonts.sh
+    - name: Index the fonts of the poster
+      run: fc-cache -f ~/.fonts/helium-poster
     - name: Build
       run: cargo build --release --locked
     - name: Render the gallery
