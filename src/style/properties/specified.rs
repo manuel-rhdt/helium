@@ -503,6 +503,11 @@ pub enum Box {
     FlexDirection(FlexDirection),
     #[property]
     FlexWrap(FlexWrap),
+    /// `flex-flow: <flex-direction> || <flex-wrap>`
+    #[property]
+    #[shorthand("flex-direction", method = "direction")]
+    #[shorthand("flex-wrap", method = "wrap")]
+    FlexFlow(FlexFlowShorthand),
     #[property]
     FlexGrow(f32),
     #[property]
@@ -532,10 +537,37 @@ pub enum Box {
     RowGap(Gap),
     #[property]
     ColumnGap(Gap),
+    /// `place-content: <align-content> <justify-content>?`
+    #[property]
+    #[shorthand("align-content", method = "align")]
+    #[shorthand("justify-content", method = "justify")]
+    PlaceContent(PlaceContentShorthand),
+    /// `place-items: <align-items> <justify-items>?`
+    #[property]
+    #[shorthand("align-items", method = "align")]
+    #[shorthand("justify-items", method = "justify")]
+    PlaceItems(PlaceItemsShorthand),
+    /// `place-self: <align-self> <justify-self>?`
+    #[property]
+    #[shorthand("align-self", method = "align")]
+    #[shorthand("justify-self", method = "justify")]
+    PlaceSelf(PlaceSelfShorthand),
+    /// `gap: <row-gap> <column-gap>?` (the one value is for both)
+    #[property]
+    #[shorthand("row-gap", method = "row")]
+    #[shorthand("column-gap", method = "column")]
+    Gap(GapShorthand),
+    /// The names that `gap` and its longhands had in the grid layout module.
+    #[property]
+    #[shorthand("row-gap", method = "row")]
+    #[shorthand("column-gap", method = "column")]
+    GridGap(GapShorthand),
     #[property]
     #[shorthand("row-gap", method = "clone")]
+    GridRowGap(Gap),
+    #[property]
     #[shorthand("column-gap", method = "clone")]
-    Gap(Gap),
+    GridColumnGap(Gap),
 
     // Grid: https://www.w3.org/TR/css-grid-1/
     #[property]
@@ -874,6 +906,91 @@ pub enum SelfAlignment {
     Baseline,
 }
 
+/// The values of `place-content`, `place-items` and `place-self`: the alignment in the block axis
+/// and the one in the inline axis, which is the same if there is only one value.
+macro_rules! place_shorthand {
+    ($name:ident, $value:ty) => {
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            align: $value,
+            justify: $value,
+        }
+
+        impl $name {
+            pub fn align(&self) -> $value {
+                self.align.clone()
+            }
+            pub fn justify(&self) -> $value {
+                self.justify.clone()
+            }
+        }
+
+        impl<'i> PropertyValue<'i> for $name {
+            type Error = StyleParseError;
+
+            fn from_css_property_value(
+                input: &mut Parser<'i>,
+            ) -> Result<Self, ParseError<Self::Error>> {
+                let align = <$value>::from_css_property_value(input)?;
+                let justify = input
+                    .try_parse(<$value>::from_css_property_value)
+                    .unwrap_or_else(|_| align.clone());
+                Ok($name { align, justify })
+            }
+        }
+    };
+}
+
+place_shorthand!(PlaceContentShorthand, ContentAlignment);
+place_shorthand!(PlaceItemsShorthand, ItemAlignment);
+place_shorthand!(PlaceSelfShorthand, SelfAlignment);
+
+/// The value of the `flex-flow` shorthand: the direction and the wrapping, in any order. What is
+/// left out has its initial value.
+#[derive(Debug, Copy, Clone)]
+pub struct FlexFlowShorthand {
+    direction: FlexDirection,
+    wrap: FlexWrap,
+}
+
+impl FlexFlowShorthand {
+    pub fn direction(&self) -> FlexDirection {
+        self.direction
+    }
+    pub fn wrap(&self) -> FlexWrap {
+        self.wrap
+    }
+}
+
+impl<'i> PropertyValue<'i> for FlexFlowShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let mut direction = None;
+        let mut wrap = None;
+        for _ in 0..2 {
+            if direction.is_none()
+                && let Ok(value) = input.try_parse(FlexDirection::from_css_property_value)
+            {
+                direction = Some(value);
+            } else if wrap.is_none()
+                && let Ok(value) = input.try_parse(FlexWrap::from_css_property_value)
+            {
+                wrap = Some(value);
+            } else {
+                break;
+            }
+        }
+        if direction.is_none() && wrap.is_none() {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(FlexFlowShorthand {
+            direction: direction.unwrap_or_default(),
+            wrap: wrap.unwrap_or_default(),
+        })
+    }
+}
+
 /// The value of the `flex` shorthand: `none | auto | <grow> <shrink>? <basis>? | <basis>`
 /// https://www.w3.org/TR/css-flexbox-1/#flex-property
 #[derive(Debug, Copy, Clone)]
@@ -1016,6 +1133,33 @@ impl<'i> PropertyValue<'i> for BorderSpacing {
 
 /// The value of `gap`. Only the form with one value (for both directions) is supported.
 pub type Gap = QuantityOrPercentage;
+
+/// The value of `gap`: the gap between the rows, and the one between the columns if it is not the
+/// same.
+#[derive(Debug, Copy, Clone)]
+pub struct GapShorthand {
+    row: Gap,
+    column: Gap,
+}
+
+impl GapShorthand {
+    pub fn row(&self) -> Gap {
+        self.row
+    }
+    pub fn column(&self) -> Gap {
+        self.column
+    }
+}
+
+impl<'i> PropertyValue<'i> for GapShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let row = Gap::from_css_property_value(input)?;
+        let column = input.try_parse(Gap::from_css_property_value).unwrap_or(row);
+        Ok(GapShorthand { row, column })
+    }
+}
 
 /// A track size of `grid-template-columns`, `grid-template-rows`, `grid-auto-columns` and
 /// `grid-auto-rows`.

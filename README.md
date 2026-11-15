@@ -79,7 +79,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   the cells in a row are not aligned), `position: absolute` and `position: relative` (`left`, `right`,
   `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in
   vertical text too; percentages of `left`/`right` in vertical lines count as `auto`), block, inline, flexbox
-  (`flex-*`, `gap`, `justify-*`, `align-*`) and grid (`grid-template-*`, `grid-auto-*`,
+  (`flex-*` with `flex-flow`, `gap` with one or two values, `justify-*`, `align-*`, `place-*`) and grid (`grid-template-*`, `grid-auto-*`,
   `grid-column`, `grid-row`, also for absolutely positioned children, which are placed in their grid area) layout, tables (`border-collapse`, `border-spacing`).
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
