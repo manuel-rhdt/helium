@@ -48,6 +48,13 @@ from the Meltho fonts of Beth Mardutho (the Syriac Institute) for the Syriac til
 the Eastern style that Assyrian Neo-Aramaic is printed in. It is kept unmodified in `fonts/` with its
 license (`fonts/LICENSE-Meltho.txt`), which allows redistribution of unmodified copies.
 
+The Egyptian hieroglyphs are set in NewGardiner by Mark-Jan Nederhof (SIL OFL), which draws the
+signs after Gardiner's sign list, as solid shapes, where Noto Sans Egyptian Hieroglyphs draws
+outlines. It is downloaded from a pinned commit of
+[nederhof/newgardiner](https://github.com/nederhof/newgardiner). Its signs are smaller on the
+em square than Noto's, so the tile is set larger (60 pt, with a tighter line height to keep the
+height of the tile).
+
 The Mongolian tile uses Mongolian Title by Almas Inc., which is free for individual use but not
 redistributable, so it is not in the repository. `fetch-mongolian-font.sh` downloads it from
 mongolfont.com (plain HTTP, so the SHA-256 is checked) and never fails: without the font, the

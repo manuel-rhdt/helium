@@ -127,6 +127,8 @@ curl -fsSL -o "$dest/NotoSerifJP-Regular.otf" https://raw.githubusercontent.com/
 curl -fsSL -o "$dest/NotoSerifKR-Regular.otf" https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/SubsetOTF/KR/NotoSerifKR-Regular.otf
 curl -fsSL -o "$dest/GentiumBookPlus-Regular.ttf" https://raw.githubusercontent.com/google/fonts/main/ofl/gentiumbookplus/GentiumBookPlus-Regular.ttf
 curl -fsSL -o "$dest/Gulzar-Regular.ttf" https://raw.githubusercontent.com/google/fonts/main/ofl/gulzar/Gulzar-Regular.ttf
+# NewGardiner (SIL OFL) for the Egyptian hieroglyphs, from a pinned commit of its repository
+curl -fsSL -o "$dest/NewGardiner.otf" https://raw.githubusercontent.com/nederhof/newgardiner/ef51d1aa1101d58a9b18b782dba51f70661194d7/fonts/NewGardiner.otf
 # Meltho East Syriac Adiabene (Beth Mardutho licence, unmodified copy kept in fonts/)
 cp "$here/fonts/SyrCOMAdiabene.otf" "$dest/"
 # Mongolian Title (optional: a failed download is not an error)
