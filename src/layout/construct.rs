@@ -271,6 +271,30 @@ impl FlowConstructor {
         }
     }
 
+    /// Gives a document without a box for its root element (`html { display: none }`) an empty
+    /// root, so that it is a blank page.
+    pub fn ensure_root(&mut self) {
+        let RootNode(root) = *self.entity_constructor.world.read_resource::<RootNode>();
+        if root.is_some() {
+            return;
+        }
+        let LayoutEntity(entity) = self.entity_constructor.build_default_entity(Default::default());
+        self.entity_constructor
+            .world
+            .write_storage::<BlockFormattingContext>()
+            .insert(
+                entity,
+                BlockFormattingContext {
+                    elements: vec![
+                        BlockLevelElement::ContainerStart(entity),
+                        BlockLevelElement::ContainerEnd(entity),
+                    ],
+                },
+            )
+            .unwrap();
+        *self.entity_constructor.world.write_resource::<RootNode>() = RootNode(Some(entity));
+    }
+
     /// Whether the document is set from right to left: the `direction` of the root element.
     pub fn is_rtl(&self) -> bool {
         let RootNode(root) = *self.entity_constructor.world.read_resource::<RootNode>();
@@ -1024,6 +1048,8 @@ impl EntityConstructor {
                     self.build_text_entity(style, transformed.as_deref().unwrap_or(&*text))
                 }
             }
+            // comments and the like have no box
+            ParsedData::Comment(_) | ParsedData::ProcessingInstruction(..) => return,
             _ => self.build_default_entity(style),
         };
 

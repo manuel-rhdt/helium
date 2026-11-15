@@ -226,6 +226,7 @@ pub fn layout(
         flow_constructor.styles.clear_author_rules();
     }
     dom.traverse(&mut flow_constructor);
+    flow_constructor.ensure_root();
     info!("TIMED: construct {:?}", time_before.elapsed());
 
     // dom.serialize_dot_graph(&mut std::fs::File::create("graph.dot").unwrap())

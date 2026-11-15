@@ -203,15 +203,25 @@ impl TreeSink for Sink {
         &self,
         name: QualName,
         attrs: Vec<Attribute>,
-        _flags: ElementFlags,
+        flags: ElementFlags,
     ) -> Self::Handle {
-        NodeRef::new_element(
+        // the content of a `<template>` is a tree of its own, which is not part of the document
+        let template_contents = flags
+            .template
+            .then(|| NodeRef::new(NodeData::from_html_data(ParsedData::DocumentFragment)));
+        NodeRef::new(NodeData::from_html_data(ParsedData::Element(ElementData {
+            template_contents,
             name,
-            attrs.into_iter().map(|attr| {
-                let Attribute { name, .. } = &attr;
-                (name.clone(), attr)
-            }),
-        )
+            attributes: RefCell::new(
+                attrs
+                    .into_iter()
+                    .map(|attr| {
+                        let Attribute { name, .. } = &attr;
+                        (name.clone(), attr)
+                    })
+                    .collect(),
+            ),
+        })))
     }
 
     #[inline]
