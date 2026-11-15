@@ -48,6 +48,11 @@ from the Meltho fonts of Beth Mardutho (the Syriac Institute) for the Syriac til
 the Eastern style that Assyrian Neo-Aramaic is printed in. It is kept unmodified in `fonts/` with its
 license (`fonts/LICENSE-Meltho.txt`), which allows redistribution of unmodified copies.
 
+The Mongolian tile uses Mongolian Title by Almas Inc., which is free for individual use but not
+redistributable, so it is not in the repository. `fetch-mongolian-font.sh` downloads it from
+mongolfont.com (plain HTTP, so the SHA-256 is checked) and never fails: without the font, the
+tile is set in Noto Sans Mongolian.
+
 `fetch-fonts.sh` downloads them and copies the bundled Adiabene (about 115 files, 33 MB, mostly the three CJK serifs) into
 `~/.fonts/helium-poster`. The Gallery workflow runs it, caches the result and renders the
 poster like the other documents, so there is no PDF in the repository.

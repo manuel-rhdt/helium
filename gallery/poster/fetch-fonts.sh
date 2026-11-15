@@ -129,5 +129,7 @@ curl -fsSL -o "$dest/GentiumBookPlus-Regular.ttf" https://raw.githubusercontent.
 curl -fsSL -o "$dest/Gulzar-Regular.ttf" https://raw.githubusercontent.com/google/fonts/main/ofl/gulzar/Gulzar-Regular.ttf
 # Meltho East Syriac Adiabene (Beth Mardutho licence, unmodified copy kept in fonts/)
 cp "$here/fonts/SyrCOMAdiabene.otf" "$dest/"
+# Mongolian Title (optional: a failed download is not an error)
+sh "$here/fetch-mongolian-font.sh" "$dest"
 fc-cache -f "$dest" 2>/dev/null || true
 echo "installed $(ls "$dest" | wc -l) fonts in $dest"

@@ -41,6 +41,11 @@ jobs:
     - name: Download the fonts of the poster
       if: steps.poster-fonts.outputs.cache-hit != 'true'
       run: sh gallery/poster/fetch-fonts.sh
+    # Optional: Mongolian Title comes from a third-party site over HTTP and is checked against
+    # a checksum. The script never fails the job; without the font Mongolian uses Noto Sans.
+    # It runs on a cache hit too, so that a failed download is retried on the next run.
+    - name: Download the Mongolian font of the poster
+      run: sh gallery/poster/fetch-mongolian-font.sh
     - name: Index the fonts of the poster
       run: fc-cache -f ~/.fonts/helium-poster
     # The typography specimen is set in EB Garamond, which is not built into Helium.
