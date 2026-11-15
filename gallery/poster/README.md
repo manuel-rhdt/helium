@@ -43,9 +43,12 @@ them with `<meta name="gallery-fonts" content="system">`. Noto Serif for the Ind
 Asian, Caucasian and CJK scripts (Noto Serif CJK for Han, Japanese and Hangul), Amiri for
 Arabic, Gulzar for Nastaliq, Abyssinica SIL for Ethiopic, Gentium Book Plus for Latin, Greek and
 Cyrillic (one design for all three, and for the punctuation of the other scripts), and Noto Sans
-for the scripts that have no serif design. All are SIL OFL licensed.
+for the scripts that have no serif design. All are SIL OFL licensed, except East Syriac Adiabene
+from the Meltho fonts of Beth Mardutho (the Syriac Institute) for the Syriac tile, which is set in
+the Eastern style that Assyrian Neo-Aramaic is printed in. It is kept unmodified in `fonts/` with its
+license (`fonts/LICENSE-Meltho.txt`), which allows redistribution of unmodified copies.
 
-`fetch-fonts.sh` downloads them (about 115 files, 33 MB, mostly the three CJK serifs) into
+`fetch-fonts.sh` downloads them and copies the bundled Adiabene (about 115 files, 33 MB, mostly the three CJK serifs) into
 `~/.fonts/helium-poster`. The Gallery workflow runs it, caches the result and renders the
 poster like the other documents, so there is no PDF in the repository.
 
