@@ -176,8 +176,8 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
     let display = match box_.display {
         Display::None | Display::TableColumn | Display::TableColumnGroup => taffy::Display::None,
         Display::Block | Display::Inline | Display::InlineBlock => taffy::Display::Block,
-        Display::Flex => taffy::Display::Flex,
-        Display::Grid => taffy::Display::Grid,
+        Display::Flex | Display::InlineFlex => taffy::Display::Flex,
+        Display::Grid | Display::InlineGrid => taffy::Display::Grid,
         // A table is laid out as a grid (see `tree::HeliumTree::build_table`). The internal
         // table boxes are no Taffy nodes of their own, except for cells and captions, which are
         // block containers.

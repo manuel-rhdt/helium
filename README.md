@@ -72,7 +72,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   sheets are read again when the size they set differs from the one assumed); `(hover)`, `(pointer)` and
   similar features say that there is no pointer. `rem` is relative to the root element (in
   `@page` and its margin boxes, to the initial font size).
-- **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `grid`, `table` and the table
+- **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`,
+  `table` and the table
   parts, `list-item`, `none`), `position: absolute` and `position: relative` (`left`, `right`,
   `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in
   vertical text too; percentages of `left`/`right` in vertical lines count as `auto`), block, inline, flexbox

@@ -540,6 +540,8 @@ impl ComputedValues {
                 Arc::make_mut(&mut self.box_).display = Display::Block
             }
             Display::InlineTable => Arc::make_mut(&mut self.box_).display = Display::Table,
+            Display::InlineFlex => Arc::make_mut(&mut self.box_).display = Display::Flex,
+            Display::InlineGrid => Arc::make_mut(&mut self.box_).display = Display::Grid,
             _ => {}
         }
     }
