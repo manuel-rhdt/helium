@@ -1051,8 +1051,6 @@ impl EntityConstructor {
     }
 
     fn build_text_entity(&mut self, style: ComputedValues, text: &str) -> LayoutEntity {
-        let font = self.match_font(&style);
-        let font_name = font.postscript_name();
         let mut visible_text = String::with_capacity(text.len());
         let mut manual_hyphen_points = Vec::new();
         for character in text.chars() {
@@ -1062,14 +1060,12 @@ impl EntityConstructor {
                 visible_text.push(character);
             }
         }
-        let fallback = self.ensure_coverage(&style, &font, &visible_text);
+        let (font, face) = self.text_face(&style, &visible_text);
         // a hyphen is inserted when a word is hyphenated
         self.ensure_coverage(&style, &font, "-");
 
-        let font_size = style.font.font_size;
         let (line_height, baseline) = line_metrics(&font, &style);
 
-        let color = crate::style::properties::computed::color_to_rgba(style.font.color);
         let decoration = style.font.text_decoration;
         let hyphens = style.text.hyphens;
         let lang = style.font.lang.clone();
@@ -1078,17 +1074,14 @@ impl EntityConstructor {
             .create_entity()
             .with(style)
             .with(components::TextRun {
-                font_name,
+                face,
                 text: visible_text,
-                font_size,
                 line_height,
                 baseline,
-                color,
                 decoration,
                 hyphens,
                 manual_hyphen_points,
                 lang,
-                fallback,
             })
             .build();
         LayoutEntity(entity)
