@@ -429,7 +429,16 @@ impl SvgWriter {
     /// searched, and the glyphs are shared with the text of the document), else as outlines.
     fn draw_text(&mut self, c: &mut PageContext<'_, '_, '_>, text: &usvg::Text, ctm: Transform) -> Result<()> {
         if !self.is_plain_text(text) {
-            return self.draw_group(c, text.flattened(), ctm);
+            self.draw_group(c, text.flattened(), ctm)?;
+            // the outlines have nothing for the colour glyphs
+            for span in text.layouted().iter().filter(|span| span.visible) {
+                let color = match span.fill.as_ref().map(|fill| fill.paint()) {
+                    Some(usvg::Paint::Color(color)) => *color,
+                    _ => usvg::Color::black(),
+                };
+                self.paint_color_glyphs(c, span, color)?;
+            }
+            return Ok(());
         }
         for span in text.layouted() {
             for decoration in [&span.overline, &span.underline].into_iter().flatten() {
@@ -441,6 +450,39 @@ impl SvgWriter {
             if let Some(line) = &span.line_through {
                 self.draw_path(c, line, ctm)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Paints the colour glyphs (emoji) of a span, which have no outline to fill: their layers
+    /// are painted by the same code as the emoji of the page. `color` is the text color, for the
+    /// layers that use it.
+    fn paint_color_glyphs(
+        &mut self,
+        c: &mut PageContext<'_, '_, '_>,
+        span: &usvg::layout::Span,
+        color: usvg::Color,
+    ) -> Result<()> {
+        let color = crate::style::properties::computed::RGBA {
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            alpha: 255,
+        };
+        for glyph in &span.positioned_glyphs {
+            let Some(name) = self.font_names.get(&glyph.font) else { continue };
+            // the matrix of an outline: font units with y up to the coordinates of the text
+            let t = glyph.outline_transform();
+            let matrix = [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from);
+            let filter = self.filter;
+            self.color_glyphs.borrow_mut().paint(
+                c,
+                name,
+                crate::layout::text::font::GlyphIndex(glyph.id.0),
+                color,
+                matrix,
+                filter,
+            )?;
         }
         Ok(())
     }
@@ -508,32 +550,10 @@ impl SvgWriter {
             }
             c.end_text()?;
             // Colour glyphs (emoji) have no outline to fill: the text above only advances over
-            // them and gives their text; their layers are painted as a form at the glyph.
+            // them and gives their text; their layers are painted over it.
             if let (Some(fill), true) = (fill, mode != 1) {
-                let color = match fill.paint() {
-                    usvg::Paint::Color(color) => *color,
-                    _ => unreachable!("plain text has plain colors"),
-                };
-                let color = crate::style::properties::computed::RGBA {
-                    red: color.red,
-                    green: color.green,
-                    blue: color.blue,
-                    alpha: 255,
-                };
-                for glyph in &span.positioned_glyphs {
-                    let name = &self.font_names[&glyph.font];
-                    // the matrix of an outline: font units with y up to the coordinates of the text
-                    let t = glyph.outline_transform();
-                    let matrix = [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from);
-                    let filter = self.filter;
-                    self.color_glyphs.borrow_mut().paint(
-                        c,
-                        name,
-                        crate::layout::text::font::GlyphIndex(glyph.id.0),
-                        color,
-                        matrix,
-                        filter,
-                    )?;
+                if let usvg::Paint::Color(color) = fill.paint() {
+                    self.paint_color_glyphs(c, span, *color)?;
                 }
             }
             c.restore_graphics_state()?;

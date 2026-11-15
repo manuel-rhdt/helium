@@ -62,3 +62,17 @@ fn emoji_in_svg_text_are_painted_like_the_emoji_of_the_page() {
     let single = render("svg_smiley", "<svg width=\"200\" height=\"60\"><text x=\"5\" y=\"40\" font-size=\"30\">😀</text></svg>");
     assert_eq!(forms(&single), page_forms, "the smiley takes the same forms on the page and in an SVG");
 }
+
+#[test]
+fn emoji_in_svg_text_with_a_gradient_fill_are_still_painted() {
+    // the letters are outlines painted with the gradient, the emoji have no outline and take the
+    // same path as everywhere else
+    let pdf = render(
+        "svg_gradient",
+        "<svg width=\"200\" height=\"60\"><defs><linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"red\"/>\
+         <stop offset=\"1\" stop-color=\"blue\"/></linearGradient></defs>\
+         <text x=\"5\" y=\"40\" font-size=\"30\" fill=\"url(#g)\">ab 😀</text></svg>",
+    );
+    let forms = pdf.windows(b"/Subtype /Form".len()).filter(|w| *w == b"/Subtype /Form").count();
+    assert!(forms >= 1, "{forms} forms");
+}
