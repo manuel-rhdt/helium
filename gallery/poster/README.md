@@ -6,8 +6,8 @@ stands the name of its script, small and vertical, and nothing else.
 - **The opening of the Universal Declaration of Human Rights** (Article 1 and the start of Article 2; a few translations in the corpus begin at Article 2) for 41 scripts that have a
   translation in the [UDHR in Unicode](https://www.unicode.org/udhr/) corpus (from Latin and Greek
   to Tibetan, Cherokee, Vai, Adlam, Javanese and Grantha). The texts come from the MIT-licensed `udhr`
-  npm package. Each text is cut after as many lines as the tile holds. Tiles are ordered from page 1 to page 2. Mongolian is set in vertical
-  columns, and Han and Japanese are set top to bottom with `writing-mode: vertical-rl`.
+  npm package. Each text is cut after as many lines as the tile holds. Tiles are ordered from page 1 to page 2. Mongolian (`vertical-lr`), Han and Japanese
+  (`vertical-rl`) are set top to bottom with `writing-mode`.
 - **Sample sentences** for 36 further scripts (Balinese, Batak, N'Ko, Osage, Warang Citi, Hanifi Rohingya, Toto, Nag Mundari and others), taken from a language-sample file supplied for this print. They are short translations in the style of the UDHR.
 - **Samples for the historic scripts** from a second research file supplied for this print: Wikipedia candidate strings (checked only for script membership) for Glagolitic, Coptic (the Bohairic Lord's Prayer), Lycian, Lydian, Carian, Old Italic, Avestan, Pahlavi, Manichaean, Sogdian, Mandaic, Kharoshthi, Old Turkic, Old Hungarian, Old Permic, Elbasan, Newa, Sharada, Modi, Kaithi, Tirhuta, Khudawadi, Dogra and others, real inscriptions for Cypriot (IG XV 1) and Linear A (Haghia Triada tablet HT 1), and the sign sequence of the Phaistos disc (side A, with the conventional reading order). Several are only a word or a short phrase.
 - **Inscriptions and words** for the historic scripts, transcribed from published editions:
