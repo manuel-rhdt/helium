@@ -207,3 +207,55 @@ pub fn helium() -> Result<std::process::Command, assert_cmd::cargo::CargoError> 
     cmd.env("HELIUM_NO_SYSTEM_FONTS", "1");
     Ok(cmd)
 }
+
+/// The CSS of a document: the content of its `<style>` elements and its `style` attributes.
+fn css_of(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut css = String::new();
+    let mut rest = 0;
+    while let Some(start) = lower[rest..].find("<style") {
+        let start = rest + start;
+        let Some(open_end) = lower[start..].find('>') else { break };
+        let body = start + open_end + 1;
+        let end = lower[body..].find("</style").map_or(lower.len(), |at| body + at);
+        css.push_str(&lower[body..end]);
+        css.push('\n');
+        rest = end;
+    }
+    let mut rest = 0;
+    while let Some(start) = lower[rest..].find("style=\"") {
+        let body = rest + start + "style=\"".len();
+        let end = lower[body..].find('"').map_or(lower.len(), |at| body + at);
+        css.push_str(&lower[body..end]);
+        css.push(';');
+        rest = end;
+    }
+    css.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// The texts of `unsupported.txt`: CSS that helium does not implement on purpose.
+fn unsupported_features() -> &'static [String] {
+    static FEATURES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FEATURES.get_or_init(|| {
+        std::fs::read_to_string(expectations_path("unsupported.txt"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| line.to_ascii_lowercase().chars().filter(|c| !c.is_whitespace()).collect())
+            .collect()
+    })
+}
+
+/// The feature of `unsupported.txt` that the CSS of one of the documents uses, if any: such a
+/// test is not run.
+pub fn unsupported_feature(documents: &[&Path]) -> Option<&'static str> {
+    let css: Vec<String> = documents
+        .iter()
+        .map(|path| css_of(&std::fs::read_to_string(path).unwrap_or_default()))
+        .collect();
+    unsupported_features()
+        .iter()
+        .find(|feature| css.iter().any(|css| css.contains(feature.as_str())))
+        .map(String::as_str)
+}

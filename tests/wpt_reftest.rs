@@ -203,6 +203,13 @@ fn wpt_reftests() {
         !is_reference && find_reference(t).is_some()
     });
     tests.sort();
+    // the tests that need what helium does not implement on purpose are not run
+    let before = tests.len();
+    tests.retain(|test| {
+        let reference = find_reference(test).unwrap();
+        unsupported_feature(&[test, &reference]).is_none()
+    });
+    eprintln!("{} reftests need unsupported features (tests/wpt/unsupported.txt) and are skipped", before - tests.len());
     assert!(
         !tests.is_empty(),
         "no WPT reftests found in {}",

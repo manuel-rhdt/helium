@@ -51,3 +51,10 @@ as a checkout of the whole of web-platform-tests, without vendoring it.
 
 A test is vendored if it has no script, no `reftest-wait`, and a reference (or `data-expected-*`
 attributes) and all the files it uses are in the checkout.
+
+## Tests that are not run
+
+`unsupported.txt` lists CSS that helium deliberately does not implement (`float`, `overflow`,
+`position: relative`, generated content, ...). A test whose `<style>` elements or `style`
+attributes, or those of its reference, contain one of the texts is not run, because it can only
+fail. Both runners print how many tests they skip. Remove a line when the feature is implemented.
