@@ -213,11 +213,30 @@ fn text_is_shaped_with_the_fonts_of_the_document() {
         ),
     );
     assert_eq!(r.svgs.len(), 1, "{}", r.log);
-    // shown with the embedded font of the document (Noto Naskh Arabic), not drawn as outlines
+    // shown with the embedded font of the document, not drawn as outlines. The text takes the
+    // font family of its element, a sans-serif one by default, so its Arabic font is the one that
+    // the text of the page has in that design.
     assert!(count(&r.pdf, " Tj") >= 1, "{}", r.pdf);
     assert!(count(&r.pdf, " c ") < 5, "{}", r.pdf);
-    assert!(r.objects.contains("NotoNaskhArabic"), "{}", r.objects);
+    assert!(r.objects.contains("NotoSansArabic"), "{}", r.objects);
+    assert!(!r.objects.contains("NotoNaskhArabic"), "{}", r.objects);
     assert!(!r.log.contains("SVG:"), "{}", r.log);
+}
+
+#[test]
+fn svg_text_gets_the_fallback_font_of_its_design_like_the_text_of_the_page() {
+    // a serif text gets the serif font for Arabic, in the page and in an SVG
+    let r = render(
+        "serif_arabic",
+        &format!(
+            "{PAGE}<p style=\"font-family: serif\">مرحبا</p>\
+             <svg width=\"200\" height=\"60\" style=\"font-family: serif\">\
+               <text x=\"100\" y=\"40\" font-size=\"30\" text-anchor=\"middle\">مرحبا</text>\
+             </svg>"
+        ),
+    );
+    assert!(r.objects.contains("NotoNaskhArabic"), "{}", r.objects);
+    assert!(!r.objects.contains("NotoSansArabic"), "{}", r.objects);
 }
 
 #[test]
