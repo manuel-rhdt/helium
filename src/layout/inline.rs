@@ -8,7 +8,7 @@ use crate::style::properties::computed::{ComputedValues, PixelLength as Px, RGBA
 use crate::style::properties::specified::{Direction, UnicodeBidi};
 
 use crate::display_list::Rect;
-use crate::layout::text::{is_invisible_formatting, shape, shape_directed, shape_with_levels};
+use crate::layout::text::{is_invisible_formatting, shape, shape_directed_into, shape_with_levels};
 
 use components::{GlyphRange, GraphicsOp, IntrinsicSize, KernedGlyph, Position, TextOps};
 use hyphenation::{Hyphenator, Language, Load, Standard};
@@ -2267,10 +2267,11 @@ pub(super) fn shape_piece_in_flow(
             .next()
             .is_some_and(is_invisible_formatting)
     };
-    let shaped: Vec<_> = shape_directed(characters, font, fonts, at, rtl)
-        .into_iter()
-        .filter(|(_, info)| !is_invisible(info))
-        .collect();
+    // the glyphs go to a buffer that is reused for the next piece
+    let mut shaped = SHAPED_SCRATCH.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
+    shaped.clear();
+    shape_directed_into(characters, font, fonts, at, rtl, &mut shaped);
+    shaped.retain(|(_, info)| !is_invisible(info));
 
     // Glyphs of characters that `font` has no glyph for come from its fallback fonts. The font
     // is switched for them and switched back to `font` at the end of the piece.
@@ -2450,6 +2451,7 @@ pub(super) fn shape_piece_in_flow(
         ops.push(TextOperator::SetFont(font.postscript_name(), font_size));
     }
 
+    SHAPED_SCRATCH.with(|scratch| *scratch.borrow_mut() = shaped);
     advance
 }
 
@@ -2505,6 +2507,9 @@ impl GlyphRunWriter {
 }
 
 thread_local! {
+    /// The glyphs of the piece that `shape_piece_in_flow` is shaping.
+    static SHAPED_SCRATCH: std::cell::RefCell<Vec<(super::text::GlyphPosition, super::text::GlyphInfo)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// The buffers of `record_to_unicode`: the glyphs by cluster and the starts of the clusters.
     static TO_UNICODE_SCRATCH: std::cell::RefCell<(Vec<(usize, u16, GlyphIndex)>, Vec<usize>)> =
         const { std::cell::RefCell::new((Vec::new(), Vec::new())) };

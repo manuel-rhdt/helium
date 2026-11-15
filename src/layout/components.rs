@@ -587,26 +587,50 @@ pub struct Glyphs(pub Vec<GlyphIndex>);
 
 /// Writes glyphs as a literal string of 16-bit glyph indices. A literal string is about half the
 /// size of a hex string. Only the bytes that are special inside a literal string need an escape.
+/// The string is written in chunks from a buffer on the stack: a document has a string for
+/// almost every word.
 fn write_glyph_string(
     f: &mut lemon_pdf::object::Formatter,
-    glyphs: impl ExactSizeIterator<Item = GlyphIndex>,
+    glyphs: impl Iterator<Item = GlyphIndex>,
 ) -> std::io::Result<()> {
     use std::io::Write;
 
-    if glyphs.len() > 0 {
-        let mut bytes = Vec::with_capacity(glyphs.len() * 2 + 2);
-        bytes.push(b'(');
-        for GlyphIndex(glyph) in glyphs {
-            for byte in (glyph as u16).to_be_bytes() {
-                match byte {
-                    b'(' | b')' | b'\\' => bytes.extend_from_slice(&[b'\\', byte]),
-                    b'\r' => bytes.extend_from_slice(b"\\r"),
-                    _ => bytes.push(byte),
+    let mut buffer = [0u8; 256];
+    let mut len = 0;
+    let mut open = false;
+    for GlyphIndex(glyph) in glyphs {
+        if !open {
+            buffer[0] = b'(';
+            len = 1;
+            open = true;
+        }
+        // a glyph takes at most four bytes, and the closing parenthesis one
+        if len + 5 > buffer.len() {
+            f.write_all(&buffer[..len])?;
+            len = 0;
+        }
+        for byte in (glyph as u16).to_be_bytes() {
+            match byte {
+                b'(' | b')' | b'\\' => {
+                    buffer[len] = b'\\';
+                    buffer[len + 1] = byte;
+                    len += 2;
+                }
+                b'\r' => {
+                    buffer[len] = b'\\';
+                    buffer[len + 1] = b'r';
+                    len += 2;
+                }
+                _ => {
+                    buffer[len] = byte;
+                    len += 1;
                 }
             }
         }
-        bytes.push(b')');
-        f.write_all(&bytes)?;
+    }
+    if open {
+        buffer[len] = b')';
+        f.write_all(&buffer[..len + 1])?;
     }
     Ok(())
 }

@@ -173,18 +173,32 @@ pub fn shape_directed(
     at: Option<usize>,
     rtl: bool,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
+    let mut glyphs = Vec::new();
+    shape_directed_into(text, font, fonts, at, rtl, &mut glyphs);
+    glyphs
+}
+
+/// [`shape_directed`], appending the glyphs to `out`, whose capacity is reused.
+pub fn shape_directed_into(
+    text: &str,
+    font: &Font,
+    fonts: &TextFonts,
+    at: Option<usize>,
+    rtl: bool,
+    out: &mut Vec<(GlyphPosition, GlyphInfo)>,
+) {
     let text = text.trim_end_matches(['\r', '\n']);
     // harfbuzz hands back a null glyph array for an empty buffer, which trips
     // the slice precondition check in harfbuzz_rs.
     if text.is_empty() {
-        return Vec::new();
+        return;
     }
 
-    let mut glyphs = shape_runs(text, font, fonts, at, rtl);
+    let start = out.len();
+    shape_runs(text, font, fonts, at, rtl, out);
     if fonts.letter_spacing != 0.0 {
-        apply_letter_spacing(&mut glyphs, text, fonts.letter_spacing, rtl);
+        apply_letter_spacing(&mut out[start..], text, fonts.letter_spacing, rtl);
     }
-    glyphs
 }
 
 fn shape_runs(
@@ -193,20 +207,19 @@ fn shape_runs(
     fonts: &TextFonts,
     at: Option<usize>,
     rtl: bool,
-) -> Vec<(GlyphPosition, GlyphInfo)> {
+    result: &mut Vec<(GlyphPosition, GlyphInfo)>,
+) {
     let lang = &fonts.key.lang;
     let ligatures = fonts.letter_spacing == 0.0;
     let toggles = Toggles { features: &fonts.features };
     let set = font.fallback_set(&fonts.key);
     if set.fonts.is_empty() && text.is_ascii() && fonts.orientation.is_none() {
         // the script is guessed
-        let mut result = Vec::with_capacity(text.len());
-        shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false, toggles, &mut result);
-        return result;
+        shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false, toggles, result);
+        return;
     }
     let fallbacks = &set.fonts;
 
-    let mut result = Vec::with_capacity(text.len());
     let mut spans = SCRATCH.with(|scratch| std::mem::take(&mut scratch.borrow_mut().spans));
     cluster_spans(text, &mut spans);
     let mut run_start = 0;
@@ -255,7 +268,7 @@ fn shape_runs(
                 ligatures,
                 was_upright,
                 toggles,
-                &mut result,
+                result,
             );
             run_start = cluster.start;
         }
@@ -273,11 +286,10 @@ fn shape_runs(
             ligatures,
             upright,
             toggles,
-            &mut result,
+            result,
         );
     }
     SCRATCH.with(|scratch| scratch.borrow_mut().spans = spans);
-    result
 }
 
 /// The OpenType features that the author turns on or off for a text.
