@@ -310,6 +310,26 @@ impl Font {
             .or_insert_with(|| scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0)))
     }
 
+    /// Records that `glyph` is drawn for `text` (the text of SVG images, whose glyphs are shown
+    /// by the PDF writer): the glyph is embedded and is extracted as `text`. A glyph that is used
+    /// for different text, or one that stands for more than a character, gets the text of its
+    /// first use as the fallback text of the `ToUnicode` map.
+    pub(crate) fn record_glyph(&self, glyph: GlyphIndex, text: &str) {
+        self.advance(glyph);
+        if text.is_empty() {
+            return;
+        }
+        let single = text.chars().count() == 1;
+        if single {
+            let mut map = self.to_unicode.lock();
+            if map.get(&glyph).is_none_or(|existing| existing == text) {
+                map.insert(glyph, text.to_owned());
+                return;
+            }
+        }
+        self.to_unicode_fallback.lock().entry(glyph).or_insert_with(|| text.to_owned());
+    }
+
     /// Whether the font has an OpenType `MATH` table.
     pub fn has_math_table(&self) -> bool {
         // SAFETY: the font is alive; `hb_font_get_face` returns its face.
@@ -451,12 +471,14 @@ pub(crate) fn color_emoji_font() -> Option<Font> {
     Font::load(data, index)
 }
 
-/// The installed font that best matches the first available of `families`.
-pub(crate) fn system_font(
+/// The face of the font database that best matches the first available of `families`.
+///
+/// The font database of the SVG images is a copy of this one, so the IDs are the same.
+pub(crate) fn system_font_id(
     families: &[FontFamily],
     weight: &FontWeight,
     style: &FontStyle,
-) -> Option<Font> {
+) -> Option<fontdb::ID> {
     let db = system_fonts();
     // A requested standard font name is followed by its bundled stand-in, which is only used
     // when the name itself is not installed.
@@ -475,7 +497,7 @@ pub(crate) fn system_font(
             }
         })
         .collect::<Vec<_>>();
-    let id = db.query(&fontdb::Query {
+    db.query(&fontdb::Query {
         families: &families,
         weight: fontdb::Weight(weight.0.round().clamp(1.0, 1000.0) as u16),
         stretch: fontdb::Stretch::Normal,
@@ -484,9 +506,43 @@ pub(crate) fn system_font(
             FontStyle::Italic => fontdb::Style::Italic,
             FontStyle::Oblique => fontdb::Style::Oblique,
         },
-    })?;
-    let (data, index) = db.with_face_data(id, |data, index| (data.to_vec(), index))?;
+    })
+}
+
+/// The installed font that best matches the first available of `families`.
+pub(crate) fn system_font(
+    families: &[FontFamily],
+    weight: &FontWeight,
+    style: &FontStyle,
+) -> Option<Font> {
+    let id = system_font_id(families, weight, style)?;
+    let (data, index) = system_fonts().with_face_data(id, |data, index| (data.to_vec(), index))?;
     Font::load(Arc::new(data), index)
+}
+
+/// The face of the font database of the SVG images that is `font`, if the font is in it: fonts
+/// that were found by other means (fontconfig) are not.
+pub(crate) fn svg_face_id(font: &Font) -> Option<fontdb::ID> {
+    use std::sync::Mutex;
+    static CACHE: OnceLock<Mutex<BTreeMap<(String, usize), Option<fontdb::ID>>>> = OnceLock::new();
+    let key = (font.postscript_name.clone(), font.data.len());
+    let mut cache = CACHE.get_or_init(Default::default).lock().ok()?;
+    if let Some(id) = cache.get(&key) {
+        return *id;
+    }
+    let db = system_fonts();
+    // fonts of the same name (the bitmap and the vector build of one family) are told apart by
+    // their data
+    let id = db
+        .faces()
+        .filter(|face| face.post_script_name == font.postscript_name)
+        .find(|face| {
+            db.with_face_data(face.id, |data, index| index == font.index && data == font.data.as_slice())
+                .unwrap_or(false)
+        })
+        .map(|face| face.id);
+    cache.insert(key, id);
+    id
 }
 
 /// The font for `style`: the first installed family of `font-family`, else the system's

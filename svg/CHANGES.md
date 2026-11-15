@@ -17,3 +17,6 @@
   Without a shaper `text` elements are not drawn. Colour glyphs (COLR, SVG and bitmap glyphs),
   variable fonts and `writer` (not a default feature any more) are gone with their code
   (`text/colr.rs`, most of `text/cache.rs`).
+- Font fallback replaces the clusters that have a missing glyph (by their bytes in the text)
+  instead of assuming that every font makes the same number of glyphs, which dropped the fallback
+  of the whole text when a font made a single glyph of a cluster (an emoji with U+FE0F).

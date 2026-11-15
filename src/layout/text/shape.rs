@@ -179,10 +179,11 @@ fn shape_runs(
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     let lang = &fonts.key.lang;
     let ligatures = fonts.letter_spacing == 0.0;
+    let toggles = Toggles { small_caps: fonts.small_caps, no_kerning: fonts.no_kerning };
     let set = font.fallback_set(&fonts.key);
     if set.fonts.is_empty() && text.is_ascii() && fonts.orientation.is_none() {
         // the script is guessed
-        return shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false);
+        return shape_single(text, font, lang, None, 0, 0, rtl, ligatures, false, toggles);
     }
     let fallbacks = &set.fonts;
 
@@ -206,9 +207,13 @@ fn shape_runs(
             (Some(index), _) => index,
             // Spaces stay in the current run (if its font has them) so that a run of fallback
             // characters is not split at every space.
+            // A colour emoji font is no exception: the space of Noto Color Emoji is as wide as an
+            // emoji.
             (None, Some((current, _, _)))
-                if single_space(cluster.text)
-                    .is_some_and(|space| font_at(font, fallbacks, current).covers(space)) =>
+                if single_space(cluster.text).is_some_and(|space| {
+                    let current = font_at(font, fallbacks, current);
+                    current.covers(space) && !current.has_color_glyphs()
+                }) =>
             {
                 current
             }
@@ -227,6 +232,7 @@ fn shape_runs(
                 rtl,
                 ligatures,
                 was_upright,
+                toggles,
             ));
             run_start = cluster.start;
         }
@@ -243,9 +249,17 @@ fn shape_runs(
             rtl,
             ligatures,
             upright,
+            toggles,
         ));
     }
     result
+}
+
+/// The optional OpenType features that a text turns on or off (the text of SVG images).
+#[derive(Clone, Copy)]
+struct Toggles {
+    small_caps: bool,
+    no_kerning: bool,
 }
 
 /// The character of a cluster that consists of a single white space character.
@@ -274,6 +288,7 @@ fn shape_run(
     rtl: bool,
     ligatures: bool,
     upright: bool,
+    toggles: Toggles,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     shape_single(
         text,
@@ -285,6 +300,7 @@ fn shape_run(
         rtl,
         ligatures,
         upright,
+        toggles,
     )
 }
 
@@ -301,6 +317,7 @@ fn shape_single(
     rtl: bool,
     ligatures: bool,
     upright: bool,
+    toggles: Toggles,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     // The direction is always set: harfbuzz would otherwise guess it from the script, so that
     // e.g. Hebrew text in a left-to-right run would be shaped right-to-left. The script (for
@@ -345,6 +362,12 @@ fn shape_single(
     }
     if upright {
         features.extend(vertical);
+    }
+    if toggles.small_caps {
+        features.push(harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('s', 'm', 'c', 'p'), 1, ..));
+    }
+    if toggles.no_kerning {
+        features.push(harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('k', 'e', 'r', 'n'), 0, ..));
     }
     let result = hb_shape(&font.hb_font, buffer, &features);
 
@@ -397,6 +420,20 @@ mod tests {
         );
         let fonts = resolver.ensure_coverage(&style, &font, text, &mut font_map);
         Setup { font, fonts }
+    }
+
+    #[test]
+    fn spaces_between_emoji_are_set_in_the_font_of_the_text() {
+        // the space of the colour emoji font is as wide as an emoji
+        let s = setup("a 😀 😀 b");
+        let glyphs = shape_directed("a 😀 😀 b", &s.font, &s.fonts, None, false);
+        let text = "a 😀 😀 b";
+        for (_, info) in &glyphs {
+            if text[info.cluster as usize..].starts_with(' ') {
+                assert_eq!(info.font, 0, "the space at {} is not in the font of the text", info.cluster);
+            }
+        }
+        assert!(glyphs.iter().any(|(_, info)| info.font != 0), "the emoji have a font of their own");
     }
 
     fn fonts_of(glyphs: &[(GlyphPosition, GlyphInfo)]) -> Vec<u16> {

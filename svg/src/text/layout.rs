@@ -920,6 +920,7 @@ fn process_chunk(
         let tmp_glyphs = shape_text(
             &chunk.text,
             font,
+            &span.font,
             span.small_caps,
             span.apply_kerning,
             &span.font.variations,
@@ -1215,7 +1216,7 @@ fn form_glyph_clusters(glyphs: &[Glyph], text: &str, font_size: f32) -> GlyphClu
 }
 
 #[inline(never)]
-fn resolve_font(
+pub(crate) fn resolve_font(
     id: ID,
     _variations: &[crate::FontVariation],
     fonts: &mut FontCache,
@@ -1297,6 +1298,7 @@ fn resolve_font(
 pub(crate) fn shape_text(
     text: &str,
     font: Arc<ResolvedFont>,
+    spec: &Font,
     small_caps: bool,
     apply_kerning: bool,
     variations: &[crate::FontVariation],
@@ -1310,12 +1312,19 @@ pub(crate) fn shape_text(
     let mut glyphs = shape_text_with_font(
         text,
         font.clone(),
+        spec,
         small_caps,
         apply_kerning,
         shaping_variations.clone(),
         fonts,
     )
     .unwrap_or_default();
+
+    // A shaper that chooses the fallback fonts has done that already.
+    if fonts.shaper.as_ref().is_some_and(|shaper| shaper.resolves_fallback()) {
+        warn_missing(&glyphs, text);
+        return glyphs;
+    }
 
     // Remember all fonts used for shaping.
     let mut used_fonts = vec![font.id];
@@ -1342,6 +1351,7 @@ pub(crate) fn shape_text(
             let fallback_glyphs = shape_text_with_font(
                 text,
                 fallback_font.clone(),
+                spec,
                 small_caps,
                 apply_kerning,
                 shaping_variations.clone(),
@@ -1356,20 +1366,10 @@ pub(crate) fn shape_text(
                 break 'outer;
             }
 
-            // We assume, that shaping with an any font will produce the same amount of glyphs.
-            // This is incorrect, but good enough for now.
-            if glyphs.len() != fallback_glyphs.len() {
-                break 'outer;
-            }
-
-            // TODO: Replace clusters and not glyphs. This should be more accurate.
-
-            // Copy new glyphs.
-            for i in 0..glyphs.len() {
-                if glyphs[i].is_missing() && !fallback_glyphs[i].is_missing() {
-                    glyphs[i] = fallback_glyphs[i].clone();
-                }
-            }
+            // Replace the clusters that have a missing glyph by the glyphs that the new font has for
+            // the same bytes of the text. The fonts can make different numbers of glyphs for a
+            // cluster: an emoji sequence is one glyph in an emoji font and several in another.
+            replace_missing_clusters(&mut glyphs, &fallback_glyphs);
 
             // Remember this font.
             used_fonts.push(fallback_font.id);
@@ -1378,20 +1378,58 @@ pub(crate) fn shape_text(
         }
     }
 
-    // Warn about missing glyphs.
-    for glyph in &glyphs {
+    warn_missing(&glyphs, text);
+
+    glyphs
+}
+
+/// Warns about the glyphs that no font has.
+fn warn_missing(glyphs: &[Glyph], text: &str) {
+    for glyph in glyphs {
         if glyph.is_missing() {
             let c = glyph.byte_idx.char_from(text);
             // TODO: print a full grapheme
-            log::warn!(
-                "No fonts with a {}/U+{:X} character were found.",
-                c,
-                c as u32
-            );
+            log::warn!("No fonts with a {}/U+{:X} character were found.", c, c as u32);
         }
     }
+}
 
-    glyphs
+/// Replaces the clusters of `glyphs` that have a missing glyph by the glyphs of `fallback` (the
+/// text shaped with another font) that belong to the same bytes of the text, if the other font
+/// has all of them.
+fn replace_missing_clusters(glyphs: &mut Vec<Glyph>, fallback: &[Glyph]) {
+    let mut starts: Vec<usize> = glyphs.iter().map(|glyph| glyph.byte_idx.value()).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    let end_of = |start: usize| starts.iter().copied().find(|&s| s > start).unwrap_or(usize::MAX);
+
+    let mut result = Vec::with_capacity(glyphs.len());
+    let mut i = 0;
+    while i < glyphs.len() {
+        // the glyphs of one cluster are next to each other
+        let start = glyphs[i].byte_idx.value();
+        let mut j = i;
+        while j < glyphs.len() && glyphs[j].byte_idx.value() == start {
+            j += 1;
+        }
+        let cluster = &glyphs[i..j];
+        if cluster.iter().any(Glyph::is_missing) {
+            let range = start..end_of(start);
+            let replacement: Vec<Glyph> = fallback
+                .iter()
+                .filter(|glyph| range.contains(&glyph.byte_idx.value()))
+                .cloned()
+                .collect();
+            if !replacement.is_empty() && replacement.iter().all(|glyph| !glyph.is_missing()) {
+                result.extend(replacement);
+                i = j;
+                continue;
+            }
+        }
+        result.extend_from_slice(cluster);
+        i = j;
+    }
+    *glyphs = result;
 }
 
 /// Converts a text into a list of glyph IDs.
@@ -1400,6 +1438,7 @@ pub(crate) fn shape_text(
 fn shape_text_with_font(
     text: &str,
     font: Arc<ResolvedFont>,
+    spec: &Font,
     small_caps: bool,
     apply_kerning: bool,
     _variations: impl IntoIterator<Item = crate::FontVariation>,
@@ -1423,7 +1462,16 @@ fn shape_text_with_font(
         }
 
         let ltr = levels[run.start].is_ltr();
-        let shaped = shaper.shape(font.id, &data, index, sub_text, !ltr, small_caps, apply_kerning)?;
+        let shaped = shaper.shape(&crate::ShapeRequest {
+            id: font.id,
+            data: &data,
+            index,
+            font: spec,
+            text: sub_text,
+            rtl: !ltr,
+            small_caps,
+            kerning: apply_kerning,
+        })?;
 
         for (i, glyph) in shaped.iter().enumerate() {
             let start = glyph.cluster;
@@ -1447,7 +1495,12 @@ fn shape_text_with_font(
                 dx: glyph.x_offset,
                 dy: glyph.y_offset,
                 width: glyph.x_advance,
-                font: font.clone(),
+                // the glyph of a fallback font has the metrics of that font
+                font: if glyph.font == font.id {
+                    font.clone()
+                } else {
+                    fonts.resolved_by_id(glyph.font).unwrap_or_else(|| font.clone())
+                },
             });
         }
     }

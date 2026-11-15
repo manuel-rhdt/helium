@@ -42,6 +42,13 @@ pub struct SvgWriter {
     /// The content of the `foreignObject` elements, by their handle: a form that is as big as the
     /// element, in points, with its origin at the bottom left corner.
     islands: HashMap<u64, FormReference>,
+    /// The fonts of the document that the glyphs of SVG text are shown with: the font of the
+    /// font database of the SVG images, and the embedded font (with its units per em).
+    font_names: crate::svg_text::SvgFontNames,
+    fonts: HashMap<String, (IndirectReference<lemon_pdf::font::Font>, u32)>,
+    /// The colour glyphs (emoji) of the document, which `pdf::color_glyph` paints for the text of
+    /// the page too.
+    color_glyphs: std::rc::Rc<std::cell::RefCell<crate::pdf::color_glyph::ColorGlyphs>>,
 }
 
 fn matrix(t: Transform) -> Matrix {
@@ -108,6 +115,27 @@ fn emit_path(c: &mut PageContext<'_, '_, '_>, path: &tiny_skia_path::Path, t: Tr
     Ok(())
 }
 
+/// Sets the line width, caps, joins and dashes of a stroke.
+fn stroke_style(c: &mut PageContext<'_, '_, '_>, stroke: &usvg::Stroke) -> Result<()> {
+    c.line_width(Pt(f64::from(stroke.width().get())))?;
+    c.line_cap(match stroke.linecap() {
+        usvg::LineCap::Butt => LineCap::Butt,
+        usvg::LineCap::Round => LineCap::Round,
+        usvg::LineCap::Square => LineCap::ProjectingSquare,
+    })?;
+    c.line_join(match stroke.linejoin() {
+        usvg::LineJoin::Miter | usvg::LineJoin::MiterClip => LineJoin::Miter,
+        usvg::LineJoin::Round => LineJoin::Round,
+        usvg::LineJoin::Bevel => LineJoin::Bevel,
+    })?;
+    c.miter_limit(f64::from(stroke.miterlimit().get()))?;
+    if let Some(dashes) = stroke.dasharray() {
+        let dashes: Vec<Pt> = dashes.iter().map(|&d| Pt(f64::from(d))).collect();
+        c.dash_pattern(&dashes, Pt(f64::from(stroke.dashoffset())))?;
+    }
+    Ok(())
+}
+
 fn fill_rule(rule: usvg::FillRule) -> FillRule {
     match rule {
         usvg::FillRule::NonZero => FillRule::NonZero,
@@ -154,7 +182,32 @@ impl SvgWriter {
             images: HashMap::new(),
             warned: HashSet::new(),
             islands: HashMap::new(),
+            font_names: HashMap::new(),
+            fonts: HashMap::new(),
+            color_glyphs: Default::default(),
         }
+    }
+
+    /// Tells the writer the colour glyphs of the document, so that the images share the forms of
+    /// the glyphs with the page.
+    pub fn set_color_glyphs(
+        &mut self,
+        color_glyphs: std::rc::Rc<std::cell::RefCell<crate::pdf::color_glyph::ColorGlyphs>>,
+    ) {
+        self.color_glyphs = color_glyphs;
+    }
+
+    /// Tells the writer which fonts of the document show the text of SVG images: `names` maps the
+    /// fonts of the font database of the images to the PostScript names, `fonts` the PostScript
+    /// names to the embedded fonts and their units per em. Text with a font that is not in them
+    /// is drawn as outlines.
+    pub fn set_fonts(
+        &mut self,
+        names: crate::svg_text::SvgFontNames,
+        fonts: HashMap<String, (IndirectReference<lemon_pdf::font::Font>, u32)>,
+    ) {
+        self.font_names = names;
+        self.fonts = fonts;
     }
 
     /// Tells the writer the form of the content of a `foreignObject`.
@@ -353,9 +406,159 @@ impl SvgWriter {
             Node::Group(group) => self.draw_group(c, group, ctm),
             Node::Path(path) => self.draw_path(c, path, ctm),
             Node::Image(image) => self.draw_image(c, image, ctm),
-            Node::Text(text) => self.draw_group(c, text.flattened(), ctm),
+            Node::Text(text) => self.draw_text(c, text, ctm),
             Node::Foreign(foreign) => self.draw_foreign(c, foreign),
         }
+    }
+
+    /// Whether the text can be shown as text with the embedded fonts of the document: every glyph
+    /// has such a font, and the fills and strokes are plain colors (gradients and patterns are
+    /// painted through the outlines of the glyphs).
+    fn is_plain_text(&self, text: &usvg::Text) -> bool {
+        let plain = |paint: &usvg::Paint| matches!(paint, usvg::Paint::Color(_));
+        text.layouted().iter().all(|span| {
+            span.fill.as_ref().is_none_or(|fill| plain(fill.paint()))
+                && span.stroke.as_ref().is_none_or(|stroke| plain(stroke.paint()))
+                && span.positioned_glyphs.iter().all(|glyph| {
+                    self.font_names.get(&glyph.font).is_some_and(|name| self.fonts.contains_key(name))
+                })
+        })
+    }
+
+    /// Draws text: as text with the embedded fonts if possible (so that it can be selected and
+    /// searched, and the glyphs are shared with the text of the document), else as outlines.
+    fn draw_text(&mut self, c: &mut PageContext<'_, '_, '_>, text: &usvg::Text, ctm: Transform) -> Result<()> {
+        if !self.is_plain_text(text) {
+            self.draw_group(c, text.flattened(), ctm)?;
+            // the outlines have nothing for the colour glyphs
+            for span in text.layouted().iter().filter(|span| span.visible) {
+                let color = match span.fill.as_ref().map(|fill| fill.paint()) {
+                    Some(usvg::Paint::Color(color)) => *color,
+                    _ => usvg::Color::black(),
+                };
+                self.paint_color_glyphs(c, span, color)?;
+            }
+            return Ok(());
+        }
+        for span in text.layouted() {
+            for decoration in [&span.overline, &span.underline].into_iter().flatten() {
+                self.draw_path(c, decoration, ctm)?;
+            }
+            if span.visible {
+                self.draw_span(c, span)?;
+            }
+            if let Some(line) = &span.line_through {
+                self.draw_path(c, line, ctm)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Paints the colour glyphs (emoji) of a span, which have no outline to fill: their layers
+    /// are painted by the same code as the emoji of the page. `color` is the text color, for the
+    /// layers that use it.
+    fn paint_color_glyphs(
+        &mut self,
+        c: &mut PageContext<'_, '_, '_>,
+        span: &usvg::layout::Span,
+        color: usvg::Color,
+    ) -> Result<()> {
+        let color = crate::style::properties::computed::RGBA {
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            alpha: 255,
+        };
+        for glyph in &span.positioned_glyphs {
+            let Some(name) = self.font_names.get(&glyph.font) else { continue };
+            // the matrix of an outline: font units with y up to the coordinates of the text
+            let t = glyph.outline_transform();
+            let matrix = [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from);
+            let filter = self.filter;
+            self.color_glyphs.borrow_mut().paint(
+                c,
+                name,
+                crate::layout::text::font::GlyphIndex(glyph.id.0),
+                color,
+                matrix,
+                filter,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Shows the glyphs of a span. The text matrix of a glyph puts the em square of its font on
+    /// the glyph, in the coordinate system of the text (with the y axis down, so it flips).
+    fn draw_span(&mut self, c: &mut PageContext<'_, '_, '_>, span: &usvg::layout::Span) -> Result<()> {
+        let (fill, stroke) = (span.fill.as_ref(), span.stroke.as_ref());
+        if fill.is_none() && stroke.is_none() || span.positioned_glyphs.is_empty() {
+            return Ok(());
+        }
+        // text rendering modes: 0 fills, 1 strokes, 2 fills and strokes (in that order)
+        let stroke_first = span.paint_order == usvg::PaintOrder::StrokeAndFill;
+        let passes: &[i32] = match (fill.is_some(), stroke.is_some()) {
+            (true, true) if stroke_first => &[1, 0],
+            (true, true) => &[2],
+            (true, false) => &[0],
+            _ => &[1],
+        };
+        let font_size = f64::from(span.font_size.get());
+        for &mode in passes {
+            c.save_graphics_state()?;
+            if let (Some(fill), true) = (fill, mode != 1) {
+                let Rgb(r, g, b) = match fill.paint() {
+                    usvg::Paint::Color(color) => rgb(*color),
+                    _ => unreachable!("plain text has plain colors"),
+                };
+                c.device_rgb_fill_color(r, g, b)?;
+                let opacity = f64::from(fill.opacity().get());
+                if opacity < 1.0 {
+                    c.set_fill_alpha(opacity)?;
+                }
+            }
+            if let (Some(stroke), true) = (stroke, mode != 0) {
+                let Rgb(r, g, b) = match stroke.paint() {
+                    usvg::Paint::Color(color) => rgb(*color),
+                    _ => unreachable!("plain text has plain colors"),
+                };
+                c.device_rgb_stroke_color(r, g, b)?;
+                let opacity = f64::from(stroke.opacity().get());
+                if opacity < 1.0 {
+                    c.set_stroke_alpha(opacity)?;
+                }
+                stroke_style(c, stroke)?;
+            }
+            c.begin_text()?;
+            c.push_operand(mode)?;
+            c.apply_operator("Tr")?;
+            let mut current: Option<&str> = None;
+            for glyph in &span.positioned_glyphs {
+                let name = &self.font_names[&glyph.font];
+                let (font, upem) = self.fonts[name];
+                if current != Some(name.as_str()) {
+                    let key = c.add_font(font);
+                    c.set_font(&key, Pt(font_size))?;
+                    current = Some(name.as_str());
+                }
+                let scale = f64::from(upem) / font_size;
+                let t = glyph.outline_transform().pre_scale(scale as f32, scale as f32);
+                for value in [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty] {
+                    c.push_operand(f64::from(value))?;
+                }
+                c.apply_operator("Tm")?;
+                c.draw_cid_glyphs([glyph.id.0 as u16])?;
+            }
+            c.end_text()?;
+            // Colour glyphs (emoji) have no outline to fill: the text above only advances over
+            // them and gives their text; their layers are painted over it.
+            if let (Some(fill), true) = (fill, mode != 1) {
+                if let usvg::Paint::Color(color) = fill.paint() {
+                    self.paint_color_glyphs(c, span, *color)?;
+                }
+            }
+            c.restore_graphics_state()?;
+        }
+        Ok(())
     }
 
     /// Draws the content of a `foreignObject`, clipped to its rectangle.
@@ -419,22 +622,7 @@ impl SvgWriter {
         if !self.set_paint(c, stroke.paint(), f64::from(stroke.opacity().get()), path, ctm, true)? {
             return Ok(false);
         }
-        c.line_width(Pt(f64::from(stroke.width().get())))?;
-        c.line_cap(match stroke.linecap() {
-            usvg::LineCap::Butt => LineCap::Butt,
-            usvg::LineCap::Round => LineCap::Round,
-            usvg::LineCap::Square => LineCap::ProjectingSquare,
-        })?;
-        c.line_join(match stroke.linejoin() {
-            usvg::LineJoin::Miter | usvg::LineJoin::MiterClip => LineJoin::Miter,
-            usvg::LineJoin::Round => LineJoin::Round,
-            usvg::LineJoin::Bevel => LineJoin::Bevel,
-        })?;
-        c.miter_limit(f64::from(stroke.miterlimit().get()))?;
-        if let Some(dashes) = stroke.dasharray() {
-            let dashes: Vec<Pt> = dashes.iter().map(|&d| Pt(f64::from(d))).collect();
-            c.dash_pattern(&dashes, Pt(f64::from(stroke.dashoffset())))?;
-        }
+        stroke_style(c, stroke)?;
         emit_path(c, path.data(), Transform::identity())?;
         c.stroke_path()?;
         Ok(true)

@@ -8,6 +8,8 @@ use std::path::Path;
 struct Rendered {
     /// The PDF with uncompressed content streams, as text.
     pdf: String,
+    /// The same with the objects of the object streams written out (fonts, resources).
+    objects: String,
     /// The border boxes (x, y, width, height in points) of the `<svg>` elements in tree order.
     svgs: Vec<[f64; 4]>,
     log: String,
@@ -49,8 +51,10 @@ fn render(name: &str, html: &str) -> Rendered {
         serde_json::from_str(&std::fs::read_to_string(layout).unwrap()).unwrap();
     let mut svgs = vec![];
     boxes_of(&dump["document"], &mut svgs);
+    let bytes = std::fs::read(output).unwrap();
     Rendered {
-        pdf: String::from_utf8_lossy(&std::fs::read(output).unwrap()).into_owned(),
+        pdf: String::from_utf8_lossy(&bytes).into_owned(),
+        objects: String::from_utf8_lossy(&common::expand_object_streams(&bytes)).into_owned(),
         svgs,
         log,
     }
@@ -182,9 +186,10 @@ fn the_contents_of_an_svg_are_not_laid_out() {
         ),
     );
     assert_eq!(r.svgs.len(), 1, "{}", r.log);
-    // the text is drawn by the SVG code as outlines: there is no text operator for it, and
-    // nothing in the layout that could be broken into lines
-    assert_eq!(count(&r.pdf, "/Type /Font"), 0, "{}", r.pdf);
+    // the text is shown by the SVG code with the embedded font of the document, with its own text
+    // operators, and there is nothing in the layout that could be broken into lines
+    assert!(count(&r.pdf, " Tj") >= 1, "{}", r.pdf);
+    assert!(count(&r.objects, "/Type /Font") >= 1, "{}", r.objects);
 }
 
 #[test]
@@ -208,8 +213,74 @@ fn text_is_shaped_with_the_fonts_of_the_document() {
         ),
     );
     assert_eq!(r.svgs.len(), 1, "{}", r.log);
-    // drawn as outlines: curves and no font
-    assert!(count(&r.pdf, " c ") > 10, "{}", r.pdf);
-    assert_eq!(count(&r.pdf, "/Font <<"), 0);
+    // shown with the embedded font of the document, not drawn as outlines. The text takes the
+    // font family of its element, a sans-serif one by default, so its Arabic font is the one that
+    // the text of the page has in that design.
+    assert!(count(&r.pdf, " Tj") >= 1, "{}", r.pdf);
+    assert!(count(&r.pdf, " c ") < 5, "{}", r.pdf);
+    assert!(r.objects.contains("NotoSansArabic"), "{}", r.objects);
+    assert!(!r.objects.contains("NotoNaskhArabic"), "{}", r.objects);
     assert!(!r.log.contains("SVG:"), "{}", r.log);
+}
+
+#[test]
+fn svg_text_gets_the_fallback_font_of_its_design_like_the_text_of_the_page() {
+    // a serif text gets the serif font for Arabic, in the page and in an SVG
+    let r = render(
+        "serif_arabic",
+        &format!(
+            "{PAGE}<p style=\"font-family: serif\">مرحبا</p>\
+             <svg width=\"200\" height=\"60\" style=\"font-family: serif\">\
+               <text x=\"100\" y=\"40\" font-size=\"30\" text-anchor=\"middle\">مرحبا</text>\
+             </svg>"
+        ),
+    );
+    assert!(r.objects.contains("NotoNaskhArabic"), "{}", r.objects);
+    assert!(!r.objects.contains("NotoSansArabic"), "{}", r.objects);
+}
+
+#[test]
+fn svg_text_is_text_that_can_be_extracted_and_shares_the_fonts_of_the_page() {
+    let r = render(
+        "shared_font",
+        &format!(
+            "{PAGE}<p style=\"font-family: serif\">page</p>\
+             <svg width=\"200\" height=\"40\"><text x=\"5\" y=\"30\" font-size=\"24\" \
+             style=\"font-family: serif\">svg</text></svg>"
+        ),
+    );
+    // one embedded font for both, and its map back to text covers the glyphs of the SVG
+    assert_eq!(count(&r.objects, "/Subtype /Type0"), 1, "{}", r.objects);
+    assert!(count(&r.pdf, " Tj") >= 2, "{}", r.pdf);
+    assert!(count(&r.objects, "/ToUnicode") >= 1);
+}
+
+#[test]
+fn gradient_text_is_drawn_as_outlines() {
+    // a text operator paints with a color, so a gradient goes through the shapes of the glyphs
+    let r = render(
+        "gradient_text",
+        &format!(
+            "{PAGE}<svg width=\"200\" height=\"60\"><defs><linearGradient id=\"g\">\
+               <stop offset=\"0\" stop-color=\"red\"/><stop offset=\"1\" stop-color=\"blue\"/>\
+             </linearGradient></defs>\
+             <text x=\"5\" y=\"40\" font-size=\"30\" fill=\"url(#g)\">outline</text></svg>"
+        ),
+    );
+    assert_eq!(count(&r.pdf, " Tj"), 0, "{}", r.pdf);
+    assert!(count(&r.pdf, " c ") > 10, "{}", r.pdf);
+}
+
+#[test]
+fn stroked_text_uses_the_stroke_text_rendering_mode() {
+    let r = render(
+        "stroked_text",
+        &format!(
+            "{PAGE}<svg width=\"200\" height=\"60\">\
+             <text x=\"5\" y=\"40\" font-size=\"30\" fill=\"none\" stroke=\"red\">outline</text>\
+             <text x=\"5\" y=\"55\" font-size=\"20\" fill=\"blue\" stroke=\"red\">both</text></svg>"
+        ),
+    );
+    assert!(count(&r.pdf, "BT 1 Tr") >= 1, "{}", r.pdf);
+    assert!(count(&r.pdf, "BT 2 Tr") >= 1, "{}", r.pdf);
 }
