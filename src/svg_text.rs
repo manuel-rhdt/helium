@@ -93,8 +93,14 @@ impl TextShaper for HeliumShaper {
             helium_style(request.font),
         );
         let mut fonts = resolver.ensure_coverage_for_key(key.clone(), &font, request.text, font_map);
-        fonts.small_caps = request.small_caps;
-        fonts.no_kerning = !request.kerning;
+        let mut features = Vec::new();
+        if request.small_caps {
+            features.push((*b"smcp", 1));
+        }
+        if !request.kerning {
+            features.push((*b"kern", 0));
+        }
+        fonts.features = features.into();
 
         let fallbacks = font.fallbacks(&key);
         let mut shaped = shape_directed(request.text, &font, &fonts, None, request.rtl);

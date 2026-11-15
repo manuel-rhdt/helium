@@ -807,6 +807,13 @@ pub struct Font {
     pub color: Color,
     pub list_style_type: specified::ListStyleType,
     pub text_decoration: specified::TextDecoration,
+    pub font_feature_settings: specified::FontFeatureSettings,
+    pub font_kerning: specified::FontKerning,
+    pub font_variant_ligatures: specified::FontVariantLigatures,
+    pub font_variant_caps: specified::FontVariantCaps,
+    pub font_variant_numeric: specified::FontVariantNumeric,
+    pub font_variant_east_asian: specified::FontVariantEastAsian,
+    pub font_variant_position: specified::FontVariantPosition,
     /// The language of the element, from the `lang` attribute. It is not a CSS property but
     /// inherited like one, so it lives in the inherited font struct.
     pub lang: Language,
@@ -871,6 +878,13 @@ impl Default for Font {
             color: opaque(0, 0, 0),
             list_style_type: Default::default(),
             text_decoration: Default::default(),
+            font_feature_settings: Default::default(),
+            font_kerning: Default::default(),
+            font_variant_ligatures: Default::default(),
+            font_variant_caps: Default::default(),
+            font_variant_numeric: Default::default(),
+            font_variant_east_asian: Default::default(),
+            font_variant_position: Default::default(),
             lang: Language::default(),
         }
     }
@@ -1353,6 +1367,74 @@ mod css_wide_tests {
         // `normal`, small-caps and stretch keywords are accepted
         let c = child(&root, "font: normal small-caps condensed bold 12px serif");
         assert_eq!(c.font.font_weight, FontWeight::BOLD);
+    }
+
+    fn root(css: &str) -> ComputedValues {
+        child(&ComputedValues::default(), css)
+    }
+
+    fn features(style: &ComputedValues) -> Vec<(String, u32)> {
+        super::super::font_features::Features::of(&style.font)
+            .into_iter()
+            .map(|(tag, value)| (String::from_utf8(tag.to_vec()).unwrap(), value))
+            .collect()
+    }
+
+    fn feature(tag: &str, value: u32) -> (String, u32) {
+        (tag.to_string(), value)
+    }
+
+    #[test]
+    fn the_font_features_are_inherited() {
+        let parent = root("font-variant-caps: small-caps; font-feature-settings: \"ss01\"; font-kerning: none");
+        let c = child(&parent, "font-variant-numeric: oldstyle-nums");
+        assert_eq!(
+            features(&c),
+            [feature("kern", 0), feature("smcp", 1), feature("onum", 1), feature("ss01", 1)]
+        );
+        assert!(features(&ComputedValues::default()).is_empty());
+    }
+
+    #[test]
+    fn font_feature_settings_override_the_variant_properties() {
+        let c = root("font-feature-settings: \"smcp\" 0, \"liga\"; font-variant-caps: small-caps; font-variant-ligatures: none");
+        let list = features(&c);
+        // the properties come before the settings, whatever their order in the style sheet
+        assert_eq!(list.last(), Some(&feature("liga", 1)));
+        let smcp: Vec<_> = list.iter().filter(|(tag, _)| tag == "smcp").collect();
+        assert_eq!(smcp, [&feature("smcp", 1), &feature("smcp", 0)]);
+    }
+
+    #[test]
+    fn the_font_variant_shorthand_sets_and_resets_its_longhands() {
+        let c = root("font-variant-numeric: tabular-nums; font-variant: small-caps no-common-ligatures");
+        assert_eq!(features(&c), [feature("liga", 0), feature("clig", 0), feature("smcp", 1)]);
+        let c = root("font-variant: none");
+        assert_eq!(
+            features(&c),
+            [feature("liga", 0), feature("clig", 0), feature("dlig", 0), feature("hlig", 0), feature("calt", 0)]
+        );
+        // the shorthand does not touch the other properties
+        let c = root("font-feature-settings: \"ss02\"; font-variant: normal");
+        assert_eq!(features(&c), [feature("ss02", 1)]);
+        let c = child(&root("font-variant: small-caps"), "font-variant: inherit");
+        assert_eq!(features(&c), [feature("smcp", 1)]);
+        let c = child(&root("font-variant: small-caps"), "font-variant: initial");
+        assert!(features(&c).is_empty());
+    }
+
+    #[test]
+    fn the_font_shorthand_resets_the_features_and_takes_small_caps() {
+        let parent = root("font-variant-numeric: tabular-nums; font-feature-settings: \"ss01\"; font-kerning: none");
+        assert!(features(&child(&parent, "font: 12px serif")).is_empty());
+        let c = child(&parent, "font: small-caps 12px serif");
+        assert_eq!(features(&c), [feature("smcp", 1)]);
+    }
+
+    #[test]
+    fn invalid_feature_declarations_are_ignored() {
+        let c = root("font-variant-caps: small-caps; font-variant-caps: sideways; font-feature-settings: liga");
+        assert_eq!(features(&c), [feature("smcp", 1)]);
     }
 
     #[test]

@@ -43,6 +43,7 @@
 use super::font::{Font, color_emoji_font, system_font, use_system_fonts};
 use super::fallback_data::*;
 use super::segment::{clusters, is_emoji_cluster, needs_font};
+use crate::style::properties::font_features::Feature;
 use crate::layout::FontMap;
 use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, Language,
@@ -144,10 +145,10 @@ pub struct TextFonts {
     /// stand upright are shaped with the vertical forms of the font (see
     /// [`crate::layout::writing_mode::is_upright`]).
     pub orientation: Option<crate::style::properties::specified::TextOrientation>,
-    /// The OpenType feature `smcp` is on (the text of SVG images).
-    pub small_caps: bool,
-    /// The OpenType feature `kern` is off (the text of SVG images).
-    pub no_kerning: bool,
+    /// The OpenType features the author asked for (`font-feature-settings`, `font-kerning` and
+    /// the `font-variant-*` properties; for the text of SVG images the small caps and the
+    /// kerning), in the order of precedence: the later ones override the earlier ones.
+    pub features: Arc<[Feature]>,
 }
 
 /// The bytes `start..end` of a text are rendered with the font with the index `font` (as in
@@ -162,7 +163,7 @@ pub struct FontRun {
 impl TextFonts {
     /// Fonts for text without known runs: every cluster gets the font chosen for it.
     pub fn without_runs(key: FallbackKey) -> Self {
-        TextFonts { key, runs: Arc::from([]), letter_spacing: 0.0, orientation: None, small_caps: false, no_kerning: false }
+        TextFonts { key, runs: Arc::from([]), letter_spacing: 0.0, orientation: None, features: Arc::from([]) }
     }
 
     pub fn runs(&self) -> &[FontRun] {
@@ -598,7 +599,7 @@ impl FontResolver {
         if runs.iter().all(|run| run.font == 0) {
             runs.clear();
         }
-        TextFonts { key, runs: runs.into(), letter_spacing: 0.0, orientation: None, small_caps: false, no_kerning: false }
+        TextFonts { key, runs: runs.into(), letter_spacing: 0.0, orientation: None, features: Arc::from([]) }
     }
 
     /// The characters that could not be rendered with any font.
@@ -1351,8 +1352,7 @@ mod tests {
             ]),
             letter_spacing: 0.0,
             orientation: None,
-            small_caps: false,
-            no_kerning: false,
+            features: Arc::from([]),
         };
         assert_eq!(fonts.font_at(0), Some(0));
         assert_eq!(fonts.font_at(2), Some(0));
