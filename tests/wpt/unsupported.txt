@@ -25,7 +25,6 @@ outline:
 text-shadow:
 
 # text and inline layout
-vertical-align:
 word-break:
 overflow-wrap:
 word-wrap:

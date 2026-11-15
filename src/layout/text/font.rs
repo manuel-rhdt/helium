@@ -340,6 +340,16 @@ impl Font {
         val.0 as f32 * font_size / 1000.0f32
     }
 
+    /// The x-height at the font size: half of the size if the font does not have it.
+    pub fn x_height_px(&self, font_size: PixelLength) -> PixelLength {
+        match self.ot_metric(sys::HB_OT_METRICS_TAG_X_HEIGHT) {
+            Some(height) if height > 0 => {
+                PixelLength(height as f32 * font_size.0 / self.upem as f32)
+            }
+            _ => PixelLength(font_size.0 * 0.5),
+        }
+    }
+
     pub fn font_height(&self) -> FontUnit {
         self.ascent() - self.descent()
     }

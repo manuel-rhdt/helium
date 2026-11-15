@@ -302,8 +302,9 @@ impl InlineFormattingContext {
         entities: &Entities,
         text_runs: &ReadStorage<components::TextRun>,
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+        aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> Result<(), String> {
-        let lines = self.compute_lines(line_width, indent, text_runs, intrinsic_sizes)?;
+        let lines = self.compute_lines(line_width, indent, text_runs, intrinsic_sizes, aligns)?;
         self.lines = lines
             .into_iter()
             .map(|line| Line {
@@ -325,6 +326,7 @@ impl InlineFormattingContext {
         indent: Px,
         text_runs: &ReadStorage<components::TextRun>,
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+        aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> Result<Vec<MeasuredLine>, String> {
         let breakpoints = &self.break_points;
         if breakpoints.is_empty() {
@@ -389,7 +391,7 @@ impl InlineFormattingContext {
             .windows(2)
             .map(|window| {
                 let (baseline, height) =
-                    self.line_height(window[0], window[1], text_runs, intrinsic_sizes);
+                    self.line_height(window[0], window[1], text_runs, intrinsic_sizes, aligns);
                 if height == Px(0.0) {
                     return Err(format!(
                         "line between break points {} and {} has zero height",
@@ -482,6 +484,7 @@ impl InlineFormattingContext {
         to_index: usize,
         text_runs: &ReadStorage<components::TextRun>,
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+        aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> (Px, Px) {
         let from = self.break_points[from_index];
         let to = self.break_points[to_index];
@@ -490,27 +493,42 @@ impl InlineFormattingContext {
             .element_span(from, to)
             .map_or(&self.elements[0..0], |(start, end)| &self.elements[start..=end]);
 
-        let (max_ascent, max_descent) = span
-            .iter()
-            .map(|&ent| {
-                if let Some(text_run) = text_runs.get(ent) {
-                    (text_run.baseline, text_run.line_height - text_run.baseline)
-                } else if let Some(&IntrinsicSize::SizeWithBaseline {
-                    height, baseline, ..
-                }) = intrinsic_sizes.get(ent)
-                {
-                    (baseline, height - baseline)
-                } else {
-                    log::error!("cannot layout element (entity {}) in line (every inline element must have an intrinsic size)", ent.id());
-                    (Px(0.0), Px(0.0))
+        let (mut max_ascent, mut max_descent) = self.strut;
+        // the height that the boxes that are aligned with the top and the bottom of the line need
+        let (mut need_top, mut need_bottom) = (Px(0.0), Px(0.0));
+        for &ent in span {
+            let Some(own) = own_extent(ent, text_runs, intrinsic_sizes) else {
+                log::error!("cannot layout element (entity {}) in line (every inline element must have an intrinsic size)", ent.id());
+                continue;
+            };
+            let placement = aligns
+                .get(ent)
+                .map_or(components::LinePlacement::Raise(Px(0.0)), |align| align.place(own));
+            match placement {
+                components::LinePlacement::Raise(raise) => {
+                    max_ascent = max_ascent.max(own.0 + raise);
+                    max_descent = max_descent.max(own.1 - raise);
                 }
-            })
-            .fold(
-                self.strut,
-                |(height, depth), (new_height, new_depth)| {
-                    (height.max(new_height), depth.max(new_depth))
-                },
-            );
+                components::LinePlacement::Top { ascent, descent, .. } => {
+                    need_top = need_top.max(ascent + descent)
+                }
+                components::LinePlacement::Bottom { ascent, descent, .. } => {
+                    need_bottom = need_bottom.max(ascent + descent)
+                }
+            }
+        }
+        // the line box is as high as the boxes that are aligned with its edges need; what is
+        // missing is added below the baseline for the ones at the top and above it for the ones at
+        // the bottom
+        let need = need_top.max(need_bottom);
+        if need > max_ascent + max_descent {
+            let missing = need - (max_ascent + max_descent);
+            if need_top >= need_bottom {
+                max_descent += missing;
+            } else {
+                max_ascent += missing;
+            }
+        }
 
         assert!(max_ascent + max_descent != Px(0.0));
         (max_ascent, max_ascent + max_descent)
@@ -1366,6 +1384,44 @@ impl<'a> System<'a> for ListMarkerCreator {
 /// [`components::AbsoluteGroup::owner`]. This runs after pagination because the line the box is
 /// on can be on any page, and before the line boxes are created, because everything that is
 /// drawn is derived from the final positions.
+/// The ascent and descent of the box of an inline-level entity: a piece of text or an atomic box.
+fn own_extent(
+    entity: Entity,
+    text_runs: &ReadStorage<components::TextRun>,
+    intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+) -> Option<(Px, Px)> {
+    if let Some(run) = text_runs.get(entity) {
+        return Some((run.baseline, run.line_height - run.baseline));
+    }
+    match intrinsic_sizes.get(entity) {
+        Some(&IntrinsicSize::SizeWithBaseline { height, baseline, .. }) => {
+            Some((baseline, height - baseline))
+        }
+        _ => None,
+    }
+}
+
+/// How far the box of `entity` is raised above the baseline of its line (which is
+/// `line_baseline` from the top of a line of `line_height`) by its `vertical-align`.
+fn align_raise(
+    entity: Entity,
+    own: (Px, Px),
+    aligns: &ReadStorage<components::VerticalAlignment>,
+    line_baseline: Px,
+    line_height: Px,
+) -> Px {
+    let Some(align) = aligns.get(entity) else {
+        return Px(0.0);
+    };
+    match align.place(own) {
+        components::LinePlacement::Raise(raise) => raise,
+        components::LinePlacement::Top { inner, ascent, .. } => line_baseline - ascent + inner,
+        components::LinePlacement::Bottom { inner, descent, .. } => {
+            descent - (line_height - line_baseline) + inner
+        }
+    }
+}
+
 pub struct PlaceInlineBlocks;
 
 impl<'a> System<'a> for PlaceInlineBlocks {
@@ -1374,10 +1430,14 @@ impl<'a> System<'a> for PlaceInlineBlocks {
         ReadStorage<'a, InlineFormattingContext>,
         ReadStorage<'a, IntrinsicSize>,
         ReadStorage<'a, components::RelativeOffset>,
+        ReadStorage<'a, components::VerticalAlignment>,
         WriteStorage<'a, Position>,
     );
 
-    fn run(&mut self, (groups, ifcs, intrinsic_sizes, relative_offsets, mut positions): Self::SystemData) {
+    fn run(
+        &mut self,
+        (groups, ifcs, intrinsic_sizes, relative_offsets, aligns, mut positions): Self::SystemData,
+    ) {
         const EPSILON: f32 = 0.01;
 
         // where the margin box of every box is, as (x, y, page)
@@ -1403,11 +1463,29 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                 let line_size = flow.swap((line_pos.width, line_pos.height)).0;
                 // `position: relative` moves the box after it is placed
                 let shift = |atom: Entity| {
-                    relative_offsets
+                    let (mut dx, mut dy) = relative_offsets
                         .get(atom)
                         .map_or((Px(0.0), Px(0.0)), |offset| {
                             offset.resolve_in_line(flow, line_size, ifc.base_rtl)
-                        })
+                        });
+                    // `vertical-align`
+                    if let Some(&IntrinsicSize::SizeWithBaseline { height, baseline, .. }) =
+                        intrinsic_sizes.get(atom)
+                    {
+                        let raise = align_raise(
+                            atom,
+                            (baseline, height - baseline),
+                            &aligns,
+                            line.baseline,
+                            line.height,
+                        );
+                        if flow.is_vertical() {
+                            dx += raise;
+                        } else {
+                            dy = dy - raise;
+                        }
+                    }
+                    (dx, dy)
                 };
                 let place = |along: Px, baseline: Px, height: Px| {
                     if flow.is_vertical() {
@@ -1536,6 +1614,7 @@ impl<'a> System<'a> for LineBoxCreator {
         ReadStorage<'a, components::IntrinsicSize>,
         ReadStorage<'a, ComputedValues>,
         ReadStorage<'a, components::RelativeOffset>,
+        ReadStorage<'a, components::VerticalAlignment>,
         Read<'a, EntityHrefs>,
         Write<'a, Hyperlinks>,
         WriteStorage<'a, components::Position>,
@@ -1554,6 +1633,7 @@ impl<'a> System<'a> for LineBoxCreator {
             intrinsic_sizes,
             computed_values,
             relative_offsets,
+            aligns,
             entity_hrefs,
             mut hyperlinks,
             mut positions,
@@ -1699,11 +1779,21 @@ impl<'a> System<'a> for LineBoxCreator {
                     // that are atomic inlines (those are shifted when they are placed); the
                     // space that they take up on the line stays. (Not in vertical text: the text
                     // matrix is turned there.)
-                    let (physical_x, physical_y) = relative_offsets
+                    let (mut physical_x, mut physical_y) = relative_offsets
                         .get(entity)
                         .map_or((Px(0.0), Px(0.0)), |offset| {
                             offset.resolve_in_line(flow, line_size, ifc.base_rtl)
                         });
+                    // `vertical-align` raises the box (to the right in vertical text, where the
+                    // tops of the glyphs are)
+                    if let Some(own) = own_extent(entity, &text_runs, &intrinsic_sizes) {
+                        let raise = align_raise(entity, own, &aligns, line.baseline, line.height);
+                        if flow.is_vertical() {
+                            physical_x += raise;
+                        } else {
+                            physical_y = physical_y - raise;
+                        }
+                    }
                     // the same move along the line and across it: along the line is to the
                     // right (down in vertical text) and across it is down (to the right)
                     let (shift_x, shift_y) = if flow.is_vertical() {

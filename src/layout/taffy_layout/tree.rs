@@ -85,6 +85,9 @@ pub(super) struct Node {
     /// Whether the left and right insets and margins of this out-of-flow box were swapped, because
     /// its parent is mirrored: the box is mirrored with the layout of its containing block.
     pub mirrored_oof: bool,
+    /// How far the content of a table cell is moved down in the cell, for `vertical-align:
+    /// middle` and `bottom` (the cell box itself fills its row).
+    pub content_shift: f32,
     /// The borders of a cell, row, row group or table of a table with collapsing borders (see
     /// [`super::collapse`]).
     pub collapsed: Option<crate::layout::components::EdgeValues<crate::layout::components::CollapsedEdge>>,
@@ -99,6 +102,7 @@ pub(super) struct HeliumTree<'a, 'w> {
     pub intrinsic_sizes: &'a mut WriteStorage<'w, IntrinsicSize>,
     pub images: &'a ReadStorage<'w, ImageBox>,
     pub text_runs: &'a ReadStorage<'w, TextRun>,
+    pub aligns: &'a ReadStorage<'w, crate::layout::components::VerticalAlignment>,
     pub table_spans: &'a ReadStorage<'w, TableCellSpan>,
     /// The `<col>` and `<colgroup>` elements of each table, in column order.
     pub table_columns: &'a ReadStorage<'w, TableColumns>,
@@ -173,6 +177,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             detailed: taffy::DetailedLayoutInfo::None,
             mirror_rtl: false,
             mirrored_oof: false,
+            content_shift: 0.0,
             collapsed: None,
             cache: Cache::new(),
             layout: Layout::new(),
@@ -652,7 +657,7 @@ impl HeliumTree<'_, '_> {
                 _ => line_width,
             });
             let lines = ifc
-                .compute_lines(PixelLength(line_width), indent, text_runs, intrinsic_sizes)
+                .compute_lines(PixelLength(line_width), indent, text_runs, intrinsic_sizes, self.aligns)
                 .unwrap_or_else(|error| {
                     log::error!("cannot break lines of {:?}: {}", entity, error);
                     vec![]

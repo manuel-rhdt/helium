@@ -51,6 +51,37 @@ pub struct FlowConstructor {
 }
 
 impl FlowConstructor {
+    /// Records the `vertical-align` of an inline-level element together with the metrics of its
+    /// parent's font, which `sub`, `super`, `middle` and `text-top`/`text-bottom` refer to.
+    fn record_vertical_align(&mut self, node: &DomRef) {
+        use crate::style::properties::computed::VerticalAlign;
+        let Some(style) = NodeData::style(node) else { return };
+        let display = style.box_.display;
+        if style.box_.vertical_align == VerticalAlign::Baseline
+            || !(display == Display::Inline || display.is_atomic_inline())
+        {
+            return;
+        }
+        let (Some(LayoutEntity(entity)), Some(parent)) = (node.layout_entity(), node.parent())
+        else {
+            return;
+        };
+        let Some(parent_style) = NodeData::style(&parent) else { return };
+        // (an image is made an atomic inline-level box in its entity only)
+        let atomic = self
+            .entity_constructor
+            .world
+            .read_storage::<ComputedValues>()
+            .get(entity)
+            .is_some_and(|style| style.box_.display.is_atomic_inline());
+        let step = self.entity_constructor.align_step(&style, &parent_style, atomic);
+        let _ = self
+            .entity_constructor
+            .world
+            .write_storage::<components::ElementAlign>()
+            .insert(entity, components::ElementAlign(step));
+    }
+
     pub fn new(world: World, stylesheet_base_dir: PathBuf) -> Self {
         Self::with_styles(world, stylesheet_base_dir, Default::default())
     }
@@ -450,6 +481,7 @@ impl Traversal<DomRef> for FlowConstructor {
         let scoped = node.clone();
         self.entity_constructor.build_entity(node);
         self.entity_constructor.record_transform_scope(&scoped);
+        self.record_vertical_align(&scoped);
     }
 
     fn postorder_traverse(&mut self, node: DomRef) {
@@ -780,6 +812,8 @@ impl EntityConstructor {
         world.register::<Position>();
         world.register::<components::TextRun>();
         world.register::<components::RelativeOffset>();
+        world.register::<components::ElementAlign>();
+        world.register::<components::VerticalAlignment>();
         world.register::<components::ListMarker>();
         world.register::<components::Decoration>();
         world.register::<MathNode>();
@@ -1113,6 +1147,29 @@ impl EntityConstructor {
         self.world.create_entity().with(style).build().into()
     }
 
+    /// The `vertical-align` of a box with its parent's font metrics (see
+    /// [`components::AlignStep`]).
+    fn align_step(
+        &mut self,
+        style: &ComputedValues,
+        parent: &ComputedValues,
+        atomic: bool,
+    ) -> components::AlignStep {
+        let font = self.match_font(style);
+        let (line_height, baseline) = line_metrics(&font, style);
+        let parent_font = self.match_font(parent);
+        let parent_size = parent.font.font_size;
+        components::AlignStep {
+            align: style.box_.vertical_align,
+            line_height,
+            own: (!atomic).then_some((baseline, line_height - baseline)),
+            parent_ascent: parent_font.scale_to_px(parent_font.ascent(), parent_size),
+            parent_descent: Px(0.0) - parent_font.scale_to_px(parent_font.descent(), parent_size),
+            parent_x_height: parent_font.x_height_px(parent_size),
+            parent_font_size: parent_size,
+        }
+    }
+
     /// The ascent and descent of the strut of a block: a zero-width inline box with the block's
     /// font and line height. Line boxes start with it (CSS 2.1 §10.8.1), so a line without any
     /// inline content is still one line of the block's font tall.
@@ -1223,7 +1280,7 @@ impl EntityConstructor {
         computed_values: &mut WriteStorage<ComputedValues>,
         inline_formatting_contexts: &mut WriteStorage<InlineFormattingContext>,
         block_formatting_contexts: &mut WriteStorage<BlockFormattingContext>,
-        relative_offsets: &mut WriteStorage<components::RelativeOffset>,
+        shifts: &mut InlineShifts,
         math_nodes: &specs::ReadStorage<MathNode>,
     ) {
         let push_block =
@@ -1262,7 +1319,7 @@ impl EntityConstructor {
             if display.is_atomic_inline() {
                 // an atomic inline-level box: its contents stay in its own formatting context
                 if let Some(style) = child_style {
-                    shift_relatively(relative_offsets, &[elem], style);
+                    shifts.apply(elem, &[elem], style);
                 }
                 inline_level_elements.push(elem);
                 continue;
@@ -1298,7 +1355,7 @@ impl EntityConstructor {
                 }) = inline_formatting_contexts.remove(elem)
                 {
                     if let Some(style) = child_style {
-                        shift_relatively(relative_offsets, &elements, style);
+                        shifts.apply(elem, &elements, style);
                     }
                     block_level_elements
                         .extend(absolutes.into_iter().map(BlockLevelElement::Absolute));
@@ -1311,13 +1368,13 @@ impl EntityConstructor {
                         computed_values,
                         inline_formatting_contexts,
                         block_formatting_contexts,
-                        relative_offsets,
+                        shifts,
                         math_nodes,
                     );
                 } else {
                     // a formula is placed on the line as a whole, like an `inline-block`
                     if let Some(style) = child_style.filter(|_| math_nodes.contains(elem)) {
-                        shift_relatively(relative_offsets, &[elem], style);
+                        shifts.apply(elem, &[elem], style);
                     }
                     inline_level_elements.push(elem);
                 }
@@ -1340,7 +1397,7 @@ impl EntityConstructor {
         let mut block_formatting_contexts = self.world.write_storage::<BlockFormattingContext>();
         let mut inline_formatting_contexts = self.world.write_storage::<InlineFormattingContext>();
         let mut computed_values = self.world.write_storage::<ComputedValues>();
-        let mut relative_offsets = self.world.write_storage::<components::RelativeOffset>();
+        let mut shifts = InlineShifts::fetch(&self.world);
         let math_nodes = self.world.read_storage::<MathNode>();
 
         let LayoutEntity(entity) = node.layout_entity().unwrap();
@@ -1363,7 +1420,7 @@ impl EntityConstructor {
             &mut computed_values,
             &mut inline_formatting_contexts,
             &mut block_formatting_contexts,
-            &mut relative_offsets,
+            &mut shifts,
             &math_nodes,
         );
 
@@ -1429,8 +1486,8 @@ impl EntityConstructor {
         *root_node = RootNode(Some(entity));
     }
 
-    fn shift_relatively(&self, entities: &[Entity], style: &ComputedValues) {
-        shift_relatively(&mut self.world.write_storage(), entities, style);
+    fn shift_relatively(&self, owner: Entity, entities: &[Entity], style: &ComputedValues) {
+        InlineShifts::fetch(&self.world).apply(owner, entities, style);
     }
 
     // called on bottom-up traversal
@@ -1452,7 +1509,7 @@ impl EntityConstructor {
 
             if child_style.box_.display.is_atomic_inline() {
                 inline_formatting_context.elements.push(child_entity);
-                self.shift_relatively(&[child_entity], &child_style);
+                self.shift_relatively(child_entity, &[child_entity], &child_style);
                 continue;
             }
 
@@ -1464,7 +1521,7 @@ impl EntityConstructor {
             }) = self.world.write_storage().remove(child_entity)
             {
                 // a relatively positioned inline box moves everything in it
-                self.shift_relatively(&elements, &child_style);
+                self.shift_relatively(child_entity, &elements, &child_style);
                 inline_formatting_context
                     .elements
                     .extend_from_slice(&elements);
@@ -1474,7 +1531,7 @@ impl EntityConstructor {
 
             // a formula is placed on the line as a whole, like an `inline-block`
             if self.world.read_storage::<MathNode>().contains(child_entity) {
-                self.shift_relatively(&[child_entity], &child_style);
+                self.shift_relatively(child_entity, &[child_entity], &child_style);
             }
             inline_formatting_context.elements.push(child_entity);
         }
@@ -1798,26 +1855,47 @@ fn foreign_sizes(group: &usvg::Group, islands: &mut [IslandSpec]) {
     }
 }
 
-/// Gives the inline-level boxes and the text in a relatively positioned inline box the offsets
-/// of the box: it is not a box of the layout, so the line boxes move its content.
-fn shift_relatively(
-    offsets: &mut WriteStorage<components::RelativeOffset>,
-    entities: &[Entity],
-    style: &ComputedValues,
-) {
-    if style.box_.position != PositionSpec::Relative {
-        return;
+/// What an inline box hands to the boxes and the text in it: its offsets (`position: relative`)
+/// and its `vertical-align`. An inline box is not a box of the layout, so the line boxes move its
+/// content.
+struct InlineShifts<'a> {
+    offsets: WriteStorage<'a, components::RelativeOffset>,
+    aligns: WriteStorage<'a, components::VerticalAlignment>,
+    steps: specs::ReadStorage<'a, components::ElementAlign>,
+}
+
+impl<'a> InlineShifts<'a> {
+    fn fetch(world: &'a World) -> Self {
+        InlineShifts {
+            offsets: world.write_storage(),
+            aligns: world.write_storage(),
+            steps: world.read_storage(),
+        }
     }
-    let pos = &style.position;
-    let inset = components::Inset {
-        left: pos.left,
-        right: pos.right,
-        top: pos.top,
-        bottom: pos.bottom,
-    };
-    for &entity in entities {
-        if let Ok(entry) = offsets.entry(entity) {
-            entry.or_insert_with(Default::default).0.push(inset);
+
+    /// Gives `entities`, the content of the inline box `owner` with the style `style`, the
+    /// offsets and the alignment of the box.
+    fn apply(&mut self, owner: Entity, entities: &[Entity], style: &ComputedValues) {
+        if style.box_.position == PositionSpec::Relative {
+            let pos = &style.position;
+            let inset = components::Inset {
+                left: pos.left,
+                right: pos.right,
+                top: pos.top,
+                bottom: pos.bottom,
+            };
+            for &entity in entities {
+                if let Ok(entry) = self.offsets.entry(entity) {
+                    entry.or_insert_with(Default::default).0.push(inset);
+                }
+            }
+        }
+        if let Some(&components::ElementAlign(step)) = self.steps.get(owner) {
+            for &entity in entities {
+                if let Ok(entry) = self.aligns.entry(entity) {
+                    entry.or_insert_with(Default::default).0.push(step);
+                }
+            }
         }
     }
 }

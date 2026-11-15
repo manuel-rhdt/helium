@@ -751,6 +751,7 @@ pub struct Box {
     pub display: specified::Display,
     pub unicode_bidi: specified::UnicodeBidi,
     pub position: PositionSpec,
+    pub vertical_align: VerticalAlign,
     pub box_sizing: BoxSizing,
 
     pub flex_direction: FlexDirection,
@@ -787,6 +788,7 @@ impl Default for Box {
             display: Default::default(),
             unicode_bidi: Default::default(),
             position: Default::default(),
+            vertical_align: Default::default(),
             box_sizing: Default::default(),
             flex_direction: Default::default(),
             flex_wrap: Default::default(),
@@ -1148,6 +1150,41 @@ impl Math {
             MathDepth::Absolute(n) => n,
             // Only observable while a style is still being built.
             MathDepth::AutoAdd | MathDepth::Add(_) => 0,
+        }
+    }
+}
+
+/// The computed `vertical-align`: a length is resolved against the font size, a percentage stays
+/// one, because it refers to the `line-height` of the box.
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
+pub enum VerticalAlign {
+    #[default]
+    Baseline,
+    Sub,
+    Super,
+    TextTop,
+    TextBottom,
+    Middle,
+    Top,
+    Bottom,
+    /// Raises the box by this much
+    LengthPercentage(LengthPercentage),
+}
+
+impl ComputedValue<specified::VerticalAlign> for VerticalAlign {
+    fn from_specified(value: &specified::VerticalAlign, style: &super::computed::ComputedValues) -> Self {
+        match value {
+            specified::VerticalAlign::QuantityOrPercentage(qp) => {
+                VerticalAlign::LengthPercentage(LengthPercentage::from_specified(qp, style))
+            }
+            specified::VerticalAlign::Baseline => VerticalAlign::Baseline,
+            specified::VerticalAlign::Sub => VerticalAlign::Sub,
+            specified::VerticalAlign::Super => VerticalAlign::Super,
+            specified::VerticalAlign::TextTop => VerticalAlign::TextTop,
+            specified::VerticalAlign::TextBottom => VerticalAlign::TextBottom,
+            specified::VerticalAlign::Middle => VerticalAlign::Middle,
+            specified::VerticalAlign::Top => VerticalAlign::Top,
+            specified::VerticalAlign::Bottom => VerticalAlign::Bottom,
         }
     }
 }
