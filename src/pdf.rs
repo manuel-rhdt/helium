@@ -491,9 +491,6 @@ pub fn write_pdf(
         .map(|_| context.create_reference())
         .collect();
 
-    // the colour glyphs of the page and of the SVG images, painted by one code path
-    let color_glyphs = std::rc::Rc::new(std::cell::RefCell::new(color_glyph::ColorGlyphs::new(&print_pages.font_map)));
-
     // The glyphs of the text of SVG images are shown with the embedded fonts of the document, so
     // they have to be recorded in the fonts before these are embedded.
     let mut svg_font_names = crate::svg_text::SvgFontNames::new();
@@ -514,6 +511,11 @@ pub fn write_pdf(
             }
         }
     }
+
+    // The colour glyphs of the page and of the SVG images, painted by one code path. The fonts are
+    // known once the fonts of the SVG text have been added to the font map.
+    let color_glyphs =
+        std::rc::Rc::new(std::cell::RefCell::new(color_glyph::ColorGlyphs::new(&print_pages.font_map)));
 
     let mut font_map = HashMap::new();
     for (font_name, font) in &print_pages.font_map {
