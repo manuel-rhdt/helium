@@ -19,6 +19,8 @@ const TOLERANCE: f64 = 0.5;
 fn dump_layout(input: &Path) -> Result<Value, String> {
     let output = common::helium()
         .unwrap()
+        .arg("--font-dir")
+        .arg(wpt_root().join("fonts"))
         .arg("--dump-layout")
         .arg("-")
         .arg(input)

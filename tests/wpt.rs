@@ -25,6 +25,8 @@ fn wpt_layout_checks() {
         let name = test_name(test);
         let output = common::helium()
             .unwrap()
+            .args(["--font-dir"])
+            .arg(wpt_root().join("fonts"))
             .arg("--check-layout")
             .arg(test)
             .arg(pdf_path(test))

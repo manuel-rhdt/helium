@@ -376,6 +376,14 @@ pub fn set_use_system_fonts(enabled: bool) {
     USE_SYSTEM_FONTS.store(enabled, Ordering::Relaxed);
 }
 
+static EXTRA_FONT_DIRS: OnceLock<Vec<std::path::PathBuf>> = OnceLock::new();
+
+/// Sets directories whose fonts are used in addition to the others. Must be called before the
+/// first font is looked up, like `set_use_system_fonts`.
+pub fn set_font_dirs(dirs: Vec<std::path::PathBuf>) {
+    let _ = EXTRA_FONT_DIRS.set(dirs);
+}
+
 /// Whether the fonts installed on the system are used.
 pub(crate) fn use_system_fonts() -> bool {
     USE_SYSTEM_FONTS.load(Ordering::Relaxed)
@@ -395,6 +403,9 @@ fn system_fonts() -> &'static fontdb::Database {
         let mut db = fontdb::Database::new();
         if use_system_fonts() {
             db.load_system_fonts();
+        }
+        for dir in EXTRA_FONT_DIRS.get().into_iter().flatten() {
+            db.load_fonts_dir(dir);
         }
         // Loaded after the system fonts so that installed fonts win ties; the bundled
         // families are only used when asked for by name or when nothing else matches.
