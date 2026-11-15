@@ -425,8 +425,10 @@ const EMOJI_FAMILIES: &[&str] = &[
     "Fluent Emoji Color",
 ];
 
-/// An installed colour emoji font with `COLR` glyphs. A system can have the same family as a
-/// bitmap font too (the `CBDT` build of Noto Color Emoji), which has to be skipped.
+/// A colour emoji font with `COLR` glyphs: an installed one, or else Noto Color Emoji, which is
+/// built into Helium (the fonts of the system come first in the database). A system can have the
+/// same family as a bitmap font too (the `CBDT` build of Noto Color Emoji), which has to be
+/// skipped.
 pub(crate) fn color_emoji_font() -> Option<Font> {
     static FOUND: OnceLock<Option<(Arc<Vec<u8>>, u32)>> = OnceLock::new();
     let (data, index) = FOUND
@@ -562,6 +564,17 @@ mod tests {
         for ch in "中漢字あカ한ع پ ٹ ی ת क ব த ไ ລ ក မ ა ա አ ∑ ♥".chars().filter(|c| !c.is_whitespace()) {
             assert!(fonts.iter().any(|font| font.covers(ch)), "no embedded font covers {ch}");
         }
+    }
+
+    #[test]
+    fn the_embedded_emoji_font_paints_colour_glyphs() {
+        let font = super::color_emoji_font().expect("an emoji font is built in");
+        assert!(font.has_color_glyphs());
+        for emoji in ["😀", "🎉", "🇩🇪", "👨\u{200D}👩\u{200D}👧", "👍🏽"] {
+            assert!(font.covers_cluster(emoji), "{emoji}");
+        }
+        let glyph = font.hb_font.get_nominal_glyph('😀').unwrap();
+        assert!(font.is_color_glyph(GlyphIndex(glyph)));
     }
 
     #[test]

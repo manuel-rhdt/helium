@@ -33,6 +33,10 @@
 //! query so that the output does not depend on the order fontconfig happens to sort fonts in, as
 //! far as possible.
 //!
+//! Emoji (UTS #51 presentation, see `segment::is_emoji_cluster`) take a colour emoji font before
+//! all of this: an installed font with `COLR` glyphs, else Noto Color Emoji, which is built into
+//! Helium (`EMBEDDED_FONTS`). Bitmap emoji fonts are not used.
+//!
 //! Characters that no font covers are collected in the `MissingGlyphs` resource and reported
 //! to the user (see `MissingGlyphs::report`).
 
@@ -587,10 +591,8 @@ impl FontResolver {
         let font = self
             .emoji_font
             .get_or_insert_with(|| {
-                use_system_fonts()
-                    .then(color_emoji_font)
-                    .flatten()
-                    .map(|font| register_font(font_map, font))
+                // an installed emoji font if there is one, else the one built into Helium
+                color_emoji_font().map(|font| register_font(font_map, font))
             })
             .clone()?;
         font.covers_cluster(cluster).then_some(font)
