@@ -31,6 +31,7 @@ use crate::layout::inline_size::decoration_colors;
 use crate::layout::normal_formatting::BlockFormattingContext;
 use crate::style::properties::computed::{ComputedValues, PixelLength, TextAlign};
 
+use crate::layout::writing_mode::Flow;
 use tree::{Content, HeliumTree, Node};
 
 /// Distance between the z indices of boxes at different levels of nested absolutely positioned
@@ -100,6 +101,7 @@ impl TaffyBlockLayout {
             &entities,
             &mut group_boxes,
         );
+        tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
         // The initial containing block is the content area of the first page.
         taffy::compute_root_layout(
             &mut tree,
@@ -140,6 +142,7 @@ impl TaffyBlockLayout {
                 x: self.margin.left.0,
                 y: 0.0,
             },
+            Flow::HorizontalTb,
             1,
             0,
         )
@@ -209,18 +212,22 @@ impl<'a> Writer<'a, '_> {
             entities: vec![],
             owner,
             parent: self.group_stack.last().copied(),
+            anchor: None,
         });
         self.group_stack.push(self.groups.len() - 1);
     }
 
     /// Writes the layout of a box and everything in it.
-    ///   origin  the top left corner of the border box of the box in document coordinates
-    ///   z       the z index of the box
-    ///   z_base  the z index offset of the absolutely positioned box the box is in
+    ///   origin       the top left corner of the border box of the box in document coordinates
+    ///   parent_flow  the flow that the layout of the box (its size and its edges) is in: the
+    ///                one of its parent
+    ///   z            the z index of the box
+    ///   z_base       the z index offset of the absolutely positioned box the box is in
     fn write_box(
         &mut self,
         id: NodeId,
         origin: Point<f32>,
+        parent_flow: Flow,
         z: i64,
         z_base: i64,
     ) -> Result<(), String> {
@@ -229,14 +236,23 @@ impl<'a> Writer<'a, '_> {
         let layout = node.layout;
         let content = node.content;
 
-        let content_x = origin.x + layout.border.left + layout.padding.left;
-        let content_y = origin.y + layout.border.top + layout.padding.top;
-        let content_width = layout.size.width
-            - layout.border.horizontal_axis_sum()
-            - layout.padding.horizontal_axis_sum();
-        let content_height = layout.size.height
-            - layout.border.vertical_axis_sum()
-            - layout.padding.vertical_axis_sum();
+        // The layout is in the logical axes of the parent: the physical size and edges of the
+        // box are found by turning them around if the parent is vertical.
+        let (width, height) = parent_flow.swap((layout.size.width, layout.size.height));
+        let margin = parent_flow.edges_to_physical(layout.margin);
+        let border = parent_flow.edges_to_physical(layout.border);
+        let padding = parent_flow.edges_to_physical(layout.padding);
+        // The logical size and edges of the box itself, which its content is laid out in.
+        let flow = node.flow;
+        let inline_size = flow.swap((width, height));
+        let frame = Frame { flow, origin, inline_size: inline_size.0, block_size: inline_size.1 };
+        let logical_border = flow.edges_to_logical(border);
+        let logical_padding = flow.edges_to_logical(padding);
+
+        let content_x = origin.x + border.left + padding.left;
+        let content_y = origin.y + border.top + padding.top;
+        let content_width = width - (border.left + border.right) - (padding.left + padding.right);
+        let content_height = height - (border.top + border.bottom) - (padding.top + padding.bottom);
         self.set_position(
             entity,
             content_x,
@@ -257,13 +273,24 @@ impl<'a> Writer<'a, '_> {
             bottom: PixelLength(rect.bottom),
             right: PixelLength(rect.right),
         };
-        decoration.margin = edges(layout.margin);
-        decoration.border = edges(layout.border);
-        decoration.padding = edges(layout.padding);
+        decoration.margin = edges(margin);
+        decoration.border = edges(border);
+        decoration.padding = edges(padding);
         decoration.collapsed = node.collapsed;
         let _ = self.decorations.insert(entity, decoration);
 
         self.emit(BlockLevelElement::ContainerStart(entity));
+
+        // An orthogonal flow is not split between pages: it is a leaf of the main flow, and its
+        // content is placed with it once the page it is on is known.
+        let anchored = node.orthogonal && content == Content::Blocks;
+        if anchored {
+            self.emit(BlockLevelElement::Leaf(entity));
+            self.open_group(None, None);
+            if let Some(&group) = self.group_stack.last() {
+                self.groups[group].anchor = Some((entity, Point { x: content_x, y: content_y }));
+            }
+        }
 
         let children = &node.children;
         match content {
@@ -273,8 +300,8 @@ impl<'a> Writer<'a, '_> {
                         self.anchors.insert(child, self.last_flow_entity);
                         continue;
                     }
-                    let location = self.node(child).layout.location;
-                    self.write_box(child, origin + location, z + 1, z_base)?;
+                    let child_origin = frame.child_origin(&self.node(child).layout);
+                    self.write_box(child, child_origin, flow, z + 1, z_base)?;
                 }
             }
             Content::Inline => {
@@ -285,11 +312,20 @@ impl<'a> Writer<'a, '_> {
                     // The contents of an `inline-block` box are placed relative to the top left
                     // corner of its margin box. They are moved to the line the box is on later.
                     self.open_group(None, Some(self.node(atom).entity));
-                    let location = self.node(atom).layout.location;
-                    self.write_box(atom, location, z + 1, z_base)?;
+                    // the border box is inside of the margin box, which is placed on the line
+                    let margin = flow.edges_to_physical(self.node(atom).layout.margin);
+                    let location = Point { x: margin.left, y: margin.top };
+                    self.write_box(atom, location, flow, z + 1, z_base)?;
                     self.group_stack.pop();
                 }
-                self.write_lines(entity, content_x, content_y, content_width, z + 1)?;
+                let content_offset = (
+                    logical_border.left + logical_padding.left,
+                    logical_border.top + logical_padding.top,
+                );
+                let content_inline_size = frame.inline_size
+                    - (logical_border.left + logical_border.right)
+                    - (logical_padding.left + logical_padding.right);
+                self.write_lines(entity, &frame, content_offset, content_inline_size, z + 1)?;
             }
             Content::Replaced => {
                 if self.intrinsic_sizes.get(entity).is_some() {
@@ -300,8 +336,8 @@ impl<'a> Writer<'a, '_> {
                 // The captions, row groups and rows in document order. The rows and groups
                 // contain their cells, which are placed relative to them.
                 for &child in node.table.iter().flat_map(|table| &table.boxes) {
-                    let location = self.node(child).layout.location;
-                    self.write_box(child, origin + location, z + 1, z_base)?;
+                    let child_origin = frame.child_origin(&self.node(child).layout);
+                    self.write_box(child, child_origin, flow, z + 1, z_base)?;
                 }
                 for &child in children {
                     if self.out_of_flow[usize::from(child)] {
@@ -311,6 +347,9 @@ impl<'a> Writer<'a, '_> {
             }
         }
 
+        if anchored {
+            self.group_stack.pop();
+        }
         self.emit(BlockLevelElement::ContainerEnd(entity));
 
         // the absolutely positioned boxes this box is the containing block of
@@ -328,20 +367,22 @@ impl<'a> Writer<'a, '_> {
                 Some(entity)
             };
             self.open_group(containing_block, None);
-            let location = self.node(child).layout.location;
+            let child_origin = frame.child_origin(&self.node(child).layout);
             let abs_base = z_base + ABS_Z_STEP;
-            self.write_box(child, origin + location, abs_base + 1, abs_base)?;
+            self.write_box(child, child_origin, flow, abs_base + 1, abs_base)?;
             self.group_stack.pop();
         }
         Ok(())
     }
 
-    /// Breaks the inline content of a box into lines and places them.
+    /// Breaks the inline content of a box into lines and places them. The lines are laid out in
+    /// the logical axes of `frame`: `content_offset` is the position of the content box relative to
+    /// the border box and `width` its inline size.
     fn write_lines(
         &mut self,
         entity: Entity,
-        content_x: f32,
-        content_y: f32,
+        frame: &Frame,
+        content_offset: (f32, f32),
         width: f32,
         z: i64,
     ) -> Result<(), String> {
@@ -374,12 +415,12 @@ impl<'a> Writer<'a, '_> {
             })
             .collect();
 
-        let mut y = content_y;
+        let mut y = content_offset.1;
         for (index, (line_entity, height, advance)) in lines.into_iter().enumerate() {
             let (x0, w0) = if index == 0 {
-                (content_x + indent_offset, width - indent)
+                (content_offset.0 + indent_offset, width - indent)
             } else {
-                (content_x, width)
+                (content_offset.0, width)
             };
             let (x, w) = match align {
                 TextAlign::Left | TextAlign::Start | TextAlign::End => (x0, advance),
@@ -387,11 +428,45 @@ impl<'a> Writer<'a, '_> {
                 TextAlign::Center => (x0 + (w0 - advance) / 2.0, advance),
                 TextAlign::Justify => (x0, w0),
             };
-            self.set_position(line_entity, x, y, w, height, z);
+            let (px, py, pw, ph) = frame.to_physical((x, y, w, height));
+            self.set_position(line_entity, px, py, pw, ph, z);
             self.emit(BlockLevelElement::Leaf(line_entity));
             y += height;
         }
         Ok(())
+    }
+}
+
+/// A box whose content is laid out in logical coordinates and the place of the box in the
+/// document, to turn the logical position of the boxes in it into physical ones.
+#[derive(Debug, Copy, Clone)]
+struct Frame {
+    /// The flow of the content of the box.
+    flow: Flow,
+    /// The top left corner of the border box of the box in document coordinates.
+    origin: Point<f32>,
+    /// The inline and block size of the border box.
+    inline_size: f32,
+    block_size: f32,
+}
+
+impl Frame {
+    /// The physical position in the document of a logical rectangle `(x, y, width, height)` that
+    /// is relative to the border box.
+    fn to_physical(&self, rect: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+        let (x, y, width, height) = self.flow.rect_to_physical(rect, (self.inline_size, self.block_size));
+        (self.origin.x + x, self.origin.y + y, width, height)
+    }
+
+    /// The top left corner of the border box of a child that has `layout`, which is logical.
+    fn child_origin(&self, layout: &taffy::Layout) -> Point<f32> {
+        let (x, y, _, _) = self.to_physical((
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height,
+        ));
+        Point { x, y }
     }
 }
 

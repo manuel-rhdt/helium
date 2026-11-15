@@ -600,6 +600,7 @@ dependencies = [
  "unicode-bidi",
  "unicode-script",
  "unicode-segmentation",
+ "unicode-vo",
  "usvg",
  "yeslogic-fontconfig-sys",
 ]

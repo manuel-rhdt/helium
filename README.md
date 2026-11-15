@@ -68,6 +68,18 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
   `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space`, `hyphens`,
   `direction`, `unicode-bidi`, `list-style-type`.
+- **Vertical text:** `writing-mode` (`vertical-rl`, `vertical-lr`, and `sideways-rl` and
+  `sideways-lr` as the vertical modes) and `text-orientation` (`mixed`, `upright`, `sideways`).
+  A box with another writing mode than its parent is an orthogonal flow, which is laid out on its
+  own in logical axes (inline and block) and then placed: its physical sizes, margins, padding
+  and borders turn with the axes, its lines run down and stack right to left (`vertical-rl`) or
+  left to right (`vertical-lr`), upright characters (UAX #50: CJK, Hangul, ...) use the vertical
+  glyphs of the font and the others are turned a quarter. An orthogonal flow is not split
+  between pages and needs a `height` (the length of its lines) or a containing block with one.
+  Not supported yet: vertical text for the whole document or for the content that is split over
+  pages, `direction: rtl` and `text-align: left`/`right` in vertical lines, absolutely
+  positioned boxes and tables in a vertical flow, `text-combine-upright`, `text-orientation`
+  per character class beyond UAX #50, and `sideways-lr` lines that run upwards.
 - **Transforms:** `transform` (2D: `translate`, `scale`, `rotate`, `skew` and their axis forms,
   `matrix`; applies to the box and everything inside of it) and `transform-origin`. A transform
   does not change the layout, does not apply to non-replaced inline boxes, and a box that is

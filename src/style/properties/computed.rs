@@ -583,6 +583,8 @@ impl StyleBuilder {
                 letter_spacing: inherited_values.text.letter_spacing,
                 text_transform: inherited_values.text.text_transform,
                 direction: inherited_values.text.direction,
+                writing_mode: inherited_values.text.writing_mode,
+                text_orientation: inherited_values.text.text_orientation,
                 border_spacing: inherited_values.text.border_spacing,
                 border_collapse: inherited_values.text.border_collapse,
                 ..Default::default()
@@ -884,6 +886,8 @@ pub struct Text {
     pub letter_spacing: PixelLength,
     pub text_transform: specified::TextTransform,
     pub direction: specified::Direction,
+    pub writing_mode: specified::WritingMode,
+    pub text_orientation: specified::TextOrientation,
     pub line_break: specified::LineBreak,
     pub border_spacing: BorderSpacing,
     pub border_collapse: specified::BorderCollapse,

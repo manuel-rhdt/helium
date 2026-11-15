@@ -30,6 +30,7 @@ unicode-bidi = "0.3"
 taffy = { version = "=0.15.1", default-features = false, features = ["std", "block_layout", "flexbox", "grid", "float_layout", "content_size", "calc", "detailed_layout_info"] }
 icu_segmenter = "2.4"
 unicode-script = "0.5.9"
+unicode-vo = "0.1"
 unicode-segmentation = "1.13.3"
 ttf-parser = { version = "0.25.1", default-features = false, features = ["glyph-names", "std"] }
 usvg = { path = "svg" }
