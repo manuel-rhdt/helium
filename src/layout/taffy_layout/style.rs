@@ -4,6 +4,7 @@ use crate::style::properties::computed::{
     BoxSizing, ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
     GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize,
 };
+use crate::layout::writing_mode::Flow;
 use crate::style::properties::specified::{Display, PositionSpec};
 use taffy::style_helpers::{
     TaffyAuto, TaffyMaxContent, TaffyMinContent, auto, fr, length, line, max_content, min_content,
@@ -147,6 +148,29 @@ pub fn is_out_of_flow(style: &ComputedValues) -> bool {
 /// whole by the box it is in, and `inline-block` boxes are laid out as block containers of their
 /// own and then placed on a line.
 pub fn taffy_style(style: &ComputedValues) -> taffy::Style {
+    physical_style(style)
+}
+
+/// The Taffy style of a box in the logical axes of `flow`: Taffy lays out the inline axis as
+/// `x` (width) and the block axis as `y` (height), so the physical sizes, margins, padding,
+/// borders and insets of a style in a vertical writing mode are turned around (see
+/// [`crate::layout::writing_mode`]).
+pub fn taffy_style_in(style: &ComputedValues, flow: Flow) -> taffy::Style {
+    let mut taffy = physical_style(style);
+    if flow.is_vertical() {
+        taffy.size = Size { width: taffy.size.height, height: taffy.size.width };
+        taffy.min_size = Size { width: taffy.min_size.height, height: taffy.min_size.width };
+        taffy.max_size = Size { width: taffy.max_size.height, height: taffy.max_size.width };
+        taffy.margin = flow.edges_to_logical(taffy.margin);
+        taffy.padding = flow.edges_to_logical(taffy.padding);
+        taffy.border = flow.edges_to_logical(taffy.border);
+        taffy.inset = flow.edges_to_logical(taffy.inset);
+        taffy.aspect_ratio = taffy.aspect_ratio.map(|ratio| 1.0 / ratio);
+    }
+    taffy
+}
+
+fn physical_style(style: &ComputedValues) -> taffy::Style {
     let pos = &style.position;
     let box_ = &style.box_;
     let display = match box_.display {

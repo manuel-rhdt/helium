@@ -51,6 +51,8 @@ pub struct InlineFormattingContext {
     pub atom_offsets: Vec<(Entity, Px)>,
     /// The `direction` of the block: the base direction of the paragraph.
     pub direction: Direction,
+    /// The flow of the lines: `writing-mode`.
+    pub flow: super::writing_mode::Flow,
     /// Whether the base direction is found from the text (`unicode-bidi: plaintext`) instead of
     /// `direction`.
     pub plaintext: bool,
@@ -119,6 +121,7 @@ impl InlineFormattingContext {
             lines: vec![],
             atom_offsets: vec![],
             direction: style.text.direction,
+            flow: style.text.writing_mode.into(),
             plaintext: style.box_.unicode_bidi == UnicodeBidi::Plaintext,
             base_rtl: style.text.direction == Direction::Rtl,
             bidi_runs: vec![],
@@ -1373,10 +1376,25 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                 let from = ifc.break_points[line.from_break];
                 let to = ifc.break_points[line.to_break];
 
+                // The top left corner of the margin box of a box that is `along` the line from
+                // its start and whose baseline is at `baseline` of its `height`. In a vertical
+                // flow the line runs down and the block start edge of the line is on the
+                // right, so the box hangs from there.
+                let flow = ifc.flow;
+                let line_size = flow.swap((line_pos.width, line_pos.height)).0;
+                let place = |along: Px, baseline: Px, height: Px| {
+                    if flow.is_vertical() {
+                        let right = line_pos.x + line_pos.width;
+                        (right - (line.baseline - baseline) - height, line_pos.y + along)
+                    } else {
+                        (line_pos.x + along, line_pos.y + line.baseline - baseline)
+                    }
+                };
+
                 if !ifc.bidi_runs.is_empty() {
                     // the boxes are reordered with the text
-                    for (atom, offset) in ifc.visual_atom_offsets(line_num, line_pos.width) {
-                        let Some(&IntrinsicSize::SizeWithBaseline { baseline, .. }) =
+                    for (atom, offset) in ifc.visual_atom_offsets(line_num, line_size) {
+                        let Some(&IntrinsicSize::SizeWithBaseline { baseline, height, .. }) =
                             intrinsic_sizes.get(atom)
                         else {
                             continue;
@@ -1384,20 +1402,20 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                         if !ifc.atom_offsets.iter().any(|&(entity, _)| entity == atom) {
                             continue;
                         }
-                        let y = line_pos.y + line.baseline - baseline;
-                        placements.insert(atom, (line_pos.x + offset, y, line_pos.page));
+                        let (x, y) = place(offset, baseline, height);
+                        placements.insert(atom, (x, y, line_pos.page));
                     }
                     continue;
                 }
 
                 // the same word spacing as the line box creator uses
-                let word_spacing = ifc.word_spacing(line_num, line_pos.width);
+                let word_spacing = ifc.word_spacing(line_num, line_size);
 
                 for &(atom, offset) in &ifc.atom_offsets {
-                    let (width, baseline) = match intrinsic_sizes.get(atom) {
+                    let (width, baseline, height) = match intrinsic_sizes.get(atom) {
                         Some(&IntrinsicSize::SizeWithBaseline {
-                            width, baseline, ..
-                        }) => (width, baseline),
+                            width, baseline, height,
+                        }) => (width, baseline, height),
                         _ => continue,
                     };
                     let _ = width;
@@ -1414,9 +1432,8 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                                 && point.advance_before.0 < offset.0 - EPSILON
                         })
                         .count();
-                    let x =
-                        line_pos.x + (offset - from.advance_after) + word_spacing * spaces as f32;
-                    let y = line_pos.y + line.baseline - baseline;
+                    let along = (offset - from.advance_after) + word_spacing * spaces as f32;
+                    let (x, y) = place(along, baseline, height);
                     placements.insert(atom, (x, y, line_pos.page));
                 }
             }
@@ -1542,8 +1559,19 @@ impl<'a> System<'a> for LineBoxCreator {
                     paragraph_start = (line_pos.x, line_pos.y + line.baseline);
                 }
 
+                // In a vertical flow the lines run downwards: the size of a line along the line is
+                // its physical height.
+                let flow = ifc.flow;
+                let line_size = flow.swap((line_pos.width, line_pos.height)).0;
+                // The physical place of the start of the line on the baseline, which is where
+                // the line matrix of vertical text goes.
+                let line_origin = flow.line_origin(
+                    (line_pos.x.0, line_pos.y.0, line_pos.width.0, line_pos.height.0),
+                    line.baseline.0,
+                );
+
                 // if we want to justify the text we have to add word-spacing
-                let word_spacing = ifc.word_spacing(line_num, line_pos.width);
+                let word_spacing = ifc.word_spacing(line_num, line_size);
 
                 // Check if a page break happened between this line and the previous. If a page
                 // break happend we have to add the existing (partial) paragraph to the previous
@@ -1587,8 +1615,21 @@ impl<'a> System<'a> for LineBoxCreator {
                 let pieces = ifc.line_pieces(line, &text_runs);
                 let last_piece = pieces.len().checked_sub(1);
 
+                if flow.is_vertical() {
+                    // the text is turned: its x axis is the inline direction, which runs down
+                    let [a, b, c, d] = flow.text_matrix();
+                    ops.push(TextOperator::SetTransform(components::TransformMatrix {
+                        a,
+                        b,
+                        c,
+                        d,
+                        e: Px(line_origin.0),
+                        f: Px(line_origin.1),
+                    }));
+                }
+
                 // the x position on the line and the x position of the text line matrix
-                let mut advance = ifc.line_start_offset(line_num, line_pos.width, word_spacing);
+                let mut advance = ifc.line_start_offset(line_num, line_size, word_spacing);
                 let mut text_cursor = Px(0.0);
                 if advance != Px(0.0) {
                     ops.push(TextOperator::NewLine {
@@ -1659,7 +1700,12 @@ impl<'a> System<'a> for LineBoxCreator {
                             );
                             ops.push(TextOperator::EndMarkedContent);
                         }
-                        piece_width += shape_piece(
+                        let vertical = flow.is_vertical().then_some(VerticalPiece {
+                            flow,
+                            baseline_x: Px(line_origin.0),
+                            start_y: line_pos.y + piece_start,
+                        });
+                        piece_width += shape_piece_in_flow(
                             characters,
                             font,
                             &run.fallback,
@@ -1668,6 +1714,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             word_spacing,
                             &ifc.inter_letter_offsets(line, &piece),
                             rtl,
+                            vertical,
                             &mut ops,
                         );
                         if hyphen && !rtl {
@@ -1701,18 +1748,31 @@ impl<'a> System<'a> for LineBoxCreator {
                                     continue;
                                 }
                                 let y = baseline + offset;
+                                // `offset` is down from the baseline; in a vertical flow that
+                                // is to the left
+                                let line_op = if flow.is_vertical() {
+                                    GraphicsOp::Line {
+                                        from_x: Px(line_origin.0) - offset,
+                                        from_y: line_pos.y + advance,
+                                        to_x: Px(line_origin.0) - offset,
+                                        to_y: line_pos.y + advance + piece_width,
+                                        thickness,
+                                    }
+                                } else {
+                                    GraphicsOp::Line {
+                                        from_x: x,
+                                        from_y: y,
+                                        to_x: x + piece_width,
+                                        to_y: y,
+                                        thickness,
+                                    }
+                                };
                                 entities
                                     .build_entity()
                                     .with(page_pos, &mut positions)
                                     .with(
                                         components::VectorGraphics {
-                                            ops: vec![GraphicsOp::Line {
-                                                from_x: x,
-                                                from_y: y,
-                                                to_x: x + piece_width,
-                                                to_y: y,
-                                                thickness,
-                                            }],
+                                            ops: vec![line_op],
                                             color: Some(run.color),
                                         },
                                         &mut graphics,
@@ -1787,7 +1847,7 @@ impl<'a> System<'a> for LineBoxCreator {
                     }
                 }
 
-                if let Some(next_line) = lines.get(line_num + 1) {
+                if let Some(next_line) = lines.get(line_num + 1).filter(|_| !flow.is_vertical()) {
                     let next_line_pos = *positions.get(next_line.entity).unwrap();
                     ops.push(TextOperator::NewLine {
                         x_offset: next_line_pos.x - line_pos.x - text_cursor,
@@ -1802,11 +1862,20 @@ impl<'a> System<'a> for LineBoxCreator {
                     }
                     hyperlinks.0.push(Hyperlink {
                         page: line_pos.page,
-                        rect: Rect {
-                            x: line_pos.x + start,
-                            y: line_pos.y,
-                            width: end - start,
-                            height: line.height,
+                        rect: if flow.is_vertical() {
+                            Rect {
+                                x: line_pos.x,
+                                y: line_pos.y + start,
+                                width: line_pos.width,
+                                height: end - start,
+                            }
+                        } else {
+                            Rect {
+                                x: line_pos.x + start,
+                                y: line_pos.y,
+                                width: end - start,
+                                height: line.height,
+                            }
                         },
                         href: href.to_owned(),
                         destination: None, // resolved later, once all positions are final
@@ -1872,6 +1941,50 @@ pub(super) fn shape_piece(
     rtl: bool,
     ops: &mut Vec<TextOperator>,
 ) -> Px {
+    shape_piece_in_flow(characters, font, fonts, at, font_size, word_spacing, inter_letter, rtl, None, ops)
+}
+
+/// Where a piece of a vertical line is on the page, to draw its upright characters.
+#[derive(Debug, Copy, Clone)]
+pub(super) struct VerticalPiece {
+    pub flow: super::writing_mode::Flow,
+    /// The physical `x` of the baseline of the line.
+    pub baseline_x: Px,
+    /// The physical `y` of the start of the piece.
+    pub start_y: Px,
+}
+
+/// The distance of the center of the em box of an ideograph above its baseline, in em.
+/// (The em box of the fonts of the CJK scripts goes from 0.12 em below the baseline to 0.88 em
+/// above it.)
+const IDEOGRAPHIC_CENTER: f32 = 0.38;
+
+/// Like [`shape_piece`]. In a vertical line (`vertical`), the characters that stand upright are
+/// drawn with a text matrix of their own, whose origin puts the center of their em box on the
+/// center of the line, while the others are turned with the line.
+pub(super) fn shape_piece_in_flow(
+    characters: &str,
+    font: &Font,
+    fonts: &crate::layout::text::fallback::TextFonts,
+    at: Option<usize>,
+    font_size: Px,
+    word_spacing: Px,
+    inter_letter: &[usize],
+    rtl: bool,
+    vertical: Option<VerticalPiece>,
+    ops: &mut Vec<TextOperator>,
+) -> Px {
+    // lines that run upwards or right-to-left in a vertical flow are not supported
+    let vertical = vertical.filter(|_| !rtl);
+    let is_upright = |cluster: usize| {
+        vertical.is_some()
+            && fonts.orientation.is_some_and(|orientation| {
+                characters[cluster..]
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| super::writing_mode::is_upright(ch, orientation))
+            })
+    };
     let is_invisible = |info: &super::text::GlyphInfo| {
         characters[info.cluster as usize..]
             .chars()
@@ -1990,6 +2103,38 @@ pub(super) fn shape_piece(
             ));
         }
         let glyph_font = font_at(current_font);
+
+        if let (Some(piece), true) = (vertical, is_upright(glyph.cluster)) {
+            out.flush(ops);
+            let advance = glyph_font.advance(glyph.glyph);
+            let size = font_size.0;
+            let advance_px = advance.0 as f32 * size / 1000.0;
+            let along = piece.start_y.0 + glyph.x.0 as f32 * size / 1000.0;
+            // the center of the em box goes to the center of the line, on the baseline plus
+            // the distance of the center of the em box above it
+            let center_x = piece.baseline_x.0 + IDEOGRAPHIC_CENTER * size;
+            ops.push(TextOperator::SetTransform(components::TransformMatrix {
+                a: 1.0,
+                b: 0.0,
+                c: 0.0,
+                d: 1.0,
+                e: Px(center_x - advance_px / 2.0),
+                f: Px(along + advance_px / 2.0 + IDEOGRAPHIC_CENTER * size),
+            }));
+            ops.push(TextOperator::KernedGlyphs(vec![KernedGlyphs::Glyphs(Glyphs(vec![glyph.glyph]))]));
+            // back to the line, behind the glyph
+            let [a, b, c, d] = piece.flow.text_matrix();
+            pen = FontUnit(glyph.x.0 + advance.0);
+            ops.push(TextOperator::SetTransform(components::TransformMatrix {
+                a,
+                b,
+                c,
+                d,
+                e: piece.baseline_x,
+                f: Px(piece.start_y.0 + pen.0 as f32 * size / 1000.0),
+            }));
+            continue;
+        }
 
         // In `TJ`, a positive kern moves the pen to the left.
         out.kern(FontUnit(pen.0 - glyph.x.0));

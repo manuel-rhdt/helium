@@ -550,6 +550,12 @@ pub enum Text {
     /// https://www.w3.org/TR/css-writing-modes-3/#direction
     #[property]
     Direction(Direction),
+    /// https://www.w3.org/TR/css-writing-modes-3/#block-flow
+    #[property]
+    WritingMode(WritingMode),
+    /// https://www.w3.org/TR/css-writing-modes-3/#text-orientation
+    #[property]
+    TextOrientation(TextOrientation),
     #[ua_property]
     LineBreak(LineBreak),
     /// Inherited like `hyphens`, so it lives in the same style struct.
@@ -1579,6 +1585,36 @@ pub enum Direction {
     #[default]
     Ltr,
     Rtl,
+}
+
+/// The direction in which lines are laid out and in which they stack: the block flow.
+/// https://www.w3.org/TR/css-writing-modes-3/#block-flow
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum WritingMode {
+    /// Lines run from left to right (for `direction: ltr`) and stack from top to bottom.
+    #[default]
+    HorizontalTb,
+    /// Lines run from top to bottom and stack from right to left.
+    VerticalRl,
+    /// Lines run from top to bottom and stack from left to right.
+    VerticalLr,
+    /// Like `vertical-rl`, with all glyphs rotated.
+    SidewaysRl,
+    /// Lines run from bottom to top and stack from left to right, with all glyphs rotated.
+    SidewaysLr,
+}
+
+/// The orientation of the glyphs in vertical lines.
+/// https://www.w3.org/TR/css-writing-modes-3/#text-orientation
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum TextOrientation {
+    /// Characters of scripts that are written vertically stand upright, the rest is rotated.
+    #[default]
+    Mixed,
+    /// All characters stand upright.
+    Upright,
+    /// All characters are rotated.
+    Sideways,
 }
 
 /// How an element takes part in the Unicode bidirectional algorithm.
