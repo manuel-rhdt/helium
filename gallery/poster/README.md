@@ -38,3 +38,11 @@ Fonts: Noto Serif for the Indic, Southeast Asian, Caucasian and CJK scripts (Not
 
 The print is not listed in `gallery/order.txt` because the gallery build only uses the fonts built
 into Helium, and these fonts are not.
+
+## Masonry variant
+
+`masonry.html` sets the same specimens as tiles of their natural height, packed into columns with
+a flex container (`flex-direction: column; flex-wrap: wrap; justify-content: space-between`), so
+that there is no empty space under the short ones. The order runs down the columns, from the left.
+The page break between the two pages is chosen from the measured heights of the tiles.
+`scripts-poster-masonry.pdf` is the result.
