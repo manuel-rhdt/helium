@@ -207,9 +207,13 @@ fn shape_runs(
             (Some(index), _) => index,
             // Spaces stay in the current run (if its font has them) so that a run of fallback
             // characters is not split at every space.
+            // A colour emoji font is no exception: the space of Noto Color Emoji is as wide as an
+            // emoji.
             (None, Some((current, _, _)))
-                if single_space(cluster.text)
-                    .is_some_and(|space| font_at(font, fallbacks, current).covers(space)) =>
+                if single_space(cluster.text).is_some_and(|space| {
+                    let current = font_at(font, fallbacks, current);
+                    current.covers(space) && !current.has_color_glyphs()
+                }) =>
             {
                 current
             }
@@ -416,6 +420,20 @@ mod tests {
         );
         let fonts = resolver.ensure_coverage(&style, &font, text, &mut font_map);
         Setup { font, fonts }
+    }
+
+    #[test]
+    fn spaces_between_emoji_are_set_in_the_font_of_the_text() {
+        // the space of the colour emoji font is as wide as an emoji
+        let s = setup("a 😀 😀 b");
+        let glyphs = shape_directed("a 😀 😀 b", &s.font, &s.fonts, None, false);
+        let text = "a 😀 😀 b";
+        for (_, info) in &glyphs {
+            if text[info.cluster as usize..].starts_with(' ') {
+                assert_eq!(info.font, 0, "the space at {} is not in the font of the text", info.cluster);
+            }
+        }
+        assert!(glyphs.iter().any(|(_, info)| info.font != 0), "the emoji have a font of their own");
     }
 
     fn fonts_of(glyphs: &[(GlyphPosition, GlyphInfo)]) -> Vec<u16> {

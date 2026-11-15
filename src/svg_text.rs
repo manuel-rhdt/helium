@@ -90,7 +90,12 @@ impl TextShaper for HeliumShaper {
         fonts.no_kerning = !request.kerning;
 
         let fallbacks = font.fallbacks(&key);
-        let shaped = shape_directed(request.text, &font, &fonts, None, request.rtl);
+        let mut shaped = shape_directed(request.text, &font, &fonts, None, request.rtl);
+        if request.rtl {
+            // right-to-left text is in logical order, and the glyphs of the shaper are in visual
+            // order (left to right)
+            shaped.reverse();
+        }
         Some(
             shaped
                 .into_iter()
