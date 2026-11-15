@@ -11,6 +11,7 @@
 
 mod collapse;
 mod page_groups;
+mod replaced;
 mod style;
 mod table;
 mod tree;

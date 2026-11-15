@@ -28,6 +28,7 @@ use crate::style::properties::computed::{ComputedValues, PixelLength};
 
 use super::style::{is_out_of_flow, taffy_style_in};
 use crate::layout::writing_mode::Flow;
+use super::replaced;
 use super::table::{GridTracks, TableStructure};
 use taffy::DetailedGridInfo;
 
@@ -400,7 +401,13 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             // A length for one side of a content box gives the other side directly: taffy
             // would apply the ratio to the border box.
             if let Some((width, height)) = image.filter(|&(w, h)| w > 0.0 && h > 0.0) {
+                // (with limits, the proportions are kept by `compute_replaced_layout`)
+                let unlimited = node.style.min_size.width.is_auto()
+                    && node.style.min_size.height.is_auto()
+                    && node.style.max_size.width.is_auto()
+                    && node.style.max_size.height.is_auto();
                 if natural_ratio
+                    && unlimited
                     && node.style.box_sizing == taffy::BoxSizing::ContentBox
                     && !node.flow.is_vertical()
                 {
@@ -741,39 +748,7 @@ impl HeliumTree<'_, '_> {
         let image = image.or_else(|| {
             self.canvases.get(node.entity).map(|canvas| (canvas.width, canvas.height))
         });
-        // An image without a given size is as big as its pixels, but within `min-` and
-        // `max-width` and `-height`, which then change the other side too (CSS 2.1 10.4: the
-        // size keeps its proportions).
-        let image = image.map(|(width, height)| {
-            let parent = inputs.parent_size;
-            let style = &node.style;
-            let resolve = |dimension: taffy::LengthPercentageAuto, basis: Option<f32>| {
-                dimension.maybe_resolve(basis, calc)
-            };
-            let min_width = resolve(style.min_size.width, parent.width).unwrap_or(0.0);
-            let max_width = resolve(style.max_size.width, parent.width).unwrap_or(f32::INFINITY);
-            let min_height = resolve(style.min_size.height, parent.height).unwrap_or(0.0);
-            let max_height = resolve(style.max_size.height, parent.height).unwrap_or(f32::INFINITY);
-            if width <= 0.0 || height <= 0.0 {
-                return (width, height);
-            }
-            let ratio = width / height;
-            let mut w = width.clamp(min_width.min(max_width), max_width);
-            let h = (w / ratio).clamp(min_height.min(max_height), max_height);
-            if (w / h - ratio).abs() > 1e-3 {
-                // the height was limited: the width follows
-                w = (h * ratio).clamp(min_width.min(max_width), max_width);
-            }
-            (w, h)
-        });
-        // the size of an image is physical: in a vertical flow the width is the block size
-        let image = image.map(|size| node.flow.swap(size));
-        let intrinsic = if image.is_some() {
-            None
-        } else {
-            self.intrinsic_sizes.get(node.entity).copied()
-        };
-        // The padding and border, which the ratio of the content box does not include. (The sizes
+        // The padding and border, which the sizes of the content box do not include. (The sizes
         // that Taffy knows are the ones of the border box.)
         let extras = {
             let style = &node.style;
@@ -781,6 +756,72 @@ impl HeliumTree<'_, '_> {
             let edges = style.padding.resolve_or_zero(basis, calc) + style.border.resolve_or_zero(basis, calc);
             (edges.horizontal_axis_sum(), edges.vertical_axis_sum())
         };
+        // An image is as big as its pixels, or as the sizes that are given for it, but within
+        // `min-` and `max-width` and `-height`, which then change the other side too (CSS 2.1
+        // 10.4: the size keeps its proportions). Only horizontal boxes: the sizes of a vertical
+        // flow are turned around.
+        let border_box = node.style.box_sizing == taffy::BoxSizing::BorderBox;
+        let to_content = |value: Option<f32>, extra: f32| {
+            value.map(|value| if border_box { (value - extra).max(0.0) } else { value })
+        };
+        let limits = image.filter(|_| !node.flow.is_vertical()).map(|natural| {
+            // an `aspect-ratio` that is not `auto` replaces the ratio of the image
+            let natural = match node.style.aspect_ratio {
+                Some(ratio) if ratio > 0.0 => (natural.0, natural.0 / ratio),
+                _ => natural,
+            };
+            let parent = inputs.parent_size;
+            let style = &node.style;
+            let size = |dimension: taffy::Dimension, basis: Option<f32>| dimension.maybe_resolve(basis, calc);
+            let limit = |dimension: taffy::LengthPercentageAuto, basis: Option<f32>| {
+                dimension.maybe_resolve(basis, calc)
+            };
+            let min = (
+                to_content(limit(style.min_size.width, parent.width), extras.0).unwrap_or(0.0),
+                to_content(limit(style.min_size.height, parent.height), extras.1).unwrap_or(0.0),
+            );
+            let max = (
+                to_content(limit(style.max_size.width, parent.width), extras.0).unwrap_or(f32::INFINITY),
+                to_content(limit(style.max_size.height, parent.height), extras.1).unwrap_or(f32::INFINITY),
+            );
+            let specified = (
+                to_content(size(style.size.width, parent.width), extras.0),
+                to_content(size(style.size.height, parent.height), extras.1),
+            );
+            (natural, specified, min, max)
+        });
+        // the size of the box, if it has no size from its container yet
+        let given = limits.map(|(natural, specified, min, max)| {
+            replaced::constrain(natural, specified, min, max)
+        });
+        let image = match (limits, given) {
+            (Some((natural, _, min, max)), _) => {
+                Some(replaced::constrain(natural, (None, None), min, max))
+            }
+            _ => image,
+        };
+        // the size of an image is physical: in a vertical flow the width is the block size
+        let image = image.map(|size| node.flow.swap(size));
+        let intrinsic = if image.is_some() {
+            None
+        } else {
+            self.intrinsic_sizes.get(node.entity).copied()
+        };
+        // The box has the size that its sides and limits give if its container gives it none.
+        let own_style = given
+            .filter(|_| inputs.known_dimensions.width.is_none() && inputs.known_dimensions.height.is_none())
+            .map(|(width, height)| {
+                let mut style = node.style.clone();
+                let border_box_size = |content: f32, extra: f32| if border_box { content + extra } else { content };
+                style.size.width = taffy::Dimension::length(border_box_size(width, extras.0));
+                style.size.height = taffy::Dimension::length(border_box_size(height, extras.1));
+                // (the limits are in the size now)
+                style.min_size = taffy::Size { width: taffy::style_helpers::auto(), height: taffy::style_helpers::auto() };
+                style.max_size = taffy::Size { width: taffy::style_helpers::auto(), height: taffy::style_helpers::auto() };
+                style.aspect_ratio = None;
+                style
+            });
+        let style = own_style.as_ref().unwrap_or(&node.style);
         // An image with a size on one side only (a flex item whose main size was resolved, or a
         // stretched grid item) has the other side from its proportions.
         // (an `aspect-ratio` that is not `auto` is the ratio instead of the one of the image)
@@ -788,7 +829,7 @@ impl HeliumTree<'_, '_> {
             .style
             .aspect_ratio
             .or_else(|| image.filter(|&(w, h)| w > 0.0 && h > 0.0).map(|(w, h)| w / h));
-        let mut output = compute_leaf_layout(inputs, &node.style, calc, |known, _available| Size {
+        let mut output = compute_leaf_layout(inputs, style, calc, |known, _available| Size {
             width: known.width.unwrap_or_else(|| match (known.height, ratio) {
                 (Some(height), Some(ratio)) => ((height - extras.1).max(0.0) * ratio + extras.0),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),

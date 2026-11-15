@@ -146,3 +146,40 @@ fn a_canvas_is_a_replaced_box() {
     assert_eq!(size(&dump, "c"), (100.0, 50.0));
     assert_eq!(size(&dump, "d"), (40.0, 20.0));
 }
+
+#[test]
+fn limits_on_an_image_keep_its_proportions() {
+    // the usual `img { max-width: 100%; height: auto }` and its relatives, in a box 200 wide
+    let case = |style: &str| {
+        let dump = layout(
+            "limits",
+            &format!("<div style='width:200px'><img id=a src='{}' style='{}'></div>", image(), style),
+        );
+        size(&dump, "a")
+    };
+    assert_eq!(case("width:100%"), (200.0, 200.0));
+    assert_eq!(case("width:300px;max-width:100%;height:auto"), (200.0, 200.0));
+    assert_eq!(case("width:300px;max-width:200px"), (200.0, 200.0));
+    assert_eq!(case("height:300px;max-height:80px"), (80.0, 80.0));
+    assert_eq!(case("width:20px;min-width:150px"), (150.0, 150.0));
+    assert_eq!(case("min-width:150px"), (150.0, 150.0));
+    assert_eq!(case("max-height:40px"), (40.0, 40.0));
+    // limits on both sides: the one that is further off wins
+    assert_eq!(case("width:300px;height:300px;max-width:200px;max-height:250px"), (200.0, 250.0));
+    // the limits are for the content box: the padding and border come on top
+    assert_eq!(case("width:300px;max-width:100%;padding:3px;border:2px solid"), (210.0, 210.0));
+}
+
+#[test]
+fn limits_apply_to_the_box_that_box_sizing_names() {
+    let dump = layout(
+        "border-box",
+        &format!(
+            "<div style='width:200px'><img id=a src='{}' style='box-sizing:border-box;width:300px;max-width:100%;padding:5px;border:5px solid'></div>",
+            image()
+        ),
+    );
+    // the border box is 200 wide: 170 of content plus 30 of padding and border, and as high
+    assert_eq!(size(&dump, "a").0, 200.0);
+    assert_eq!(size(&dump, "a").1, 200.0);
+}
