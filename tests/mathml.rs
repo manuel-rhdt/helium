@@ -188,37 +188,32 @@ fn mspace_with_negative_width_moves_back() {
     );
 }
 
+/// The glyph ids of the `TJ` operators of the text, in order (the numbers between them are kerns).
+fn glyph_ids(dump: &Value) -> Vec<u64> {
+    let mut ids = Vec::new();
+    for run in dump["paint"]["text"].as_array().unwrap() {
+        for op in run["ops"].as_array().unwrap() {
+            if op["op"] == "kerned" {
+                for item in op["items"].as_array().unwrap() {
+                    if let Some(glyphs) = item.as_array() {
+                        ids.extend(glyphs.iter().map(|g| g.as_u64().unwrap()));
+                    }
+                }
+            }
+        }
+    }
+    ids
+}
+
 fn glyph_count_in_math_font(dump: &Value) -> usize {
-    dump["paint"]["text"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|run| run["ops"].as_array().unwrap())
-        .filter(|op| op["op"] == "glyphs")
-        .map(|op| op["glyphs"].as_array().unwrap().len())
-        .sum()
+    glyph_ids(dump).len()
 }
 
 #[test]
 fn multi_letter_identifiers_are_upright_unless_a_variant_is_given() {
     // the glyph ids of the same letters in italic and in normal style differ
     let glyphs = |name: &str, math: &str| {
-        let dump = dump(name, &format!("<p><math>{}</math></p>", math));
-        let mut ids = Vec::new();
-        for run in dump["paint"]["text"].as_array().unwrap() {
-            for op in run["ops"].as_array().unwrap() {
-                if op["op"] == "glyphs" {
-                    ids.extend(
-                        op["glyphs"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .map(|g| g.as_u64().unwrap()),
-                    );
-                }
-            }
-        }
-        ids
+        glyph_ids(&dump(name, &format!("<p><math>{}</math></p>", math)))
     };
     let multi = glyphs("mi_multi", "<mi>sin</mi>");
     let upright = glyphs("mi_multi_normal", r#"<mi mathvariant="normal">sin</mi>"#);
