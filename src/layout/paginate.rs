@@ -639,11 +639,24 @@ impl<'world> System<'world> for Paginator {
 
         // Absolutely positioned boxes are not part of the text list. They are placed on the page
         // of their containing block, which for the initial containing block is the first page.
-        for group in absolute_groups
-            .groups
-            .iter()
-            .filter(|group| group.owner.is_none() && group.anchor.is_none())
-        {
+        // (the ones in an `inline-block` box are placed with the box, once its line is known)
+        let in_atom = |mut group: usize| {
+            while let Some(parent) = absolute_groups.groups[group].parent {
+                if absolute_groups.groups[parent].owner.is_some() {
+                    return true;
+                }
+                if absolute_groups.groups[parent].anchor.is_some() {
+                    // placed with the box it is anchored to
+                    return false;
+                }
+                group = parent;
+            }
+            false
+        };
+        for (index, group) in absolute_groups.groups.iter().enumerate() {
+            if group.owner.is_some() || group.anchor.is_some() || in_atom(index) {
+                continue;
+            }
             let page = group
                 .containing_block
                 .and_then(|cb| positions.get(cb))

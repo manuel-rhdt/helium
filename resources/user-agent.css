@@ -411,6 +411,20 @@ th {
   padding: 1px;
 }
 
+/* The content of a cell is in the middle of it, unless the author says otherwise. */
+thead,
+tbody,
+tfoot,
+table > tr {
+  vertical-align: middle;
+}
+
+tr,
+td,
+th {
+  vertical-align: inherit;
+}
+
 th {
   font-weight: bold;
   text-align: center;

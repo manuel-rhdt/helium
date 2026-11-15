@@ -302,8 +302,9 @@ impl InlineFormattingContext {
         entities: &Entities,
         text_runs: &ReadStorage<components::TextRun>,
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+        aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> Result<(), String> {
-        let lines = self.compute_lines(line_width, indent, text_runs, intrinsic_sizes)?;
+        let lines = self.compute_lines(line_width, indent, text_runs, intrinsic_sizes, aligns)?;
         self.lines = lines
             .into_iter()
             .map(|line| Line {
@@ -325,6 +326,7 @@ impl InlineFormattingContext {
         indent: Px,
         text_runs: &ReadStorage<components::TextRun>,
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+        aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> Result<Vec<MeasuredLine>, String> {
         let breakpoints = &self.break_points;
         if breakpoints.is_empty() {
@@ -389,7 +391,7 @@ impl InlineFormattingContext {
             .windows(2)
             .map(|window| {
                 let (baseline, height) =
-                    self.line_height(window[0], window[1], text_runs, intrinsic_sizes);
+                    self.line_height(window[0], window[1], text_runs, intrinsic_sizes, aligns);
                 if height == Px(0.0) {
                     return Err(format!(
                         "line between break points {} and {} has zero height",
@@ -482,6 +484,7 @@ impl InlineFormattingContext {
         to_index: usize,
         text_runs: &ReadStorage<components::TextRun>,
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+        aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> (Px, Px) {
         let from = self.break_points[from_index];
         let to = self.break_points[to_index];
@@ -490,27 +493,42 @@ impl InlineFormattingContext {
             .element_span(from, to)
             .map_or(&self.elements[0..0], |(start, end)| &self.elements[start..=end]);
 
-        let (max_ascent, max_descent) = span
-            .iter()
-            .map(|&ent| {
-                if let Some(text_run) = text_runs.get(ent) {
-                    (text_run.baseline, text_run.line_height - text_run.baseline)
-                } else if let Some(&IntrinsicSize::SizeWithBaseline {
-                    height, baseline, ..
-                }) = intrinsic_sizes.get(ent)
-                {
-                    (baseline, height - baseline)
-                } else {
-                    log::error!("cannot layout element (entity {}) in line (every inline element must have an intrinsic size)", ent.id());
-                    (Px(0.0), Px(0.0))
+        let (mut max_ascent, mut max_descent) = self.strut;
+        // the height that the boxes that are aligned with the top and the bottom of the line need
+        let (mut need_top, mut need_bottom) = (Px(0.0), Px(0.0));
+        for &ent in span {
+            let Some(own) = own_extent(ent, text_runs, intrinsic_sizes) else {
+                log::error!("cannot layout element (entity {}) in line (every inline element must have an intrinsic size)", ent.id());
+                continue;
+            };
+            let placement = aligns
+                .get(ent)
+                .map_or(components::LinePlacement::Raise(Px(0.0)), |align| align.place(own));
+            match placement {
+                components::LinePlacement::Raise(raise) => {
+                    max_ascent = max_ascent.max(own.0 + raise);
+                    max_descent = max_descent.max(own.1 - raise);
                 }
-            })
-            .fold(
-                self.strut,
-                |(height, depth), (new_height, new_depth)| {
-                    (height.max(new_height), depth.max(new_depth))
-                },
-            );
+                components::LinePlacement::Top { ascent, descent, .. } => {
+                    need_top = need_top.max(ascent + descent)
+                }
+                components::LinePlacement::Bottom { ascent, descent, .. } => {
+                    need_bottom = need_bottom.max(ascent + descent)
+                }
+            }
+        }
+        // the line box is as high as the boxes that are aligned with its edges need; what is
+        // missing is added below the baseline for the ones at the top and above it for the ones at
+        // the bottom
+        let need = need_top.max(need_bottom);
+        if need > max_ascent + max_descent {
+            let missing = need - (max_ascent + max_descent);
+            if need_top >= need_bottom {
+                max_descent += missing;
+            } else {
+                max_ascent += missing;
+            }
+        }
 
         assert!(max_ascent + max_descent != Px(0.0));
         (max_ascent, max_ascent + max_descent)
@@ -1366,6 +1384,44 @@ impl<'a> System<'a> for ListMarkerCreator {
 /// [`components::AbsoluteGroup::owner`]. This runs after pagination because the line the box is
 /// on can be on any page, and before the line boxes are created, because everything that is
 /// drawn is derived from the final positions.
+/// The ascent and descent of the box of an inline-level entity: a piece of text or an atomic box.
+fn own_extent(
+    entity: Entity,
+    text_runs: &ReadStorage<components::TextRun>,
+    intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+) -> Option<(Px, Px)> {
+    if let Some(run) = text_runs.get(entity) {
+        return Some((run.baseline, run.line_height - run.baseline));
+    }
+    match intrinsic_sizes.get(entity) {
+        Some(&IntrinsicSize::SizeWithBaseline { height, baseline, .. }) => {
+            Some((baseline, height - baseline))
+        }
+        _ => None,
+    }
+}
+
+/// How far the box of `entity` is raised above the baseline of its line (which is
+/// `line_baseline` from the top of a line of `line_height`) by its `vertical-align`.
+fn align_raise(
+    entity: Entity,
+    own: (Px, Px),
+    aligns: &ReadStorage<components::VerticalAlignment>,
+    line_baseline: Px,
+    line_height: Px,
+) -> Px {
+    let Some(align) = aligns.get(entity) else {
+        return Px(0.0);
+    };
+    match align.place(own) {
+        components::LinePlacement::Raise(raise) => raise,
+        components::LinePlacement::Top { inner, ascent, .. } => line_baseline - ascent + inner,
+        components::LinePlacement::Bottom { inner, descent, .. } => {
+            descent - (line_height - line_baseline) + inner
+        }
+    }
+}
+
 pub struct PlaceInlineBlocks;
 
 impl<'a> System<'a> for PlaceInlineBlocks {
@@ -1373,10 +1429,15 @@ impl<'a> System<'a> for PlaceInlineBlocks {
         Read<'a, components::AbsoluteGroups>,
         ReadStorage<'a, InlineFormattingContext>,
         ReadStorage<'a, IntrinsicSize>,
+        ReadStorage<'a, components::RelativeOffset>,
+        ReadStorage<'a, components::VerticalAlignment>,
         WriteStorage<'a, Position>,
     );
 
-    fn run(&mut self, (groups, ifcs, intrinsic_sizes, mut positions): Self::SystemData) {
+    fn run(
+        &mut self,
+        (groups, ifcs, intrinsic_sizes, relative_offsets, aligns, mut positions): Self::SystemData,
+    ) {
         const EPSILON: f32 = 0.01;
 
         // where the margin box of every box is, as (x, y, page)
@@ -1400,6 +1461,32 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                 // right, so the box hangs from there.
                 let flow = ifc.flow;
                 let line_size = flow.swap((line_pos.width, line_pos.height)).0;
+                // `position: relative` moves the box after it is placed
+                let shift = |atom: Entity| {
+                    let (mut dx, mut dy) = relative_offsets
+                        .get(atom)
+                        .map_or((Px(0.0), Px(0.0)), |offset| {
+                            offset.resolve_in_line(flow, line_size, ifc.base_rtl)
+                        });
+                    // `vertical-align`
+                    if let Some(&IntrinsicSize::SizeWithBaseline { height, baseline, .. }) =
+                        intrinsic_sizes.get(atom)
+                    {
+                        let raise = align_raise(
+                            atom,
+                            (baseline, height - baseline),
+                            &aligns,
+                            line.baseline,
+                            line.height,
+                        );
+                        if flow.is_vertical() {
+                            dx += raise;
+                        } else {
+                            dy = dy - raise;
+                        }
+                    }
+                    (dx, dy)
+                };
                 let place = |along: Px, baseline: Px, height: Px| {
                     if flow.is_vertical() {
                         let right = line_pos.x + line_pos.width;
@@ -1421,7 +1508,8 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                             continue;
                         }
                         let (x, y) = place(offset, baseline, height);
-                        placements.insert(atom, (x, y, line_pos.page));
+                        let (dx, dy) = shift(atom);
+                        placements.insert(atom, (x + dx, y + dy, line_pos.page));
                     }
                     continue;
                 }
@@ -1452,7 +1540,8 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                         .count();
                     let along = (offset - from.advance_after) + word_spacing * spaces as f32;
                     let (x, y) = place(along, baseline, height);
-                    placements.insert(atom, (x, y, line_pos.page));
+                    let (dx, dy) = shift(atom);
+                    placements.insert(atom, (x + dx, y + dy, line_pos.page));
                 }
             }
         }
@@ -1479,21 +1568,36 @@ impl<'a> System<'a> for PlaceInlineBlocks {
         for group in order {
             let owner = groups.groups[group].owner.unwrap();
             let (dx, dy, page) = placements[&owner];
-            for &entity in &groups.groups[group].entities {
-                if let Some(pos) = positions.get_mut(entity) {
-                    pos.x += dx;
-                    pos.y += dy;
-                    pos.page = page;
+            // the entities of the box, and of the absolutely positioned boxes in it (those
+            // have no owner: their containing block is the box or a box in it)
+            let mut moving = vec![group];
+            let mut next = 0;
+            while let Some(&current) = moving.get(next) {
+                next += 1;
+                for &entity in &groups.groups[current].entities {
+                    if let Some(pos) = positions.get_mut(entity) {
+                        pos.x += dx;
+                        pos.y += dy;
+                        pos.page = page;
+                    }
                 }
-            }
-            for (child, other) in groups.groups.iter().enumerate() {
-                if other.parent != Some(group) || child == group {
-                    continue;
-                }
-                if let Some(placement) = other.owner.and_then(|owner| placements.get_mut(&owner)) {
-                    placement.0 += dx;
-                    placement.1 += dy;
-                    placement.2 = page;
+                for (child, other) in groups.groups.iter().enumerate() {
+                    if other.parent != Some(current) || child == current {
+                        continue;
+                    }
+                    match other.owner {
+                        // (a group that is anchored to a box is placed with that box)
+                        None if other.anchor.is_some() => {}
+                        None => moving.push(child),
+                        Some(owner) => {
+                            // an inline-block box in the box moves with it
+                            if let Some(placement) = placements.get_mut(&owner) {
+                                placement.0 += dx;
+                                placement.1 += dy;
+                                placement.2 = page;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1509,6 +1613,8 @@ impl<'a> System<'a> for LineBoxCreator {
         ReadStorage<'a, components::TextRun>,
         ReadStorage<'a, components::IntrinsicSize>,
         ReadStorage<'a, ComputedValues>,
+        ReadStorage<'a, components::RelativeOffset>,
+        ReadStorage<'a, components::VerticalAlignment>,
         Read<'a, EntityHrefs>,
         Write<'a, Hyperlinks>,
         WriteStorage<'a, components::Position>,
@@ -1526,6 +1632,8 @@ impl<'a> System<'a> for LineBoxCreator {
             text_runs,
             intrinsic_sizes,
             computed_values,
+            relative_offsets,
+            aligns,
             entity_hrefs,
             mut hyperlinks,
             mut positions,
@@ -1557,9 +1665,9 @@ impl<'a> System<'a> for LineBoxCreator {
             let mut paragraph_start = (Px(0.0), Px(0.0));
 
             // The x-intervals on the current line of the hyperlinks that have text on it, as
-            // `(href, link node, start, end)`. Adjacent intervals of the same link are merged as
+            // `(href, link node, start, end, shift down)`. Adjacent intervals of the same link are merged as
             // the pieces of the line are visited from left to right.
-            let mut link_intervals: Vec<(&str, Option<StructNodeId>, Px, Px)> = Vec::new();
+            let mut link_intervals: Vec<(&str, Option<StructNodeId>, Px, Px, Px)> = Vec::new();
 
             // The tag of the open marked-content sequence and the end of the text it covers so
             // far. Consecutive pieces of the same text node share a sequence as long as they
@@ -1667,6 +1775,35 @@ impl<'a> System<'a> for LineBoxCreator {
                     // The x position of the current piece on the line, before its width is
                     // added to `advance`.
                     let piece_start = advance;
+                    // `position: relative` on an inline box moves the text in it, and the boxes
+                    // that are atomic inlines (those are shifted when they are placed); the
+                    // space that they take up on the line stays. (Not in vertical text: the text
+                    // matrix is turned there.)
+                    let (mut physical_x, mut physical_y) = relative_offsets
+                        .get(entity)
+                        .map_or((Px(0.0), Px(0.0)), |offset| {
+                            offset.resolve_in_line(flow, line_size, ifc.base_rtl)
+                        });
+                    // `vertical-align` raises the box (to the right in vertical text, where the
+                    // tops of the glyphs are)
+                    if let Some(own) = own_extent(entity, &text_runs, &intrinsic_sizes) {
+                        let raise = align_raise(entity, own, &aligns, line.baseline, line.height);
+                        if flow.is_vertical() {
+                            physical_x += raise;
+                        } else {
+                            physical_y = physical_y - raise;
+                        }
+                    }
+                    // the same move along the line and across it: along the line is to the
+                    // right (down in vertical text) and across it is down (to the right)
+                    let (shift_x, shift_y) = if flow.is_vertical() {
+                        (physical_y, Px(0.0) - physical_x)
+                    } else {
+                        (physical_x, physical_y)
+                    };
+                    let shifted = shift_x != Px(0.0) || shift_y != Px(0.0);
+                    // the move across the line, in physical terms
+                    let cross_shift = if flow.is_vertical() { physical_x } else { physical_y };
                     let tag = text_runs
                         .get(entity)
                         .and_then(|_| structure.content_tag(entity, piece.start));
@@ -1704,6 +1841,13 @@ impl<'a> System<'a> for LineBoxCreator {
                         // the hyphen of a hyphenated word goes at its end
                         let hyphen = to_break.hyphen && Some(piece_index) == last_piece;
                         let mut piece_width = Px(0.0);
+                        if shifted && text_runs.get(entity).is_some() {
+                            ops.push(TextOperator::NewLine {
+                                x_offset: piece_start + shift_x - text_cursor,
+                                leading: shift_y,
+                            });
+                            text_cursor = piece_start + shift_x;
+                        }
                         if hyphen && rtl {
                             ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
                             piece_width +=
@@ -1742,7 +1886,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         color_glyphs.extend(take_color_glyphs(
                             &mut ops,
                             ops_before,
-                            (line_pos.x + piece_start, line_pos.y + line.baseline),
+                            (line_pos.x + piece_start + physical_x, line_pos.y + line.baseline + physical_y),
                             run.face.color,
                         ));
                         if hyphen && !rtl {
@@ -1761,14 +1905,22 @@ impl<'a> System<'a> for LineBoxCreator {
                             );
                             ops.push(TextOperator::EndMarkedContent);
                         }
+                        if shifted {
+                            // back to where the next piece starts
+                            ops.push(TextOperator::NewLine {
+                                x_offset: piece_width - shift_x,
+                                leading: Px(0.0) - shift_y,
+                            });
+                            text_cursor = piece_start + piece_width;
+                        }
                         if !run.decoration.is_none() && piece_width > Px(0.0) {
                             let page_pos = components::Position {
                                 y: line_pos.y,
                                 height: Px(0.0),
                                 ..line_pos
                             };
-                            let x = line_pos.x + advance;
-                            let baseline = line_pos.y + line.baseline;
+                            let x = line_pos.x + advance + physical_x;
+                            let baseline = line_pos.y + line.baseline + physical_y;
                             for ((offset, thickness), enabled) in
                                 decoration_lines(run.face.font_size, run.decoration)
                             {
@@ -1780,10 +1932,10 @@ impl<'a> System<'a> for LineBoxCreator {
                                 // is to the left
                                 let line_op = if flow.is_vertical() {
                                     GraphicsOp::Line {
-                                        from_x: Px(line_origin.0) - offset,
-                                        from_y: line_pos.y + advance,
-                                        to_x: Px(line_origin.0) - offset,
-                                        to_y: line_pos.y + advance + piece_width,
+                                        from_x: Px(line_origin.0) - offset + physical_x,
+                                        from_y: line_pos.y + advance + physical_y,
+                                        to_x: Px(line_origin.0) - offset + physical_x,
+                                        to_y: line_pos.y + advance + physical_y + piece_width,
                                         thickness,
                                     }
                                 } else {
@@ -1841,8 +1993,8 @@ impl<'a> System<'a> for LineBoxCreator {
                                 .insert(
                                     entity,
                                     Position {
-                                        x: line_pos.x + advance,
-                                        y: line_pos.y + line.baseline - baseline,
+                                        x: line_pos.x + advance + physical_x,
+                                        y: line_pos.y + line.baseline - baseline + physical_y,
                                         width,
                                         height,
                                         ..paragraph_pos.unwrap()
@@ -1865,11 +2017,18 @@ impl<'a> System<'a> for LineBoxCreator {
                                 Some(interval)
                                     if interval.0 == href
                                         && interval.1 == node
-                                        && interval.3 == piece_start =>
+                                        && interval.3 == piece_start + shift_x
+                                        && interval.4 == cross_shift =>
                                 {
-                                    interval.3 = advance;
+                                    interval.3 = advance + shift_x;
                                 }
-                                _ => link_intervals.push((href, node, piece_start, advance)),
+                                _ => link_intervals.push((
+                                    href,
+                                    node,
+                                    piece_start + shift_x,
+                                    advance + shift_x,
+                                    cross_shift,
+                                )),
                             }
                         }
                     }
@@ -1884,7 +2043,7 @@ impl<'a> System<'a> for LineBoxCreator {
                 }
 
                 // Convert the intervals of this line into clickable areas for the hyperlinks.
-                for (href, node, start, end) in link_intervals.drain(..) {
+                for (href, node, start, end, down) in link_intervals.drain(..) {
                     if end <= start {
                         continue;
                     }
@@ -1892,7 +2051,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         page: line_pos.page,
                         rect: if flow.is_vertical() {
                             Rect {
-                                x: line_pos.x,
+                                x: line_pos.x + down,
                                 y: line_pos.y + start,
                                 width: line_pos.width,
                                 height: end - start,
@@ -1900,7 +2059,7 @@ impl<'a> System<'a> for LineBoxCreator {
                         } else {
                             Rect {
                                 x: line_pos.x + start,
-                                y: line_pos.y,
+                                y: line_pos.y + down,
                                 width: end - start,
                                 height: line.height,
                             }

@@ -9,7 +9,9 @@ The tests use `checkLayout(...)` from `resources/check-layout-th.js`: elements c
 those against the computed layout (see `src/layout/check.rs`); `tests/wpt.rs` runs every file.
 
 Only tests that are fully static can be used, because helium does not run scripts. Tests whose
-script modifies the document before calling `checkLayout` are not vendored.
+script modifies the document, or computes the expectations, before calling `checkLayout` are not
+vendored: they could only fail, or check nothing (`evaluateStyleChange`, `.style.x = ...`,
+`setAttribute('data-expected-...')`, `getComputedStyle`).
 
 * Add a test: copy it from WPT into the same relative path under this directory.
 * Known failures live in `expectations.txt`. They must keep failing, so a fix to helium shows up

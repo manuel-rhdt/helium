@@ -72,10 +72,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   sheets are read again when the size they set differs from the one assumed); `(hover)`, `(pointer)` and
   similar features say that there is no pointer. `rem` is relative to the root element (in
   `@page` and its margin boxes, to the initial font size).
-- **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `grid`, `table` and the table
-  parts, `list-item`, `none`), `position: absolute`, block, inline, flexbox
+- **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`,
+  `table` and the table
+  parts, `list-item`, `none`), `vertical-align` (on inline boxes, and `top`, `middle` and `bottom` in table cells; the baselines of
+  the cells in a row are not aligned), `position: absolute` and `position: relative` (`left`, `right`,
+  `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in
+  vertical text too; percentages of `left`/`right` in vertical lines count as `auto`), block, inline, flexbox
   (`flex-*`, `gap`, `justify-*`, `align-*`) and grid (`grid-template-*`, `grid-auto-*`,
-  `grid-column`, `grid-row`) layout, tables (`border-collapse`, `border-spacing`).
+  `grid-column`, `grid-row`, also for absolutely positioned children, which are placed in their grid area) layout, tables (`border-collapse`, `border-spacing`).
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
   `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space`, `hyphens`,
@@ -151,7 +155,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`,
 `@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
-relative`/`fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
-`outline`, `vertical-align`, `word-break`/`overflow-wrap`,
+fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
+`outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `vw`/`vh`, `ex`/`ch` and other units, scripting, and form
 interaction.

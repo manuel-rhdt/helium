@@ -38,6 +38,12 @@ use tree::{Content, HeliumTree, Node};
 /// boxes. Absolutely positioned boxes are painted on top of the in-flow content.
 const ABS_Z_STEP: i64 = 100000;
 
+/// A relatively positioned box is painted in the layer of the positioned boxes, on top of the
+/// in-flow content that follows it. The depth of the boxes in it adds to the step, so it has to
+/// be bigger than the depth of any tree, and it is smaller than [`ABS_Z_STEP`] to leave room
+/// for the absolutely positioned boxes above.
+const REL_Z_STEP: i64 = 1000;
+
 pub struct TaffyBlockLayout {
     pub root_entity: Entity,
     pub page_width: PixelLength,
@@ -55,6 +61,7 @@ impl TaffyBlockLayout {
         world.register::<BlockFormattingContext>();
         world.register::<InlineFormattingContext>();
         world.register::<TextRun>();
+        world.register::<crate::layout::components::VerticalAlignment>();
         world.register::<TableCellSpan>();
         world.register::<TableColumns>();
         world.entry::<TextList>().or_insert_with(Default::default);
@@ -74,6 +81,7 @@ impl TaffyBlockLayout {
         let page_margins = world.read_resource::<crate::layout::pages::PageMargins>();
         let mut group_boxes = world.write_storage::<crate::layout::components::PageGroupBox>();
         let text_runs = world.read_storage::<TextRun>();
+        let aligns = world.read_storage::<crate::layout::components::VerticalAlignment>();
         let table_spans = world.read_storage::<TableCellSpan>();
         let table_columns = world.read_storage::<TableColumns>();
 
@@ -89,6 +97,7 @@ impl TaffyBlockLayout {
             intrinsic_sizes: &mut intrinsic_sizes,
             images: &images,
             text_runs: &text_runs,
+            aligns: &aligns,
             table_spans: &table_spans,
             table_columns: &table_columns,
             fallback_line_width: content_width.max(0.0),
@@ -125,6 +134,7 @@ impl TaffyBlockLayout {
             computed_values: &computed_values,
             inline_ctxs: &mut inline_ctxs,
             text_runs: &text_runs,
+            aligns: &aligns,
             intrinsic_sizes: &intrinsic_sizes,
             positions: &mut world.write_storage::<Position>(),
             decorations: &mut world.write_storage::<Decoration>(),
@@ -157,6 +167,7 @@ struct Writer<'a, 'w> {
     computed_values: &'a ReadStorage<'w, ComputedValues>,
     inline_ctxs: &'a mut WriteStorage<'w, InlineFormattingContext>,
     text_runs: &'a ReadStorage<'w, TextRun>,
+    aligns: &'a ReadStorage<'w, crate::layout::components::VerticalAlignment>,
     intrinsic_sizes: &'a WriteStorage<'w, IntrinsicSize>,
     positions: &'a mut WriteStorage<'w, Position>,
     decorations: &'a mut WriteStorage<'w, Decoration>,
@@ -196,6 +207,16 @@ impl<'a> Writer<'a, '_> {
                 page: 0,
             },
         );
+    }
+
+    /// The z index and the z index offset of a child of a box at `z`: a relatively positioned box
+    /// starts a layer of its own above the in-flow content.
+    fn child_z(&self, child: NodeId, z: i64, z_base: i64) -> (i64, i64) {
+        if self.node(child).style.position == taffy::Position::Relative {
+            (z_base + REL_Z_STEP + 1, z_base + REL_Z_STEP)
+        } else {
+            (z + 1, z_base)
+        }
     }
 
     fn emit(&mut self, element: BlockLevelElement) {
@@ -293,6 +314,8 @@ impl<'a> Writer<'a, '_> {
         }
 
         let children = &node.children;
+        // the content of a table cell that `vertical-align` moves down
+        let shift = node.content_shift;
         match content {
             Content::Blocks => {
                 for &child in children {
@@ -300,8 +323,10 @@ impl<'a> Writer<'a, '_> {
                         self.anchors.insert(child, self.last_flow_entity);
                         continue;
                     }
-                    let child_origin = frame.child_origin(&self.node(child).layout);
-                    self.write_box(child, child_origin, flow, z + 1, z_base)?;
+                    let mut child_origin = frame.child_origin(&self.node(child).layout);
+                    child_origin.y += shift;
+                    let (child_z, child_base) = self.child_z(child, z, z_base);
+                    self.write_box(child, child_origin, flow, child_z, child_base)?;
                 }
             }
             Content::Inline => {
@@ -315,12 +340,13 @@ impl<'a> Writer<'a, '_> {
                     // the border box is inside of the margin box, which is placed on the line
                     let margin = flow.edges_to_physical(self.node(atom).layout.margin);
                     let location = Point { x: margin.left, y: margin.top };
-                    self.write_box(atom, location, flow, z + 1, z_base)?;
+                    let (atom_z, atom_base) = self.child_z(atom, z, z_base);
+                    self.write_box(atom, location, flow, atom_z, atom_base)?;
                     self.group_stack.pop();
                 }
                 let content_offset = (
                     logical_border.left + logical_padding.left,
-                    logical_border.top + logical_padding.top,
+                    logical_border.top + logical_padding.top + shift,
                 );
                 let content_inline_size = frame.inline_size
                     - (logical_border.left + logical_border.right)
@@ -336,8 +362,10 @@ impl<'a> Writer<'a, '_> {
                 // The captions, row groups and rows in document order. The rows and groups
                 // contain their cells, which are placed relative to them.
                 for &child in node.table.iter().flat_map(|table| &table.boxes) {
-                    let child_origin = frame.child_origin(&self.node(child).layout);
-                    self.write_box(child, child_origin, flow, z + 1, z_base)?;
+                    let mut child_origin = frame.child_origin(&self.node(child).layout);
+                    child_origin.y += shift;
+                    let (child_z, child_base) = self.child_z(child, z, z_base);
+                    self.write_box(child, child_origin, flow, child_z, child_base)?;
                 }
                 for &child in children {
                     if self.out_of_flow[usize::from(child)] {
@@ -399,6 +427,7 @@ impl<'a> Writer<'a, '_> {
             self.entities,
             self.text_runs,
             self.intrinsic_sizes,
+            self.aligns,
         )
         .map_err(|e| format!("cannot break lines of {:?}: {}", entity, e))?;
         let align = ifc.resolved_text_align();
