@@ -262,6 +262,6 @@ fn stroked_text_uses_the_stroke_text_rendering_mode() {
              <text x=\"5\" y=\"55\" font-size=\"20\" fill=\"blue\" stroke=\"red\">both</text></svg>"
         ),
     );
-    assert!(count(&r.pdf, "\n1 Tr") >= 1, "{}", r.pdf);
-    assert!(count(&r.pdf, "\n2 Tr") >= 1, "{}", r.pdf);
+    assert!(count(&r.pdf, "BT 1 Tr") >= 1, "{}", r.pdf);
+    assert!(count(&r.pdf, "BT 2 Tr") >= 1, "{}", r.pdf);
 }
