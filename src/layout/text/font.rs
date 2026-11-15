@@ -310,6 +310,26 @@ impl Font {
             .or_insert_with(|| scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0)))
     }
 
+    /// Records that `glyph` is drawn for `text` (the text of SVG images, whose glyphs are shown
+    /// by the PDF writer): the glyph is embedded and is extracted as `text`. A glyph that is used
+    /// for different text, or one that stands for more than a character, gets the text of its
+    /// first use as the fallback text of the `ToUnicode` map.
+    pub(crate) fn record_glyph(&self, glyph: GlyphIndex, text: &str) {
+        self.advance(glyph);
+        if text.is_empty() {
+            return;
+        }
+        let single = text.chars().count() == 1;
+        if single {
+            let mut map = self.to_unicode.lock();
+            if map.get(&glyph).is_none_or(|existing| existing == text) {
+                map.insert(glyph, text.to_owned());
+                return;
+            }
+        }
+        self.to_unicode_fallback.lock().entry(glyph).or_insert_with(|| text.to_owned());
+    }
+
     /// Whether the font has an OpenType `MATH` table.
     pub fn has_math_table(&self) -> bool {
         // SAFETY: the font is alive; `hb_font_get_face` returns its face.

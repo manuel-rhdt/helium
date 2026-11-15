@@ -513,6 +513,27 @@ pub fn write_pdf(
         .collect();
     let mut color_forms = color_glyph::ColorGlyphForms::default();
 
+    // The glyphs of the text of SVG images are shown with the embedded fonts of the document, so
+    // they have to be recorded in the fonts before these are embedded.
+    let mut svg_font_names = crate::svg_text::SvgFontNames::new();
+    {
+        let mut seen = std::collections::HashSet::new();
+        let display_lists = print_pages
+            .islands
+            .iter_mut()
+            .map(|island| &mut island.display_list)
+            .chain(print_pages.pages.iter_mut().map(|page| &mut page.display_list));
+        for display_list in display_lists {
+            for item in display_list.items() {
+                if let DisplayItem::Image { image, .. } = item
+                    && let crate::image::LoadedImage::Svg(svg) = &**image
+                {
+                    crate::svg_text::register_glyphs(&svg.tree, &mut print_pages.font_map, &mut svg_font_names, &mut seen);
+                }
+            }
+        }
+    }
+
     let mut font_map = HashMap::new();
     for (font_name, font) in &print_pages.font_map {
         if !font.glyph_advances.lock().is_empty() {
@@ -527,6 +548,13 @@ pub fn write_pdf(
     let mut images: HashMap<*const crate::image::LoadedImage, Embedded> = HashMap::new();
     let page_filter = if no_filter { None } else { Some(StreamFilter::Deflate) };
     let mut svg_writer = crate::svg::SvgWriter::new(page_filter);
+    svg_writer.set_fonts(
+        svg_font_names,
+        font_map
+            .iter()
+            .filter_map(|(name, &font)| Some((name.clone(), (font, print_pages.font_map.get(name)?.upem))))
+            .collect(),
+    );
     // The content of the `foreignObject` elements of SVG images (HTML and MathML) was laid out
     // like small pages and becomes forms. An island can contain SVG images with islands of their
     // own, which come after it, so the last one is written first.

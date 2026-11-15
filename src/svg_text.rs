@@ -70,3 +70,68 @@ impl TextShaper for HarfbuzzShaper {
         )
     }
 }
+
+/// The fonts that the glyphs of the SVG text use, by their ID in the font database of the SVG
+/// images, as the PostScript names of fonts in the font map of the document.
+pub type SvgFontNames = HashMap<usvg::fontdb::ID, String>;
+
+/// Records the glyphs of the text in `tree` (and in the SVG images inside of it) in the fonts of
+/// the document, so that the PDF writer can show them as text with an embedded font. A font that
+/// the document does not have yet is added to `font_map`. `names` tells which font of the map is
+/// meant by an ID of the font database. `seen` holds the trees that were recorded already.
+pub fn register_glyphs(
+    tree: &usvg::Tree,
+    font_map: &mut crate::layout::FontMap,
+    names: &mut SvgFontNames,
+    seen: &mut std::collections::HashSet<*const usvg::Tree>,
+) {
+    if !seen.insert(tree as *const usvg::Tree) {
+        return;
+    }
+    register_group(tree.root(), tree.fontdb(), font_map, names, seen);
+}
+
+fn register_group(
+    group: &usvg::Group,
+    db: &usvg::fontdb::Database,
+    font_map: &mut crate::layout::FontMap,
+    names: &mut SvgFontNames,
+    seen: &mut std::collections::HashSet<*const usvg::Tree>,
+) {
+    use crate::layout::text::font::{Font, GlyphIndex};
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(inner) => register_group(inner, db, font_map, names, seen),
+            usvg::Node::Image(image) => {
+                if let usvg::ImageKind::SVG(tree) = image.kind() {
+                    register_glyphs(tree, font_map, names, seen);
+                }
+            }
+            usvg::Node::Text(text) => {
+                for span in text.layouted() {
+                    for glyph in &span.positioned_glyphs {
+                        let name = match names.get(&glyph.font) {
+                            Some(name) => name.clone(),
+                            None => {
+                                let Some(font) = db
+                                    .with_face_data(glyph.font, |data, index| Font::load(Arc::new(data.to_vec()), index))
+                                    .flatten()
+                                else {
+                                    continue;
+                                };
+                                let font = crate::layout::text::fallback::register_font(font_map, font);
+                                let name = font.postscript_name();
+                                names.insert(glyph.font, name.clone());
+                                name
+                            }
+                        };
+                        if let Some(font) = font_map.get(&name) {
+                            font.record_glyph(GlyphIndex(u32::from(glyph.id.0)), &glyph.text);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
