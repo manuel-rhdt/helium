@@ -215,14 +215,23 @@ impl Component for TableColumns {
     type Storage = DenseVecStorage<Self>;
 }
 
-/// The marker of a list item, drawn outside of the item's first line.
+/// What a text is set in: the font, its size and color, and the fonts and the features that
+/// shaping needs (letter-spacing, OpenType features, fallback fonts). Text that is not part of a
+/// `TextRun` (the markers of list items, the margin boxes of pages) takes it from its style in
+/// one place, `EntityConstructor::text_face`.
 #[derive(Debug, Clone)]
-pub struct ListMarker {
-    pub text: String,
+pub struct TextFace {
     pub font_name: String,
     pub font_size: PixelLength,
     pub color: crate::style::properties::computed::RGBA,
     pub fallback: crate::layout::text::fallback::TextFonts,
+}
+
+/// The marker of a list item, drawn outside of the item's first line.
+#[derive(Debug, Clone)]
+pub struct ListMarker {
+    pub text: String,
+    pub face: TextFace,
 }
 
 impl Component for ListMarker {

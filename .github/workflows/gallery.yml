@@ -43,6 +43,18 @@ jobs:
       run: sh gallery/poster/fetch-fonts.sh
     - name: Index the fonts of the poster
       run: fc-cache -f ~/.fonts/helium-poster
+    # The typography specimen is set in EB Garamond, which is not built into Helium.
+    - name: Cache the font of the typography specimen
+      id: typography-fonts
+      uses: actions/cache@v4
+      with:
+        path: ~/.fonts/helium-typography
+        key: typography-fonts-${{ hashFiles('gallery/typography/fetch-fonts.sh') }}
+    - name: Download the font of the typography specimen
+      if: steps.typography-fonts.outputs.cache-hit != 'true'
+      run: sh gallery/typography/fetch-fonts.sh
+    - name: Index the font of the typography specimen
+      run: fc-cache -f ~/.fonts/helium-typography
     - name: Build
       run: cargo build --release --locked
     - name: Render the gallery

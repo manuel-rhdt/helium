@@ -68,6 +68,12 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
   `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space`, `hyphens`,
   `direction`, `unicode-bidi`, `list-style-type`.
+- **OpenType features:** `font-feature-settings`, `font-kerning`, and `font-variant` with
+  `font-variant-ligatures`, `-caps`, `-numeric`, `-east-asian` and `-position`; the `font`
+  shorthand resets them and takes `small-caps`. They are handed to the shaper in the order of the
+  CSS Fonts 4 precedence (the `font-feature-settings` last). Not supported:
+  `font-variant-alternates` and `-emoji`, `font-variation-settings`, and the synthesis of small
+  caps, subscripts and superscripts for fonts that lack the features (the text stays as it is).
 - **Vertical text:** `writing-mode` (`vertical-rl`, `vertical-lr`, and `sideways-rl` and
   `sideways-lr` as the vertical modes) and `text-orientation` (`mixed`, `upright`, `sideways`).
   A box with another writing mode than its parent is an orthogonal flow, which is laid out on its

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OpenType features, set in EB Garamond</title>
+<meta name="description" content="A type specimen that asks EB Garamond for its OpenType features through CSS: ligatures, real small capitals, old-style and tabular figures, fractions, superiors, historical forms, case-sensitive forms and stylistic sets.">
+<meta name="keywords" content="font-feature-settings, font-variant-*, font-kerning, ligatures, small caps, figures, hyphenation">
+<meta name="gallery-fonts" content="system">
+<!-- Needs EB Garamond (SIL Open Font License, https://github.com/octaviopardo/EBGaramond12) installed:
+     `sh fetch-fonts.sh` downloads it. Without it the fallback font (TeX Gyre Termes) shows the
+     features that it has too, with fewer variants. -->
+<style>
+  @page { width: 210mm; height: 297mm; margin: 17mm 18mm 18mm 18mm;
+    @bottom-center { font-family: "EB Garamond", "TeX Gyre Termes", serif; font-variant-numeric: oldstyle-nums;
+      font-size: 9pt; color: #6b5a3c; content: counter(page); } }
+
+  html { font-family: "EB Garamond", "TeX Gyre Termes", serif; background: #fbf8f1; color: #1d1b17; }
+  body { margin: 0; font-size: 11pt; line-height: 15.2pt; font-variant-numeric: oldstyle-nums; }
+  code, .css { font-family: "DejaVu Sans Mono", "JetBrains Mono", monospace; font-size: 7.6pt; font-variant-numeric: normal;
+    font-feature-settings: normal; letter-spacing: 0; color: #7a3b1d; }
+
+  /* Masthead */
+  .eyebrow { font-variant-caps: all-small-caps; letter-spacing: 0.22em; font-size: 10pt; color: #8a6a35; text-align: center; margin: 4pt 0 0; }
+  h1 { font-weight: normal; font-size: 35pt; line-height: 40pt; text-align: center; margin: 8pt 0 2pt;
+    font-variant-caps: small-caps; font-variant-ligatures: common-ligatures discretionary-ligatures;
+    letter-spacing: 0.02em; }
+  .sub { text-align: center; font-style: italic; font-size: 13.5pt; line-height: 18pt; margin: 0 0 6pt; color: #4a4030; }
+  .rule { border: 0; border-top: 0.6pt solid #b99d62; border-bottom: 0.6pt solid #b99d62; height: 2.4pt; margin: 10pt 0 14pt; }
+
+  /* Two columns of text */
+  .cols { display: flex; gap: 8mm; }
+  .cols > div { flex: 1; }
+  p { margin: 0; text-align: justify; hyphens: auto; text-indent: 1.2em; }
+  p.first, h2 + p, .cols > div > p:first-child { text-indent: 0; }
+  .lead { font-size: 13.5pt; line-height: 18.5pt; text-indent: 0; text-align: left; margin-bottom: 11pt; hyphens: none; color: #2b261d; }
+  .caps { font-variant-caps: all-small-caps; letter-spacing: 0.06em; }
+  .pq { margin: 9pt 0 9pt; padding: 7pt 0; border-top: 0.5pt solid #b99d62; border-bottom: 0.5pt solid #b99d62;
+    font-style: italic; font-size: 13pt; line-height: 17pt; text-align: center; text-indent: 0; hyphens: none; color: #5b4620; }
+  .ornament { text-align: center; text-indent: 0; font-feature-settings: "ss04"; color: #8a6a35; font-size: 13pt; margin: 6pt 0; }
+
+  h2 { font-weight: normal; font-variant-caps: all-small-caps; letter-spacing: 0.16em; font-size: 11.5pt;
+    margin: 14pt 0 6pt; color: #8a6a35; break-after: avoid; }
+
+  /* Specimen table */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; vertical-align: baseline; padding: 2.9pt 6pt 2.9pt 0; border-bottom: 0.4pt solid #d9ccb0; font-weight: normal; }
+  thead th { font-variant-caps: all-small-caps; letter-spacing: 0.14em; color: #8a6a35; font-size: 9.5pt; border-bottom: 0.8pt solid #b99d62; padding-bottom: 3pt; }
+  td.name { width: 21%; font-style: italic; color: #4a4030; }
+  td.css { width: 34%; font-size: 7pt; }
+  td.off, td.on { width: 22.5%; font-size: 12pt; line-height: 14pt; }
+  td.off { color: #8c826f; }
+  tr.group td { border-bottom: 0; padding-top: 8pt; font-variant-caps: all-small-caps; letter-spacing: 0.16em; color: #8a6a35; font-size: 10pt; }
+  td.num { font-variant-numeric: lining-nums; }
+
+  .note { font-size: 9pt; line-height: 12.2pt; color: #6b5f48; text-align: left; text-indent: 0; margin-top: 10pt; }
+  .page2 { break-before: page; }
+</style>
+</head>
+<body>
+
+<p class="eyebrow">a specimen of the typesetting features of OpenType</p>
+<h1>The quiet machinery of type</h1>
+<p class="sub">Ligatures, small capitals, figures and the other small decisions<br>that make a page easy to read</p>
+<hr class="rule">
+
+<p class="lead">Most readers never notice good typography; they notice only that a page is easy to read. The work is in details too small to name, and an OpenType font carries them as <em>features</em>: alternate glyphs, and the rules that choose between them.</p>
+
+<div class="cols">
+<div>
+<p>An <span class="caps">fi</span> in a line of 11 point text can collide: the hook of the <em>f</em> runs into the dot of the <em>i</em>. A ligature draws the pair as one shape. Fonts carry a second set for the shapes that are not needed in plain text, and for the printers’ habits of earlier centuries: a <em>ct</em> and an <em>st</em> that are joined by an arc, a long <span style="font-feature-settings: 'hist'">s</span> inside of words.</p>
+<p>Figures have the same choice. Set among lowercase letters, the old-style figures 1984, 2026 and 3,471 rise and fall like the letters around them. A table wants figures of one width in a column, and a headline wants capitals’ height. Acronyms like <span class="caps">pdf</span>, <span class="caps">css</span> and <span class="caps">html</span> are set in real small capitals, drawn with the weight of the text, rather than in shrunken capitals that look too light. Fractions such as <span style="font-variant-numeric: diagonal-fractions">3/4, 11/16 and 7/32</span> have a numerator and a denominator that are set to fit one another.</p>
+</div>
+<div>
+<p>A browser or a print engine does not guess any of this. The <em>CSS Fonts</em> module gives each choice a name: <code>font-variant-ligatures</code>, <code>font-variant-caps</code>, <code>font-variant-numeric</code> and the other <code>font-variant-*</code> properties for the common ones, and <code>font-feature-settings</code> for everything else, by the four-letter tag of the feature. The engine hands the list to the shaper, in a fixed order of precedence, so that the last word is the one of the designer.</p>
+<p>This page is set by Helium in EB Garamond, a revival of the Garamond types of the sixteenth century by Georg Duffner and Octavio Pardo. The text has the ligatures on, as is usual, and the figures old-style. The table on the next page puts each feature next to the same words without it, together with the declaration that selects it.</p>
+</div>
+</div>
+
+<p class="pq">“A good page asks to be read, not looked at.”</p>
+
+<div class="cols">
+<div>
+<h2>Number and measure</h2>
+<p class="first">In 1784 the Treaty was copied 12 times, in a hand of 7¼ in. lines; by the 2nd of March the 3rd copy had a blot at <span style="font-variant-position: super">1</span>/<span style="font-variant-position: sub">2</span> the width of a column. The water in the ink was H<span style="font-variant-position: sub">2</span>O; the area of the page, 20 × 30 cm, is 600 cm<span style="font-variant-position: super">2</span>.</p>
+</div>
+<div>
+<h2>Old spellings</h2>
+<p class="first" style="font-feature-settings: 'hist'; font-variant-ligatures: common-ligatures discretionary-ligatures historical-ligatures;">Assistance, still in doubt: the strict Queen slept in the Island of Jealousy and passion.</p>
+</div>
+</div>
+
+<p class="ornament">*&nbsp;&nbsp;*&nbsp;&nbsp;*</p>
+
+<p class="note">Set by Helium from HTML and <span class="caps">css</span>. Typeface: EB Garamond (Georg Duffner, Octavio Pardo; <span class="caps">sil ofl</span>). The text uses <code>font-variant-numeric: oldstyle-nums</code>, <code>font-variant-caps</code>, <code>font-variant-ligatures</code>, <code>font-variant-position</code> and <code>font-feature-settings</code>.</p>
+
+
+<section class="page2">
+<p class="eyebrow">the declarations, the features and their effect</p>
+<h1 style="font-size: 24pt; line-height: 28pt; margin: 4pt 0 4pt">Each feature, off and on</h1>
+<hr class="rule" style="margin-top: 4pt">
+
+<table>
+<thead><tr><th>Feature</th><th>CSS</th><th>Off</th><th>On</th></tr></thead>
+<tbody>
+<tr class="group"><td colspan="4">Ligatures</td></tr>
+<tr><td class="name">Standard ligatures</td><td class="css">font-variant-ligatures: none</td>
+  <td class="off" style="font-variant-ligatures: none">office fluffy affix</td><td class="on">office fluffy affix</td></tr>
+<tr><td class="name">Discretionary ligatures</td><td class="css">font-variant-ligatures: discretionary-ligatures</td>
+  <td class="off">The strict acts; Thy stock</td><td class="on" style="font-variant-ligatures: discretionary-ligatures">The strict acts; Thy stock</td></tr>
+<tr><td class="name">Historical forms</td><td class="css">font-feature-settings: "hist"</td>
+  <td class="off">Jealousy, Island, passion</td><td class="on" style="font-feature-settings: 'hist'">Jealousy, Island, passion</td></tr>
+<tr><td class="name">Kerning</td><td class="css">font-kerning: none</td>
+  <td class="off" style="font-kerning: none">AVATAR To Ty Wa</td><td class="on">AVATAR To Ty Wa</td></tr>
+
+<tr class="group"><td colspan="4">Capitals</td></tr>
+<tr><td class="name">Small capitals</td><td class="css">font-variant-caps: small-caps</td>
+  <td class="off">Hamburgefonstiv</td><td class="on" style="font-variant-caps: small-caps">Hamburgefonstiv</td></tr>
+<tr><td class="name">All small capitals</td><td class="css">font-variant-caps: all-small-caps</td>
+  <td class="off">NASA and Typography</td><td class="on" style="font-variant-caps: all-small-caps">NASA and Typography</td></tr>
+<tr><td class="name">Petite capitals</td><td class="css">font-variant-caps: all-petite-caps</td>
+  <td class="off">Petite Capitals</td><td class="on" style="font-variant-caps: all-petite-caps">Petite Capitals</td></tr>
+<tr><td class="name">Case-sensitive forms</td><td class="css">font-feature-settings: "case"</td>
+  <td class="off">(BERLIN–PARIS) [VIA] ¡OLÉ!</td><td class="on" style="font-feature-settings: 'case'">(BERLIN–PARIS) [VIA] ¡OLÉ!</td></tr>
+<tr><td class="name">Swash capital</td><td class="css">font-feature-settings: "swsh"</td>
+  <td class="off"><em>Quiet Quince</em></td><td class="on" style="font-feature-settings: 'swsh'"><em>Quiet Quince</em></td></tr>
+
+<tr class="group"><td colspan="4">Figures</td></tr>
+<tr><td class="name">Lining and old-style</td><td class="css">font-variant-numeric: lining-nums</td>
+  <td class="off">1234567890 in 1984</td><td class="on" style="font-variant-numeric: lining-nums">1234567890 in 1984</td></tr>
+<tr><td class="name">Tabular and proportional</td><td class="css">font-variant-numeric: tabular-nums</td>
+  <td class="off num" style="font-variant-numeric: lining-nums proportional-nums">1,111.11<br>9,999.89<br>1,001.01</td><td class="on num" style="font-variant-numeric: lining-nums tabular-nums">1,111.11<br>9,999.89<br>1,001.01</td></tr>
+<tr><td class="name">Fractions</td><td class="css">font-variant-numeric: diagonal-fractions</td>
+  <td class="off">1/2 3/4 11/16 7/32</td><td class="on" style="font-variant-numeric: diagonal-fractions">1/2 3/4 11/16 7/32</td></tr>
+<tr><td class="name">Ordinals</td><td class="css">font-variant-numeric: ordinal</td>
+  <td class="off">1a 2o N°5 1st 2nd</td><td class="on" style="font-variant-numeric: ordinal">1a 2o N°5 1st 2nd</td></tr>
+
+<tr class="group"><td colspan="4">Superiors and inferiors</td></tr>
+<tr><td class="name">Superscript</td><td class="css">font-variant-position: super</td>
+  <td class="off">E = mc2, x2 + y2</td><td class="on">E = mc<span style="font-variant-position: super">2</span>, x<span style="font-variant-position: super">2</span> + y<span style="font-variant-position: super">2</span></td></tr>
+<tr><td class="name">Subscript</td><td class="css">font-variant-position: sub</td>
+  <td class="off">H2O, CO2, x1 + x2</td><td class="on">H<span style="font-variant-position: sub">2</span>O, CO<span style="font-variant-position: sub">2</span>, x<span style="font-variant-position: sub">1</span> + x<span style="font-variant-position: sub">2</span></td></tr>
+
+<tr class="group"><td colspan="4">Stylistic sets</td></tr>
+<tr><td class="name">Fleurons (ss04)</td><td class="css">font-feature-settings: "ss04"</td>
+  <td class="off">* ( &gt;</td><td class="on" style="font-feature-settings: 'ss04'">* ( &gt;</td></tr>
+<tr><td class="name">Arrows by name (ss03)</td><td class="css">font-feature-settings: "ss03"</td>
+  <td class="off">arrowright northeast</td><td class="on" style="font-feature-settings: 'ss03'">arrowright northeast</td></tr>
+</tbody>
+</table>
+<p class="note">Every row is the same text twice; only the declaration of the CSS column differs (for the superiors and inferiors it applies to the digits). <code>font-variant-*</code> properties and <code>font-feature-settings</code> are inherited, the <code>font</code> shorthand resets them, and the settings come last in the list that the shaper gets, so <code>font-feature-settings: "liga" 0</code> wins over <code>font-variant-ligatures: common-ligatures</code>.</p>
+</section>
+
+</body>
+</html>

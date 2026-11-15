@@ -3,6 +3,10 @@ use std::str::FromStr;
 
 use super::super::parse::StyleParseError;
 use super::computed::PixelLength;
+pub use super::font_features::{
+    FontFeatureSettings, FontKerning, FontVariant, FontVariantCaps, FontVariantEastAsian,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
+};
 use cssparser::{CowRcStr, ParseError, Parser, Token, match_ignore_ascii_case};
 use cssparser_color::Color;
 use helium_derive::{ParseDeclaration, PropertyValue};
@@ -421,14 +425,46 @@ pub enum Font {
     FontSize(FontSize),
     #[property]
     LineHeight(LineHeight),
-    /// https://www.w3.org/TR/css-fonts-4/#font-prop. The system font keywords, `font-variant`
-    /// and `font-stretch` are not supported (the last two are accepted and ignored).
+    /// https://www.w3.org/TR/css-fonts-4/#font-feature-settings-prop
+    #[property]
+    FontFeatureSettings(FontFeatureSettings),
+    #[property]
+    FontKerning(FontKerning),
+    #[property]
+    FontVariantLigatures(FontVariantLigatures),
+    #[property]
+    FontVariantCaps(FontVariantCaps),
+    #[property]
+    FontVariantNumeric(FontVariantNumeric),
+    #[property]
+    FontVariantEastAsian(FontVariantEastAsian),
+    #[property]
+    FontVariantPosition(FontVariantPosition),
+    /// https://www.w3.org/TR/css-fonts-4/#font-variant-prop
+    #[property]
+    #[shorthand("font-variant-ligatures", method = "ligatures")]
+    #[shorthand("font-variant-caps", method = "caps")]
+    #[shorthand("font-variant-numeric", method = "numeric")]
+    #[shorthand("font-variant-east-asian", method = "east_asian")]
+    #[shorthand("font-variant-position", method = "position")]
+    FontVariant(FontVariant),
+    /// https://www.w3.org/TR/css-fonts-4/#font-prop. The system font keywords and `font-stretch`
+    /// are not supported (the latter is accepted and ignored). `font-variant` is the one of CSS 2
+    /// (`small-caps`); like the other longhands that the shorthand resets, the other
+    /// `font-variant-*` properties and `font-feature-settings` go back to their initial values.
     #[property]
     #[shorthand("font-style", method = "style")]
     #[shorthand("font-weight", method = "weight")]
     #[shorthand("font-size", method = "size")]
     #[shorthand("line-height", method = "line_height")]
     #[shorthand("font-family", method = "family")]
+    #[shorthand("font-variant-caps", method = "caps")]
+    #[shorthand("font-variant-ligatures", method = "ligatures")]
+    #[shorthand("font-variant-numeric", method = "numeric")]
+    #[shorthand("font-variant-east-asian", method = "east_asian")]
+    #[shorthand("font-variant-position", method = "position")]
+    #[shorthand("font-feature-settings", method = "feature_settings")]
+    #[shorthand("font-kerning", method = "kerning")]
     Font(FontShorthand),
     /// Inherited like the font properties, so it lives in the same style struct.
     #[property]
@@ -1864,9 +1900,38 @@ pub struct FontShorthand {
     size: FontSize,
     line_height: LineHeight,
     family: Vec<FontFamily>,
+    caps: FontVariantCaps,
 }
 
 impl FontShorthand {
+    pub fn caps(&self) -> FontVariantCaps {
+        self.caps
+    }
+
+    pub fn ligatures(&self) -> FontVariantLigatures {
+        FontVariantLigatures::default()
+    }
+
+    pub fn numeric(&self) -> FontVariantNumeric {
+        FontVariantNumeric::default()
+    }
+
+    pub fn east_asian(&self) -> FontVariantEastAsian {
+        FontVariantEastAsian::default()
+    }
+
+    pub fn position(&self) -> FontVariantPosition {
+        FontVariantPosition::default()
+    }
+
+    pub fn feature_settings(&self) -> FontFeatureSettings {
+        FontFeatureSettings::default()
+    }
+
+    pub fn kerning(&self) -> FontKerning {
+        FontKerning::default()
+    }
+
     pub fn style(&self) -> FontStyle {
         self.style.clone()
     }
@@ -1894,6 +1959,7 @@ impl<'i> PropertyValue<'i> for FontShorthand {
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
         let mut style = None;
         let mut weight = None;
+        let mut caps = FontVariantCaps::Normal;
         // `normal` stands for the initial value of any of the four, it is only counted
         let mut normals = 0;
         let mut others = 0;
@@ -1911,10 +1977,16 @@ impl<'i> PropertyValue<'i> for FontShorthand {
                     // `font-variant` of CSS 2 and the keywords of `font-stretch`
                     let ident = input.expect_ident()?.clone();
                     match_ignore_ascii_case! { &ident,
-                        "small-caps" | "ultra-condensed" | "extra-condensed" | "condensed"
+                        "small-caps" => Ok(true),
+                        "ultra-condensed" | "extra-condensed" | "condensed"
                         | "semi-condensed" | "semi-expanded" | "expanded" | "extra-expanded"
-                        | "ultra-expanded" => Ok(()),
+                        | "ultra-expanded" => Ok(false),
                         _ => Err(input.new_error_for_next_token::<()>()),
+                    }
+                })
+                .inspect(|small_caps| {
+                    if *small_caps {
+                        caps = FontVariantCaps::SmallCaps;
                     }
                 })
                 .is_ok()
@@ -1940,6 +2012,7 @@ impl<'i> PropertyValue<'i> for FontShorthand {
             size,
             line_height,
             family,
+            caps,
         })
     }
 }

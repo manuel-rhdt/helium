@@ -1,4 +1,4 @@
-use super::components::{self, EntityHrefs, Hyperlink, Hyperlinks, Paragraph, TextOperator, take_color_glyphs};
+use super::components::{self, EntityHrefs, Hyperlink, Hyperlinks, Paragraph, PlacedColorGlyph, TextOperator, take_color_glyphs};
 use crate::tagging::{ContentTag, StructNodeId, StructureTree};
 use super::{
     FontMap,
@@ -1235,7 +1235,7 @@ impl<'a> System<'a> for ListMarkerCreator {
         }
 
         for (item, item_x, line_pos, baseline, marker) in created {
-            let size = marker.font_size;
+            let size = marker.face.font_size;
             // These shapes are not available in most fonts, so they are drawn instead.
             let shape = match marker.text.as_str() {
                 "\u{25E6}" => Some((size * 0.36, false)),
@@ -1291,38 +1291,30 @@ impl<'a> System<'a> for ListMarkerCreator {
                     .with(
                         components::VectorGraphics {
                             ops,
-                            color: Some(marker.color),
+                            color: Some(marker.face.color),
                         },
                         &mut graphics,
                     )
                     .build();
                 continue;
             }
-            let font = &font_map[&marker.font_name];
-            let mut ops = vec![
-                TextOperator::SetFont(marker.font_name.clone(), marker.font_size),
-                TextOperator::SetColor(marker.color),
-            ];
-            let ops_before = ops.len();
-            let width = shape_piece(
-                &marker.text,
-                font,
-                &marker.fallback,
-                Some(0),
-                marker.font_size,
-                Px(0.0),
-                &[],
-                false,
-                &mut ops,
-            );
+            let font = &font_map[&marker.face.font_name];
+            let ShapedLine { mut ops, width, color_glyphs } = shape_line(&marker.text, font, &marker.face, false);
             // the marker is the label (`Lbl`) of the list item
             if let Some(tag) = structure.content_tag(item, 0) {
                 ops.insert(0, TextOperator::BeginTag(tag));
                 ops.push(TextOperator::EndMarkedContent);
             }
-            let gap = marker.font_size * 0.4;
+            let gap = marker.face.font_size * 0.4;
             let start_pos = (item_x - gap - width, line_pos.y + baseline);
-            let color_glyphs = take_color_glyphs(&mut ops, ops_before, start_pos, marker.color);
+            let color_glyphs = color_glyphs
+                .into_iter()
+                .map(|glyph| PlacedColorGlyph {
+                    x: glyph.x + start_pos.0,
+                    baseline: glyph.baseline + start_pos.1,
+                    ..glyph
+                })
+                .collect();
             entities
                 .build_entity()
                 .with(
@@ -1938,6 +1930,51 @@ fn decoration_lines(
 /// The text of an inserted hyphen as far as extraction is concerned: a hyphen that exists only
 /// because of a line break must not be taken for a hyphen of the word.
 const SOFT_HYPHEN: &str = "\u{AD}";
+
+/// A text that is set on one line in one go.
+pub(super) struct ShapedLine {
+    /// The operators that draw the text, from the font and the color to the last glyph.
+    pub ops: Vec<TextOperator>,
+    pub width: Px,
+    /// The colour glyphs of the text, relative to the start of the text on the baseline.
+    pub color_glyphs: Vec<PlacedColorGlyph>,
+}
+
+/// Sets `text` in the face `face` on one line: the text is reordered by the bidirectional
+/// algorithm (`rtl` is the direction of the paragraph), every run is shaped in its direction and
+/// the runs are drawn in visual order. The markers of list items and the margin boxes of pages
+/// are set like this.
+pub(super) fn shape_line(text: &str, font: &Font, face: &components::TextFace, rtl: bool) -> ShapedLine {
+    use unicode_bidi::{BidiInfo, Level};
+
+    let mut ops = vec![
+        TextOperator::SetFont(face.font_name.clone(), face.font_size),
+        TextOperator::SetColor(face.color),
+    ];
+    let info = BidiInfo::new(text, Some(if rtl { Level::rtl() } else { Level::ltr() }));
+    let mut width = Px(0.0);
+    let mut color_glyphs = Vec::new();
+    for paragraph in &info.paragraphs {
+        let (levels, runs) = info.visual_runs(paragraph, paragraph.range.clone());
+        for run in runs {
+            let ops_before = ops.len();
+            let run_width = shape_piece(
+                &text[run.clone()],
+                font,
+                &face.fallback,
+                Some(run.start),
+                face.font_size,
+                Px(0.0),
+                &[],
+                levels[run.start].is_rtl(),
+                &mut ops,
+            );
+            color_glyphs.extend(take_color_glyphs(&mut ops, ops_before, (width, Px(0.0)), face.color));
+            width += run_width;
+        }
+    }
+    ShapedLine { ops, width, color_glyphs }
+}
 
 /// Draws `characters`, which start at the byte `at` of the text that `fonts` is for (if they are
 /// part of it), with `font` (and its fallback fonts) by appending the text operators to

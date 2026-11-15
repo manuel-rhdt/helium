@@ -3,19 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <title>A novel, set as a book</title>
-<meta name="description" content="The opening chapters of Pride and Prejudice set like a trade paperback: justified, hyphenated text, running heads on facing pages, sunk chapter openings and a folio.">
+<meta name="description" content="The opening chapters of Pride and Prejudice set like a trade paperback: justified, hyphenated text, running heads on facing pages, sunk chapter openings with small capitals, and old-style folios.">
 <meta name="gallery-thumbnail" content="3">
 <meta name="keywords" content="named pages, :left / :right, hyphenation, widows and orphans">
 <!-- The first three chapters of "Pride and Prejudice" by Jane Austen (Project Gutenberg eBook #1342, public domain). -->
 <style>
-  /* A trade-paperback page, 5.5 x 8.5 inch, set in Palatino (TeX Gyre Pagella): about 62
-     characters to the line at 10.5pt, which is the comfortable range for continuous reading. */
+  /* A trade-paperback page, 5.5 x 8.5 inch: about 62 characters to the line at 10.5pt, which is
+     the comfortable range for continuous reading. The type is Palatino if the machine has it; the
+     gallery uses only the fonts built into Helium and so shows TeX Gyre Termes. Capitals that
+     stand for a word or a heading are the small capitals of the font (`font-variant-caps`), the
+     folios are old-style figures, and the ligatures of the font are on. */
   @page {
     width: 5.5in; height: 8.5in;
     margin: 0.8in 0.7in 0.95in 0.7in;
-    @top-center { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, serif; font-size: 7.5pt;
-      letter-spacing: 0.18em; text-transform: uppercase; color: #444; }
-    @bottom-center { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, serif; content: counter(page); font-size: 9pt; }
+    @top-center { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, serif;
+      letter-spacing: 0.16em; font-variant-caps: all-small-caps; font-size: 9pt; color: #444; }
+    @bottom-center { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, serif; content: counter(page); font-size: 9pt; font-variant-numeric: oldstyle-nums; }
   }
   @page :left { @top-center { content: "Jane Austen"; } }
   @page :right { @top-center { content: "Pride and Prejudice"; } }
@@ -39,32 +42,31 @@
 
   /* Chapter openings start a recto-style page, sunk a third of the way down the page */
   h2 { break-before: page; break-after: avoid; margin: 0 0 2.4em; padding-top: 1.5in;
-    font-size: 12pt; line-height: 16pt; font-weight: normal; text-align: center;
-    text-transform: uppercase; letter-spacing: 0.2em; }
+    font-size: 13pt; line-height: 16pt; font-weight: normal; text-align: center;
+    font-variant-caps: all-small-caps; letter-spacing: 0.2em; }
 
   /* Title page */
   .title-page { text-align: center; padding-top: 2.2in; break-after: page; }
-  .title-page h1 { font-size: 30pt; line-height: 36pt; font-weight: normal; letter-spacing: 0.08em;
-    text-transform: uppercase; margin: 0 0 0.9em; }
-  .title-page .author { font-size: 12pt; letter-spacing: 0.3em; margin-top: 2.2em; }
+  .title-page h1 { font-size: 30pt; line-height: 36pt; font-weight: normal; letter-spacing: 0.06em;
+    font-variant-caps: small-caps; margin: 0 0 0.9em; }
+  .title-page .author { font-size: 13pt; letter-spacing: 0.26em; font-variant-caps: all-small-caps; margin-top: 2.2em; }
   .title-page h1 + .author { margin-top: 0; }
 
   /* Contents */
   .toc { break-after: page; }
-  .toc h1 { text-align: center; font-size: 12pt; font-weight: normal; text-transform: uppercase;
+  .toc h1 { text-align: center; font-size: 12pt; font-weight: normal; font-variant-caps: all-small-caps;
     letter-spacing: 0.2em; margin: 0 0 2em; padding-top: 0.6in; }
   .toc p.entry { display: inline-block; width: 32%; text-indent: 0; text-align: center; margin: 0; line-height: 17pt; font-size: 10pt; }
   .toc a { color: inherit; text-decoration: none; }
 
-  /* Letters are signed in small capitals; the stray quotes are kerned into the margin */
-  .smcap { font-size: 0.86em; letter-spacing: 0.06em; text-transform: uppercase; }
-  .lftspc { margin-left: -0.04em; }
+  /* A chapter opens with its first words in small capitals */
+  .open { font-variant-caps: small-caps; letter-spacing: 0.05em; }
 </style>
 </head>
 <body>
 <div class="title-page">
   <h1>Pride and Prejudice</h1>
-  <div class="author">JANE AUSTEN</div>
+  <div class="author">Jane Austen</div>
 </div>
 <div class="toc">
   <h1>Contents</h1>
@@ -75,7 +77,7 @@
 <section class="chapter">
 <h2 id="ch1">Chapter I.</h2>
 
-<p>IT is a truth universally acknowledged, that a single man in possession
+<p><span class="open">It is a truth</span> universally acknowledged, that a single man in possession
 of a good fortune must be in want of a wife.</p>
 
 <p>However little known the feelings or views of such a man may be on his
@@ -192,7 +194,7 @@ daughters married: its solace was visiting and news.</p>
 <section class="chapter">
 <h2 id="ch2">Chapter II.</h2>
 
-<p>MR. BENNET was among the earliest of those who waited on Mr. Bingley. He
+<p><span class="open">Mr. Bennet was among</span> the earliest of those who waited on Mr. Bingley. He
 had always intended to visit him, though to the last always assuring his
 wife that he should not go; and till the evening after the visit was
 paid she had no knowledge of it. It was then disclosed in the following
@@ -298,7 +300,7 @@ dinner.</p>
 <section class="chapter">
 <h2 id="ch3">Chapter III.</h2>
 
-<p>NOT all that Mrs. Bennet, however, with the assistance of her five
+<p><span class="open">Not all that Mrs. Bennet,</span> however, with the assistance of her five
 daughters, could ask on the subject, was sufficient to draw from her
 husband any satisfactory description of Mr. Bingley. They attacked him
 in various ways, with barefaced questions, ingenious suppositions, and

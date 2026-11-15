@@ -278,7 +278,6 @@ impl FlowConstructor {
                     _ => continue,
                 };
                 let style = style_builder.build();
-                let font = self.entity_constructor.match_font(&style);
                 // page numbers are drawn later, but only consist of digits
                 let static_text: String = content
                     .iter()
@@ -287,19 +286,16 @@ impl FlowConstructor {
                         _ => None,
                     })
                     .collect();
-                // the text of the margin box is put together later: the fonts of its clusters
-                let fallback = self
-                    .entity_constructor
-                    .ensure_coverage(&style, &font, &static_text);
-                let fallback = TextFonts::without_runs(fallback.key);
-                let font_name = font.postscript_name();
+                // the text of the margin box is put together later (with the number of the page):
+                // it takes the fonts of its clusters
+                let (_, mut face) = self.entity_constructor.text_face(&style, &static_text);
+                face.fallback = face.fallback.for_other_text();
                 resolved.push(ResolvedMarginBox {
                     kind,
                     content,
-                    font_name,
-                    font_size: style.font.font_size,
-                    color: color_to_rgba(style.font.color),
-                    fallback,
+                    face,
+                    text_transform: style.text.text_transform,
+                    lang: style.font.lang.clone(),
                     text_align: text_align.unwrap_or(match kind {
                         MarginBoxKind::TopCenter | MarginBoxKind::BottomCenter => TextAlign::Center,
                         MarginBoxKind::TopRight | MarginBoxKind::BottomRight => TextAlign::Right,
@@ -702,6 +698,19 @@ impl std::fmt::Debug for EntityConstructor {
     }
 }
 
+/// The height of a line of text in `font` with `style` and the distance of its baseline from the
+/// top: the line height, with the half-leading above and below the font's own height.
+fn line_metrics(font: &Font, style: &ComputedValues) -> (Px, Px) {
+    let font_size = style.font.font_size;
+    let font_height = font.scale_to_px(font.font_height(), font_size);
+    let line_height = match style.font.line_height {
+        LineHeight::Normal => font_height * 1.2,
+        LineHeight::LengthPercentage(lp) => lp.absolute(font_size),
+    };
+    let baseline = font.scale_to_px(font.ascent(), font_size) + (line_height - font_height) / 2.0;
+    (line_height, baseline)
+}
+
 impl EntityConstructor {
     pub fn new(mut world: World, base_dir: PathBuf) -> Self {
         world.register::<ComputedValues>();
@@ -799,6 +808,20 @@ impl EntityConstructor {
         font_map[&name].clone()
     }
 
+    /// The font and everything else that text with `style` is set in, with fallback fonts for the
+    /// characters of `text`.
+    fn text_face(&mut self, style: &ComputedValues, text: &str) -> (Arc<Font>, components::TextFace) {
+        let font = self.match_font(style);
+        let fallback = self.ensure_coverage(style, &font, text);
+        let face = components::TextFace {
+            font_name: font.postscript_name(),
+            font_size: style.font.font_size,
+            color: color_to_rgba(style.font.color),
+            fallback,
+        };
+        (font, face)
+    }
+
     /// Adds fallback fonts to `font` for the characters of `text` it has no glyph for.
     fn ensure_coverage(&mut self, style: &ComputedValues, font: &Font, text: &str) -> TextFonts {
         let mut font_map = self.world.write_resource::<FontMap>();
@@ -810,6 +833,7 @@ impl EntityConstructor {
         if font_size > 0.0 {
             fonts.letter_spacing = style.text.letter_spacing.0 / font_size * 1000.0;
         }
+        fonts.features = crate::style::properties::font_features::Features::of(&style.font).into();
         if style.text.writing_mode != crate::style::properties::specified::WritingMode::HorizontalTb {
             fonts.orientation = Some(style.text.text_orientation);
         }
@@ -854,16 +878,8 @@ impl EntityConstructor {
                     .marker_text(ordinal)
                     .filter(|_| is_list_item);
                 let marker = marker_text.map(|text| {
-                    let font = self.match_font(&style);
-                    let fallback = self.ensure_coverage(&style, &font, &text);
-                    let font_name = font.postscript_name();
-                    components::ListMarker {
-                        text,
-                        font_name,
-                        font_size: style.font.font_size,
-                        color: crate::style::properties::computed::color_to_rgba(style.font.color),
-                        fallback,
-                    }
+                    let (_, face) = self.text_face(&style, &text);
+                    components::ListMarker { text, face }
                 });
 
                 if style.box_.display.is_atomic_inline() {
@@ -1030,14 +1046,7 @@ impl EntityConstructor {
     /// inline content is still one line of the block's font tall.
     fn strut(&mut self, style: &ComputedValues) -> (Px, Px) {
         let font = self.match_font(style);
-        let font_size = style.font.font_size;
-        let font_height = font.scale_to_px(font.font_height(), font_size);
-        let line_height = match style.font.line_height {
-            LineHeight::Normal => font_height * 1.2,
-            LineHeight::LengthPercentage(lp) => lp.absolute(style.font.font_size),
-        };
-        let baseline =
-            font.scale_to_px(font.ascent(), font_size) + (line_height - font_height) / 2.0;
+        let (line_height, baseline) = line_metrics(&font, style);
         (baseline, line_height - baseline)
     }
 
@@ -1058,13 +1067,7 @@ impl EntityConstructor {
         self.ensure_coverage(&style, &font, "-");
 
         let font_size = style.font.font_size;
-        let font_height = font.scale_to_px(font.font_height(), font_size);
-        let line_height = match style.font.line_height {
-            LineHeight::Normal => font_height * 1.2,
-            LineHeight::LengthPercentage(lp) => lp.absolute(style.font.font_size),
-        };
-        let line_gap = line_height - font_height;
-        let baseline = font.scale_to_px(font.ascent(), font_size) + line_gap / 2.0;
+        let (line_height, baseline) = line_metrics(&font, &style);
 
         let color = crate::style::properties::computed::color_to_rgba(style.font.color);
         let decoration = style.font.text_decoration;

@@ -7,6 +7,7 @@ use super::{Font, font::FontUnit};
 use super::fallback::TextFonts;
 use super::segment::clusters;
 use crate::style::properties::computed::Language;
+use crate::style::properties::font_features::Feature;
 use unicode_script::Script;
 
 pub type HarfbuzzFont = Shared<HbFont<'static>>;
@@ -179,7 +180,7 @@ fn shape_runs(
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     let lang = &fonts.key.lang;
     let ligatures = fonts.letter_spacing == 0.0;
-    let toggles = Toggles { small_caps: fonts.small_caps, no_kerning: fonts.no_kerning };
+    let toggles = Toggles { features: &fonts.features };
     let set = font.fallback_set(&fonts.key);
     if set.fonts.is_empty() && text.is_ascii() && fonts.orientation.is_none() {
         // the script is guessed
@@ -255,11 +256,10 @@ fn shape_runs(
     result
 }
 
-/// The optional OpenType features that a text turns on or off (the text of SVG images).
+/// The OpenType features that the author turns on or off for a text.
 #[derive(Clone, Copy)]
-struct Toggles {
-    small_caps: bool,
-    no_kerning: bool,
+struct Toggles<'a> {
+    features: &'a [Feature],
 }
 
 /// The character of a cluster that consists of a single white space character.
@@ -288,7 +288,7 @@ fn shape_run(
     rtl: bool,
     ligatures: bool,
     upright: bool,
-    toggles: Toggles,
+    toggles: Toggles<'_>,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     shape_single(
         text,
@@ -317,7 +317,7 @@ fn shape_single(
     rtl: bool,
     ligatures: bool,
     upright: bool,
-    toggles: Toggles,
+    toggles: Toggles<'_>,
 ) -> Vec<(GlyphPosition, GlyphInfo)> {
     // The direction is always set: harfbuzz would otherwise guess it from the script, so that
     // e.g. Hebrew text in a left-to-right run would be shaped right-to-left. The script (for
@@ -363,12 +363,11 @@ fn shape_single(
     if upright {
         features.extend(vertical);
     }
-    if toggles.small_caps {
-        features.push(harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('s', 'm', 'c', 'p'), 1, ..));
-    }
-    if toggles.no_kerning {
-        features.push(harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('k', 'e', 'r', 'n'), 0, ..));
-    }
+    // the author's features come last: they override the ones above (letter-spaced text can have
+    // ligatures if the author asks for them)
+    features.extend(toggles.features.iter().map(|&([a, b, c, d], value)| {
+        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new(a as char, b as char, c as char, d as char), value, ..)
+    }));
     let result = hb_shape(&font.hb_font, buffer, &features);
 
     let scale = |val| FontUnit(val as f64 * (1000f64 / font.upem as f64));
@@ -610,5 +609,90 @@ mod tests {
         let plain = shape_directed("אבג", &s.font, &s.fonts, Some(0), true);
         let wide = shape_directed("אבג", &s.font, &spaced(&s, 100.0), Some(0), true);
         assert!((total(&wide) - total(&plain) - 300.0).abs() < 1e-6);
+    }
+
+    fn featured(s: &Setup, features: &[Feature]) -> TextFonts {
+        let mut fonts = s.fonts.clone();
+        fonts.features = features.to_vec().into();
+        fonts
+    }
+
+    fn glyph_ids(glyphs: &[(GlyphPosition, GlyphInfo)]) -> Vec<u32> {
+        glyphs.iter().map(|(_, g)| g.codepoint).collect()
+    }
+
+    #[test]
+    fn small_caps_replace_the_lowercase_letters() {
+        let s = setup("small");
+        let plain = shape("small", &s.font, &s.fonts, Some(0));
+        let caps = shape("small", &s.font, &featured(&s, &[(*b"smcp", 1)]), Some(0));
+        assert_eq!(plain.len(), caps.len());
+        assert_ne!(glyph_ids(&plain), glyph_ids(&caps));
+        // the capitals of the text stay the same
+        let upper = shape("SMALL", &s.font, &s.fonts, Some(0));
+        assert_eq!(glyph_ids(&upper).len(), caps.len());
+        assert!(total(&caps) < total(&upper), "small capitals are narrower than capitals");
+    }
+
+    #[test]
+    fn all_small_caps_also_replace_the_capitals() {
+        let s = setup("Ab");
+        let small = shape("Ab", &s.font, &featured(&s, &[(*b"smcp", 1)]), Some(0));
+        let all = shape("Ab", &s.font, &featured(&s, &[(*b"smcp", 1), (*b"c2sc", 1)]), Some(0));
+        assert_eq!(small[0].1.codepoint, shape("A", &s.font, &s.fonts, Some(0))[0].1.codepoint);
+        assert_ne!(all[0].1.codepoint, small[0].1.codepoint);
+        assert_eq!(all[0].1.codepoint != small[0].1.codepoint, true);
+        assert_eq!(all[1].1.codepoint, small[1].1.codepoint);
+    }
+
+    #[test]
+    fn old_style_figures_and_slashed_zeros_are_other_glyphs() {
+        let s = setup("0123");
+        let plain = glyph_ids(&shape("0123", &s.font, &s.fonts, Some(0)));
+        let old = glyph_ids(&shape("0123", &s.font, &featured(&s, &[(*b"onum", 1)]), Some(0)));
+        let slashed = glyph_ids(&shape("0123", &s.font, &featured(&s, &[(*b"zero", 1)]), Some(0)));
+        assert_ne!(plain, old);
+        assert_ne!(plain[0], slashed[0]);
+        assert_eq!(plain[1..], slashed[1..]);
+    }
+
+    #[test]
+    fn ligatures_can_be_turned_off_and_discretionary_ones_on() {
+        let s = setup("fi a--b");
+        let plain = shape("fi a--b", &s.font, &s.fonts, Some(0));
+        let off = shape("fi a--b", &s.font, &featured(&s, &[(*b"liga", 0)]), Some(0));
+        assert_eq!(plain.len() + 1, off.len(), "the fi ligature");
+        // the font replaces two hyphens by a dash
+        let discretionary = shape("fi a--b", &s.font, &featured(&s, &[(*b"dlig", 1)]), Some(0));
+        assert_eq!(plain.len(), discretionary.len() + 1);
+    }
+
+    #[test]
+    fn later_features_override_earlier_ones() {
+        let s = setup("fi");
+        let off_then_on =
+            shape("fi", &s.font, &featured(&s, &[(*b"liga", 0), (*b"liga", 1)]), Some(0));
+        assert_eq!(off_then_on.len(), 1);
+        let on_then_off =
+            shape("fi", &s.font, &featured(&s, &[(*b"liga", 1), (*b"liga", 0)]), Some(0));
+        assert_eq!(on_then_off.len(), 2);
+    }
+
+    #[test]
+    fn a_feature_the_author_asks_for_wins_over_the_letter_spacing() {
+        let s = setup("fi");
+        let mut fonts = featured(&s, &[(*b"liga", 1)]);
+        fonts.letter_spacing = 10.0;
+        assert_eq!(shape("fi", &s.font, &fonts, Some(0)).len(), 1);
+        fonts.features = std::sync::Arc::from([]);
+        assert_eq!(shape("fi", &s.font, &fonts, Some(0)).len(), 2);
+    }
+
+    #[test]
+    fn kerning_can_be_turned_off() {
+        let s = setup("AVAV");
+        let kerned = shape("AVAV", &s.font, &s.fonts, Some(0));
+        let plain = shape("AVAV", &s.font, &featured(&s, &[(*b"kern", 0)]), Some(0));
+        assert!(total(&kerned) < total(&plain));
     }
 }
