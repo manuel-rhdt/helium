@@ -73,7 +73,9 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   similar features say that there is no pointer. `rem` is relative to the root element (in
   `@page` and its margin boxes, to the initial font size).
 - **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `grid`, `table` and the table
-  parts, `list-item`, `none`), `position: absolute`, block, inline, flexbox
+  parts, `list-item`, `none`), `position: absolute` and `position: relative` (`left`, `right`,
+  `top` and `bottom` move the box after layout, also inline boxes and `inline-block` boxes; in vertical
+  text and on formulas the offsets are ignored), block, inline, flexbox
   (`flex-*`, `gap`, `justify-*`, `align-*`) and grid (`grid-template-*`, `grid-auto-*`,
   `grid-column`, `grid-row`) layout, tables (`border-collapse`, `border-spacing`).
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
@@ -151,7 +153,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`,
 `@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
-relative`/`fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
+fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
 `outline`, `vertical-align`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `vw`/`vh`, `ex`/`ch` and other units, scripting, and form
 interaction.

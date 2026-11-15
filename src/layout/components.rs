@@ -142,6 +142,65 @@ impl Component for IntrinsicSize {
     type Storage = DenseVecStorage<Self>;
 }
 
+/// The offsets of `position: relative` (`left`, `right`, `top`, `bottom`) of an inline-level box.
+///
+/// Boxes in a block, flex or grid container are shifted by the layout itself. An inline box is
+/// not a box of the layout, so the pieces of text and the atomic boxes inside it carry the
+/// offsets of every relatively positioned inline box that they are in, and the line boxes shift
+/// them. The offsets are added up.
+#[derive(Debug, Clone, Default)]
+pub struct RelativeOffset(pub Vec<Inset>);
+
+impl Component for RelativeOffset {
+    type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Inset {
+    pub left: crate::style::properties::computed::GenericSize,
+    pub right: crate::style::properties::computed::GenericSize,
+    pub top: crate::style::properties::computed::GenericSize,
+    pub bottom: crate::style::properties::computed::GenericSize,
+}
+
+impl RelativeOffset {
+    /// How far the box is moved to the right and down, for a containing block that is
+    /// `container_width` wide and whose direction is right-to-left if `rtl`.
+    ///
+    /// Percentages of `top` and `bottom` refer to the height of the containing block, which is
+    /// usually `auto` and then makes them behave like `auto` (CSS 2.2, 9.3.2); they are taken as
+    /// `auto` here.
+    pub fn resolve(&self, container_width: PixelLength, rtl: bool) -> (PixelLength, PixelLength) {
+        use crate::style::properties::computed::{GenericSize, LengthPercentage};
+        let horizontal = |size: GenericSize| match size {
+            GenericSize::Auto => None,
+            GenericSize::LengthPercentage(lp) => Some(lp.absolute(container_width).0),
+        };
+        let vertical = |size: GenericSize| match size {
+            GenericSize::LengthPercentage(LengthPercentage::PixelLength(len)) => Some(len.0),
+            _ => None,
+        };
+        let (mut dx, mut dy) = (0.0, 0.0);
+        for inset in &self.0 {
+            // over-constrained: `left` wins in a left-to-right container, `right` in the other
+            dx += match (horizontal(inset.left), horizontal(inset.right)) {
+                (Some(left), Some(_)) if !rtl => left,
+                (Some(_), Some(right)) => -right,
+                (Some(left), None) => left,
+                (None, Some(right)) => -right,
+                (None, None) => 0.0,
+            };
+            // over-constrained: `top` wins
+            dy += match (vertical(inset.top), vertical(inset.bottom)) {
+                (Some(top), _) => top,
+                (None, Some(bottom)) => -bottom,
+                (None, None) => 0.0,
+            };
+        }
+        (PixelLength(dx), PixelLength(dy))
+    }
+}
+
 /// The position of a box relative to the smallest containing stacking context.
 #[derive(Debug, Copy, Clone, Default)]
 pub struct StackingContextRelativePosition {

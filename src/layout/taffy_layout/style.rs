@@ -255,6 +255,7 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
         box_sizing,
         position: match style.box_.position {
             PositionSpec::Static => Position::Static,
+            PositionSpec::Relative => Position::Relative,
             PositionSpec::Absolute => Position::Absolute,
         },
         inset: Rect {

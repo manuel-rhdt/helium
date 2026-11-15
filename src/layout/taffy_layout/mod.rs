@@ -38,6 +38,12 @@ use tree::{Content, HeliumTree, Node};
 /// boxes. Absolutely positioned boxes are painted on top of the in-flow content.
 const ABS_Z_STEP: i64 = 100000;
 
+/// A relatively positioned box is painted in the layer of the positioned boxes, on top of the
+/// in-flow content that follows it. The depth of the boxes in it adds to the step, so it has to
+/// be bigger than the depth of any tree, and it is smaller than [`ABS_Z_STEP`] to leave room
+/// for the absolutely positioned boxes above.
+const REL_Z_STEP: i64 = 1000;
+
 pub struct TaffyBlockLayout {
     pub root_entity: Entity,
     pub page_width: PixelLength,
@@ -198,6 +204,16 @@ impl<'a> Writer<'a, '_> {
         );
     }
 
+    /// The z index and the z index offset of a child of a box at `z`: a relatively positioned box
+    /// starts a layer of its own above the in-flow content.
+    fn child_z(&self, child: NodeId, z: i64, z_base: i64) -> (i64, i64) {
+        if self.node(child).style.position == taffy::Position::Relative {
+            (z_base + REL_Z_STEP + 1, z_base + REL_Z_STEP)
+        } else {
+            (z + 1, z_base)
+        }
+    }
+
     fn emit(&mut self, element: BlockLevelElement) {
         // absolutely positioned and inline-block boxes are not paginated with the main flow
         if self.group_stack.is_empty() {
@@ -301,7 +317,8 @@ impl<'a> Writer<'a, '_> {
                         continue;
                     }
                     let child_origin = frame.child_origin(&self.node(child).layout);
-                    self.write_box(child, child_origin, flow, z + 1, z_base)?;
+                    let (child_z, child_base) = self.child_z(child, z, z_base);
+                    self.write_box(child, child_origin, flow, child_z, child_base)?;
                 }
             }
             Content::Inline => {
@@ -315,7 +332,8 @@ impl<'a> Writer<'a, '_> {
                     // the border box is inside of the margin box, which is placed on the line
                     let margin = flow.edges_to_physical(self.node(atom).layout.margin);
                     let location = Point { x: margin.left, y: margin.top };
-                    self.write_box(atom, location, flow, z + 1, z_base)?;
+                    let (atom_z, atom_base) = self.child_z(atom, z, z_base);
+                    self.write_box(atom, location, flow, atom_z, atom_base)?;
                     self.group_stack.pop();
                 }
                 let content_offset = (
@@ -337,7 +355,8 @@ impl<'a> Writer<'a, '_> {
                 // contain their cells, which are placed relative to them.
                 for &child in node.table.iter().flat_map(|table| &table.boxes) {
                     let child_origin = frame.child_origin(&self.node(child).layout);
-                    self.write_box(child, child_origin, flow, z + 1, z_base)?;
+                    let (child_z, child_base) = self.child_z(child, z, z_base);
+                    self.write_box(child, child_origin, flow, child_z, child_base)?;
                 }
                 for &child in children {
                     if self.out_of_flow[usize::from(child)] {
