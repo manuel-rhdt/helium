@@ -94,55 +94,71 @@ fn is_fullwidth_form(ch: char) -> bool {
 /// of its first character that is not `Common` or `Inherited`; the remaining clusters take the
 /// script of the preceding cluster (the following one at the start of the text).
 pub fn clusters(text: &str) -> Vec<Cluster<'_>> {
-    let mut clusters: Vec<Cluster<'_>> = text
-        .grapheme_indices(true)
-        .map(|(start, grapheme)| Cluster {
-            start,
-            text: grapheme,
-            script: if grapheme.chars().next().is_some_and(is_fullwidth_form) {
-                Script::Han
-            } else {
-                grapheme
-                    .chars()
-                    .map(|ch| ch.script())
-                    .find(|script| !is_neutral(*script))
-                    .unwrap_or(Script::Common)
-            },
-        })
-        .collect();
+    let mut spans = Vec::new();
+    cluster_spans(text, &mut spans);
+    spans
+        .into_iter()
+        .map(|span| Cluster { start: span.start, text: &text[span.start..span.end], script: span.script })
+        .collect()
+}
+
+/// The byte range of a grapheme cluster of a text and the script it is itemized as: a
+/// [`Cluster`] that does not borrow the text, so that a buffer of them can be reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+    pub script: Script,
+}
+
+/// `clusters`, written to `spans` (which is cleared first).
+pub fn cluster_spans(text: &str, spans: &mut Vec<Span>) {
+    spans.clear();
+    spans.extend(text.grapheme_indices(true).map(|(start, grapheme)| Span {
+        start,
+        end: start + grapheme.len(),
+        script: if grapheme.chars().next().is_some_and(is_fullwidth_form) {
+            Script::Han
+        } else {
+            grapheme
+                .chars()
+                .map(|ch| ch.script())
+                .find(|script| !is_neutral(*script))
+                .unwrap_or(Script::Common)
+        },
+    }));
 
     // Neutral clusters follow the run before them. Characters with Script_Extensions that
     // include the script of the run belong to it; ones that do not start a run of their own
     // if they unambiguously belong to a script.
     let mut run: Option<Script> = None;
-    for cluster in &mut clusters {
-        if is_neutral(cluster.script) {
-            let first = cluster.text.chars().next().unwrap_or(' ');
+    for span in spans.iter_mut() {
+        if is_neutral(span.script) {
+            let first = text[span.start..].chars().next().unwrap_or(' ');
             match extension_script(first, run) {
-                Some(script) => cluster.script = script,
+                Some(script) => span.script = script,
                 None => {
                     if let Some(run) = run {
-                        cluster.script = run;
+                        span.script = run;
                     }
                 }
             }
         }
-        if !is_neutral(cluster.script) {
-            run = Some(cluster.script);
+        if !is_neutral(span.script) {
+            run = Some(span.script);
         }
     }
     // clusters at the start of the text take the script of the next run
     let mut next: Option<Script> = None;
-    for cluster in clusters.iter_mut().rev() {
-        if is_neutral(cluster.script) {
+    for span in spans.iter_mut().rev() {
+        if is_neutral(span.script) {
             if let Some(next) = next {
-                cluster.script = next;
+                span.script = next;
             }
         } else {
-            next = Some(cluster.script);
+            next = Some(span.script);
         }
     }
-    clusters
 }
 
 #[cfg(test)]

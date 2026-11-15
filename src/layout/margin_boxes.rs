@@ -235,7 +235,7 @@ impl<'a> System<'a> for MarginBoxPaint {
                     .with(
                         Paragraph {
                             start_pos: (x, y + ascent),
-                            ops,
+                            ops: ops.into(),
                             color_glyphs: color_glyphs
                                 .into_iter()
                                 .map(|glyph| PlacedColorGlyph {

@@ -724,7 +724,9 @@ pub enum TextOperator {
 #[derive(Debug, Clone)]
 pub struct Paragraph {
     pub start_pos: (PixelLength, PixelLength),
-    pub ops: Vec<TextOperator>,
+    /// The operators of the text. Shared, so that the display list can hold the text of a
+    /// paragraph without copying it.
+    pub ops: std::sync::Arc<Vec<TextOperator>>,
     /// The colour glyphs of the text, painted over it.
     pub color_glyphs: Vec<PlacedColorGlyph>,
 }
@@ -733,9 +735,14 @@ impl Paragraph {
     pub fn new(start_x: PixelLength, start_y: PixelLength) -> Self {
         Paragraph {
             start_pos: (start_x, start_y),
-            ops: vec![],
+            ops: Default::default(),
             color_glyphs: vec![],
         }
+    }
+
+    /// The operators for changing: copied first if the display list shares them.
+    pub fn ops_mut(&mut self) -> &mut Vec<TextOperator> {
+        std::sync::Arc::make_mut(&mut self.ops)
     }
 }
 

@@ -291,12 +291,12 @@ impl LayoutMathGlyphs {
                     let font = &font_map[&node.font_name];
                     if !color_set {
                         if let Some(style) = style {
-                            para.ops
+                            para.ops_mut()
                                 .push(TextOperator::SetColor(color_to_rgba(style.font.color)));
                         }
                         color_set = true;
                     }
-                    para.ops.push(TextOperator::SetFont(
+                    para.ops_mut().push(TextOperator::SetFont(
                         node.font_name.clone(),
                         Px(*font_size),
                     ));
@@ -310,10 +310,10 @@ impl LayoutMathGlyphs {
                             x + Px(origin.x + glyph.offset.x),
                             y + Px(origin.y + glyph.offset.y),
                         );
-                        para.ops.push(TextOperator::SetTransform(transform));
+                        para.ops_mut().push(TextOperator::SetTransform(transform));
                         let glyph_index = GlyphIndex(glyph.glyph);
                         let _ = font.advance(glyph_index);
-                        para.ops
+                        para.ops_mut()
                             .push(TextOperator::Glyphs(Glyphs(vec![glyph_index])));
                         // the pieces of a stretched operator have no text of their own
                         if let Some(text) = text {
@@ -461,8 +461,8 @@ impl<'world> System<'world> for LayoutMathGlyphs {
             }
             // the formula is tagged as a whole
             if let Some(tag) = structure.content_tag(entity, 0) {
-                para.ops.insert(0, TextOperator::BeginTag(tag));
-                para.ops.push(TextOperator::EndMarkedContent);
+                para.ops_mut().insert(0, TextOperator::BeginTag(tag));
+                para.ops_mut().push(TextOperator::EndMarkedContent);
             }
             paragraphs.insert(entity, para).unwrap();
             vector_graphics.insert(entity, vg).unwrap();

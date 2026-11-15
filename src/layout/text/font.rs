@@ -206,7 +206,14 @@ impl Font {
     /// A snapshot of the fallback fonts of this font for `key` and the clusters that they were
     /// chosen for.
     pub(crate) fn fallback_set(&self, key: &FallbackKey) -> Arc<FallbackSet> {
-        self.fallbacks.read().get(key).cloned().unwrap_or_default()
+        // most fonts have no fallbacks for most keys: share one empty set instead of allocating
+        // one for every piece of text
+        static EMPTY: OnceLock<Arc<FallbackSet>> = OnceLock::new();
+        self.fallbacks
+            .read()
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| EMPTY.get_or_init(Default::default).clone())
     }
 
     /// Uses `fallback` for `cluster` (itemized as `script`) in text of the description `key`.

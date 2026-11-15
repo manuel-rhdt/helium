@@ -1284,11 +1284,12 @@ fn resolve_embeds(
         .iter()
         .any(|op| matches!(op, TextOperator::Embed { .. }))
     {
+        // the operators are shared, not copied
         return paragraph.clone();
     }
     let mut ops = Vec::with_capacity(paragraph.ops.len());
     let mut color_glyphs = paragraph.color_glyphs.clone();
-    for op in &paragraph.ops {
+    for op in paragraph.ops.iter() {
         match op {
             &TextOperator::Embed { entity, x, y } => {
                 if page.contains(entity.id()) {
@@ -1304,7 +1305,7 @@ fn resolve_embeds(
     }
     Paragraph {
         start_pos: paragraph.start_pos,
-        ops,
+        ops: ops.into(),
         color_glyphs,
     }
 }

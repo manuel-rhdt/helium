@@ -1368,7 +1368,7 @@ impl<'a> System<'a> for ListMarkerCreator {
                 .with(
                     Paragraph {
                         start_pos,
-                        ops,
+                        ops: ops.into(),
                         color_glyphs,
                     },
                     &mut paragraphs,
@@ -1714,7 +1714,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             .with(
                                 Paragraph {
                                     start_pos: paragraph_start,
-                                    ops: ops.clone(),
+                                    ops: std::mem::take(&mut ops).into(),
                                     color_glyphs: std::mem::take(&mut color_glyphs),
                                 },
                                 &mut paragraphs,
@@ -2080,7 +2080,7 @@ impl<'a> System<'a> for LineBoxCreator {
                     .with(
                         Paragraph {
                             start_pos: paragraph_start,
-                            ops,
+                            ops: ops.into(),
                             color_glyphs,
                         },
                         &mut paragraphs,
@@ -2482,6 +2482,12 @@ impl GlyphRunWriter {
     }
 }
 
+thread_local! {
+    /// The buffers of `record_to_unicode`: the glyphs by cluster and the starts of the clusters.
+    static TO_UNICODE_SCRATCH: std::cell::RefCell<(Vec<(usize, u16, GlyphIndex)>, Vec<usize>)> =
+        const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
+}
+
 /// Records which characters the glyphs of `shaped` (in logical order) stand for, so that the text
 /// can be extracted from the PDF.
 ///
@@ -2496,14 +2502,17 @@ fn record_to_unicode<'a>(
     font_at: &impl Fn(u16) -> &'a Font,
 ) -> (std::collections::HashMap<usize, String>, Vec<usize>) {
     use unicode_segmentation::UnicodeSegmentation;
-    let mut clusters: BTreeMap<usize, Vec<(u16, GlyphIndex)>> = BTreeMap::new();
-    for (_, info) in shaped {
-        clusters
-            .entry(info.cluster as usize)
-            .or_default()
-            .push((info.font, GlyphIndex(info.codepoint)));
+    // The glyphs by cluster. The buffers are reused: this runs for every piece of text.
+    let (mut glyphs, mut starts) = TO_UNICODE_SCRATCH.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
+    glyphs.clear();
+    glyphs.extend(shaped.iter().map(|(_, info)| (info.cluster as usize, info.font, GlyphIndex(info.codepoint))));
+    // the glyphs are in logical order, which is the order of their clusters, but not in every
+    // case (the stable sort keeps the order of the glyphs of a cluster)
+    if !glyphs.is_sorted_by_key(|&(cluster, ..)| cluster) {
+        glyphs.sort_by_key(|&(cluster, ..)| cluster);
     }
-    let starts: Vec<usize> = clusters.keys().copied().collect();
+    starts.clear();
+    starts.extend(glyphs.chunk_by(|a, b| a.0 == b.0).map(|group| group[0].0));
     // The unit of `/ActualText` is the grapheme cluster: a base character with its marks, whose
     // glyphs the extractor would otherwise have to assemble from the positions of the marks.
     // A unit has to hold whole glyph clusters too, since a glyph cannot be split between two
@@ -2516,7 +2525,8 @@ fn record_to_unicode<'a>(
         .filter(|&i| i == 0 || starts.binary_search(&i).is_ok())
         .collect();
     let mut unclean = std::collections::BTreeSet::new();
-    for (i, (&start, glyphs)) in clusters.iter().enumerate() {
+    for (i, group) in glyphs.chunk_by(|a, b| a.0 == b.0).enumerate() {
+        let start = group[0].0;
         let end = starts.get(i + 1).copied().unwrap_or(characters.len());
         // without the invisible characters that were dropped in front of the next cluster
         let Some(text) = characters.get(start..end) else { continue };
@@ -2524,8 +2534,8 @@ fn record_to_unicode<'a>(
         if text.is_empty() {
             continue;
         }
-        let clean = match glyphs[..] {
-            [(font, glyph)] => {
+        let clean = match group {
+            &[(_, font, glyph)] => {
                 let mut map = font_at(font).to_unicode.lock();
                 match map.get(&glyph) {
                     Some(existing) => existing == text,
@@ -2538,7 +2548,7 @@ fn record_to_unicode<'a>(
             _ => false,
         };
         if !clean {
-            for &(font, glyph) in glyphs {
+            for &(_, font, glyph) in group {
                 font_at(font)
                     .to_unicode_fallback
                     .lock()
@@ -2548,6 +2558,7 @@ fn record_to_unicode<'a>(
             unclean.insert(grapheme_start(&boundaries, start));
         }
     }
+    TO_UNICODE_SCRATCH.with(|scratch| *scratch.borrow_mut() = (glyphs, starts));
     let mut actual_text = std::collections::HashMap::new();
     for &start in &unclean {
         let i = boundaries.partition_point(|&b| b <= start);
