@@ -1053,9 +1053,6 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     index += 1;
                 }
             }
-            // the vector grew by doubling: give back the unused capacity, the context keeps
-            // its break points until its line boxes are made
-            break_points.shrink_to_fit();
         }
     }
 }
