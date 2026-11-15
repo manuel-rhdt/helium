@@ -1,5 +1,6 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
+use super::media::MediaEnv;
 use super::properties::specified::{CssWideDeclaration, Font, ParseDeclaration, PropertyDeclaration};
 use crate::tree::ElementRef;
 
@@ -40,12 +41,14 @@ pub struct Styles {
     rules: Vec<QualifiedRule>,
     /// The number of rules at the start of `rules` that come from the user agent style sheet.
     user_agent_rules: usize,
+    /// What the media queries of the style sheets are evaluated against.
+    media: MediaEnv,
 }
 
 impl Default for Styles {
     fn default() -> Self {
         let ua_style = include_str!("../../resources/user-agent.css");
-        let mut styles = Styles { rules: vec![], user_agent_rules: 0 };
+        let mut styles = Styles { rules: vec![], user_agent_rules: 0, media: MediaEnv::default() };
         styles.parse_css(ua_style);
         styles.user_agent_rules = styles.rules.len();
         styles
@@ -56,19 +59,30 @@ impl Styles {
     /// Style sheets without any rule, not even the ones of the user agent. Cheap, unlike
     /// `default()`, which parses the user agent style sheet.
     pub fn empty() -> Self {
-        Styles { rules: vec![], user_agent_rules: 0 }
+        Styles { rules: vec![], user_agent_rules: 0, media: MediaEnv::default() }
+    }
+
+    /// Sets the page that the media queries of the style sheets read from now on are evaluated
+    /// against.
+    pub fn set_media(&mut self, media: MediaEnv) {
+        self.media = media;
+    }
+
+    /// Whether the media queries of a `media` attribute match (no queries match everything).
+    pub fn media_matches(&self, queries: &str) -> bool {
+        super::media::matches_text(queries, &self.media)
     }
 
     pub fn parse_css(&mut self, input: &str) {
         let mut parser = Parser::new(input);
-        let mut top_level = TopLevelParser::default();
+        let mut top_level = TopLevelParser { media: self.media };
 
         for rule in StyleSheetParser::new(&mut parser, &mut top_level) {
             match rule {
                 Err((error, text, _location)) => {
                     warn!("Could not parse CSS rule {:?}: {:?}", text, error)
                 }
-                Ok(rule) => self.rules.push(rule),
+                Ok(rules) => self.rules.extend(rules),
             }
         }
     }
@@ -386,12 +400,16 @@ impl PropertyDeclarationBlock {
     }
 }
 
+/// Reads the rules of a style sheet: a rule of a `@media` block gives its rules, if the queries
+/// match, so every rule is a list.
 #[derive(Debug, Default)]
-struct TopLevelParser {}
+struct TopLevelParser {
+    media: MediaEnv,
+}
 
 impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
     type Prelude = SelectorList<Selectors>;
-    type QualifiedRule = QualifiedRule;
+    type QualifiedRule = Vec<QualifiedRule>;
     type Error = StyleParseError;
 
     fn parse_prelude<'t>(
@@ -410,16 +428,23 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
         _start: &ParserState,
         input: &mut Parser<'i>,
     ) -> Result<Self::QualifiedRule, ParseError<Self::Error>> {
-        Ok(QualifiedRule::new(
+        Ok(vec![QualifiedRule::new(
             prelude,
             PropertyDeclarationBlock::parse_declarations(input),
-        ))
+        )])
     }
 }
 
+/// What follows the name of an at-rule of the top level.
+enum AtPrelude {
+    Page(PageSelector),
+    /// Whether the media queries match.
+    Media(bool),
+}
+
 impl<'i> AtRuleParser<'i> for TopLevelParser {
-    type Prelude = PageSelector;
-    type AtRule = QualifiedRule;
+    type Prelude = AtPrelude;
+    type AtRule = Vec<QualifiedRule>;
     type Error = StyleParseError;
 
     fn parse_prelude<'t>(
@@ -427,6 +452,12 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
         name: CowRcStr<'i>,
         input: &mut Parser<'i>,
     ) -> Result<Self::Prelude, ParseError<Self::Error>> {
+        if name.eq_ignore_ascii_case("media") {
+            let matches = super::media::matches(input, &self.media);
+            // what is left of an invalid query is skipped with the rule
+            while input.next().is_ok() {}
+            return Ok(AtPrelude::Media(matches));
+        }
         if !name.eq_ignore_ascii_case("page") {
             return Err(ParseError::from_basic_kind(
                 BasicParseErrorKind::AtRuleInvalid,
@@ -440,7 +471,7 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
             .ok()
             .map(|ident| std::sync::Arc::<str>::from(&*ident));
         if input.is_exhausted() {
-            return Ok(PageSelector { name, pseudo: None });
+            return Ok(AtPrelude::Page(PageSelector { name, pseudo: None }));
         }
         input.expect_colon()?;
         let ident = input.expect_ident()?.clone();
@@ -453,7 +484,7 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
         if !input.is_exhausted() {
             return Err(invalid());
         }
-        Ok(PageSelector { name, pseudo: Some(pseudo) })
+        Ok(AtPrelude::Page(PageSelector { name, pseudo: Some(pseudo) }))
     }
 
     fn parse_block<'t>(
@@ -462,12 +493,28 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
         _start: &ParserState,
         input: &mut Parser<'i>,
     ) -> Result<Self::AtRule, ParseError<Self::Error>> {
+        let prelude = match prelude {
+            AtPrelude::Page(prelude) => prelude,
+            AtPrelude::Media(matches) => {
+                // the rules of the block, nested blocks included
+                let mut rules = vec![];
+                for rule in StyleSheetParser::new(input, self) {
+                    match rule {
+                        Err((error, text, _location)) => {
+                            warn!("Could not parse CSS rule {:?}: {:?}", text, error)
+                        }
+                        Ok(nested) => rules.extend(nested),
+                    }
+                }
+                return Ok(if matches { rules } else { vec![] });
+            }
+        };
         let body = parse_page_body(input);
-        Ok(QualifiedRule {
+        Ok(vec![QualifiedRule {
             selectors: GeneralizedSelector::AtPage(prelude),
             properties: body.properties,
             margin_boxes: body.margin_boxes,
-        })
+        }])
     }
 }
 

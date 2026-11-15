@@ -357,6 +357,14 @@ impl FlowConstructor {
             name, attributes, ..
         }) = &node.html_data
         {
+            // a style sheet for other media (`media="screen"`) is not read
+            let for_this_media = attributes
+                .borrow()
+                .get(&QualName::new(None, ns!(), local_name!("media")))
+                .map_or(true, |media| self.styles.media_matches(&media.value));
+            if !for_this_media {
+                return;
+            }
             if name == &QualName::new(None, ns!(html), local_name!("style")) {
                 for child in TreeLinked::children(node) {
                     if let ParsedData::Text(css) = &child.html_data {
