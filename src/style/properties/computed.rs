@@ -752,6 +752,7 @@ pub struct Box {
     pub unicode_bidi: specified::UnicodeBidi,
     pub position: PositionSpec,
     pub vertical_align: VerticalAlign,
+    pub aspect_ratio: specified::AspectRatio,
     pub box_sizing: BoxSizing,
 
     pub flex_direction: FlexDirection,
@@ -789,6 +790,7 @@ impl Default for Box {
             unicode_bidi: Default::default(),
             position: Default::default(),
             vertical_align: Default::default(),
+            aspect_ratio: Default::default(),
             box_sizing: Default::default(),
             flex_direction: Default::default(),
             flex_wrap: Default::default(),

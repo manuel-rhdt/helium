@@ -101,6 +101,7 @@ pub(super) struct HeliumTree<'a, 'w> {
     pub inline_ctxs: &'a mut WriteStorage<'w, InlineFormattingContext>,
     pub intrinsic_sizes: &'a mut WriteStorage<'w, IntrinsicSize>,
     pub images: &'a ReadStorage<'w, ImageBox>,
+    pub canvases: &'a ReadStorage<'w, crate::layout::components::CanvasSize>,
     pub text_runs: &'a ReadStorage<'w, TextRun>,
     pub aligns: &'a ReadStorage<'w, crate::layout::components::VerticalAlignment>,
     pub table_spans: &'a ReadStorage<'w, TableCellSpan>,
@@ -373,8 +374,21 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             // A box with an intrinsic size (such as a `<math>` element) is sized like a replaced
             // element: an `auto` width is its intrinsic width instead of the container's width.
             let image = self.images.get(entity).map(|image| (image.width, image.height));
-            let replaced = image.is_some() || self.intrinsic_sizes.get(entity).is_some();
+            // a `<canvas>` has the ratio of its size, like an image
+            let canvas = self.canvases.get(entity).map(|canvas| (canvas.width, canvas.height));
+            let replaced = image.is_some()
+                || canvas.is_some()
+                || self.intrinsic_sizes.get(entity).is_some();
+            let image = image.or(canvas);
+            // `aspect-ratio: auto` (also `auto <ratio>`) leaves the ratio of an image to the image
+            let natural_ratio = self
+                .computed_values
+                .get(entity)
+                .is_none_or(|style| style.box_.aspect_ratio.auto);
             let node = self.node_mut(id);
+            if image.is_some() && natural_ratio {
+                node.style.aspect_ratio = None;
+            }
             node.content = Content::Replaced;
             node.style.item_is_replaced = replaced;
             // An image keeps its proportions when only one of its sides is given.
@@ -386,7 +400,10 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             // A length for one side of a content box gives the other side directly: taffy
             // would apply the ratio to the border box.
             if let Some((width, height)) = image.filter(|&(w, h)| w > 0.0 && h > 0.0) {
-                if node.style.box_sizing == taffy::BoxSizing::ContentBox && !node.flow.is_vertical() {
+                if natural_ratio
+                    && node.style.box_sizing == taffy::BoxSizing::ContentBox
+                    && !node.flow.is_vertical()
+                {
                     let length = |dimension: taffy::Dimension| {
                         let raw = dimension.into_raw();
                         (raw.tag() == taffy::CompactLength::LENGTH_TAG).then(|| raw.value())
@@ -421,7 +438,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             });
             if let Some((width, height)) = image
                 .filter(|&(w, h)| w > 0.0 && h > 0.0)
-                .filter(|_| !sizes_given && (constrained || !has_edges))
+                .filter(|_| natural_ratio && !sizes_given && (constrained || !has_edges))
             {
                 // the ratio of the logical sides: turned around in a vertical flow
                 let (inline, block) = node.flow.swap((width, height));
@@ -720,6 +737,10 @@ impl HeliumTree<'_, '_> {
         // An image is as big as the image, however often it was an inline-block atom before (which
         // stores the size of its margin box as its `IntrinsicSize`).
         let image = self.images.get(node.entity).map(|image| (image.width, image.height));
+        // (a `<canvas>` is sized like an image)
+        let image = image.or_else(|| {
+            self.canvases.get(node.entity).map(|canvas| (canvas.width, canvas.height))
+        });
         // An image without a given size is as big as its pixels, but within `min-` and
         // `max-width` and `-height`, which then change the other side too (CSS 2.1 10.4: the
         // size keeps its proportions).
@@ -752,13 +773,30 @@ impl HeliumTree<'_, '_> {
         } else {
             self.intrinsic_sizes.get(node.entity).copied()
         };
+        // The padding and border, which the ratio of the content box does not include. (The sizes
+        // that Taffy knows are the ones of the border box.)
+        let extras = {
+            let style = &node.style;
+            let basis = inputs.parent_size.width;
+            let edges = style.padding.resolve_or_zero(basis, calc) + style.border.resolve_or_zero(basis, calc);
+            (edges.horizontal_axis_sum(), edges.vertical_axis_sum())
+        };
+        // An image with a size on one side only (a flex item whose main size was resolved, or a
+        // stretched grid item) has the other side from its proportions.
+        // (an `aspect-ratio` that is not `auto` is the ratio instead of the one of the image)
+        let ratio = node
+            .style
+            .aspect_ratio
+            .or_else(|| image.filter(|&(w, h)| w > 0.0 && h > 0.0).map(|(w, h)| w / h));
         let mut output = compute_leaf_layout(inputs, &node.style, calc, |known, _available| Size {
-            width: known.width.unwrap_or(
-                image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),
-            ),
-            height: known.height.unwrap_or(
-                image.map_or_else(|| intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0), |i| i.1),
-            ),
+            width: known.width.unwrap_or_else(|| match (known.height, ratio) {
+                (Some(height), Some(ratio)) => ((height - extras.1).max(0.0) * ratio + extras.0),
+                _ => image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),
+            }),
+            height: known.height.unwrap_or_else(|| match (known.width, ratio) {
+                (Some(width), Some(ratio)) => ((width - extras.0).max(0.0) / ratio + extras.1),
+                _ => image.map_or_else(|| intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0), |i| i.1),
+            }),
         });
         if let Some(IntrinsicSize::SizeWithBaseline { baseline, .. }) = intrinsic {
             output.baselines = Baselines::from_first(Some(baseline.0));

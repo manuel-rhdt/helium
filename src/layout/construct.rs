@@ -813,6 +813,7 @@ impl EntityConstructor {
         world.register::<components::TextRun>();
         world.register::<components::RelativeOffset>();
         world.register::<components::ElementAlign>();
+        world.register::<components::CanvasSize>();
         world.register::<components::VerticalAlignment>();
         world.register::<components::ListMarker>();
         world.register::<components::Decoration>();
@@ -986,7 +987,24 @@ impl EntityConstructor {
                     .then(|| table_cell_span(element_data))
                     .flatten();
                 let svg = self.pending_svg.take();
-                let is_image = svg.is_some()
+                // a `<canvas>` is a replaced box of 300 by 150 pixels, or the size of its
+                // attributes, with nothing drawn in it (scripts do not run)
+                let canvas = (element_data.name
+                    == QualName::new(None, ns!(html), local_name!("canvas")))
+                .then(|| {
+                    let dimension = |name, default: f32| {
+                        element_data
+                            .attributes
+                            .borrow()
+                            .get(&QualName::new(None, ns!(), name))
+                            .and_then(|attribute| attribute.value.trim().parse::<f32>().ok())
+                            .filter(|value| value.is_finite() && *value >= 0.0)
+                            .unwrap_or(default)
+                    };
+                    (dimension(local_name!("width"), 300.0), dimension(local_name!("height"), 150.0))
+                });
+                let is_image = canvas.is_some()
+                    || svg.is_some()
                     || element_data.name == QualName::new(None, ns!(html), local_name!("img"));
                 let image = match svg {
                     Some(svg) => {
@@ -1021,6 +1039,12 @@ impl EntityConstructor {
                     self.world
                         .write_storage::<components::ImageBox>()
                         .insert(entity.0, image)
+                        .unwrap();
+                }
+                if let Some((width, height)) = canvas {
+                    self.world
+                        .write_storage::<components::CanvasSize>()
+                        .insert(entity.0, components::CanvasSize { width, height })
                         .unwrap();
                 }
                 if let Some(span) = span {
@@ -1231,7 +1255,8 @@ impl EntityConstructor {
 
         // An image has no content: it stays a leaf box, which is as big as the image.
         if let LayoutEntity(entity) = node.layout_entity().unwrap()
-            && self.world.read_storage::<components::ImageBox>().contains(entity)
+            && (self.world.read_storage::<components::ImageBox>().contains(entity)
+                || self.world.read_storage::<components::CanvasSize>().contains(entity))
         {
             return;
         }

@@ -222,6 +222,17 @@ impl RelativeOffset {
     }
 }
 
+/// The size of a `<canvas>` in pixels, which is a replaced box with nothing drawn in it.
+#[derive(Debug, Copy, Clone)]
+pub struct CanvasSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Component for CanvasSize {
+    type Storage = DenseVecStorage<Self>;
+}
+
 /// The `vertical-align` of an inline-level box, with what is needed to resolve it against the
 /// parent box (CSS 2.2, 10.8.1).
 #[derive(Debug, Copy, Clone)]

@@ -253,6 +253,15 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
             end: grid_placement(box_.grid_row_end),
         },
         box_sizing,
+        // The ratio gives the size of one side from the other: with a length on both sides there
+        // is nothing to give.
+        aspect_ratio: box_.aspect_ratio.ratio.filter(|_| {
+            use crate::style::properties::computed::{GenericSize, LengthPercentage};
+            let length = |size: GenericSize| {
+                matches!(size, GenericSize::LengthPercentage(LengthPercentage::PixelLength(_)))
+            };
+            !(length(pos.width) && length(pos.height))
+        }),
         position: match style.box_.position {
             PositionSpec::Static => Position::Static,
             PositionSpec::Relative => Position::Relative,

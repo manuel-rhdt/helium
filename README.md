@@ -74,7 +74,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `@page` and its margin boxes, to the initial font size).
 - **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`,
   `table` and the table
-  parts, `list-item`, `none`), `vertical-align` (on inline boxes, and `top`, `middle` and `bottom` in table cells; the baselines of
+  parts, `list-item`, `none`), `aspect-ratio` (also for the images and `<canvas>` boxes, which are blank and 300 by 150 pixels
+  unless their attributes say otherwise), `vertical-align` (on inline boxes, and `top`, `middle` and `bottom` in table cells; the baselines of
   the cells in a row are not aligned), `position: absolute` and `position: relative` (`left`, `right`,
   `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in
   vertical text too; percentages of `left`/`right` in vertical lines count as `auto`), block, inline, flexbox

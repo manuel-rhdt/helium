@@ -491,6 +491,9 @@ pub enum Box {
     /// https://www.w3.org/TR/CSS22/visudet.html#propdef-vertical-align
     #[property]
     VerticalAlign(VerticalAlign),
+    /// https://www.w3.org/TR/css-sizing-4/#aspect-ratio
+    #[property]
+    AspectRatio(AspectRatio),
     /// https://www.w3.org/TR/css-sizing-3/#box-sizing
     #[property]
     BoxSizing(BoxSizing),
@@ -1883,6 +1886,63 @@ impl<'a> List<'a, Border> {
             .next()
             .unwrap_or(Color::CurrentColor)
     }
+}
+
+/// `aspect-ratio: auto | <ratio> | auto && <ratio>`: the preferred ratio of the width to the height
+/// of the box. With `auto`, a replaced element has the ratio of its content instead (and the ratio
+/// is the one of the boxes that have no content ratio); a ratio of `0` or `/ 0` is no ratio.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct AspectRatio {
+    pub auto: bool,
+    pub ratio: Option<f32>,
+}
+
+impl Default for AspectRatio {
+    fn default() -> Self {
+        AspectRatio { auto: true, ratio: None }
+    }
+}
+
+impl<'i> PropertyValue<'i> for AspectRatio {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let mut auto = false;
+        let mut ratio: Option<Option<f32>> = None;
+        // `auto` and the ratio, in any order
+        for _ in 0..2 {
+            if !auto && input.try_parse(|input| input.expect_ident_matching("auto")).is_ok() {
+                auto = true;
+            } else if ratio.is_none()
+                && let Ok(value) = input.try_parse(parse_ratio)
+            {
+                ratio = Some(value);
+            } else {
+                break;
+            }
+        }
+        if !auto && ratio.is_none() {
+            return Err(input.new_error_for_next_token());
+        }
+        // a degenerate ratio is no ratio
+        let ratio = ratio.flatten();
+        Ok(AspectRatio { auto: auto || ratio.is_none(), ratio })
+    }
+}
+
+/// `<number [0,∞]> [ / <number [0,∞]> ]?`: the width divided by the height, or `None` for a
+/// degenerate ratio (zero or infinite).
+fn parse_ratio<'i>(input: &mut Parser<'i>) -> Result<Option<f32>, ParseError<StyleParseError>> {
+    let width = f32::from_css_property_value(input)?;
+    let height = if input.try_parse(|input| input.expect_delim('/')).is_ok() {
+        f32::from_css_property_value(input)?
+    } else {
+        1.0
+    };
+    if width < 0.0 || height < 0.0 {
+        return Err(input.new_error_for_next_token());
+    }
+    Ok((width > 0.0 && height > 0.0 && (width / height).is_finite()).then(|| width / height))
 }
 
 /// `vertical-align`: how an inline-level box is aligned in its line, or the content of a table
