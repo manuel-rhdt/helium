@@ -259,7 +259,17 @@ pub fn load(src: &str, base_dir: &Path) -> Result<LoadedImage, String> {
     LoadedImage::from_bytes(data, base_dir)
 }
 
-/// The file that a relative URL refers to, if it is inside of `base_dir`.
+static RESOURCE_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Sets the directory that the files of a document (images) must be inside of, if it is not
+/// the directory of the document itself: a document may refer to files next to it, such as
+/// `../support/image.png`. Must be called before the first image is loaded.
+pub fn set_resource_root(root: PathBuf) {
+    let _ = RESOURCE_ROOT.set(root);
+}
+
+/// The file that a relative URL refers to, if it is inside of `base_dir` (or of the resource
+/// root, see `set_resource_root`).
 fn resolve_path(src: &str, base_dir: &Path) -> Result<PathBuf, String> {
     let src = src.trim();
     if let Some(colon) = src.find(':') {
@@ -282,9 +292,10 @@ fn resolve_path(src: &str, base_dir: &Path) -> Result<PathBuf, String> {
     let canonical = full
         .canonicalize()
         .map_err(|error| format!("cannot read {}: {}", full.display(), error))?;
-    let base = base_dir
+    let allowed = RESOURCE_ROOT.get().map_or(base_dir, |root| root.as_path());
+    let base = allowed
         .canonicalize()
-        .map_err(|error| format!("cannot read {}: {}", base_dir.display(), error))?;
+        .map_err(|error| format!("cannot read {}: {}", allowed.display(), error))?;
     if !canonical.starts_with(&base) {
         return Err(format!(
             "{} is outside of the directory of the document",
