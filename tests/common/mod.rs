@@ -41,7 +41,9 @@ pub fn write_expectations(file: &str, failing: &BTreeSet<String>) {
     let mut reasons = String::new();
     let mut pending: Vec<&str> = vec![];
     for line in keep[header_len..].iter() {
-        if line.starts_with('#') {
+        if line.starts_with("# Not investigated") {
+            // the heading of the entries that have no reason: it is written again below
+        } else if line.starts_with('#') {
             pending.push(line);
         } else if line.trim().is_empty() {
             pending.clear();

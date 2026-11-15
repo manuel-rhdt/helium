@@ -4,8 +4,6 @@
 
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-001.xht
-
-# Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-003.xht
 css/CSS2/borders/border-bottom-applies-to-005.xht
 css/CSS2/borders/border-bottom-applies-to-006.xht
