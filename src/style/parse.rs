@@ -119,6 +119,11 @@ impl Styles {
         index < self.user_agent_rules
     }
 
+    /// Removes the rules of the document, to read its style sheets again.
+    pub fn clear_author_rules(&mut self) {
+        self.rules.truncate(self.user_agent_rules);
+    }
+
     pub fn rules_iter(&self) -> impl DoubleEndedIterator<Item = &QualifiedRule> {
         self.rules.iter()
     }
