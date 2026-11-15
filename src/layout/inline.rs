@@ -846,18 +846,20 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                         crate::style::properties::specified::Hyphens::Auto => {
                             // without a dictionary for the language, words are not hyphenated
-                            match dictionaries.get(&text_run.lang) {
-                                Some(dictionary) => word_ranges(&text_run.text)
-                                    .into_iter()
-                                    .flat_map(|(word_start, word_end)| {
-                                        let word = &text_run.text[word_start..word_end];
-                                        let breaks = dictionary.hyphenate(word).breaks;
-                                        limit_hyphenation_chars(word, breaks)
-                                            .into_iter()
-                                            .map(move |offset| word_start + offset)
-                                    })
-                                    .collect(),
-                                None => Vec::new(),
+                            if dictionaries.get(&text_run.lang).is_none() {
+                                Vec::new()
+                            } else {
+                                let mut points = Vec::new();
+                                for (word_start, word_end) in word_ranges(&text_run.text) {
+                                    let word = &text_run.text[word_start..word_end];
+                                    points.extend(
+                                        dictionaries
+                                            .points(&text_run.lang, word)
+                                            .iter()
+                                            .map(|offset| word_start + offset),
+                                    );
+                                }
+                                points
                             }
                         }
                     };
@@ -1091,26 +1093,56 @@ fn push_bidi_runs(
 
 /// The hyphenation dictionaries of the languages of a document, loaded when they are first
 /// needed. Only the dictionaries that are embedded into Helium (Cargo features `embed_*` of the
-/// `hyphenation` crate, currently US English) are available.
+/// `hyphenation` crate, currently US English) are available. The hyphenation points of the words
+/// that were looked up are kept: words repeat, and the dictionary allocates for every lookup.
 #[derive(Default)]
-struct HyphenationDictionaries(HashMap<Language, Option<Standard>>);
+struct HyphenationDictionaries {
+    dictionaries: HashMap<Language, Option<Standard>>,
+    /// The points of a word (see `limit_hyphenation_chars`) by language.
+    words: HashMap<Language, HashMap<String, Vec<usize>>>,
+}
 
 impl HyphenationDictionaries {
+    /// Loads the dictionary of `language` if it has not been.
+    fn load(&mut self, language: Language) {
+        self.dictionaries.entry(language).or_insert_with(|| {
+            Standard::from_embedded(language).ok().or_else(|| {
+                // British English is hyphenated as American English without its dictionary
+                (language == Language::EnglishGB)
+                    .then(|| Standard::from_embedded(Language::EnglishUS).ok())
+                    .flatten()
+            })
+        });
+    }
+
     /// The dictionary for text in `lang`. Text of an unknown language is hyphenated as English,
     /// text in a language without a dictionary not at all.
     fn get(&mut self, lang: &crate::style::properties::computed::Language) -> Option<&Standard> {
         let language = hyphenation_language(lang)?;
-        self.0
-            .entry(language)
-            .or_insert_with(|| {
-                Standard::from_embedded(language).ok().or_else(|| {
-                    // British English is hyphenated as American English without its dictionary
-                    (language == Language::EnglishGB)
-                        .then(|| Standard::from_embedded(Language::EnglishUS).ok())
-                        .flatten()
-                })
-            })
-            .as_ref()
+        self.load(language);
+        self.dictionaries[&language].as_ref()
+    }
+
+    /// The byte offsets in `word` of the hyphenation points that leave enough characters on both
+    /// sides (see `limit_hyphenation_chars`), in text in `lang`.
+    fn points(&mut self, lang: &crate::style::properties::computed::Language, word: &str) -> &[usize] {
+        // a word that is too short has no points: the dictionary does not need to be asked
+        if word.chars().count() < HYPHENATE_MIN_WORD {
+            return &[];
+        }
+        let Some(language) = hyphenation_language(lang) else {
+            return &[];
+        };
+        self.load(language);
+        let words = self.words.entry(language).or_default();
+        if !words.contains_key(word) {
+            let points = match &self.dictionaries[&language] {
+                Some(dictionary) => limit_hyphenation_chars(word, dictionary.hyphenate(word).breaks),
+                None => Vec::new(),
+            };
+            words.insert(word.to_owned(), points);
+        }
+        &words[word]
     }
 }
 
@@ -2358,16 +2390,19 @@ pub(super) fn shape_piece_in_flow(
         ops.push(TextOperator::BeginActualText(text.to_owned()));
     }
     for glyph in &placed {
-        let cluster = grapheme_start(&boundaries, glyph.cluster);
-        if open_cluster != Some(cluster) {
-            if open_cluster.take().is_some() {
-                out.flush(ops);
-                ops.push(TextOperator::EndMarkedContent);
-            }
-            if let Some(text) = actual_text.get(&cluster) {
-                out.flush(ops);
-                ops.push(TextOperator::BeginActualText(text.clone()));
-                open_cluster = Some(cluster);
+        // the clusters that are marked with their text; there are none in most pieces
+        if !actual_text.is_empty() {
+            let cluster = grapheme_start(&boundaries, glyph.cluster);
+            if open_cluster != Some(cluster) {
+                if open_cluster.take().is_some() {
+                    out.flush(ops);
+                    ops.push(TextOperator::EndMarkedContent);
+                }
+                if let Some(text) = actual_text.get(&cluster) {
+                    out.flush(ops);
+                    ops.push(TextOperator::BeginActualText(text.clone()));
+                    open_cluster = Some(cluster);
+                }
             }
         }
 
@@ -2546,11 +2581,9 @@ fn record_to_unicode<'a>(
     // texts: a conjunct with its vowel sign (Kannada "ಲ್ಲಾ", Sinhala "ක්‍රි") is several
     // grapheme clusters but one glyph cluster. So a unit boundary is a grapheme boundary where a
     // glyph cluster starts.
-    let boundaries: Vec<usize> = characters
-        .grapheme_indices(true)
-        .map(|(i, _)| i)
-        .filter(|&i| i == 0 || starts.binary_search(&i).is_ok())
-        .collect();
+    // Only needed for clusters that go into `actual_text`, so it is built when the first one
+    // is found: it is empty if there are none, which is the case for most texts.
+    let mut boundaries: Vec<usize> = Vec::new();
     let mut unclean = std::collections::BTreeSet::new();
     for (i, group) in glyphs.chunk_by(|a, b| a.0 == b.0).enumerate() {
         let start = group[0].0;
@@ -2581,6 +2614,14 @@ fn record_to_unicode<'a>(
                     .lock()
                     .entry(glyph)
                     .or_insert_with(|| text.to_owned());
+            }
+            if boundaries.is_empty() {
+                boundaries.extend(
+                    characters
+                        .grapheme_indices(true)
+                        .map(|(i, _)| i)
+                        .filter(|&i| i == 0 || starts.binary_search(&i).is_ok()),
+                );
             }
             unclean.insert(grapheme_start(&boundaries, start));
         }
