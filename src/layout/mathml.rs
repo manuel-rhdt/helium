@@ -313,8 +313,7 @@ impl LayoutMathGlyphs {
                         para.ops.push(TextOperator::SetTransform(transform));
                         let glyph_index = GlyphIndex(glyph.glyph);
                         let _ = font.advance(glyph_index);
-                        para.ops
-                            .push(TextOperator::Glyphs(Glyphs(vec![glyph_index])));
+                        para.ops.push_glyph(glyph_index);
                         // the pieces of a stretched operator have no text of their own
                         if let Some(text) = text {
                             font.to_unicode_fallback

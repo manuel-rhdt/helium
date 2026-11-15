@@ -1,6 +1,6 @@
 use crate::layout::components::ImageBox;
 use crate::layout::components::{
-    Decoration, DecorationFragment, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
+    Decoration, DecorationFragment, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator, TextOps,
     TransformMatrix, VectorGraphics, ZIndex,
 };
 use crate::layout::normal_formatting::Pages;
@@ -1292,15 +1292,16 @@ fn resolve_embeds(
     {
         return paragraph;
     }
-    let Paragraph { start_pos, ops: old_ops, mut color_glyphs } = paragraph;
-    let mut ops = Vec::with_capacity(old_ops.len());
+    let Paragraph { start_pos, ops: old, mut color_glyphs } = paragraph;
+    let (old_ops, glyphs) = old.into_parts();
+    let mut ops = TextOps::from_parts(Vec::with_capacity(old_ops.len()), glyphs);
     for op in old_ops {
         match op {
             TextOperator::Embed { entity, x, y } => {
                 if page.contains(entity.id())
                     && let Some(embedded) = paragraphs.remove(entity)
                 {
-                    ops.extend(embedded.ops);
+                    ops.append(embedded.ops);
                     color_glyphs.extend(embedded.color_glyphs);
                 }
                 ops.push(TextOperator::SetTransform(TransformMatrix::translation(x, y)));

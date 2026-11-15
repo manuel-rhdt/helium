@@ -10,7 +10,7 @@ use crate::style::properties::specified::{Direction, UnicodeBidi};
 use crate::display_list::Rect;
 use crate::layout::text::{is_invisible_formatting, shape, shape_directed, shape_with_levels};
 
-use components::{Glyphs, GraphicsOp, IntrinsicSize, KernedGlyphs, Position};
+use components::{GlyphRange, GraphicsOp, IntrinsicSize, KernedGlyph, Position, TextOps};
 use hyphenation::{Hyphenator, Language, Load, Standard};
 use lemon_pdf::font::FontUnit;
 use specs::storage::GenericReadStorage;
@@ -1655,7 +1655,7 @@ impl<'a> System<'a> for LineBoxCreator {
                 continue;
             }
 
-            let mut ops: Vec<TextOperator> = vec![];
+            let mut ops = TextOps::default();
             let mut color_glyphs: Vec<components::PlacedColorGlyph> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
             let mut previous_color: Option<RGBA> = None;
@@ -2143,7 +2143,7 @@ impl std::ops::Add<Px> for Pen {
 /// A text that is set on one line in one go.
 pub(super) struct ShapedLine {
     /// The operators that draw the text, from the font and the color to the last glyph.
-    pub ops: Vec<TextOperator>,
+    pub ops: TextOps,
     pub width: Px,
     /// The colour glyphs of the text, relative to the start of the text on the baseline.
     pub color_glyphs: Vec<PlacedColorGlyph>,
@@ -2156,10 +2156,13 @@ pub(super) struct ShapedLine {
 pub(super) fn shape_line(text: &str, font: &Font, face: &components::TextFace, rtl: bool) -> ShapedLine {
     use unicode_bidi::{BidiInfo, Level};
 
-    let mut ops = vec![
-        TextOperator::SetFont(face.font_name.clone(), face.font_size),
-        TextOperator::SetColor(face.color),
-    ];
+    let mut ops = TextOps::from_parts(
+        vec![
+            TextOperator::SetFont(face.font_name.clone(), face.font_size),
+            TextOperator::SetColor(face.color),
+        ],
+        vec![],
+    );
     let info = BidiInfo::new(text, Some(if rtl { Level::rtl() } else { Level::ltr() }));
     let mut width = Px(0.0);
     let mut color_glyphs = Vec::new();
@@ -2200,7 +2203,7 @@ pub(super) fn shape_piece(
     word_spacing: Px,
     inter_letter: &[usize],
     rtl: bool,
-    ops: &mut Vec<TextOperator>,
+    ops: &mut TextOps,
 ) -> Px {
     shape_piece_in_flow(characters, font, fonts, at, font_size, word_spacing, inter_letter, rtl, None, ops)
 }
@@ -2233,7 +2236,7 @@ pub(super) fn shape_piece_in_flow(
     inter_letter: &[usize],
     rtl: bool,
     vertical: Option<VerticalPiece>,
-    ops: &mut Vec<TextOperator>,
+    ops: &mut TextOps,
 ) -> Px {
     // lines that run upwards or right-to-left in a vertical flow are not supported
     let vertical = vertical.filter(|_| !rtl);
@@ -2333,7 +2336,7 @@ pub(super) fn shape_piece_in_flow(
 
     // The glyphs are written in visual order, and right-to-left text gets its logical order from
     // `/ActualText`. Each kern moves the pen to where its glyph is drawn.
-    let mut out = GlyphRunWriter::default();
+    let mut out = GlyphRunWriter::new(ops);
     let mut current_font = 0u16;
     let mut rise = FontUnit(0.0);
     // where the pen is after the last glyph
@@ -2382,7 +2385,8 @@ pub(super) fn shape_piece_in_flow(
                 e: Px(center_x - advance_px / 2.0),
                 f: Px(along + advance_px / 2.0 + IDEOGRAPHIC_CENTER * size),
             }));
-            ops.push(TextOperator::KernedGlyphs(vec![KernedGlyphs::Glyphs(Glyphs(vec![glyph.glyph]))]));
+            ops.push_glyph(glyph.glyph);
+            out.skip_pushed(ops);
             // back to the line, behind the glyph
             let [a, b, c, d] = piece.flow.text_matrix();
             pen = FontUnit(glyph.x.0 + advance.0);
@@ -2405,7 +2409,7 @@ pub(super) fn shape_piece_in_flow(
             rise = glyph.rise;
             ops.push(TextOperator::SetRise(font_size * (rise.0 as f32 / 1000.0)));
         }
-        out.glyph(glyph.glyph);
+        out.glyph(ops, glyph.glyph);
         if vertical.is_none() && glyph_font.is_color_glyph(glyph.glyph) {
             ops.push(TextOperator::ColorGlyph {
                 font: glyph_font.postscript_name(),
@@ -2437,48 +2441,54 @@ pub(super) fn shape_piece_in_flow(
     advance
 }
 
-/// Collects glyphs and the kerns between them into `TJ` operators.
-#[derive(Default)]
+/// Collects glyphs and the kerns between them into `TJ` operators. The glyphs are appended to
+/// `TextOps::glyphs` as they come, and `flush` ends the operator that they make up.
 struct GlyphRunWriter {
-    items: Vec<KernedGlyphs>,
-    glyphs: Vec<GlyphIndex>,
+    /// Where the glyphs of the operator that is being collected start.
+    start: usize,
     /// The kern that goes in front of the next glyph, summed up so that a glyph gets one kern.
     pending_kern: FontUnit,
 }
 
 impl GlyphRunWriter {
+    fn new(ops: &TextOps) -> Self {
+        GlyphRunWriter { start: ops.glyphs.len(), pending_kern: FontUnit(0.0) }
+    }
+
     fn kern(&mut self, kern: FontUnit) {
         self.pending_kern.0 += kern.0;
     }
 
-    fn glyph(&mut self, glyph: GlyphIndex) {
-        self.write_pending_kern();
-        self.glyphs.push(glyph);
-    }
-
-    fn write_pending_kern(&mut self) {
-        // 0.1/1000 em is far below anything visible; the coarser values compress better
-        let kern = (self.pending_kern.0 * 10.0).round() / 10.0;
-        if kern.abs() >= 0.1 {
-            if !self.glyphs.is_empty() {
-                self.items
-                    .push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut self.glyphs))));
-            }
-            self.items.push(KernedGlyphs::Kern(FontUnit(kern)));
-        }
+    /// The pending kern in tenths of a font unit, which is reset: 0.1/1000 em is far below
+    /// anything visible; the coarser values compress better.
+    fn take_kern(&mut self) -> i32 {
+        let tenths = (self.pending_kern.0 * 10.0).round();
         self.pending_kern = FontUnit(0.0);
+        if tenths.abs() >= 1.0 { tenths as i32 } else { 0 }
     }
 
-    /// Appends the collected glyphs and kerns to `ops` as one `TJ` operator.
-    fn flush(&mut self, ops: &mut Vec<TextOperator>) {
-        self.write_pending_kern();
-        if !self.glyphs.is_empty() {
-            self.items
-                .push(KernedGlyphs::Glyphs(Glyphs(std::mem::take(&mut self.glyphs))));
+    fn glyph(&mut self, ops: &mut TextOps, glyph: GlyphIndex) {
+        let kern = self.take_kern();
+        ops.glyphs.push(KernedGlyph { glyph, kern });
+    }
+
+    /// Continues after glyphs that were pushed to `ops` without this writer.
+    fn skip_pushed(&mut self, ops: &TextOps) {
+        self.start = ops.glyphs.len();
+    }
+
+    /// Ends the `TJ` operator of the collected glyphs and kerns and appends it to `ops`.
+    fn flush(&mut self, ops: &mut TextOps) {
+        let trailing_kern = self.take_kern();
+        let end = ops.glyphs.len();
+        if end > self.start || trailing_kern != 0 {
+            ops.push(TextOperator::KernedGlyphs(GlyphRange {
+                start: self.start as u32,
+                end: end as u32,
+                trailing_kern,
+            }));
         }
-        if !self.items.is_empty() {
-            ops.push(TextOperator::KernedGlyphs(std::mem::take(&mut self.items)));
-        }
+        self.start = end;
     }
 }
 
@@ -2630,10 +2640,10 @@ mod tests {
     }
 
     /// The operators `shape_piece` emits for `text`, with the width it returns.
-    fn pieces(family: &str, text: &str, rtl: bool, word_spacing: Px) -> (Vec<TextOperator>, Px, Font) {
+    fn pieces(family: &str, text: &str, rtl: bool, word_spacing: Px) -> (TextOps, Px, Font) {
         let font = font_named(family);
         let fonts = crate::layout::text::fallback::TextFonts::default();
-        let mut ops = Vec::new();
+        let mut ops = TextOps::default();
         let width = shape_piece(text, &font, &fonts, None, Px(16.0), word_spacing, &[], rtl, &mut ops);
         (ops, width, font)
     }
@@ -2667,16 +2677,10 @@ mod tests {
     }
 
     /// The glyphs of the `TJ` operators, in order.
-    fn glyph_count(ops: &[TextOperator]) -> usize {
+    fn glyph_count(ops: &TextOps) -> usize {
         ops.iter()
             .map(|op| match op {
-                TextOperator::KernedGlyphs(items) => items
-                    .iter()
-                    .map(|item| match item {
-                        KernedGlyphs::Glyphs(glyphs) => glyphs.0.len(),
-                        KernedGlyphs::Kern(_) => 0,
-                    })
-                    .sum(),
+                TextOperator::KernedGlyphs(range) => (range.end - range.start) as usize,
                 _ => 0,
             })
             .sum()
@@ -2684,18 +2688,16 @@ mod tests {
 
     /// The pen has to end where the returned width says it does: the glyph advances minus
     /// the kerns of the `TJ` operators is the width of the piece.
-    fn net_advance(ops: &[TextOperator], font: &Font, size: f32) -> f32 {
+    fn net_advance(ops: &TextOps, font: &Font, size: f32) -> f32 {
         let mut total = 0.0;
-        for op in ops {
-            if let TextOperator::KernedGlyphs(items) = op {
-                for item in items {
-                    match item {
-                        KernedGlyphs::Glyphs(glyphs) => {
-                            total += glyphs.0.iter().map(|g| font.advance(*g).0 as f32).sum::<f32>()
-                        }
-                        KernedGlyphs::Kern(kern) => total -= kern.0 as f32,
+        for op in ops.iter() {
+            if let TextOperator::KernedGlyphs(range) = op {
+                range.for_each_item(&ops.glyphs, |item| match item {
+                    components::KernedItem::Glyphs(glyphs) => {
+                        total += glyphs.iter().map(|g| font.advance(g.glyph).0 as f32).sum::<f32>()
                     }
-                }
+                    components::KernedItem::Kern(kern) => total -= kern.0 as f32,
+                });
             }
         }
         total * size / 1000.0
@@ -2732,8 +2734,8 @@ mod tests {
     fn marking_does_not_depend_on_earlier_text() {
         let font = font_named("Noto Sans Devanagari");
         let fonts = crate::layout::text::fallback::TextFonts::default();
-        let mut first = Vec::new();
-        let mut second = Vec::new();
+        let mut first = TextOps::default();
+        let mut second = TextOps::default();
         for ops in [&mut first, &mut second] {
             shape_piece("कि", &font, &fonts, None, Px(16.0), Px(0.0), &[], false, ops);
         }
@@ -2798,15 +2800,11 @@ mod tests {
         let glyphs: Vec<_> = ops
             .iter()
             .filter_map(|op| match op {
-                TextOperator::KernedGlyphs(items) => Some(items),
+                TextOperator::KernedGlyphs(range) => Some(&ops.glyphs[range.start as usize..range.end as usize]),
                 _ => None,
             })
             .flatten()
-            .filter_map(|item| match item {
-                KernedGlyphs::Glyphs(g) => Some(g.0.clone()),
-                _ => None,
-            })
-            .flatten()
+            .map(|g| g.glyph)
             .collect();
         let expected = [font.hb_font.get_nominal_glyph('ב').unwrap(), font.hb_font.get_nominal_glyph('א').unwrap()];
         assert_eq!(glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected);

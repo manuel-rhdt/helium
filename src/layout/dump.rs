@@ -15,7 +15,7 @@ use std::fmt::Write;
 use specs::{Join, World, WorldExt};
 
 use crate::layout::components::{
-    Decoration, DecorationFragment, EdgeValues, Fragmented, KernedGlyphs, LayoutEntity, Paragraph,
+    Decoration, DecorationFragment, EdgeValues, Fragmented, KernedGlyph, KernedItem, LayoutEntity, Paragraph,
     Position, TextOperator, TextRun,
 };
 use crate::layout::construct::AssignLayoutEntity;
@@ -223,7 +223,7 @@ fn dump_paragraphs(world: &World) -> Vec<String> {
     let paragraphs = world.read_storage::<Paragraph>();
     let mut out = Vec::new();
     for (pos, paragraph) in (&positions, &paragraphs).join() {
-        let ops: Vec<String> = paragraph.ops.iter().map(op_json).collect();
+        let ops: Vec<String> = paragraph.ops.iter().map(|op| op_json(op, &paragraph.ops.glyphs)).collect();
         out.push(format!(
             "{{\"page\": {}, \"x\": {}, \"y\": {}, \"ops\": [{}]}}",
             pos.page,
@@ -265,12 +265,12 @@ fn dump_lines(world: &World) -> Vec<String> {
     out
 }
 
-fn glyph_ids(glyphs: &crate::layout::components::Glyphs) -> String {
-    let ids: Vec<String> = glyphs.0.iter().map(|g| g.0.to_string()).collect();
+fn glyph_ids(glyphs: &[KernedGlyph]) -> String {
+    let ids: Vec<String> = glyphs.iter().map(|g| g.glyph.0.to_string()).collect();
     format!("[{}]", ids.join(", "))
 }
 
-fn op_json(op: &TextOperator) -> String {
+fn op_json(op: &TextOperator, glyphs: &[KernedGlyph]) -> String {
     match op {
         TextOperator::SetFont(name, size) => {
             format!(
@@ -280,17 +280,14 @@ fn op_json(op: &TextOperator) -> String {
             )
         }
         TextOperator::SetColor(c) => format!("{{\"op\": \"color\", \"value\": {}}}", color(*c)),
-        TextOperator::Glyphs(glyphs) => {
-            format!("{{\"op\": \"glyphs\", \"glyphs\": {}}}", glyph_ids(glyphs))
-        }
-        TextOperator::KernedGlyphs(items) => {
-            let items: Vec<String> = items
-                .iter()
-                .map(|item| match item {
-                    KernedGlyphs::Glyphs(glyphs) => glyph_ids(glyphs),
-                    KernedGlyphs::Kern(kern) => number(kern.0 as f32),
+        TextOperator::KernedGlyphs(range) => {
+            let mut items: Vec<String> = Vec::new();
+            range.for_each_item(glyphs, |item| {
+                items.push(match item {
+                    KernedItem::Glyphs(run) => glyph_ids(run),
+                    KernedItem::Kern(kern) => number(kern.0 as f32),
                 })
-                .collect();
+            });
             format!("{{\"op\": \"kerned\", \"items\": [{}]}}", items.join(", "))
         }
         TextOperator::SetWordSpacing(spacing) => {

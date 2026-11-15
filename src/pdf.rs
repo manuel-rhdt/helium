@@ -301,7 +301,7 @@ fn paint_items(
                 page_context.set_position(x.into(), y.into())?;
                 let mut marked = MarkedContent::default();
 
-                for op in &par.ops {
+                for op in par.ops.iter() {
                     match op {
                         TextOperator::SetFont(font_name, size) => {
                             // A font that draws no glyph anywhere is not embedded (e.g.
@@ -321,14 +321,9 @@ fn paint_items(
                                 floatize(color.blue),
                             )?;
                         }
-                        TextOperator::Glyphs(glyphs) => {
+                        &TextOperator::KernedGlyphs(range) => {
                             marked.before_content(page_context, tagged)?;
-                            page_context.push_operand(glyphs)?;
-                            page_context.apply_operator("Tj")?;
-                        }
-                        TextOperator::KernedGlyphs(glyphs) => {
-                            marked.before_content(page_context, tagged)?;
-                            page_context.push_operand(glyphs)?;
+                            page_context.push_operand(range.array(&par.ops.glyphs))?;
                             page_context.apply_operator("TJ")?;
                         }
                         &TextOperator::NewLine { x_offset, leading } => {
