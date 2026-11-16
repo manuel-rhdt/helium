@@ -89,9 +89,6 @@ css/css-sizing/svg-intrinsic-size-009.html
 css/css-sizing/svg-intrinsic-size-010.html
 css/css-sizing/svg-intrinsic-size-011.html
 css/css-tables/absolute-tables-height-quirks-001.html
-css/css-tables/colspan-001.html
-css/css-tables/colspan-002.html
-css/css-tables/colspan-003.html
 css/css-tables/fractional-percent-width.html
 css/css-tables/tentative/table-rows-with-zero-columns.html
 css/css-text/line-breaking/line-breaking-atomic-nowrap-002.html
