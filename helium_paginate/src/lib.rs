@@ -9,7 +9,9 @@
 //!
 //! [`paragraph`] holds the line breaker.
 
+mod columns;
 mod flow;
+mod graph;
 mod kernel;
 pub mod paragraph;
 mod service;
@@ -17,11 +19,13 @@ mod solver;
 mod token;
 
 pub use flow::{BoxRef, BreakKind, BreakLevel, Item, ItemId, NodeRef, PageKind, PageSpec, PageTable, ParId, Problem};
-pub use kernel::{Invalid, Kernel, PageFill, PageStart, Solution};
-pub use service::{GalleyFlow, GalleyService, LayoutService};
-pub use solver::{balance, BalanceObjective, CssObjective, ExactSolver, Objective, Solver};
+pub use columns::{plan_fragment, ColumnFill, FragmentPlan};
+pub use kernel::{Invalid, Kernel, PageFill, PageFragment, PageStart, Solution};
+pub use service::{Fragment, GalleyFlow, GalleyService, LayoutService};
+pub use graph::{shortest_path, Graph, Path, PageEdge, PageGraph, PageKey};
+pub use solver::{balance, ColumnCost, CssCost, CssObjective, ExactSolver, FullestFirst, Objective, Solver, TallestColumn};
 pub use service::ParLine;
-pub use token::{BreakToken, Cut, Position};
+pub use token::{BreakToken, ContainerCut, Cut, Position};
 
 #[cfg(test)]
 mod tests;

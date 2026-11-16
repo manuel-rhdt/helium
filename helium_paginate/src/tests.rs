@@ -203,15 +203,24 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         overflow: false,
     };
     let css = CssObjective;
-    assert_eq!(css.page_cost(&fill, false), 1000.0);
-    assert_eq!(css.page_cost(&fill, true), 0.0);
+    // 10 px are left on the page
+    let slack = CssCost {
+        slack: CssCost::slack_of(10.0),
+        ..CssCost::default()
+    };
+    assert_eq!(slack.slack, 640 * 640 * 640);
+    assert_eq!(css.page_cost(&fill, false), Some(slack));
+    assert_eq!(css.page_cost(&fill, true), Some(CssCost::default()));
     let avoid = PageFill {
         end_kind: BreakKind::Avoid,
         ..fill
     };
     assert_eq!(
         css.page_cost(&avoid, false),
-        1000.0 + CssObjective::AVOID_BREAK_COST
+        Some(CssCost {
+            avoided_breaks: 1,
+            ..slack
+        })
     );
     let widow = PageFill {
         widow_violation: true,
@@ -220,23 +229,51 @@ fn the_cost_of_a_page_follows_the_css_objective() {
     };
     assert_eq!(
         css.page_cost(&widow, false),
-        1000.0 + CssObjective::ORPHANS_WIDOWS_COST
+        Some(CssCost {
+            orphans_and_widows: 1,
+            ..slack
+        })
     );
+    // how empty a page is does not matter where it ends at a forced break
     let forced = PageFill {
         end_kind: BreakKind::Forced,
         ..fill
     };
-    assert_eq!(
-        css.page_cost(&forced, true),
-        CssObjective::FORCED_BREAK_COST
-    );
+    assert_eq!(css.page_cost(&forced, true), Some(CssCost::default()));
+    assert_eq!(css.page_cost(&forced, false), Some(CssCost::default()));
     let overflow = PageFill {
         overflow: true,
         used: 150.0,
         end_kind: BreakKind::Avoid,
         ..fill
     };
-    assert_eq!(css.page_cost(&overflow, false), CssObjective::OVERFLOW_COST);
+    assert_eq!(
+        css.page_cost(&overflow, false),
+        Some(CssCost {
+            overflows: 1,
+            ..CssCost::default()
+        })
+    );
+}
+
+#[test]
+fn a_cost_is_compared_by_its_fields_in_the_order_of_their_priority() {
+    // a page that does not fit is worse than any number of avoided breaks, which are worse than
+    // any number of widows, which are worse than any amount of empty pages
+    let cost = |overflows, avoided_breaks, orphans_and_widows, slack: u128| CssCost {
+        overflows,
+        avoided_breaks,
+        orphans_and_widows,
+        slack,
+    };
+    assert!(cost(1, 0, 0, 0) > cost(0, 1000, 1000, u128::MAX / 2));
+    assert!(cost(0, 1, 0, 0) > cost(0, 0, 1000, u128::MAX / 2));
+    assert!(cost(0, 0, 1, 0) > cost(0, 0, 0, u128::MAX / 2));
+    assert!(cost(0, 0, 0, 2) > cost(0, 0, 0, 1));
+    // rounding errors of single precision positions do not make costs differ
+    assert_eq!(CssCost::slack_of(20.8), CssCost::slack_of(20.800_04));
+    // the sum adds the fields
+    assert_eq!(cost(1, 2, 3, 4).plus(&cost(1, 1, 1, 1)), cost(2, 3, 4, 5));
 }
 
 fn solve(flow: GalleyFlow, block_size: f32) -> (Vec<Position>, Vec<PageFill>) {
@@ -416,7 +453,11 @@ fn reference_solution(reference: &Reference) -> Vec<usize> {
         let height = reference.advance[to] - reference.advance[from];
         let content = reference.heights[from];
         if height > content {
-            if to == from + 1 { 1e30 } else { f64::INFINITY }
+            // (The paginator had 1e30 here. A sum with it has no digits left for any cost below
+            // 1e14, so every pagination of a flow with such a page cost the same and the earliest
+            // one won, whatever it broke. The typed cost compares the rest, so the reference has
+            // a cost that leaves room for them.)
+            if to == from + 1 { 1e18 } else { f64::INFINITY }
         } else {
             let mut cost = if reference.forced[to] {
                 -1e15
@@ -884,12 +925,18 @@ fn balanced_columns_cut_a_paragraph_where_the_widows_allow_it() {
 struct Tallest;
 
 impl Objective for Tallest {
-    fn page_cost(&self, fill: &PageFill, _is_last: bool) -> f64 {
-        fill.used as f64
+    type Cost = f64;
+
+    fn zero(&self) -> f64 {
+        0.0
     }
 
-    fn combine(&self, so_far: f64, page: f64, _index: usize) -> f64 {
-        so_far.max(page)
+    fn page_cost(&self, fill: &PageFill, _is_last: bool) -> Option<f64> {
+        Some(fill.used as f64)
+    }
+
+    fn combine(&self, so_far: &f64, page: &f64, _index: usize) -> f64 {
+        so_far.max(*page)
     }
 }
 
@@ -916,4 +963,322 @@ fn the_exact_solver_minimises_what_the_objective_combines() {
     let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
     let pages = kernel.realize(&solution).unwrap();
     assert_eq!(used(&pages), [90.0, 30.0]);
+}
+
+// Containers that are split over pages.
+
+/// A container of `count` boxes of 20 in `columns` columns, as the content of a flow.
+fn container(count: usize, columns: usize, fill: ColumnFill) -> GalleyFlow {
+    let mut inner = items(count);
+    // the container is one box in the flow of the page
+    let mut flow = GalleyFlow::new();
+    flow.container(std::mem::take(&mut inner), columns, fill, (0.0, 0.0));
+    flow
+}
+
+/// The pages of a flow of the exact solver: where each one starts, and what it holds.
+fn container_pages(flow: GalleyFlow, block_size: f32) -> (Vec<Position>, Vec<PageFill>) {
+    solve(flow, block_size)
+}
+
+fn in_container(item: usize, inner: usize) -> Position {
+    Position::InContainer { item, cut: ContainerCut::at_item(inner) }
+}
+
+#[test]
+fn a_container_that_fits_is_one_fragment_with_balanced_columns() {
+    let (pages, fills) = container_pages(container(5, 2, ColumnFill::Balance), 100.0);
+    assert_eq!(pages, [START]);
+    // three boxes and two (the breaks between the boxes are items, too)
+    assert_eq!(used(&fills), [60.0]);
+    // filled in turn, the columns are the ones of the page
+    let (pages, fills) = container_pages(container(5, 2, ColumnFill::Auto), 100.0);
+    assert_eq!(pages, [START]);
+    assert_eq!(used(&fills), [100.0]);
+}
+
+#[test]
+fn a_container_that_does_not_fit_has_a_fragment_on_every_page() {
+    // 25 boxes in two columns of five: two full fragments, then five boxes balanced as 3 and 2
+    let (pages, fills) = container_pages(container(25, 2, ColumnFill::Balance), 100.0);
+    assert_eq!(used(&fills), [100.0, 100.0, 60.0]);
+    // the container is one item, and a fragment starts inside it, in front of its eleventh and
+    // twenty-first box (the breaks are items, too: the box number n is the item 2 * n)
+    assert_eq!(pages, [START, in_container(0, 20), in_container(0, 40)]);
+    let (_, fills) = container_pages(container(25, 2, ColumnFill::Auto), 100.0);
+    assert_eq!(used(&fills), [100.0, 100.0, 100.0]);
+}
+
+#[test]
+fn only_the_last_fragment_is_balanced_unless_all_of_them_are() {
+    // a forced break of the page level after the sixth box: the first fragment has six boxes
+    let content = |fill| {
+        let mut inner = items(6);
+        inner.break_at(BreakKind::Forced, BreakLevel::Page);
+        inner.content(20.0);
+        let mut flow = GalleyFlow::new();
+        flow.container(inner, 2, fill, (0.0, 0.0));
+        flow
+    };
+    // (the sixth box is in the first column of five and the second: not balanced)
+    let (_, fills) = container_pages(content(ColumnFill::Balance), 100.0);
+    assert_eq!(used(&fills), [100.0, 20.0]);
+    assert_eq!(fills[0].end_kind, BreakKind::Forced);
+    let (_, fills) = container_pages(content(ColumnFill::BalanceAll), 100.0);
+    assert_eq!(used(&fills), [60.0, 20.0]);
+    assert_eq!(fills[0].end_kind, BreakKind::Forced);
+}
+
+#[test]
+fn a_forced_page_break_in_a_container_continues_it_on_the_next_page() {
+    // three boxes, a break, three boxes
+    let mut inner = items(3);
+    inner.break_at(BreakKind::Forced, BreakLevel::Page);
+    inner.content(20.0).break_at(ALLOWED, BreakLevel::Column).content(20.0);
+    inner.break_at(ALLOWED, BreakLevel::Column).content(20.0);
+    let mut flow = GalleyFlow::new();
+    flow.container(inner, 2, ColumnFill::Auto, (0.0, 0.0));
+    let (pages, fills) = container_pages(flow, 100.0);
+    // (items: box, break, box, break, box, forced break, box, ...)
+    assert_eq!(pages, [START, in_container(0, 6)]);
+    assert_eq!(used(&fills), [60.0, 60.0]);
+}
+
+#[test]
+fn a_container_in_the_middle_of_a_page_has_what_is_left_of_it() {
+    // 40 of content in front of the container leave 60: three boxes per column
+    let mut flow = GalleyFlow::new();
+    flow.content(40.0).break_(ALLOWED);
+    let mut inner = items(8);
+    inner.break_at(ALLOWED, BreakLevel::Column);
+    flow.container(inner, 2, ColumnFill::Auto, (0.0, 0.0));
+    let (pages, fills) = container_pages(flow, 100.0);
+    // the first page has the 40 and a full fragment of six boxes, the second the other three
+    assert_eq!(used(&fills), [100.0, 40.0]);
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[1], in_container(2, 12));
+}
+
+#[test]
+fn the_content_after_a_container_starts_where_its_last_fragment_ends() {
+    let mut flow = GalleyFlow::new();
+    flow.container(items(12), 2, ColumnFill::Balance, (0.0, 0.0));
+    flow.break_(ALLOWED).content(30.0);
+    let (pages, fills) = container_pages(flow, 100.0);
+    // two columns of five and a fragment of two boxes, balanced (one and one), and the
+    // box after it
+    assert_eq!(used(&fills), [100.0, 20.0 + 30.0]);
+    assert_eq!(pages.len(), 2);
+}
+
+#[test]
+fn a_container_that_cannot_hold_a_box_gets_a_page_of_its_own_for_it() {
+    // a box of 150 in a container on a page of 100
+    let mut inner = GalleyFlow::new();
+    inner.content(150.0);
+    let mut flow = GalleyFlow::new();
+    flow.content(10.0).break_(ALLOWED);
+    flow.container(inner, 2, ColumnFill::Balance, (0.0, 0.0));
+    let (pages, fills) = container_pages(flow, 100.0);
+    // the container does not start on the first page: nothing of it fits
+    assert_eq!(pages.len(), 2);
+    assert_eq!(used(&fills), [10.0, 150.0]);
+    assert!(fills[1].overflow);
+}
+
+#[test]
+fn the_padding_of_a_container_is_part_of_its_first_and_last_fragment() {
+    // an edge of 10 on top and 5 at the bottom
+    let mut flow = GalleyFlow::new();
+    flow.container(items(15), 2, ColumnFill::Balance, (10.0, 5.0));
+    let (_, fills) = container_pages(flow, 100.0);
+    // 15 boxes: the first fragment has 90 for its columns (the edge is on top): four boxes in
+    // each, 80 and 10 for the edge. The seven boxes that are left are balanced as four and three,
+    // 80 and the edge at the bottom: 85.
+    assert_eq!(used(&fills), [90.0, 85.0]);
+}
+
+#[test]
+fn the_fragments_that_a_page_has_are_listed_for_its_layout() {
+    let mut flow = GalleyFlow::new();
+    flow.content(40.0).break_(ALLOWED);
+    flow.container(items(8), 2, ColumnFill::Auto, (0.0, 0.0));
+    let (problem, mut service) = flow.finish(page(100.0));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let pages = kernel.realize(&solution).unwrap();
+    let first = kernel.fragments(&solution.pages[0], pages[0].end);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].from, None);
+    assert_eq!(first[0].available, 60.0);
+    assert_eq!(first[0].end, Some(ContainerCut::at_item(12)));
+    let second = kernel.fragments(&solution.pages[1], pages[1].end);
+    assert_eq!(second[0].from, Some(ContainerCut::at_item(12)));
+    assert_eq!(second[0].available, 100.0);
+    assert_eq!(second[0].end, None);
+}
+
+#[test]
+fn a_fragment_that_breaks_a_rule_inside_makes_the_container_start_on_the_next_page() {
+    // A paragraph of three lines of 10 in two columns has room for two lines on the first page: it
+    // would be an orphan in one column and a widow in the other. The container starts on the next
+    // page, where the three lines are in one column.
+    let mut flow = GalleyFlow::new();
+    flow.content(80.0).break_(ALLOWED);
+    let mut inner = GalleyFlow::new();
+    inner.paragraph(&[10.0; 3], 2, 2, false);
+    flow.container(inner, 2, ColumnFill::Balance, (0.0, 0.0));
+    let (pages, fills) = container_pages(flow, 100.0);
+    assert_eq!(pages, [START, Position::Item(2)]);
+    assert_eq!(used(&fills), [80.0, 30.0]);
+    assert!(fills.iter().all(|fill| !fill.orphan_violation && !fill.widow_violation));
+}
+
+#[test]
+fn the_lines_that_the_next_fragment_starts_with_are_counted_against_the_widows() {
+    // 61 lines of 10 in two columns of 300: the lines of a page are 30 and 29, so that the next
+    // fragment has two lines and not one
+    let mut inner = GalleyFlow::new();
+    inner.paragraph(&[10.0; 61], 2, 2, false);
+    let mut flow = GalleyFlow::new();
+    flow.container(inner, 2, ColumnFill::Balance, (0.0, 0.0));
+    let (problem, mut service) = flow.finish(page(300.0));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let fills = kernel.realize(&solution).unwrap();
+    assert_eq!(used(&fills), [300.0, 20.0]);
+    assert!(fills.iter().all(|fill| !fill.widow_violation && !fill.orphan_violation));
+    // the second fragment starts 59 lines into the paragraph
+    let second = kernel.position(solution.pages[1].at);
+    assert_eq!(second, Position::InContainer { item: 0, cut: ContainerCut { item: 0, cut: Some(Cut(59)) } });
+}
+
+#[test]
+fn a_problem_can_start_in_the_middle_of_its_items() {
+    let mut flow = GalleyFlow::new();
+    flow.content(10.0).break_(ALLOWED).content(20.0).break_(ALLOWED).content(30.0);
+    let (problem, mut service) = flow.finish(page(100.0));
+    let problem = problem.starting_at(Position::Item(2));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let first = kernel.first_page();
+    assert_eq!(kernel.position(first.at), Position::Item(2));
+    assert_eq!(used(&kernel.candidates(&first)), [20.0, 50.0]);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    assert_eq!(solution.pages, [first]);
+    assert_eq!(used(&kernel.realize(&solution).unwrap()), [50.0]);
+}
+
+#[test]
+fn the_pages_of_a_fragment_end_where_the_last_of_them_does() {
+    // five boxes in two columns of 40: the fragment ends after the fourth box
+    let mut inner = GalleyFlow::new();
+    for index in 0..5 {
+        if index > 0 {
+            inner.break_at(ALLOWED, BreakLevel::Column);
+        }
+        inner.content(20.0);
+    }
+    let (problem, mut service) = inner.finish(page(40.0));
+    let problem = problem.with_level(BreakLevel::Column).with_page_limit(2).as_fragment();
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    // two pages, and the place where the fragment ends
+    let (pages, end) = solution.fragment_end().unwrap();
+    assert_eq!(pages.len(), 2);
+    assert_eq!(kernel.position(end.at), Position::Item(8));
+    assert_eq!(used(&kernel.realize(&solution).unwrap()), [40.0, 40.0]);
+    assert!(!kernel.is_end(end.at));
+    assert!(kernel.is_final(&end));
+}
+
+// The search in a graph, on graphs that are not the pages of a document.
+
+/// A graph given by its edges: `(from, to, cost)`. The nodes are numbered in the order in which
+/// they are taken, and the last one is the end.
+struct Toy {
+    edges: Vec<(usize, usize, u32)>,
+    last: usize,
+}
+
+impl Graph for Toy {
+    type Node = usize;
+    type Edge = u32;
+    type Key = usize;
+    type Rank = usize;
+
+    fn start(&mut self) -> usize {
+        0
+    }
+
+    fn key(&mut self, node: &usize) -> usize {
+        *node
+    }
+
+    fn rank(&mut self, key: usize) -> usize {
+        key
+    }
+
+    fn is_end(&mut self, node: &usize) -> bool {
+        *node == self.last
+    }
+
+    fn edges(&mut self, node: &usize) -> Vec<(u32, usize)> {
+        self.edges
+            .iter()
+            .filter(|(from, ..)| from == node)
+            .map(|&(_, to, cost)| (cost, to))
+            .collect()
+    }
+}
+
+fn toy_path(edges: &[(usize, usize, u32)], last: usize, sum: bool) -> Option<Vec<usize>> {
+    let mut graph = Toy {
+        edges: edges.to_vec(),
+        last,
+    };
+    let path = shortest_path(
+        &mut graph,
+        0u32,
+        &mut |edge: &u32| Some(*edge),
+        &mut |so_far, edge, _| if sum { so_far + edge } else { (*so_far).max(*edge) },
+    )?;
+    let mut nodes = path.nodes;
+    nodes.push(path.end);
+    Some(nodes)
+}
+
+#[test]
+fn the_search_finds_the_cheapest_path_of_any_graph() {
+    // 0 -> 1 -> 3 costs 10 and 0 -> 2 -> 3 costs 9
+    let edges = [(0, 1, 5), (1, 3, 5), (0, 2, 1), (2, 3, 8)];
+    assert_eq!(toy_path(&edges, 3, true), Some(vec![0, 2, 3]));
+    // the maximum of the costs of the edges is 5 and 8: the other path is the one
+    assert_eq!(toy_path(&edges, 3, false), Some(vec![0, 1, 3]));
+}
+
+#[test]
+fn of_paths_that_cost_the_same_the_one_that_goes_through_the_earlier_node_wins() {
+    let edges = [(0, 2, 1), (0, 1, 1), (2, 3, 1), (1, 3, 1)];
+    assert_eq!(toy_path(&edges, 3, true), Some(vec![0, 1, 3]));
+}
+
+#[test]
+fn a_graph_without_a_way_to_its_end_has_no_path() {
+    assert_eq!(toy_path(&[(0, 1, 1)], 2, true), None);
+}
+
+#[test]
+fn an_edge_that_cannot_be_taken_is_left_out() {
+    let mut graph = Toy {
+        edges: vec![(0, 1, 1), (0, 2, 7), (1, 3, 1), (2, 3, 1)],
+        last: 3,
+    };
+    // the cheap way is not allowed
+    let path = shortest_path(
+        &mut graph,
+        0u32,
+        &mut |edge: &u32| (*edge != 1).then_some(*edge),
+        &mut |so_far, edge, _| so_far + edge,
+    );
+    assert!(path.is_none(), "every way to the end has an edge of cost 1: {path:?}");
 }

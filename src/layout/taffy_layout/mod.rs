@@ -144,6 +144,7 @@ impl TaffyBlockLayout {
             flow: None,
             icb_height: 0.0,
             plain_root: None,
+            page_fragments: HashMap::new(),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
         tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
@@ -153,7 +154,7 @@ impl TaffyBlockLayout {
             .collect();
 
         // the flow of the document, and the geometry of the page at every place of it
-        let flow = std::rc::Rc::new(flow::extract(&mut tree, root, page_margins.rtl));
+        let flow = std::rc::Rc::new(flow::extract(&mut tree, root, page_margins.rtl, self.page_height.0 > 0.0));
         tree.flow = Some(flow.clone());
         let geometry = paginate::Geometry {
             margins: &page_margins,
@@ -172,7 +173,14 @@ impl TaffyBlockLayout {
         #[cfg(test)]
         probe::call(&probe::BEFORE, &mut service);
         // (start of the page, its end, the page)
-        let mut planned: Vec<(helium_paginate::PageStart, helium_paginate::Position, helium_paginate::Position, helium_paginate::PageFill)> = vec![];
+        // (and the fragments of the containers that are on the page)
+        let mut planned: Vec<(
+            helium_paginate::PageStart,
+            helium_paginate::Position,
+            helium_paginate::Position,
+            helium_paginate::PageFill,
+            Vec<helium_paginate::PageFragment>,
+        )> = vec![];
         {
             use helium_paginate::Solver;
             let mut kernel = helium_paginate::Kernel::new(&problem, &mut service);
@@ -182,7 +190,8 @@ impl TaffyBlockLayout {
             for (page, fill) in fills.iter().enumerate() {
                 let start = solution.pages[page];
                 let finish = kernel.position(fill.end);
-                planned.push((start, kernel.position(start.at), finish, *fill));
+                let fragments = kernel.fragments(&start, fill.end);
+                planned.push((start, kernel.position(start.at), finish, *fill, fragments));
             }
             if fills.is_empty() {
                 planned.push((
@@ -199,6 +208,7 @@ impl TaffyBlockLayout {
                         widow_violation: false,
                         overflow: false,
                     },
+                    vec![],
                 ));
             }
         }
@@ -215,7 +225,7 @@ impl TaffyBlockLayout {
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
-        for (start, from, to, fill) in &planned {
+        for (start, from, to, fill, on_page) in &planned {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
                 let index = page_contexts.len();
@@ -251,6 +261,13 @@ impl TaffyBlockLayout {
                 },
             );
             let tree = &mut *service.tree;
+            tree.page_fragments = on_page
+                .iter()
+                .map(|fragment| {
+                    let key = (fragment.from, fragment.page_inline.to_bits(), fragment.available.to_bits());
+                    (NodeId::from(fragment.container.0 as usize), key)
+                })
+                .collect();
             tree.set_window(window, root);
             taffy::compute_root_layout(
                 tree,
@@ -266,6 +283,16 @@ impl TaffyBlockLayout {
                     "page {} is {height} high, but the paginator counted {}",
                     start.index + 1,
                     fill.used
+                );
+            }
+            // A box that does not fit on a page and has no break in it is not split: what is
+            // below the bottom of the page is laid out but is not on the page.
+            if fill.overflow && height > spec.block_size + 0.5 {
+                log::warn!(
+                    "page {} has {height} of content on a page of {} high: the content below the \
+                     page is not printed (a box taller than a page is not split)",
+                    start.index + 1,
+                    spec.block_size
                 );
             }
             let HeliumTree { nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, .. } = tree;
@@ -507,8 +534,8 @@ impl<'a> Writer<'a, '_> {
         let layout = self.layout_of(id);
         let content = node.content;
         let in_flow_box = node.span.as_ref().filter(|span| !span.anchored && self.group_stack.is_empty());
-        let open_start = in_flow_box.is_some_and(|span| self.window.open_at_start(span));
-        let open_end = in_flow_box.is_some_and(|span| self.window.open_at_end(span));
+        let open_start = in_flow_box.is_some_and(|span| self.window.cut_at_start(id, span));
+        let open_end = in_flow_box.is_some_and(|span| self.window.cut_at_end(id, span));
         // A table or a row group is laid out as a whole: the part on the page is cut from it.
         let table_part = node
             .span
@@ -629,7 +656,15 @@ impl<'a> Writer<'a, '_> {
             // a container with columns: the columns are written, one after the other
             _ if columns.is_some() => {
                 let layouts = columns.expect("the columns are laid out");
-                self.write_columns(id, layouts, flow, (content_x, content_y), (content_width, content_height), z, z_base)?;
+                self.write_columns(
+                    id,
+                    layouts,
+                    flow,
+                    (content_x, content_y),
+                    (content_width, content_height),
+                    (z, z_base),
+                    !open_start,
+                )?;
             }
             Content::Blocks if table_part.is_some() => {
                 for &child in &table_part.unwrap().kids {
@@ -734,12 +769,13 @@ impl<'a> Writer<'a, '_> {
         flow: Flow,
         (content_x, content_y): (f32, f32),
         (content_width, content_height): (f32, f32),
-        z: i64,
-        z_base: i64,
+        (z, z_base): (i64, i64),
+        first_fragment: bool,
     ) -> Result<(), String> {
         let node = self.node(id);
         let plan = &layouts.plan;
-        if node.content == Content::Inline {
+        // (the `inline-block` boxes are written once, with the first fragment of the container)
+        if node.content == Content::Inline && first_fragment {
             self.write_atoms(id, flow, z, z_base)?;
         }
         // the first column of a container with a direction from right to left is at the right

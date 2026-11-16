@@ -1,5 +1,6 @@
+use crate::columns::{plan_fragment, ColumnFill};
 use crate::flow::{BoxRef, BreakKind, BreakLevel, Item, NodeRef, PageTable, ParId, Problem};
-use crate::token::Cut;
+use crate::token::{ContainerCut, Cut};
 use std::rc::Rc;
 
 /// A line of a paragraph of the flow.
@@ -10,6 +11,24 @@ pub struct ParLine {
     /// The cut behind the line, where a page that ends after the line is continued. Meaningless
     /// for the last line of the paragraph.
     pub end: Cut,
+}
+
+/// A way for a fragment of a container to end: what a page has of the container.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Fragment {
+    /// Where the next fragment starts, or `None` if the container ends in this one.
+    pub end: Option<ContainerCut>,
+    /// The extent of the fragment on the page: its columns, and the padding and the border at
+    /// the top (of the first fragment) and at the bottom (of the last).
+    pub used: f64,
+    /// The kind of the break at the end of the fragment: forced at a forced break of the page
+    /// level, else allowed or to be avoided.
+    pub end_kind: BreakKind,
+    /// Some column of the fragment ends where it should not, or has fewer lines of a paragraph
+    /// than `orphans` or `widows` ask for.
+    pub orphan_violation: bool,
+    pub widow_violation: bool,
+    pub avoid_violation: bool,
 }
 
 /// Answers the questions of the kernel about sizes.
@@ -46,6 +65,25 @@ pub trait LayoutService {
     /// `inline` wide: the lines for the width and the indent that the paragraph is given there.
     /// `lines` answers for the same paragraphs on a page.
     fn lines_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> Rc<[ParLine]>;
+
+    /// The ways that a fragment of a container that starts at `from` (`None`: at its start) can
+    /// end on a page that is `page_inline` wide, when `available` is what is left of the page.
+    /// The fragments are listed in the order of growing content. A fragment that has an `end` goes
+    /// on on the next page, and a fragment without one is the end of the container. If
+    /// nothing fits, the fragment is the least that can be placed, and it is taller than
+    /// `available`. The same arguments give the same fragments.
+    ///
+    /// A service that has no containers is not asked.
+    fn fragment(
+        &mut self,
+        container: BoxRef,
+        from: Option<ContainerCut>,
+        page_inline: f32,
+        available: f64,
+    ) -> Rc<[Fragment]> {
+        let _ = (container, from, page_inline, available);
+        panic!("the layout service has no containers")
+    }
 }
 
 /// A layout service that is backed by a galley: the document laid out once, at one width. The
@@ -59,6 +97,17 @@ pub struct GalleyService {
     paragraphs: Vec<Vec<f64>>,
     /// The extent of the content of every box that can be a subtree root.
     boxes: Vec<f64>,
+    containers: Vec<GalleyContainer>,
+}
+
+/// A container of a galley: a multi-column container with a flow of its own.
+#[derive(Debug, Clone)]
+struct GalleyContainer {
+    items: Vec<Item>,
+    columns: usize,
+    fill: ColumnFill,
+    /// The padding and the border at the top and the bottom.
+    edges: (f64, f64),
 }
 
 impl GalleyService {
@@ -71,6 +120,13 @@ impl GalleyService {
     pub fn add_box(&mut self, content_extent: f64) -> BoxRef {
         self.boxes.push(content_extent);
         BoxRef(self.boxes.len() as u32 - 1)
+    }
+
+    /// A container. Its content is made of the items of this service. The box that is returned is
+    /// asked for by the item of the container.
+    pub fn add_container(&mut self, items: Vec<Item>, columns: usize, fill: ColumnFill, edges: (f64, f64)) -> BoxRef {
+        self.containers.push(GalleyContainer { items, columns, fill, edges });
+        BoxRef(self.containers.len() as u32 - 1)
     }
 
     pub fn add_paragraph(&mut self, line_extents: Vec<f64>) -> ParId {
@@ -107,6 +163,29 @@ impl LayoutService for GalleyService {
 
     fn lines_in(&mut self, _root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> Rc<[ParLine]> {
         self.lines(par, from, inline)
+    }
+
+    fn fragment(
+        &mut self,
+        container: BoxRef,
+        from: Option<ContainerCut>,
+        page_inline: f32,
+        available: f64,
+    ) -> Rc<[Fragment]> {
+        let GalleyContainer { items, columns, fill, edges } = self.containers[container.0 as usize].clone();
+        let (top, bottom) = edges;
+        let top = if from.is_none() { top } else { 0.0 };
+        // (the bottom edge is only known to be there once the container ends)
+        let plan = plan_fragment(self, &items, columns, page_inline, from, (available - top) as f32, bottom as f32, fill);
+        let used = plan.height as f64 + top + if plan.end.is_none() { bottom } else { 0.0 };
+        Rc::from(vec![Fragment {
+            end: plan.end,
+            used,
+            end_kind: plan.end_kind,
+            orphan_violation: plan.orphan_violation,
+            widow_violation: plan.widow_violation,
+            avoid_violation: plan.avoid_violation,
+        }])
     }
 }
 
@@ -168,6 +247,33 @@ impl GalleyFlow {
             widows,
             avoid_inside,
         });
+        self
+    }
+
+    /// A container with `columns` columns. Its content is the flow `inner`, which has its own
+    /// numbers of boxes and paragraphs. The breaks in it are the ones of its columns, and a break
+    /// of the level `Page` in it ends a fragment. `edges` are the padding and the border at the
+    /// top and at the bottom.
+    pub fn container(&mut self, inner: GalleyFlow, columns: usize, fill: ColumnFill, edges: (f64, f64)) -> &mut Self {
+        let nodes = self.service.nodes.len() as u32;
+        let paragraphs = self.service.paragraphs.len() as u32;
+        self.service.nodes.extend(inner.service.nodes);
+        self.service.paragraphs.extend(inner.service.paragraphs);
+        let items = inner
+            .items
+            .into_iter()
+            .map(|item| match item {
+                Item::Box { node } => Item::Box { node: NodeRef(node.0 + nodes) },
+                Item::Gap { node } => Item::Gap { node: NodeRef(node.0 + nodes) },
+                Item::Paragraph { id, orphans, widows, avoid_inside } => {
+                    Item::Paragraph { id: ParId(id.0 + paragraphs), orphans, widows, avoid_inside }
+                }
+                Item::Break { .. } => item,
+                Item::Container { .. } => panic!("a container is not in a container"),
+            })
+            .collect();
+        let node = self.service.add_container(items, columns, fill, edges);
+        self.items.push(Item::Container { node, avoid_inside: false });
         self
     }
 

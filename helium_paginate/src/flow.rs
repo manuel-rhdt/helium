@@ -67,12 +67,23 @@ pub enum Item {
     Break { kind: BreakKind, level: BreakLevel },
     /// A paragraph of the flow. Its lines are rigid: a page can only cut between the lines that
     /// the layout service has for it, which depend on the width of the page and on where the
-    /// paragraph starts on it. There is no `Item` for a container that is split yet.
+    /// paragraph starts on it.
     Paragraph {
         id: ParId,
         orphans: u32,
         widows: u32,
         /// Whether the breaks between the lines are `BreakKind::Avoid`.
+        avoid_inside: bool,
+    },
+    /// A container that is split over pages: a multi-column container. Its content is a flow of
+    /// its own that the layout service knows; the kernel asks it for the ways that a fragment of
+    /// the container can end within the height that is left on a page
+    /// ([`LayoutService::fragment`](crate::LayoutService::fragment)). The padding and the border
+    /// of the container are part of the fragments (the top ones of the first fragment, the
+    /// bottom ones of the last), and the margins around it are gaps of the flow.
+    Container {
+        node: BoxRef,
+        /// Whether the breaks inside the container are `BreakKind::Avoid`.
         avoid_inside: bool,
     },
 }
@@ -164,6 +175,18 @@ pub struct Problem {
     /// whatever breaks there are in it, and overflows if it is more than it can hold. Without a
     /// limit there can be any number of pages.
     pub max_pages: Option<usize>,
+    /// Where the first page starts: in front of the first item, unless the problem is the
+    /// rest of a flow, from a place on.
+    pub start: Position,
+    /// Whether the pages are the columns of one fragment of a container, which has to end where
+    /// the last of its `max_pages` pages does, or at a forced break of the page level, instead of
+    /// at the end of the items: the solution ends at the place that its last page ends at
+    /// ([`Solution::end`](crate::Solution::end)), the last page may end at any of its breaks, and
+    /// a forced break of the page level ends the fragment (see [`Problem::kind_of`]).
+    pub fragment: bool,
+    /// Whether a forced break of the page level is a break here, too (the pages are the columns
+    /// of a container: a page break is always a column break, too).
+    pub page_breaks: bool,
 }
 
 impl Problem {
@@ -173,7 +196,41 @@ impl Problem {
             items,
             level: BreakLevel::Page,
             max_pages: None,
+            start: Position::Item(0),
+            fragment: false,
+            page_breaks: false,
         }
+    }
+
+    /// The first page starts at this place.
+    pub fn starting_at(mut self, start: Position) -> Self {
+        self.start = start;
+        self
+    }
+
+    /// The pages are the columns of a fragment of a container (see [`Problem::fragment`]). There
+    /// must be a limit on the number of pages.
+    pub fn as_fragment(mut self) -> Self {
+        self.fragment = true;
+        self.page_breaks = true;
+        self
+    }
+
+    /// A forced break of the page level is a break in this problem of the columns of a container,
+    /// too.
+    pub fn with_page_breaks(mut self) -> Self {
+        self.page_breaks = true;
+        self
+    }
+
+    /// Whether a break ends a fragment: it is a forced break of the page level in the columns of
+    /// a container that is split.
+    pub fn ends_fragment(&self, kind: BreakKind, level: BreakLevel) -> bool {
+        self.fragment && self.is_page_break(kind, level)
+    }
+
+    fn is_page_break(&self, kind: BreakKind, level: BreakLevel) -> bool {
+        self.page_breaks && self.level == BreakLevel::Column && level == BreakLevel::Page && kind.is_forced()
     }
 
     /// The pages are fragmentainers of this level.
@@ -189,8 +246,10 @@ impl Problem {
     }
 
     /// The kind of a break of the level in this problem: a break of the other level is no break.
+    /// The exception is a forced page break in the columns of a fragment: it is always a column
+    /// break, too (https://www.w3.org/TR/css-break-3/#forced-breaks).
     pub fn kind_of(&self, kind: BreakKind, level: BreakLevel) -> BreakKind {
-        if level == self.level {
+        if level == self.level || self.is_page_break(kind, level) {
             kind
         } else {
             BreakKind::Allowed

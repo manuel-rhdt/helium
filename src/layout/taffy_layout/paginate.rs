@@ -26,7 +26,7 @@ pub(super) struct Classes {
     classes: Vec<Class>,
     /// By the item that the page starts in front of.
     at_item: Vec<usize>,
-    /// By the paragraph item that the page starts in.
+    /// By the paragraph or container item that the page starts in.
     in_paragraph: HashMap<usize, usize>,
 }
 
@@ -87,7 +87,7 @@ impl Classes {
         }
         let mut in_paragraph = HashMap::new();
         for (item, entry) in flow.items.iter().enumerate() {
-            if let (Item::Paragraph { .. }, Some(node)) = (entry, flow.leaves[item]) {
+            if let (Item::Paragraph { .. } | Item::Container { .. }, Some(node)) = (entry, flow.leaves[item]) {
                 in_paragraph.insert(item, id_of((name_of(node), false)));
             }
         }
@@ -97,7 +97,7 @@ impl Classes {
     pub fn of(&self, position: Position) -> &Class {
         let id = match position {
             Position::Item(item) => self.at_item[item],
-            Position::InParagraph { item, .. } => self.in_paragraph[&item],
+            Position::InParagraph { item, .. } | Position::InContainer { item, .. } => self.in_paragraph[&item],
         };
         &self.classes[id]
     }
@@ -159,7 +159,7 @@ impl Geometry<'_> {
         PageTable::new(rtl, move |position, kind| {
             let class = match position {
                 Position::Item(item) => classes.at_item[item],
-                Position::InParagraph { item, .. } => classes.in_paragraph[&item],
+                Position::InParagraph { item, .. } | Position::InContainer { item, .. } => classes.in_paragraph[&item],
             };
             specs[class][kind as usize]
         })
@@ -184,9 +184,11 @@ pub(super) fn window(
     let (first, start_cut, leading) = match start {
         Position::Item(0) => (0, None, Leading::Natural),
         Position::Item(item) => {
+            // (a forced break of the page level is a column break, too)
             let forced = matches!(
                 items[item - 1],
-                Item::Break { kind, level: of } if level == of && kind.is_forced()
+                Item::Break { kind, level: of }
+                    if (level == of || (level == BreakLevel::Column && of == BreakLevel::Page)) && kind.is_forced()
             );
             let leading = match items.get(item) {
                 Some(Item::Gap { .. }) if forced => Leading::Gap(leading_gap(item)),
@@ -195,12 +197,14 @@ pub(super) fn window(
             (item, None, leading)
         }
         Position::InParagraph { item, cut } => (item, Some((paragraph(item), cut)), Leading::Discard),
+        Position::InContainer { item, .. } => (item, None, Leading::Discard),
     };
     let (last, end_cut, at_end) = match end {
         Position::Item(item) if item >= len => (len, None, true),
         // (the break is not part of the page)
         Position::Item(item) => (item - 1, None, false),
         Position::InParagraph { item, cut } => (item + 1, Some((paragraph(item), cut)), false),
+        Position::InContainer { item, .. } => (item + 1, None, false),
     };
     Window {
         start: first as u32,
@@ -211,5 +215,13 @@ pub(super) fn window(
         // (the margins at the end of the content of a column are not part of it)
         at_end: at_end && scope.is_none(),
         scope,
+        start_container: match start {
+            Position::InContainer { item, .. } => Some(paragraph(item)),
+            _ => None,
+        },
+        end_container: match end {
+            Position::InContainer { item, .. } => Some(paragraph(item)),
+            _ => None,
+        },
     }
 }

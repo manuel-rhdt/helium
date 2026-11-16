@@ -1,10 +1,11 @@
 # Pagination: design
 
-Status: steps 1, 2 and 4 of "Order of work" are implemented, and so are steps 1 and 2 of the
-order of work of "Multi-column layout" (the service answers for a subtree at a width, and a
-container with columns that is not split over pages has balanced columns). The section "Where the
-code stands" describes the code as it is; the sections after it are the design, with notes where
-the code differs.
+Status: steps 1, 2 and 4 of "Order of work" are implemented, and so are steps 1 to 3 of the
+order of work of "Multi-column layout" (the service answers for a subtree at a width, a container
+with columns has balanced columns, and one that is taller than the rest of its page is split over
+pages, with the columns of a page filled in turn and the last fragment balanced). `column-span:
+all` is not done. The section "Where the code stands" describes the code as it is; the sections
+after it are the design, with notes where the code differs.
 
 ## Goals
 
@@ -38,10 +39,11 @@ The pipeline in `src/layout/mod.rs` (`layout`) is:
      the box of its top edge, its kids with a break and a gap between each two of them, and the
      box of its bottom edge. A paragraph is its two edges and a paragraph item. Boxes that are
      not split (replaced boxes, flex and grid containers, boxes with a `height`, orthogonal
-     flows, containers with columns) are one box. A table is split between its rows, row groups
-     and captions, where no cell spans over the break. Every box knows its items (`Span`). The
-     content of a container with columns is a flow of its own, with its own numbers of items,
-     of the break level `Column` (see "Multi-column layout").
+     flows) are one box. A table is split between its rows, row groups and captions, where no
+     cell spans over the break. A container with columns is one item, `Item::Container`, which
+     the kernel asks the layout service for the fragments of. Every box knows its items
+     (`Span`). The content of a container with columns is a flow of its own, with its own
+     numbers of items, of the break level `Column` (see "Multi-column layout").
    - `service.rs` is the layout service. For every page width that the kernel asks about it
      lays the whole tree out once with Taffy (a galley) and reads the extents of boxes and gaps
      from it. The lines of a paragraph are what the line breaker makes of it for the width that
@@ -49,13 +51,16 @@ The pipeline in `src/layout/mod.rs` (`layout`) is:
      the end of a line of it, and else the rest of the paragraph broken for the width of the
      page. Everything is cached by the width that was asked for. The service also answers for a
      box laid out *at a width of its own*, the content width of that box and not of a page (a
-     *subtree*, `subtree.rs`; see "A subtree at a width").
+     *subtree*, `subtree.rs`; see "A subtree at a width"), and for the fragment of a container
+     with columns that fits in what is left of a page (`fragment`; see "A container that is
+     split over pages").
    - `paginate.rs` gives the kernel the geometry of the page that starts at every place: the
      name of the first content on it, whether it starts a page group, and its kind decide the
      margins and the size. The exact solver with `CssObjective` chooses the pages.
    - `columns.rs` chooses and lays out the columns of a container with columns (see "Multi-column
-     layout"). The container is a leaf for Taffy, so a page layout asks it for a height like any
-     other box.
+     layout"): for a container that is not split, its balanced columns, for one that is split, the
+     columns of the fragment on a page. The container is a leaf for Taffy, so a page layout asks it
+     for a height like any other box.
    - For every chosen page `window.rs` shows Taffy a *window* on the tree and the page is laid
      out for its own width and height. `Writer` writes the positions of the boxes that are
      on the page, in the coordinates of the page. A box on more than one page has a position
@@ -77,12 +82,17 @@ Limits of this, in order of importance:
   `the_columns_of_a_table_stay_the_ones_of_the_page_where_it_starts` is ignored until then).
   A box with a `height` is not split either (a minimum height is dropped for a box that is
   cut).
-- **Multi-column containers.** A container with columns is one box of the flow of its page, so it
-  is not split over pages: one that does not fit in the rest of a page moves to the next, and one
-  that is taller than a page has a page of its own and overflows it. A forced page break inside of
-  it ends nothing. The `inline-block` boxes in its lines are sized for the first width that was
-  laid out (like all of them), a table in it is one box, an absolutely positioned box that it is the
-  containing block of is not placed, and a container in a vertical flow is a block.
+- **Multi-column containers.** A container with columns whose height is the one of its content
+  is split over pages. One that has a `height`, `max-height`, `min-height` or `aspect-ratio`, one
+  inside of another container with columns, a flex or grid container or a table cell, and any in a
+  document that is cropped, is one box: it is not split, a box in it that is taller than a page
+  overflows it, and the part below the page is not printed (the program says so). A nested
+  container is laid out inside of one column. The `inline-block` boxes in its lines are sized for
+  the first width that was laid out (like all of them), a table in it is one box, an absolutely
+  positioned box that it is the containing block of is not placed, and a container in a vertical
+  flow is a block. The fragments of one container are not chosen together with the choice of the
+  pages around it: the kernel gets one way to end a fragment for every start and every height
+  (see "A container that is split over pages").
 - **Out-of-flow boxes.** An absolutely positioned box is laid out on the page of the content in
   front of it, in the content area of that page. If the box is positioned by `top` or `bottom`
   in the initial containing block, it is on the first page. A containing block that is cut
@@ -187,15 +197,17 @@ enum Position {
     Item(ItemId),
     /// Inside a paragraph of the flow.
     InParagraph { item: ItemId, cut: Cut },
-    /// Inside a container that is split: one position per parallel part
-    /// (the cells of a grid row, the items of a flex line).
-    InContainer { item: ItemId, parts: Vec<BreakToken> },
+    /// Inside a container that is split: in front of the fragment of it that starts at the
+    /// cut, a place in the flow of the content of the container.
+    InContainer { item: ItemId, cut: ContainerCut },
 }
 ```
 
-`InContainer` is the reason for the opaque handle. A break inside a grid row
-cuts several cells at once, and a flat index cannot say that. The first
-implementation only has the first two variants.
+`InContainer` is the reason for the opaque handle. A break inside a container is a place in
+another flow, and the container may have parallel parts: a break inside a grid row cuts several
+cells at once, and a flat index cannot say that. The code has the first three variants, with a
+`ContainerCut` for a multi-column container (an item of the flow of its content, or a cut in a
+paragraph item of it). One position per parallel part comes with the grid and flex containers.
 
 ### The flow
 
@@ -214,7 +226,7 @@ pub enum Item {
     /// A paragraph of the flow.
     Paragraph { id: ParId, orphans: u8, widows: u8, avoid_inside: bool },
     /// A container that can be split between or inside its parts.
-    Container { node: NodeRef },
+    Container { node: BoxRef, avoid_inside: bool },
 }
 
 pub enum BreakKind { Allowed, Avoid, Forced, ForcedLeft, ForcedRight }
@@ -223,10 +235,13 @@ pub enum BreakLevel { Page, Column }
 
 A `Problem` paginates one level (`Problem::level`), and a break of the other level is no break in
 it: it is of the kind `Allowed` there. A forced column break outside of a container with columns
-is therefore like `auto`, and a forced page break in a container with columns that is not split
-ends nothing. A `Problem` can also limit its number of pages (`max_pages`): the last page that
-there can be takes the rest of the content, whatever breaks it has, and overflows if it cannot
-hold it. The columns of a container are such a problem.
+is therefore like `auto`. The exception is a forced page break in the columns of a container
+(`Problem::page_breaks`): a page break is always a column break, too, and in the problem of a
+fragment of a container it ends the fragment. A `Problem` can also limit its number of pages
+(`max_pages`): the last page that there can be takes the rest of the content, whatever breaks it
+has, and overflows if it cannot hold it. The columns of a container are such a problem. It can
+start at a place of its items (`Problem::start`), and be the problem of a fragment of a container
+(`Problem::fragment`, see "A container that is split over pages").
 
 Items carry no sizes. The kernel asks the layout service for the extent of a
 `Box` or `Gap` on a page of a given inline size.
@@ -361,21 +376,77 @@ disagree about what a solution means.
 
 ## Solvers and objectives
 
+The pagination of a document is a path in a graph, and a solver searches it. A node is a place
+where a page can start, with everything that the pages after it depend on (the kind of the page,
+and its number if the number of pages is limited) and nothing else. An edge is a page, from the
+place where it starts to a place where it can end. The graph is a DAG that is never built as a
+whole: the edges of a node are made when the search gets to it. The edges carry facts (a
+`PageFill`), and an objective makes the cost of a path from them, so the graph and the costs can
+change independently.
+
 ```rust
+/// A graph that is searched for the cheapest path from its start to one of its ends.
+pub trait Graph {
+    type Node: Clone;
+    type Edge;
+    type Key: Copy + Eq + Hash;   // nodes with the same key have the same future
+    type Rank: Ord;               // every edge goes to a node of a greater rank
+    fn start(&mut self) -> Self::Node;
+    fn key(&mut self, node: &Self::Node) -> Self::Key;
+    fn rank(&mut self, key: Self::Key) -> Self::Rank;
+    fn is_end(&mut self, node: &Self::Node) -> bool;
+    fn edges(&mut self, node: &Self::Node) -> Vec<(Self::Edge, Self::Node)>;
+}
+
+/// The cheapest path, found by taking the nodes in the order of their rank.
+pub fn shortest_path<G: Graph, C: Clone + PartialOrd>(
+    graph: &mut G, zero: C,
+    weigh: &mut dyn FnMut(&G::Edge) -> Option<C>,
+    combine: &mut dyn FnMut(&C, &C, &G::Edge) -> C,
+) -> Option<Path<G::Node>>;
+
 pub trait Solver {
     fn solve(&self, kernel: &mut Kernel) -> Solution;
 }
 
 pub trait Objective {
-    fn page_cost(&self, fill: &PageFill, is_last: bool) -> f64;
-    /// The cost of the pages so far and one more. The sum by default.
-    fn combine(&self, so_far: f64, page: f64, index: usize) -> f64;
+    type Cost: Clone + Debug + PartialOrd;
+    fn zero(&self) -> Self::Cost;
+    /// The cost of a page, or `None` if it cannot be used.
+    fn page_cost(&self, fill: &PageFill, is_last: bool) -> Option<Self::Cost>;
+    /// The cost of the pages so far and one more: a sum, or a maximum.
+    fn combine(&self, so_far: &Self::Cost, page: &Self::Cost, index: usize) -> Self::Cost;
 }
 ```
 
+`Kernel` is a graph through the adapter `PageGraph` (the node is a `PageStart`, the edge a
+`PageEdge`: the `PageFill`, the number of the page and whether it is the last). The exact solver
+is `shortest_path` on that graph. A policy that does not search everything (greedy, a beam, a
+learned one) chooses among the edges of a node and is written against the same trait.
+
+**A cost is a type.** The costs of CSS have a priority: a page that does not fit is worse than any
+number of avoided breaks, which are worse than any number of orphans and widows, which are worse
+than any amount of empty pages. This is a struct of fields in the order of their priority,
+compared field by field (`CssCost`, with `#[derive(PartialOrd)]`), and not one number with large
+constants for "very bad" (the paginator had 1e12 for an avoided break, 1e11 for orphans and
+widows, 1e30 for a page that does not fit and -1e15 for a forced break). Those encoded the
+priorities in magnitudes, and a sum with a large constant has no digits left for the costs below
+it: with the 1e30 of one page that does not fit, every pagination of the document cost the same,
+whatever else it broke; with the -1e15 of the forced breaks of a book of 61 chapters, differences
+of the empty room below about 2 px were lost. A forced break is not a cost at all now:
+`candidates` ends every page at it, so all paginations have the same ones.
+
+The room that is left on a page is counted in whole units of 1/64 px (`CssCost::slack_of`). The
+positions are single precision numbers and the room is a difference of two of them, so two
+paginations with the same pages in another order differ in the last digits of their cost. A
+rounding error should not decide between them: the rule of the exact solver does (of paginations
+of the same cost the one that has the earlier start of the last page wins). Without the whole
+units the layout of `gallery/book` changed at a page where a page with 20.8 px left and one with
+1.5 px left swapped places.
+
 The exact solver minimises what `combine` makes of the costs of the pages: the sum for pages, the
-maximum for balanced columns (`BalanceObjective`). If the number of pages is limited, the number
-of the page is part of the state of the search.
+maximum for balanced columns (`ColumnCost`, `TallestColumn`, `FullestFirst`). If the number of
+pages is limited, the number of the page is part of the state of the search.
 
 Planned solvers:
 
@@ -388,9 +459,9 @@ Planned solvers:
 - **Joint.** The exact solver with a positive tolerance.
 - **Pruned and evolved solvers.** Any policy over `candidates`.
 
-`CssObjective` holds the constants of the current paginator: the cube of the
-unused height, `AVOID_BREAK_COST`, `ORPHANS_WIDOWS_COST`, and nothing for the
-last page.
+`CssObjective` has the costs of the paginator as a `CssCost`: pages that do not
+fit, avoided breaks, orphans and widows, and the cube of the unused height, and nothing
+for the last page and for pages that end at a forced break.
 
 The joint solver adds line demerits and page costs, which needs an exchange
 rate between the two. There is no principled value for it. It is a field of
@@ -443,16 +514,23 @@ pub trait LayoutService {
     fn extent_in(&mut self, root: BoxRef, node: NodeRef, inline: f32) -> f64;
     fn lines_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> Rc<[ParLine]>;
 
-    /// The ways to end a part of a container within `available`.
-    fn fragment(&mut self, node: NodeRef, from: BreakToken, page_inline: f32,
-                available: f32) -> Vec<Fragment>;
+    /// The ways to end a fragment of a container that starts at `from` within `available`.
+    fn fragment(&mut self, container: BoxRef, from: Option<ContainerCut>, page_inline: f32,
+                available: f64) -> Rc<[Fragment]>;
 
     /// Lays out one chosen page and writes the positions of its boxes.
     fn layout_page(&mut self, start: BreakToken, end: BreakToken, spec: PageSpec,
                    lines: &LineChoices) -> PageLayout;
 }
 
-pub struct Fragment { pub end: BreakToken, pub used: f32 }
+pub struct Fragment {
+    /// Where the next fragment starts, or `None` if the container ends in this one.
+    pub end: Option<ContainerCut>,
+    pub used: f64,
+    pub end_kind: BreakKind,
+    /// Rules broken inside the fragment (orphans, widows, avoid), which count against the page.
+    pub orphan_violation: bool, pub widow_violation: bool, pub avoid_violation: bool,
+}
 pub struct PageLayout { pub used: f32, pub overflow: bool }
 ```
 
@@ -662,7 +740,10 @@ Where the code differs from the design above:
 - `PageTable` is a function from the position and the kind of a page to its geometry.
 - `PageStart` has the page number. A `Solution` is a list of `PageStart`s; a number that is
   missing is an empty page that `next_page` made for a break to a left or right page.
-- `fragment` and `PageLayout` do not exist: tables are split between rows without them.
+- `PageLayout` does not exist. `fragment` does, for multi-column containers: its container is a
+  `BoxRef`, it starts at a `ContainerCut` and not at a token (the service does not know tokens), it
+  has the height that is left on the page as an `f64`, and it returns one fragment (see "A container
+  that is split over pages"). Tables are split between rows without it.
 
 Islands (`foreignObject`, `layout_islands`) keep one page; they use the exact solver and show
 the first page.
@@ -685,10 +766,12 @@ independent of each other.
 
 ## Multi-column layout
 
-Status: steps 1 and 2 of "Order of work" below are implemented: a container with `column-count` or
-`column-width` that is not split over pages, whose content is block flow or one paragraph, has
-balanced columns, rules and breaks between columns. Splitting a container over pages (step 3) and
-`column-span: all` (step 4) are not done.
+Status: steps 1 to 3 of "Order of work" below are implemented: a container with `column-count` or
+`column-width` whose content is block flow or one paragraph has balanced columns, rules and breaks
+between columns, and one that is taller than the rest of its page is split over pages: the columns
+of a page are filled in turn, and the last fragment is balanced (`column-fill`). `column-span: all`
+(step 4) is not done. A container that has a height of its own is not split (see "A container that
+is split over pages" for what is not).
 
 A column is a fragmentainer like a page: a box with an inline size and a block size that content
 is cut into. The kernel, the solvers, the break tokens and the re-breaking of paragraphs carry
@@ -706,22 +789,24 @@ a page. It is a fragmentation context inside another one, and that is what this 
 
 ### What does not carry over
 
-**Nested kernels.** A container with columns is one box (`Item::Box`) in the flow of its page,
-with an extent that is found by an inner kernel run: a `Problem` whose pages are the N columns,
-as wide as a column. (The `fragment` call that steps 6 and 7 add for tables, grid and flex is the
-same thing for a container that is split; step 3 here needs it.)
+**Nested kernels.** A container with columns is one item (`Item::Container`, or `Item::Box` if it
+is not split) in the flow of its page, with a fragment on every page that is found by an inner
+kernel run: a `Problem` whose pages are the N columns, as wide as a column, over the flow of the
+content from the place where the fragment starts. (The `fragment` call that steps 6 and 7 add for
+tables, grid and flex is the same thing for a container that is split, and it was built for the
+containers with columns first: see "A container that is split over pages".)
 
 **Balancing is a min-max problem.** With `column-fill: balance` (the default) a container with an
 `auto` height is as short as it can be while its content still fits in N columns. The exact solver
-adds up the costs of the pages by default. `Objective` has a combine operator for this
-(`combine(so_far, page, index)`, with the sum as the default, so `CssObjective` and everything
-else is as before). Balancing takes the maximum, in two exact steps (`balance`, `BalanceObjective`):
+adds up the costs of the pages by default. `Objective::combine` is the operator for this (the
+sum for `CssObjective`, so everything else is as before). Balancing takes the maximum, in two
+exact steps (`balance`, with the objectives `TallestColumn` and `FullestFirst`):
 
 1. The maximum of the heights of the columns is minimised. The height of a column is its content
-   plus a cost for every rule that it breaks: a break that is to be avoided, orphans and widows,
-   and content that does not fit. Each of these costs more than any content (the costs are in the
-   order that `CssObjective` has), so a column is only as tall as it takes to keep the rules, if
-   that is possible.
+   plus the rules that it breaks: a column that does not fit is worse than any column that ends where a
+   break is to be avoided, which is worse than any with orphans or widows, which is worse than any
+   height (`ColumnCost`, compared field by field, in the order that `CssCost` has). So a column is
+   only as tall as it takes to keep the rules, if that is possible.
 2. Among the paginations in which no column is taller than the least maximum, the sum of the
    heights of the columns, each weighted by its number plus one, is minimised. With the same
    tallest column the first columns are therefore the fullest, as in browsers: five boxes in two
@@ -754,8 +839,10 @@ level only, and `avoid` avoids both. The flow of a page has the level `Page` and
 content of a container has the level `Column`. A break item has the level of the value that
 decides it (a forced value of the level of the flow, else an avoid value of it, else a forced or
 avoid value of the other level, which is no break there, else none). Only a break of the level of
-the problem is a break in it. A forced break of level `Page` in a container with columns that is not
-split ends nothing, and it will end the fragment of the container on that page in step 3. A
+the problem is a break in it, with one exception: a forced break of level `Page` in a container with
+columns is a column break, too, and it ends the fragment of the container on its page (it is a
+break to the left or the right page if it asks for one). A change of the page name between two
+children of a container is not a break. A
 `break-inside` of a box (the container itself too) is an `avoid` for the breaks inside it of its
 level; the `break-inside` of the boxes around a container does not reach the columns, which are
 another fragmentation context. The breaks do not propagate out of a container: the `break-before`
@@ -818,10 +905,14 @@ of a column is discarded). Page names do not change columns. Tables in it are on
   content does not fit in N columns of that height, every column but the last is as full as it
   can be (the balancing finds the one with the least tallest column, which is the first columns
   that are full), and the last column takes the rest and overflows below the container.
-- **`column-fill: auto`** is parsed and treated as `balance`. Filling the columns in order, in a
-  container with a height, is the cost of `CssObjective` over the same problem, which step 3 needs.
+- **`column-fill: auto`** is not balanced and the columns are filled in turn, but only for a
+  container that is split (an item of the flow of a page: see "A container that is split over
+  pages"). One that has a `height` is balanced within it whatever `column-fill` says (the
+  columns of a container with a height that is filled in turn would need `CssObjective` over the same
+  problem, with the height as the size of the columns; not done). `column-fill: balance-all` is
+  parsed; it differs from `balance` only for a fragment that ends at a forced page break.
 - **`min-height` and `max-height`** do not change the columns: the container is that high, and the
-  columns are as high as the content needs.
+  columns are as high as the content needs. A container that has one is not split over pages.
 
 For a container that is not split (its content fits on the page) this reduces to `extent`: the
 balanced height of the container, computed once for a width and a height. The plans are cached
@@ -844,12 +935,207 @@ content box of the container, in the colour of `column-rule-color` (`currentcolo
 colour). It is an entity of its own with a `Position` and a `Decoration` (`ColumnRule`), so it is
 in the display list and in `--dump-layout` `paint.rects` like any other filled rectangle. Every
 visible `column-rule-style` is painted as a solid line. The rules belong to the container; where
-the container is split over pages (step 3) every fragment has the rules of its columns, because the
-rules are made from the columns that are written.
+the container is split over pages every fragment has the rules of its columns, as tall as the columns
+of the fragment, because the rules are made from the columns that are written. A column rule is
+only drawn between two columns that both have content, and fragmentation splits a multi-column
+container into several lines of columns, each with its own gaps and rules (CSS Multi-column Layout
+Level 1, sections 3 and 4).
 
 The text of a paragraph that runs over two columns is one `Paragraph` of the display list with
 a new line from one line to the next: the new line says where the next line is when it is not
 directly below (at the top of the next column) and moves the text to it.
+
+### A container that is split over pages
+
+Steps 3a, 3b and 3c. A multi-column container is split over pages if it is an item of the flow of a
+page (`Item::Container`, made by `Extractor::emit`): its height is the one of its content (no
+`height`, `max-height`, `min-height` or `aspect-ratio`), the document has pages that have a size
+(not `--crop`), and it is not inside of another container with columns, a flex or grid container, a
+table or an `inline-block`. Every other container with columns is one `Item::Box`, as before.
+
+**The item and the tokens.** The item stands for the whole border box of the container. The padding
+and the border at the top are part of its first fragment, and the ones at the bottom of its last;
+the margins around the container are gaps of the flow, as around any block. A page can end inside
+the item, at `Position::InContainer { item, cut }`, and the next page starts there. A `ContainerCut`
+is a place in the flow of the content of the container: in front of one of its items, or a cut in a
+paragraph item of it, and its numbers are in the order of the content, so that the exact solver can
+order the places of the outer flow and of the container together. Tokens stay opaque: the kernel
+makes one for every end that the layout service answers with.
+
+**The question.** `Kernel::candidates` walks the items of a page. At a container it asks the
+service `fragment(container, from, page_inline, available)` for the fragment that starts at the
+cut it was given (`None` at the start of the container) and has `available`: what is left of the
+page after the content and the gaps in front of the container. The service answers with one
+`Fragment`. If it has an `end` the page can end there, and nothing else is on the page (the
+fills are listed at that token and the walk stops). If it has none the container ends in the
+fragment: the walk goes on behind it, with the extent of the fragment added. `used` is the whole
+extent: the columns, and the padding and border at the top and at the bottom where they are part of
+the fragment. A fragment taller than what is available gets the rule of every unbreakable item: the
+page may end behind it if nothing else is on it, and the page is an overflow. The rules that a
+fragment breaks inside (orphans and widows in a column, a break that should be avoided in a column
+that is not the last) are flags of the fragment; they count against the page like orphans and
+widows at the end of a page. `break-inside: avoid` on the container or on a box around it makes
+the end of a fragment inside it an `avoid` break. The page that a fragment is on is given to the
+layout of the page by `Kernel::fragments(start, end)`: the same walk, which records for every
+container what it asked and what it was answered. This is what a page needs to find the plan of
+the fragment again, so that the layout of the page and the choice of the pages cannot disagree
+(the numbers are the ones the kernel asked with, and the same arguments give the same answer).
+
+**The inner problem of a fragment.** `helium_paginate::plan_fragment` makes the answer; it is in
+the crate so that the kernel tests can run it, and the engine only gives it the extents and lines
+of the content at the width of a column (`InColumns`, as for a container that is not split).
+
+1. The columns that are as full as they can be. The problem has the N columns as its pages, as
+   high as what is available (minus the padding and border at the top), over the items of the
+   content, starting at the cut (`Problem::starting_at`). It is the problem of a fragment
+   (`Problem::as_fragment`): it has exactly N pages, or fewer if the content ends first, and its
+   last page is not the one that takes the rest, so that it may end at any of its breaks. A forced
+   page break in the content is a column break and the end of the fragment. The exact solver with
+   `CssObjective` chooses the columns, so `avoid`, orphans and widows are kept as far as possible
+   and every column but the last is as full as it can be. The solver is made for a limited
+   problem: the states are the places where a column starts and the number of the column, and
+   the solution has one entry more than it has pages, the place where the last one ends
+   (`Solution::fragment_end`, `Kernel::is_final`).
+   The lines that the next fragment starts with are counted at the end of the last column: a
+   cut in a paragraph that leaves fewer lines than `widows` is a widow violation of that column.
+2. If the content ends within the N columns, this is the last fragment. The columns are balanced
+   (`balance`) with `balance` and `balance-all`, within what is available minus the padding and
+   border at the bottom, and not with `auto`, where they are the columns of step 1. If the padding
+   at the bottom leaves too little room for the content, the fragment does not end the container
+   (the columns of step 1 are made for the room that there is without it).
+3. If the fragment ends at a forced page break, it is balanced with `balance-all` only, over the
+   items in front of the break.
+4. The fragment is as tall as its tallest column. A fragment that is not the last is therefore
+   not stretched to the bottom of the page by the columns; its box is, as is every box that goes on
+   on the next page. The fragment that starts a container in the middle of a page has what is
+   left of the page, the others the height of the page.
+
+The answer is cached by the arguments, and so is the plan (`ColumnsNode::fragments`), which has the
+windows of the columns. The outer solver is given one way to end a fragment for every start and
+every height: it chooses where the pages before and after the container start and end, and not where
+a fragment ends among the possibilities of its columns. That is a restriction (see below).
+
+**Windows.** The window of a page is the one of every page: the items of the flow from the start to the
+end, and the container is the box that holds a fragment. The page ends inside the item, and its
+span says nothing about that, so the window knows the containers that it starts and ends in
+(`Window::start_container` and `end_container`): the box is cut there (no padding, border or margin
+at the cut, no minimum height, and it has a fragment of its own for the decoration), as a box with
+items on both sides of the window is. In the layout of the page the container is a leaf for Taffy, as
+high as the plan found for it (`HeliumTree::page_fragments`, set from `Kernel::fragments` for the
+page). Its columns are laid out one after the other, every one through a window of its own that
+replaces the one of the page while it is set (`save_window` and `restore_window`), and written with
+the layouts of that column. The windows are therefore nested: the one of the page, and the ones of
+the columns of the fragments on it. In a layout that is not of a page (the galleys of the layout
+service, which only give extents) the container is as high as nothing and its columns are not
+laid out: it is not balanced for its whole content there. This is what makes a container of
+thousands of lines cheap: the pagination with the balancing of 3,993 lines in one container took
+0.22 s, and the pagination of the same lines split over 50 pages 0.014 s (release build).
+
+**Decisions where this document was open.**
+
+- *Rules* are drawn in every fragment, between the columns that have content on it, as tall as the
+  columns of the fragment. The specification says that a multi-column container has lines of columns
+  (one for every fragment), that rules are drawn between two columns that both have content, and
+  that their length is the height of the column.
+- *`column-fill: auto`* fills the columns in turn up to what is available on the page, whether the
+  container is split or not: a container that fits is as high as its tallest column, and may have
+  its content in the first column only. (This changes the layout of a container with `column-fill:
+  auto` that was balanced before.) A container with a `height` is balanced as before.
+- *`column-fill: balance-all`* is parsed and implemented: it balances the fragments that are not
+  full, which are the last one and the ones that end at a forced page break. A fragment that has
+  filled its columns is balanced already.
+- *A forced page break* in a container ends the fragment; the break is to the left or the right
+  page if it asks for one, and then the margins at the start of the next fragment are kept. A
+  change of the page name between two children does not end it.
+- *The height of a fragment* is its tallest column, and a fragment that is not the last is not made
+  higher than that (the box of the container reaches the bottom of the page).
+- *`min-height`* on a container makes it a box that is not split, because the minimum would have to
+  be applied to the container as a whole.
+- *A different page width* is found per fragment, as the specification has it (multicol 3.4): a page
+  of another width has columns of its own count and width, because the service asks for the width
+  of the content box of the container on that page. What the fragments of two pages have in common
+  is the flow of the content.
+
+**Restrictions.**
+
+- A container with a `height` keeps the behaviour of step 2: its columns are balanced within the
+  height and the content that does not fit overflows below the last column. (Divergence: in paged
+  media the specification puts the columns that do not fit on the next page, multicol 8.2.)
+- A multi-column container inside of a split one is one box in a column; it is not split. A table
+  in a column is one box.
+- A container inside of a flex or grid container, a table cell, an `inline-block` box or an
+  absolutely positioned box, and a container in a document that is cropped (`--crop`, where
+  every box has a page of its own), is not split. A container in a `foreignObject` is split over
+  the pages of the island, and only the first is shown, as for any other content.
+- A box in a column that is taller than a page, and cannot be split, overflows the page, and what is
+  below the page is not printed (a warning says so).
+- The outer solver has one way to end a fragment for every start and every available height, the
+  one that the inner exact solver finds best for the columns. It cannot make a fragment end earlier
+  or later than that to improve the pages around the container, except by moving the start of the
+  container. The rules that a fragment breaks inside count against it, so a container that can
+  only start on a page with a widow moves to the next page.
+- The lines that are counted against `widows` at the end of a fragment are the ones that the
+  paragraph has from the cut at the width of the same column. If the next page has another width,
+  the lines are broken again there and there may be another number of them.
+- The size of the `inline-block` boxes in a paragraph is the one of the first width, as everywhere.
+- `column-span: all` is parsed and ignored.
+
+**Divergences from the specifications.** The columns that do not fit in a container with a `height`
+(above). The height of a fragment that ends at a forced break or at the end of the content with
+`column-fill: auto` is the tallest column: the specification only gives an example for a
+container with a height. The specification does not say how the content is divided between the
+columns when a rule cannot be kept; the choice is the one of the exact solver with the costs of
+`CssObjective`.
+
+### The common case is a container over pages
+
+For a renderer of pages the container that is taller than a page is the main case: a two-column
+article whose text runs over several pages, with the columns of every page filled in turn. It was
+a defect of the first versions: the container was one box balanced over all its content, and what
+was below the page was laid out and not printed. The section above is what fixes it; the
+tests in `tests/multicol.rs` (`the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto`
+and the ones next to it) describe the arithmetic. What is still missing for an article is not part
+of this document: floats for figures in a column, footnotes, and spanning figures. Text in
+columns works; `column-span: all` is step 4.
+
+What the specifications say (CSS Multi-column Level 1, CSS Fragmentation Level 3, read on
+2026-11-16), and what is done about it.
+
+- `column-fill: balance`, the initial value: "In fragmented contexts, only the last fragment is
+  balanced." `balance-all` balances all fragments, and `auto` fills the columns in turn
+  (multicol 7.1). All three are parsed and done.
+- Content that comes right in front of a spanner is balanced whatever `column-fill` says; the
+  content after a spanner is balanced or not as `column-fill` says (multicol 7.1, from the
+  description of the property and the names of its tests; the normative text was not read in
+  full). Not done with the spanners.
+- A page break inside a container is always both a page break and a column break: the container
+  gets a new row of columns on the next page (fragmentation 2.2). A forced break "forces ensuing
+  content into the next fragmentainer of the type associated with the break, breaking through as
+  many fragmentation contexts as necessary"; one that is not inside a context of its type has no
+  effect (fragmentation 4.3). So a forced page break inside a container ends the fragment, and a
+  forced column break outside one is ignored, which is what the break levels do. Done.
+- Spanners are honored in every fragment. The margins of two adjacent spanners collapse; the
+  bottom margin of a spanner does not collapse with the top margin of what follows, because a
+  column box is a new block formatting context (multicol 6.1). Not done.
+- A container that has more columns than it has room for (a `height` that is too small, or
+  forced column breaks) puts the extra columns on the next page in paged media (multicol 8.2).
+  A container with a `height` lets such content overflow below the last column, which is the rule for
+  continuous media only. A container without a height does it right: the columns of a fragment
+  that are too many are the next fragment.
+- The column count and the column width may be found per fragment in paged media (multicol 3.4).
+  They are, per page width.
+- A fragmentainer of another size is laid out as if the whole element were fragmented across
+  fragmentainers of that size; intrinsic sizes are kept across the whole element, and the
+  initial containing block is that of the first fragmentainer (fragmentation 5.1). This is what
+  the windows do.
+- Column rules are drawn between two columns that both have content, and a container that is
+  fragmented has a line of columns for every fragment (multicol 3 and 4). Done: the rules are per
+  fragment.
+
+Not checked against the text: the rules for `box-decoration-break` and margins at breaks
+(fragmentation 5.2 to 5.4); the fragments of a box that is cut have no border, padding or rounded
+corners at the cut (`box-decoration-break: slice`), and the margins at an unforced break are
+discarded and at a forced one kept, as for pages.
 
 ### Order of work
 
@@ -859,9 +1145,21 @@ directly below (at the top of the next column) and moves the text to it.
 2. Done. `column-count`, `column-width`, `column-gap` and `column-rule` for a container that is not
    split over pages and whose content is block flow or one paragraph. Balanced. The combine
    operator of `Objective`. Break levels, and `break-before: column`.
-3. A container that is split over pages: `fragment` for it, `column-fill: auto`, and balancing of
-   the last fragment only.
+3. Done. A container that is split over pages (see "A container that is split over pages").
+   a. Columns filled in turn (`column-fill: auto`) over pages, with the first fragment as high as
+      the rest of its page, forced page breaks inside the container, and no loss of content for
+      a container that is taller than a page.
+   b. The last fragment balanced, and `column-fill` as the specification has it (`balance-all`
+      too).
+   c. `fragment` for a container in the middle of the flow: the kernel asks the layout service
+      for the fragment that fits. Steps 6 and 7 above can use the same question for tables, grid
+      and flex containers; the one for tables needs pinned columns, and the ones for grid and flex
+      containers need parts that are side by side, which the multi-column container has as columns.
 4. `column-span: all`.
+
+The tests of step 3 are in `tests/multicol.rs`, below the others. The first versions of three of
+them forgot that `column-gap: normal` is 1em in a multi-column container (16px at the default font
+size), which puts the second column at x = 208 and not 200. They set `column-gap: 0` now.
 
 Step 1 does not need anything of the later ones, and the steps of "Order of work" above (3, 5, 6
 and 7) are independent of it, except that step 3 here shares `fragment` with step 6 there.
@@ -888,7 +1186,15 @@ and 7) are independent of it, except that step 3 here shares `fragment` with ste
   fixed (see above).
 - **Where the column rules belong if the container is split.** To the fragments: they are made
   from the columns that a page has, so a fragment on a page has the rules of its own columns, and
-  balancing of the last fragment only changes how tall they are. Not done until step 3.
+  balancing of the last fragment only changes how tall they are. Done.
+- **Whether the outer solver needs several ways to end a fragment.** It has one: the one that the
+  exact solver finds best for the columns. More would let the outer solver trade the end of a fragment
+  against the pages around it, at the price of one inner solution for every end (the number of
+  starts of a fragment would be the number of places in the container, as it is for the pages of a
+  paragraph). Not measured; the rules that a fragment breaks are costs of the page already.
+- **`page` names inside a container.** A change of the page name between two children does not end
+  the fragment, and the page that continues the container is of the name of the container. The
+  specification asks for a break there; not done.
 - **Orthogonal writing modes.** A container with a vertical flow (`writing-mode`) is not a container
   with columns: it is a block. A container with columns inside of a vertical flow whose own flow is
   horizontal works like any other; one that is an orthogonal flow is a block, too. Nothing
@@ -906,8 +1212,8 @@ and 7) are independent of it, except that step 3 here shares `fragment` with ste
 - Whether the lines that are in a window of several columns of one pass keep correct positions:
   `Writer::write_lines` sets positions per entity, and a paragraph that is cut between two
   columns has lines of one entity in both. This is how it works over pages, one pass per page.
-- Whether the column rules (`column-rule`) belong to the container or to its fragments, which
-  matters where the container is split over pages.
+- Whether the column rules (`column-rule`) belong to the container or to its fragments: resolved,
+  see "Multi-column layout".
 - Orthogonal writing modes. A column is a block-axis fragmentainer, and the inline axis of a
   vertical document is the vertical one. Nothing here has been checked for them.
 

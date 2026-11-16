@@ -15,6 +15,45 @@ pub struct BreakToken(pub(crate) u32);
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Cut(pub u32);
 
+/// A cut of a container: where the next fragment of it continues, in the flow of the content of
+/// the container. It is the place inside the content where the fragment starts: in front of an
+/// item (`cut` is `None`) or inside a paragraph item, in front of the part of it that starts at
+/// the cut. What the items are is up to the layout service; the kernel only stores the cut and
+/// compares the cuts of one container. They are in the order of the content.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ContainerCut {
+    pub item: u32,
+    pub cut: Option<Cut>,
+}
+
+impl ContainerCut {
+    /// In front of an item of the content.
+    pub fn at_item(item: usize) -> Self {
+        ContainerCut { item: item as u32, cut: None }
+    }
+
+    /// The position in the content that the cut is.
+    pub fn position(self) -> Position {
+        match self.cut {
+            None => Position::Item(self.item as usize),
+            Some(cut) => Position::InParagraph { item: self.item as usize, cut },
+        }
+    }
+
+    /// The cut of a position of the content.
+    pub fn of(position: Position) -> Self {
+        match position {
+            Position::Item(item) => ContainerCut::at_item(item),
+            Position::InParagraph { item, cut } => ContainerCut { item: item as u32, cut: Some(cut) },
+            Position::InContainer { .. } => panic!("a container is not inside a container"),
+        }
+    }
+
+    fn order(self) -> u64 {
+        (u64::from(self.item) << 32) | self.cut.map_or(0, |cut| u64::from(cut.0) + 1)
+    }
+}
+
 /// A position in the flow, which a [`BreakToken`] stands for. Equal positions have equal tokens.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Position {
@@ -23,23 +62,25 @@ pub enum Position {
     Item(usize),
     /// Inside a paragraph of the flow, in front of the part of it that starts at the cut.
     InParagraph { item: usize, cut: Cut },
-    // `InContainer`, a position inside a container that is split, comes with the containers.
+    /// Inside a container that is split, in front of the fragment of it that starts at the cut.
+    InContainer { item: usize, cut: ContainerCut },
 }
 
 impl Position {
     /// The place of the position in the flow: positions that come first in the document compare
-    /// less. The start of a paragraph item is in front of the cuts inside it.
-    pub fn order(self) -> (usize, u32) {
+    /// less. The start of a paragraph or of a container item is in front of the cuts inside it.
+    pub fn order(self) -> (usize, u64) {
         match self {
             Position::Item(item) => (item, 0),
-            Position::InParagraph { item, cut } => (item, cut.0 + 1),
+            Position::InParagraph { item, cut } => (item, u64::from(cut.0) + 1),
+            Position::InContainer { item, cut } => (item, cut.order() + 1),
         }
     }
 
     /// The item the position is in front of or inside of.
     pub fn item(self) -> usize {
         match self {
-            Position::Item(item) | Position::InParagraph { item, .. } => item,
+            Position::Item(item) | Position::InParagraph { item, .. } | Position::InContainer { item, .. } => item,
         }
     }
 }
