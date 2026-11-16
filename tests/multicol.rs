@@ -889,3 +889,125 @@ fn a_box_that_is_cut_between_columns_has_the_border_of_its_parts() {
     let horizontal: Vec<&&Rect> = blue.iter().filter(|rect| rect.rect[2] > 100.0).collect();
     assert_eq!(horizontal.len(), 2, "one top and one bottom border: {blue:?}");
 }
+
+// A container that is split over pages. These tests describe what step 3 of the multi-column
+// order of work in `docs/pagination.md` has to do. Today a container taller than a page is one
+// box, balanced over its whole content: its columns are as tall as the content allows, and the
+// part of them that is below the page is lost.
+
+/// Asserts the page and the top left corner of a box.
+fn assert_on(layout: &Layout, id: &str, page: u64, x: f64, y: f64) {
+    let item = layout.get(id);
+    assert_eq!(item.page, page, "page of {id}");
+    assert_close(item.rect[0], x, &format!("x of {id}"));
+    assert_close(item.rect[1], y, &format!("y of {id}"));
+}
+
+#[test]
+#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
+fn no_content_of_a_tall_container_is_below_its_page() {
+    // 100 items of 20px in two columns are 2000px of content on pages that are 600px high
+    let layout = layout("tall_invariant", &doc("", &container("column-count: 2", 100)));
+    for number in 1..=100 {
+        let item = layout.get(&format!("i{number}"));
+        assert!(
+            item.rect[1] + item.rect[3] <= 600.0 + 0.01,
+            "i{number} ends at {} on page {}, below the page",
+            item.rect[1] + item.rect[3],
+            item.page
+        );
+        assert!(item.page <= 1, "i{number} is on page {}, there should be two pages", item.page);
+    }
+}
+
+#[test]
+#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
+fn the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto() {
+    // a page holds 30 items per column and 60 per page
+    let layout = layout(
+        "fill_auto_pages",
+        &doc(
+            "",
+            &format!(
+                "{}<p id=after style=\"margin:0;height:20px\"></p>",
+                container("column-count: 2; column-fill: auto", 100)
+            ),
+        ),
+    );
+    assert_on(&layout, "i1", 0, 0.0, 0.0);
+    assert_on(&layout, "i30", 0, 0.0, 580.0);
+    assert_on(&layout, "i31", 0, 200.0, 0.0);
+    assert_on(&layout, "i60", 0, 200.0, 580.0);
+    assert_on(&layout, "i61", 1, 0.0, 0.0);
+    assert_on(&layout, "i90", 1, 0.0, 580.0);
+    // the last page is not balanced: the second column has what the first one cannot hold
+    assert_on(&layout, "i91", 1, 200.0, 0.0);
+    assert_on(&layout, "i100", 1, 200.0, 180.0);
+    // the first column of the last page is full, so the container is as high as the page
+    assert_on(&layout, "after", 2, 0.0, 0.0);
+}
+
+#[test]
+#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
+fn only_the_last_page_of_a_container_is_balanced() {
+    // the columns are balanced by default: the pages before the last are full all the same
+    let layout = layout(
+        "balance_last_page",
+        &doc(
+            "",
+            &format!(
+                "{}<p id=after style=\"margin:0;height:20px\"></p>",
+                container("column-count: 2", 100)
+            ),
+        ),
+    );
+    assert_on(&layout, "i30", 0, 0.0, 580.0);
+    assert_on(&layout, "i31", 0, 200.0, 0.0);
+    assert_on(&layout, "i60", 0, 200.0, 580.0);
+    // 40 items are left for the last page: 20 in each column
+    assert_on(&layout, "i61", 1, 0.0, 0.0);
+    assert_on(&layout, "i80", 1, 0.0, 380.0);
+    assert_on(&layout, "i81", 1, 200.0, 0.0);
+    assert_on(&layout, "i100", 1, 200.0, 380.0);
+    // the container ends where its balanced columns end
+    assert_on(&layout, "after", 1, 0.0, 400.0);
+}
+
+#[test]
+#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
+fn the_first_page_of_a_container_is_as_high_as_the_rest_of_the_page() {
+    // 100px of content in front of the container leave 500px: 25 items per column
+    let layout = layout(
+        "first_fragment",
+        &doc(
+            "",
+            &format!(
+                "<div style=\"height:100px\"></div>{}",
+                container("column-count: 2; column-fill: auto", 100)
+            ),
+        ),
+    );
+    assert_on(&layout, "i1", 0, 0.0, 100.0);
+    assert_on(&layout, "i25", 0, 0.0, 580.0);
+    assert_on(&layout, "i26", 0, 200.0, 100.0);
+    assert_on(&layout, "i50", 0, 200.0, 580.0);
+    // the next page has the full height again
+    assert_on(&layout, "i51", 1, 0.0, 0.0);
+    assert_on(&layout, "i80", 1, 0.0, 580.0);
+}
+
+#[test]
+#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
+fn a_forced_page_break_in_a_container_ends_the_page() {
+    // ten items fill part of the first column; the item with the break starts the next page
+    let body = format!(
+        "<div id=m style=\"column-count: 2; column-fill: auto\">{}\
+         <div class=i id=i11 style=\"height:20px;break-before:page\"></div>{}</div>",
+        items(1, 10),
+        items(12, 9)
+    );
+    let layout = layout("forced_page", &doc("", &body));
+    assert_on(&layout, "i10", 0, 0.0, 180.0);
+    assert_on(&layout, "i11", 1, 0.0, 0.0);
+    assert_on(&layout, "i20", 1, 0.0, 180.0);
+}

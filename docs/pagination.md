@@ -688,7 +688,8 @@ independent of each other.
 Status: steps 1 and 2 of "Order of work" below are implemented: a container with `column-count` or
 `column-width` that is not split over pages, whose content is block flow or one paragraph, has
 balanced columns, rules and breaks between columns. Splitting a container over pages (step 3) and
-`column-span: all` (step 4) are not done.
+`column-span: all` (step 4) are not done. **A container that is taller than a page loses its
+content today** (see "The common case is a container over pages").
 
 A column is a fragmentainer like a page: a box with an inline size and a block size that content
 is cut into. The kernel, the solvers, the break tokens and the re-breaking of paragraphs carry
@@ -851,6 +852,55 @@ The text of a paragraph that runs over two columns is one `Paragraph` of the dis
 a new line from one line to the next: the new line says where the next line is when it is not
 directly below (at the top of the next column) and moves the text to it.
 
+### The common case is a container over pages
+
+The steps below were first ordered as if a balanced container inside one page were the common
+case. That is the common case on the web. For a renderer of pages it is not: a two-column article
+whose text runs over several pages, with the columns of every page filled in turn, is. Steps 1
+and 2 are only the smaller part of what is used most.
+
+What happens today to a container taller than a page: it is one box, balanced over all its
+content. A test with a container of about 12 paragraphs in two columns on A5 pages put the text
+of the second column at a y position of about 1,738px on a page that is 793px high. The content
+below the page is not on any page, and nothing is logged. The only test of a taller container
+(`tests/multicol.rs`, test 12) asserts that nothing crashes, which is why this was not noticed.
+This is a defect, and it should be fixed before more features are added.
+
+What is wanted, in the order in which it is cheap:
+
+- **Columns filled in turn over pages** (`column-fill: auto`). The columns of a page are filled to
+  the height that is left on it, and the fragment of the container ends after the last column.
+  The kernel already does most of it. The fragmentainers are a sequence of columns, the block
+  size is the height that is available on the page (smaller on the first page of a container
+  that starts in the middle of one), and the page of a column and its x offset follow from its
+  number. The outer kernel gets at most the complete sets of columns as places to end a
+  fragment, plus the end of the content. This needs no balancing, and no choice that depends on
+  where the content ends. It does need tokens that say where in a container a fragment starts,
+  and a window on the children of the container for the part on one page.
+- **The last fragment balanced.** By default (`column-fill: balance`) only the last fragment of
+  a container that is split is balanced; the others are full. Print also often leaves the last
+  page unbalanced (the first column full, the second with the rest), which is `column-fill: auto`.
+  Both are wanted, and today `column-fill: auto` is parsed and balances.
+- **A forced page break inside a container** ends the fragment on that page and continues on the
+  next one. A forced column break ends a column, as now.
+- **`column-span: all`**, for the title block of an article and for wide figures. A spanning box
+  splits the container into sections. Each is filled or balanced for itself.
+
+A typical article needs more than this and helium has none of it: floats for figures in a
+column, footnotes, and spanning figures that float to the top of a page. They are non-goals of
+this document. Text in columns would work after the steps above; an article as a whole would not.
+
+An earlier version of this document argued against treating a container at the top of the flow
+as a special case. For the first item above the objection is weaker than it was: a container
+that fills the page area from its top has no outer content to decide about. It is acceptable to
+build that case first, if it is built so that the general nested case (a container in the middle
+of a page, with content after it that depends on its last fragment) can replace it without
+changes to the solvers.
+
+Not checked: what `column-fill: auto` means for a container with an `auto` height in a context
+that has no page (the specification and browsers may differ); the height of the last fragment
+with `auto` fill when its first column is not full.
+
 ### Order of work
 
 1. Done. The service answers the extent and the lines of a subtree at a given width of its
@@ -859,9 +909,17 @@ directly below (at the top of the next column) and moves the text to it.
 2. Done. `column-count`, `column-width`, `column-gap` and `column-rule` for a container that is not
    split over pages and whose content is block flow or one paragraph. Balanced. The combine
    operator of `Objective`. Break levels, and `break-before: column`.
-3. A container that is split over pages: `fragment` for it, `column-fill: auto`, and balancing of
-   the last fragment only.
+3. A container that is split over pages. This is the most used case and comes next.
+   a. Columns filled in turn (`column-fill: auto`) over pages, with the first fragment as high as
+      the rest of its page, forced page breaks inside the container, and no loss of content for
+      a container that is taller than a page (fix this first).
+   b. The last fragment balanced, and `column-fill` as the specification has it.
+   c. `fragment` for a container in the middle of the flow, where the outer solver has to ask for
+      the ways a fragment can end (shared with step 6 above).
 4. `column-span: all`.
+
+The tests of step 3 are in `tests/multicol.rs`, below the others, and are ignored with the reason
+that steps 3a and 3b are not done.
 
 Step 1 does not need anything of the later ones, and the steps of "Order of work" above (3, 5, 6
 and 7) are independent of it, except that step 3 here shares `fragment` with step 6 there.
