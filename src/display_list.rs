@@ -5,7 +5,7 @@ use crate::layout::components::{
 };
 use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{ComputedValues, PixelLength, RGBA};
-use crate::style::properties::background::resolve_layer;
+use crate::style::properties::background::{image_tiles, resolve_layer};
 use crate::style::properties::gradient::{BoxSize, Image, Position as BackgroundPosition, Resolved};
 use crate::style::properties::specified::{BlendMode, BorderStyle};
 
@@ -321,6 +321,9 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
         height: rect.height.0,
     };
     let (area, paint) = (size(area), size(paint));
+    fn cycle<T: Clone>(values: &[T], index: usize, default: T) -> T {
+        if values.is_empty() { default } else { values[index % values.len()].clone() }
+    }
     let modes = &style.background.background_blend_mode;
     style
         .background
@@ -330,9 +333,6 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
         .rev()
         .filter_map(|(index, image)| match image {
             Image::Gradient(gradient) => {
-                fn cycle<T: Clone>(values: &[T], index: usize, default: T) -> T {
-                    if values.is_empty() { default } else { values[index % values.len()].clone() }
-                }
                 let background = &style.background;
                 let gradient = resolve_layer(
                     &gradient.with_current_color(current),
@@ -346,7 +346,32 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
                     paint,
                 )?;
                 let blend = if modes.is_empty() { BlendMode::Normal } else { modes[index % modes.len()] };
-                Some(Layer { gradient, blend })
+                Some(Layer::Gradient(GradientLayer { gradient, blend }))
+            }
+            Image::Url(url) => {
+                let image = url.load()?;
+                let background = &style.background;
+                let tiles = image_tiles(
+                    image.size(),
+                    &cycle(&background.background_size, index, Default::default()),
+                    &cycle(&background.background_position, index, BackgroundPosition {
+                        x: Default::default(),
+                        y: Default::default(),
+                    }),
+                    cycle(&background.background_repeat, index, Default::default()),
+                    area,
+                    paint,
+                );
+                if tiles.is_empty() {
+                    return None;
+                }
+                let rect = |tile: BoxSize| Rect {
+                    x: PixelLength(tile.x),
+                    y: PixelLength(tile.y),
+                    width: PixelLength(tile.width),
+                    height: PixelLength(tile.height),
+                };
+                Some(Layer::Image { image: image.clone(), tiles: tiles.into_iter().map(rect).collect() })
             }
             Image::None => None,
         })
@@ -355,9 +380,30 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
 
 /// A gradient of a background with the way it is blended with the layers below.
 #[derive(Debug, Clone)]
-pub struct Layer {
+pub struct GradientLayer {
     pub gradient: Resolved,
     pub blend: BlendMode,
+}
+
+/// A layer of a background.
+#[derive(Debug, Clone)]
+pub enum Layer {
+    Gradient(GradientLayer),
+    /// An image, drawn once in every tile.
+    Image {
+        image: std::sync::Arc<crate::image::LoadedImage>,
+        tiles: Vec<Rect>,
+    },
+}
+
+impl Layer {
+    /// How the layer is blended with the ones below. An image is not blended.
+    fn blend(&self) -> BlendMode {
+        match self {
+            Layer::Gradient(layer) => layer.blend,
+            Layer::Image { .. } => BlendMode::Normal,
+        }
+    }
 }
 
 /// A background whose layers are blended. The layers only blend with each other, so they are
@@ -369,7 +415,7 @@ pub struct BlendGroup {
     pub bbox: Rect,
     pub color: RGBA,
     /// From bottom to top.
-    pub layers: Vec<Layer>,
+    pub layers: Vec<GradientLayer>,
 }
 
 #[derive(Debug, Clone)]
@@ -731,16 +777,21 @@ impl DisplayList {
         entity: Entity,
         z: ZIndex,
     ) {
+        let gradients = layers
+            .iter()
+            .filter_map(|layer| match layer {
+                Layer::Gradient(layer) => Some(layer.clone()),
+                Layer::Image { .. } => None,
+            })
+            .collect();
         self.append(
-            DisplayItem::BlendGroup(Box::new(BlendGroup {
-                clip: clip.to_vec(),
-                bbox,
-                color,
-                layers: layers.to_vec(),
-            })),
+            DisplayItem::BlendGroup(Box::new(BlendGroup { clip: clip.to_vec(), bbox, color, layers: gradients })),
             entity,
             z,
         );
+        // the images are not part of the group, so they are not blended: they go over it
+        let images: Vec<Layer> = layers.iter().filter(|layer| matches!(layer, Layer::Image { .. })).cloned().collect();
+        self.gradients(&images, clip, entity, z);
     }
 
     /// Paints the background of a style over a rectangle, behind everything else.
@@ -748,7 +799,7 @@ impl DisplayList {
         let z = ZIndex(i64::MIN);
         let color = crate::style::properties::color::color_to_rgba(style.background.background_color);
         let gradients = background_gradients(style, rect, rect);
-        if gradients.iter().any(|layer| layer.blend != BlendMode::Normal) {
+        if gradients.iter().any(|layer| layer.blend() != BlendMode::Normal) {
             self.blended_background(rect, color, &gradients, &rect_path(rect), entity, z);
             return;
         }
@@ -763,7 +814,7 @@ impl DisplayList {
 
     /// Paints gradients, clipped to the (rounded) border box `clip`.
     fn gradients(&mut self, gradients: &[Layer], clip: &[PathSegment], entity: Entity, z: ZIndex) {
-        for Layer { gradient, .. } in gradients {
+        for layer in gradients {
             self.append(DisplayItem::Push, entity, z);
             self.append(
                 DisplayItem::ClipPath {
@@ -773,7 +824,16 @@ impl DisplayList {
                 entity,
                 z,
             );
-            self.append(DisplayItem::Gradient(Box::new(gradient.clone())), entity, z);
+            match layer {
+                Layer::Gradient(GradientLayer { gradient, .. }) => {
+                    self.append(DisplayItem::Gradient(Box::new(gradient.clone())), entity, z)
+                }
+                Layer::Image { image, tiles } => {
+                    for &rect in tiles {
+                        self.append(DisplayItem::Image { rect, image: image.clone() }, entity, z);
+                    }
+                }
+            }
             self.append(DisplayItem::Pop, entity, z);
         }
     }
@@ -795,7 +855,7 @@ impl DisplayList {
         let zero = PixelLength(0.0);
         let outer_path = rounded_rect_path(rect, outer);
 
-        let blended = gradients.iter().any(|layer| layer.blend != BlendMode::Normal);
+        let blended = gradients.iter().any(|layer| layer.blend() != BlendMode::Normal);
         if blended {
             self.blended_background(rect, background_color, gradients, &outer_path, entity, z);
         } else if background_color != RGBA::transparent() {
@@ -1062,7 +1122,7 @@ impl<'a> System<'a> for DisplayDecoration {
                 }
             }
 
-            let blended = gradients.iter().any(|layer| layer.blend != BlendMode::Normal);
+            let blended = gradients.iter().any(|layer| layer.blend() != BlendMode::Normal);
             if blended {
                 self.display_list.blended_background(
                     border_box,

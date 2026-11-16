@@ -208,7 +208,10 @@ impl FlowConstructor {
                     .attributes
                     .borrow()
                     .get(&QualName::new(None, ns!(), local_name!("style")))
-                    .map(|attr| PropertyDeclarationBlock::parse_inline(&attr.value));
+                    .map(|attr| {
+                        let dir = &self.stylesheet_base_dir;
+                        crate::style::url_context::with(dir, dir, || PropertyDeclarationBlock::parse_inline(&attr.value))
+                    });
                 let mut cascade = vec![];
                 for (user_agent, _, rule) in &matched_rules {
                     if *user_agent {
@@ -423,7 +426,9 @@ impl FlowConstructor {
             if name == &QualName::new(None, ns!(html), local_name!("style")) {
                 for child in TreeLinked::children(node) {
                     if let ParsedData::Text(css) = &child.html_data {
-                        self.styles.parse_css(&css.borrow())
+                        // relative URLs in the style sheet are relative to the document
+                        let dir = self.stylesheet_base_dir.clone();
+                        crate::style::url_context::with(&dir, &dir, || self.styles.parse_css(&css.borrow()))
                     } else {
                         log::warn!("<style> element did not contain any style information.")
                     }

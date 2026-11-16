@@ -346,6 +346,83 @@ fn axis_region(tiles: &AxisTiles, paint_start: f32, paint_end: f32) -> (f32, f32
     }
 }
 
+/// The most tiles that an image is repeated into; more would be a page full of one-pixel tiles.
+const MAX_TILES: usize = 10_000;
+
+/// The rectangles that an image of the size `natural` is drawn into as a layer of a background:
+/// the size of a tile follows `background-size`, and the tiles are those that
+/// `background-position` and `background-repeat` put into the positioning area `area` (the
+/// padding box) and that touch the painted area `paint` (the border box).
+///
+/// https://www.w3.org/TR/css-backgrounds-3/#the-background-size
+pub fn image_tiles(
+    natural: (f32, f32),
+    size: &ComputedSize,
+    position: &Position<LengthPercentage>,
+    repeat: Repeat,
+    area: BoxSize,
+    paint: BoxSize,
+) -> Vec<BoxSize> {
+    let (image_width, image_height) = natural;
+    if !(image_width > 0.0 && image_height > 0.0 && area.width > 0.0 && area.height > 0.0) {
+        return vec![];
+    }
+    let (width, height) = match size {
+        Size::Cover => {
+            let scale = (area.width / image_width).max(area.height / image_height);
+            (image_width * scale, image_height * scale)
+        }
+        Size::Contain => {
+            let scale = (area.width / image_width).min(area.height / image_height);
+            (image_width * scale, image_height * scale)
+        }
+        Size::Explicit(width, height) => {
+            let width = width.map(|w| w.absolute(PixelLength(area.width)).0);
+            let height = height.map(|h| h.absolute(PixelLength(area.height)).0);
+            match (width, height) {
+                (Some(width), Some(height)) => (width, height),
+                // `auto` keeps the proportions of the image
+                (Some(width), None) => (width, width * image_height / image_width),
+                (None, Some(height)) => (height * image_width / image_height, height),
+                (None, None) => (image_width, image_height),
+            }
+        }
+    };
+    if !(width > 0.0 && height > 0.0) {
+        return vec![];
+    }
+    let xs = axis_tiles(repeat.x, width, &position.x, area.x, area.width);
+    let ys = axis_tiles(repeat.y, height, &position.y, area.y, area.height);
+    // the starts of the tiles of an axis that touch `from..to`
+    let starts = |tiles: &AxisTiles, from: f32, to: f32| -> Vec<f32> {
+        if !tiles.repeats {
+            return (tiles.origin < to && tiles.origin + tiles.size > from).then_some(tiles.origin).into_iter().collect();
+        }
+        let mut starts = vec![];
+        let mut k = ((from - tiles.origin) / tiles.step).floor();
+        loop {
+            let start = tiles.origin + k * tiles.step;
+            if start >= to || starts.len() > MAX_TILES {
+                break;
+            }
+            if start + tiles.size > from {
+                starts.push(start);
+            }
+            k += 1.0;
+        }
+        starts
+    };
+    let columns = starts(&xs, paint.x, paint.x + paint.width);
+    let rows = starts(&ys, paint.y, paint.y + paint.height);
+    if columns.len() * rows.len() > MAX_TILES {
+        log::warn!("A background image is repeated {} times: not painted", columns.len() * rows.len());
+        return vec![];
+    }
+    rows.iter()
+        .flat_map(|&y| columns.iter().map(move |&x| BoxSize { x, y, width: xs.size, height: ys.size }))
+        .collect()
+}
+
 /// Resolves a gradient that is an image of a background: it is laid out in tiles in the
 /// positioning area `area` (the padding box) and painted into `paint` (the border box).
 pub fn resolve_layer(
@@ -492,6 +569,83 @@ mod tests {
 
     fn layer(size: ComputedSize, position: Position<LengthPercentage>, repeat: Repeat) -> Option<Resolved> {
         resolve_layer(&gradient(), &size, &position, repeat, AREA, AREA)
+    }
+
+    fn image_tiles_of(
+        natural: (f32, f32),
+        size: ComputedSize,
+        position: Position<LengthPercentage>,
+        repeat: Repeat,
+    ) -> Vec<BoxSize> {
+        image_tiles(natural, &size, &position, repeat, AREA, AREA)
+    }
+
+    const NO_REPEAT: Repeat = Repeat { x: RepeatStyle::NoRepeat, y: RepeatStyle::NoRepeat };
+
+    fn tile(x: f32, y: f32, width: f32, height: f32) -> BoxSize {
+        BoxSize { x, y, width, height }
+    }
+
+    #[test]
+    fn an_image_has_its_own_size_unless_told_otherwise() {
+        let tiles = image_tiles_of((40.0, 20.0), Size::default(), at(lp(0.0), lp(0.0)), NO_REPEAT);
+        assert_eq!(tiles, vec![tile(10.0, 20.0, 40.0, 20.0)]);
+    }
+
+    #[test]
+    fn auto_keeps_the_proportions_of_the_image() {
+        let width = Size::Explicit(Some(lp(50.0)), None);
+        assert_eq!(
+            image_tiles_of((100.0, 40.0), width, at(lp(0.0), lp(0.0)), NO_REPEAT),
+            vec![tile(10.0, 20.0, 50.0, 20.0)]
+        );
+        let height = Size::Explicit(None, Some(lp(30.0)));
+        assert_eq!(
+            image_tiles_of((100.0, 40.0), height, at(lp(0.0), lp(0.0)), NO_REPEAT),
+            vec![tile(10.0, 20.0, 75.0, 30.0)]
+        );
+    }
+
+    #[test]
+    fn cover_fills_the_area_and_contain_fits_into_it() {
+        // 100 x 60 area, image 50 x 50: cover scales by 2 (to 100 x 100), contain by 1.2 (to 60 x 60)
+        let cover = image_tiles_of((50.0, 50.0), Size::Cover, at(lp(0.0), lp(0.0)), NO_REPEAT);
+        assert_eq!(cover, vec![tile(10.0, 20.0, 100.0, 100.0)]);
+        let contain = image_tiles_of((50.0, 50.0), Size::Contain, at(lp(0.0), lp(0.0)), NO_REPEAT);
+        // (the scale 1.2 is not exact in a float)
+        assert_eq!(contain.len(), 1);
+        let (got, want) = (contain[0], tile(10.0, 20.0, 60.0, 60.0));
+        assert!(
+            (got.x - want.x).abs() < 1e-3
+                && (got.y - want.y).abs() < 1e-3
+                && (got.width - want.width).abs() < 1e-3
+                && (got.height - want.height).abs() < 1e-3,
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn a_repeated_image_fills_the_painted_area_with_tiles() {
+        let size = Size::Explicit(Some(lp(30.0)), Some(lp(20.0)));
+        let tiles = image_tiles_of((10.0, 10.0), size, at(lp(0.0), lp(0.0)), Repeat::default());
+        // 100 x 60 area from (10, 20): the tiles start at the position and continue in both directions
+        assert_eq!(tiles.len(), 4 * 3);
+        assert!(tiles.iter().all(|t| t.width == 30.0 && t.height == 20.0));
+        assert!(tiles.contains(&tile(10.0, 20.0, 30.0, 20.0)));
+        assert!(tiles.contains(&tile(100.0, 60.0, 30.0, 20.0)));
+    }
+
+    #[test]
+    fn a_tile_of_a_centred_image_is_in_the_middle() {
+        let half = LengthPercentage::Percentage(super::Percentage(0.5));
+        let tiles = image_tiles_of((40.0, 20.0), Size::default(), at(half, half), NO_REPEAT);
+        // (100-40)/2 and (60-20)/2 from the start of the area
+        assert_eq!(tiles, vec![tile(40.0, 40.0, 40.0, 20.0)]);
+    }
+
+    #[test]
+    fn nothing_is_drawn_for_an_image_without_a_size() {
+        assert!(image_tiles_of((0.0, 10.0), Size::default(), at(lp(0.0), lp(0.0)), NO_REPEAT).is_empty());
     }
 
     #[test]

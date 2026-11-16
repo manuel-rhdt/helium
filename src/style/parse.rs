@@ -114,7 +114,10 @@ impl Styles {
         };
 
         match std::fs::read_to_string(&path) {
-            Ok(css) => self.parse_css(&css),
+            // relative URLs in the style sheet are relative to the style sheet
+            Ok(css) => crate::style::url_context::with(path.parent().unwrap_or(base_dir), base_dir, || {
+                self.parse_css(&css)
+            }),
             Err(error) => warn!(
                 "Could not read stylesheet \"{}\": {}",
                 path.display(),
