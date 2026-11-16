@@ -1,8 +1,9 @@
 # Pagination: design
 
-Status: steps 1, 2 and 4 of "Order of work" are implemented. The section "Where the code stands"
-describes the code as it is; the sections after it are the design, with notes where the code
-differs.
+Status: steps 1, 2 and 4 of "Order of work" are implemented, and so is step 1 of the order of
+work of "Multi-column layout" (the service answers for a subtree at a width). The section "Where
+the code stands" describes the code as it is; the sections after it are the design, with notes
+where the code differs.
 
 ## Goals
 
@@ -43,7 +44,9 @@ The pipeline in `src/layout/mod.rs` (`layout`) is:
      from it. The lines of a paragraph are what the line breaker makes of it for the width that
      the galley gave it; from a cut on, they are the lines of the whole paragraph if the cut is
      the end of a line of it, and else the rest of the paragraph broken for the width of the
-     page. Everything is cached by the width that was asked for.
+     page. Everything is cached by the width that was asked for. The service also answers for a
+     box laid out *at a width of its own*, the content width of that box and not of a page (a
+     *subtree*, `subtree.rs`; see "A subtree at a width").
    - `paginate.rs` gives the kernel the geometry of the page that starts at every place: the
      name of the first content on it, whether it starts a page group, and its kind decide the
      margins and the size. The exact solver with `CssObjective` chooses the pages.
@@ -60,9 +63,14 @@ Limits of this, in order of importance:
   that continues on a page of another width is broken again from the cut on, without the state of
   the line breaker.
 - **Monolithic containers.** Flex and grid containers and table rows are never split. A table is
-  split between rows, but it is laid out as a whole, for the width of the page where it starts:
-  the columns of a table do not follow the width of later pages. A box with a `height` is not
-  split either (a minimum height is dropped for a box that is cut).
+  split between rows, but it is laid out as a whole, again for the width of every page that it
+  is on (the window shows Taffy all its cells, and the galley of each width lays out all of
+  it). The rows of a page are therefore laid out for that page and the paginator counts them
+  so, but the columns of a table follow the width of each page instead of staying the ones of
+  the page where it starts. Pinning the columns is step 6 of "Order of work" (the test
+  `the_columns_of_a_table_stay_the_ones_of_the_page_where_it_starts` is ignored until then).
+  A box with a `height` is not split either (a minimum height is dropped for a box that is
+  cut).
 - **Out-of-flow boxes.** An absolutely positioned box is laid out on the page of the content in
   front of it, in the content area of that page. If the box is positioned by `top` or `bottom`
   in the initial containing block, it is on the first page. A containing block that is cut
@@ -404,6 +412,11 @@ pub trait LayoutService {
     /// The extent of a `Box` or `Gap` on a page.
     fn extent(&mut self, node: NodeRef, page_inline: f32) -> f32;
 
+    /// The extent of the content of a box, and what is inside it, at a width of its own.
+    fn content_extent(&mut self, root: BoxRef, inline: f32) -> f64;
+    fn extent_in(&mut self, root: BoxRef, node: NodeRef, inline: f32) -> f64;
+    fn lines_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> Rc<[ParLine]>;
+
     /// The ways to end a part of a container within `available`.
     fn fragment(&mut self, node: NodeRef, from: BreakToken, page_inline: f32,
                 available: f32) -> Vec<Fragment>;
@@ -425,6 +438,9 @@ are no width classes: the cache is keyed by the width that is asked for.
 Positions that depend on the height of the page or of a split box (absolutely
 positioned boxes with `bottom`, percentage heights, `vh`) are right per page
 without a later fix-up.
+
+`content_extent`, `extent_in` and `lines_in` are the same questions for a subtree. They are
+cached by (box, inline size) as well.
 
 If `layout_page` reports an overflow, an estimate was wrong. The kernel
 records the true extent for that range and the solver solves again from that
@@ -449,6 +465,69 @@ All semantics of fragments are in this view. Taffy is used unchanged.
 Subtrees that are not cut are served from Taffy's cache of each node. The
 nodes on the edge of a window must not share cache entries with the same nodes
 laid out whole.
+
+### A subtree at a width
+
+`LayoutService::content_extent(root, inline)` and its companions `extent_in` and `lines_in` answer
+for the box `root` laid out on its own. `BoxRef` names a box of the flow (in the engine, the index
+of its node in `HeliumTree`).
+
+- **What `inline` is.** The width of the *content box* of `root`. `root` is laid out as the root
+  of a formatting context: its own `width`, `min-width` and `max-width` do not apply, its padding
+  and border come around `inline` (so its border box is wider), and a percentage in its own
+  padding refers to `inline`. Margins of `root` are not part of it, and margins of its children
+  do not collapse through its edges. The content box is the width that a column has, and what the
+  children of a box see, so a multi-column container asks for its content at the width of a
+  column. Everything inside is laid out by the usual rules for that content width: percentages,
+  `inline-block` boxes, nested boxes, tables. The height that is available is the one of the
+  galleys (the height of the first page).
+- **What it returns.** `content_extent` is the block size of the content box of `root`: its
+  height without padding and border (for a table, from its first row to its last). `extent_in`
+  is the extent of a `Box` or a `Gap` that is inside `root`, as `extent` has it on a page: the
+  boxes and gaps of the flow between the start and the end of `root` have one. (A gap or an
+  edge that is made from boxes around `root` has none, and asking for it is an error.) `lines_in`
+  gives the lines of a paragraph inside `root` for the line width and the indent that its box
+  has at that width, from a cut on, as `lines` does for a page.
+- **Cache of the service.** By (box, `inline`), and for the lines by (box, paragraph, cut,
+  `inline`). The same arguments give the same answers.
+- **Cache of Taffy.** An entry is keyed by the known size, the available space and the size of the
+  parent, and the cache of a node only knows the layout of that node: the layouts of its
+  children live in the children. A layout at another width therefore leaves two kinds of
+  damage, and both are handled explicitly (`subtree.rs`):
+  1. *Below the box.* The caches of all nodes of the subtree are cleared in front of the layout
+     (and the width that each paragraph was measured at is forgotten), so everything is
+     computed from nothing at this width. Afterwards the entries of these nodes agree with the
+     layouts below them, as after any layout.
+  2. *Around the box.* The caches of its ancestors still say that their children are as they
+     were in the last galley, while the layouts below `root` are now the ones of this width.
+     A later layout of the page that gets such an entry would return the old size and keep the
+     new positions. The caches of the ancestors are cleared behind the layout; their other
+     children keep their entries.
+
+  A test shows that the second kind matters: with that step left out, a page layout after a
+  question differs (`the_boxes_around_a_subtree_are_laid_out_again_behind_a_question_about_it`).
+  No test shows that the clearing in front is needed (the entries of the nodes below `root` are
+  consistent with each other and would be found only for the same inputs); it is kept because
+  the paragraphs' `measured` widths and the next point rely on every paragraph being laid out
+  anew.
+- **`inline-block` boxes.** The boxes of a paragraph are laid out once, for the line width of
+  the first layout of the paragraph, and their widths are *added* to the inline context
+  (`apply_atom_widths`). That state is not part of Taffy's cache. A question that came first
+  would give every later layout the sizes of its width, and one that came later would use the
+  sizes of an earlier width. Both are wrong for boxes with a percentage width or a width that
+  fits their content. The inline context of a paragraph as it was before the widths were
+  applied is therefore kept (`Node::atoms_before`); for the layout of a subtree the paragraph
+  gets a copy of it, the boxes are sized for this width, and the lines of `lines_in` are made
+  from that copy. Behind the layout the inline context, the sizes of the boxes and the lines
+  that were cached for the paragraph are the ones from before. (The galleys of the pages still
+  size the boxes once, for the first width; that limit is unchanged.)
+- **What is not covered.** The root must be part of the flow and not an orthogonal flow.
+  Out-of-flow boxes in the subtree whose containing block is outside it are not placed; no layout
+  of the subtree uses them. A window is taken off the tree first, so a subtree is always a whole
+  box. The galley path (`extent` and `lines` for a page) is not written with this call: the
+  root of a galley is the root of the document, laid out by `compute_root_layout` with its own
+  margins and the initial containing block, and the galley is not slower or different for it.
+  Only the paragraph part of `lines` is shared.
 
 ### Two regimes
 
@@ -614,10 +693,12 @@ their columns to the height that is available, as `column-fill: auto` does.
 
 **The service must answer for a subtree at a width.** `LayoutService::extent` reads from a
 galley: the whole document laid out at one page width. The content of a multi-column container
-needs its extent at the width of a column, which is not the width of any of its ancestors. The
-service has to lay out a subtree with a given available width. The windowed tree can do that;
-the service does not use it for this yet. The same limit applies today to a table that continues
-on a page of another width.
+needs its extent at the width of a column, which is not the width of any of its ancestors.
+`content_extent`, `extent_in` and `lines_in` do that (see "A subtree at a width"): the box is laid
+out alone with a definite content width, on the tree without a window, and the cache of Taffy is
+protected around it. No kernel or solver uses these calls yet. A table that continues on a page of
+another width does not need them today, since it is laid out whole for every page; they are what
+pinned columns will be asked with.
 
 **Break levels.** `BreakKind` tells forced from avoid, not the level. A forced column break ends
 a column. A forced page break in a multi-column container ends the fragment of the container on
@@ -664,9 +745,9 @@ balanced height of the container, computed once for a width.
 
 ### Order of work
 
-1. The service answers the extent and the lines of a subtree at a given available width, instead
-   of reading them from a galley. This is also what splitting tables on pages of another width
-   needs.
+1. Done. The service answers the extent and the lines of a subtree at a given width of its
+   content box, instead of reading them from a galley. Nothing uses it yet; it is also what
+   pinning the columns of a table that is split needs.
 2. `column-count`, `column-width`, `column-gap` and `column-rule` for a container that is not
    split over pages and whose content is block flow. Balanced. The combine operator of
    `Objective`. Break levels, and `break-before: column`.
@@ -702,6 +783,8 @@ and 7) are independent of it, except that step 3 here shares `fragment` with ste
   replaces the final entry of its child, the layout of a node's descendants is always the one
   that its last final entry was computed with. For a document with several page widths this
   means that a node is laid out again whenever the width changes, which is what the galleys do.
+  A subtree that is laid out at a width of its own breaks that reasoning for the boxes around
+  it, which are not laid out again; see "A subtree at a width" for what is done.
 - **Windows and margins.** Resolved by testing. A margin that adjoins the edge of a page is
   discarded by setting it to zero on the boxes along the first and last kid of the window, down
   to the first box that has padding or border at that edge (a margin below it does not adjoin
@@ -722,5 +805,6 @@ and 7) are independent of it, except that step 3 here shares `fragment` with ste
   paginator together (release build).
 - **Floats and footnotes** take space on a page out of the order of the flow. They would be a
   new kind of item, and `candidates` would no longer be a walk in one direction.
-- **A table that spans pages of different widths** keeps the columns of the width of the page it
-  starts on.
+- **A table that spans pages of different widths** is laid out for the width of each page: its
+  columns are found again on every page, where the design asks for the columns of the page it
+  starts on (step 6).
