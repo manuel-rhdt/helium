@@ -173,5 +173,5 @@ Other image formats (GIF, WebP, ...), `url()` backgrounds,
 `@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
 fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
 `outline`, `word-break`/`overflow-wrap`,
-`counter-*` and `::before`/`::after`, `vw`/`vh`, `ex`/`ch` and other units, scripting, and form
+`counter-*` and `::before`/`::after`, `vw`/`vh` and other units, scripting, and form
 interaction.
