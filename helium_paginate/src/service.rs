@@ -1,4 +1,4 @@
-use crate::flow::{BoxRef, BreakKind, Item, NodeRef, PageTable, ParId, Problem};
+use crate::flow::{BoxRef, BreakKind, BreakLevel, Item, NodeRef, PageTable, ParId, Problem};
 use crate::token::Cut;
 use std::rc::Rc;
 
@@ -144,8 +144,13 @@ impl GalleyFlow {
         self
     }
 
+    /// A break between pages.
     pub fn break_(&mut self, kind: BreakKind) -> &mut Self {
-        self.items.push(Item::Break { kind });
+        self.break_at(kind, BreakLevel::Page)
+    }
+
+    pub fn break_at(&mut self, kind: BreakKind, level: BreakLevel) -> &mut Self {
+        self.items.push(Item::Break { kind, level });
         self
     }
 

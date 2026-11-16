@@ -345,7 +345,7 @@ impl Extractor<'_, '_, '_> {
                         }
                         if let Some(before) = previous {
                             let kind = self.break_kind(before, child, avoid_inside);
-                            self.push(Item::Break { kind });
+                            self.push(Item::Break { kind, level: helium_paginate::BreakLevel::Page });
                         }
                         self.gap_item(end, Anchor::Top(child));
                         self.emit(child, Some(id), avoid_inside);
@@ -405,7 +405,7 @@ impl Extractor<'_, '_, '_> {
                     .is_some_and(|rows| rows.end > 0 && self.tree.table_row_blocked(table, rows.end - 1));
                 if !blocked {
                     let kind = self.break_kind(before, kid.node, avoid_inside);
-                    self.push(Item::Break { kind });
+                    self.push(Item::Break { kind, level: helium_paginate::BreakLevel::Page });
                 } else {
                     // no break: the boxes are in one piece
                     let _ = before;

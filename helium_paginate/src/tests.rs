@@ -730,3 +730,190 @@ fn a_paragraph_is_cut_for_the_width_of_each_page() {
     assert_eq!(used(&pages), [40.0; 4]);
     assert!(pages.iter().all(|fill| !fill.overflow));
 }
+
+/// The columns of a flow that is balanced in `columns` columns that can hold `block_size`, as
+/// the content of every column.
+fn balanced(flow: GalleyFlow, columns: usize, block_size: f32) -> Vec<f32> {
+    let (problem, mut service) = flow.finish(page(block_size));
+    let problem = problem.with_level(BreakLevel::Column).with_page_limit(columns);
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = balance(&mut kernel);
+    let pages = kernel.realize(&solution).expect("the solution of balancing is valid");
+    used(&pages)
+}
+
+fn items(count: usize) -> GalleyFlow {
+    let mut flow = GalleyFlow::new();
+    for index in 0..count {
+        if index > 0 {
+            flow.break_at(ALLOWED, BreakLevel::Column);
+        }
+        flow.content(20.0);
+    }
+    flow
+}
+
+#[test]
+fn a_break_of_the_other_level_is_no_break() {
+    let flow = |level| {
+        let mut flow = GalleyFlow::new();
+        flow.content(10.0)
+            .break_at(BreakKind::Forced, level)
+            .content(10.0)
+            .break_at(BreakKind::Avoid, level)
+            .content(10.0);
+        flow
+    };
+    let used_of = |flow: GalleyFlow, level| {
+        let (problem, mut service) = flow.finish(page(100.0));
+        let problem = problem.with_level(level);
+        let mut kernel = Kernel::new(&problem, &mut service);
+        let first = kernel.first_page();
+        used(&kernel.candidates(&first))
+    };
+    // on pages, a forced page break ends the page, and nothing else is possible
+    assert_eq!(used_of(flow(BreakLevel::Page), BreakLevel::Page), [10.0]);
+    // a column break is no break on a page: the avoid break is a break that can be taken, and so
+    // is the one that was forced
+    assert_eq!(used_of(flow(BreakLevel::Column), BreakLevel::Page), [10.0, 20.0, 30.0]);
+    // in columns it is the other way round
+    assert_eq!(used_of(flow(BreakLevel::Column), BreakLevel::Column), [10.0]);
+    assert_eq!(used_of(flow(BreakLevel::Page), BreakLevel::Column), [10.0, 20.0, 30.0]);
+    // an avoid break of the other level is not avoided
+    let (problem, mut service) = flow(BreakLevel::Column).finish(page(100.0));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let first = kernel.first_page();
+    let ends: Vec<BreakKind> = kernel.candidates(&first).iter().map(|fill| fill.end_kind).collect();
+    assert!(ends.iter().all(|kind| *kind == BreakKind::Allowed), "{ends:?}");
+}
+
+#[test]
+fn the_last_page_that_there_can_be_takes_the_rest() {
+    // ten boxes of 20 on pages that hold 60, but there are two pages at most
+    let (problem, mut service) = items(10).finish(page(60.0));
+    let problem = problem.with_page_limit(2);
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let first = kernel.first_page();
+    // the first page ends after one, two or three boxes
+    assert_eq!(used(&kernel.candidates(&first)), [20.0, 40.0, 60.0]);
+    let fill = kernel.candidates(&first)[2];
+    let second = kernel.next_page(&first, &fill).unwrap();
+    // the second takes the rest, and does not fit: 140 for 7 boxes with the break in between
+    let fills = kernel.candidates(&second);
+    assert_eq!(used(&fills), [140.0]);
+    assert!(fills[0].overflow);
+    assert!(kernel.is_end(fills[0].end));
+}
+
+#[test]
+fn balanced_columns_are_as_low_as_they_can_be_and_the_first_ones_are_the_fullest() {
+    assert_eq!(balanced(items(6), 3, 1000.0), [40.0, 40.0, 40.0]);
+    assert_eq!(balanced(items(5), 2, 1000.0), [60.0, 40.0]);
+    // 5 boxes in three columns: two, two and one
+    assert_eq!(balanced(items(5), 3, 1000.0), [40.0, 40.0, 20.0]);
+    // there are more columns than boxes
+    assert_eq!(balanced(items(2), 3, 1000.0), [20.0, 20.0]);
+    assert_eq!(balanced(items(1), 2, 1000.0), [20.0]);
+    // one column
+    assert_eq!(balanced(items(3), 1, 1000.0), [60.0]);
+}
+
+#[test]
+fn balanced_columns_are_within_the_height_that_there_is() {
+    // six boxes in a height of 100: three and three
+    assert_eq!(balanced(items(6), 2, 100.0), [60.0, 60.0]);
+    // ten boxes in two columns of 60: the first is as full as it can be, and the last overflows
+    let (problem, mut service) = items(10).finish(page(60.0));
+    let problem = problem.with_level(BreakLevel::Column).with_page_limit(2);
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = balance(&mut kernel);
+    let pages = kernel.realize(&solution).unwrap();
+    assert_eq!(used(&pages), [60.0, 140.0]);
+    assert_eq!([pages[0].overflow, pages[1].overflow], [false, true]);
+}
+
+#[test]
+fn balanced_columns_respect_forced_breaks_and_break_where_they_are_allowed_to() {
+    // a forced column break after the first of five boxes leaves the balance nothing to choose
+    let mut flow = GalleyFlow::new();
+    flow.content(20.0).break_at(BreakKind::Forced, BreakLevel::Column);
+    for index in 0..4 {
+        if index > 0 {
+            flow.break_at(ALLOWED, BreakLevel::Column);
+        }
+        flow.content(20.0);
+    }
+    assert_eq!(balanced(flow, 2, 1000.0), [20.0, 80.0]);
+
+    // A (20) B (20) C (40, unbreakable) D (20) in two columns: [A, B] and [C, D]
+    let mut flow = GalleyFlow::new();
+    flow.content(20.0)
+        .break_at(ALLOWED, BreakLevel::Column)
+        .content(20.0)
+        .break_at(ALLOWED, BreakLevel::Column)
+        .content(40.0)
+        .break_at(ALLOWED, BreakLevel::Column)
+        .content(20.0);
+    assert_eq!(balanced(flow, 2, 1000.0), [40.0, 60.0]);
+
+    // the break after the second of four boxes is to be avoided: three and one
+    let mut flow = GalleyFlow::new();
+    flow.content(20.0)
+        .break_at(ALLOWED, BreakLevel::Column)
+        .content(20.0)
+        .break_at(BreakKind::Avoid, BreakLevel::Column)
+        .content(20.0)
+        .break_at(ALLOWED, BreakLevel::Column)
+        .content(20.0);
+    assert_eq!(balanced(flow, 2, 1000.0), [60.0, 20.0]);
+}
+
+#[test]
+fn balanced_columns_cut_a_paragraph_where_the_widows_allow_it() {
+    // A paragraph of 7 lines of 10 in two columns, at least 2 lines at each end: 4 and 3
+    let mut flow = GalleyFlow::new();
+    flow.paragraph(&[10.0; 7], 2, 2, false);
+    assert_eq!(balanced(flow, 2, 1000.0), [40.0, 30.0]);
+    // 3 lines with orphans and widows of 2 cannot be cut: they stay in one column
+    let mut flow = GalleyFlow::new();
+    flow.paragraph(&[10.0; 3], 2, 2, false);
+    assert_eq!(balanced(flow, 2, 1000.0), [30.0]);
+}
+
+/// An objective that takes the maximum of the costs of the pages, which is the cost of a page.
+struct Tallest;
+
+impl Objective for Tallest {
+    fn page_cost(&self, fill: &PageFill, _is_last: bool) -> f64 {
+        fill.used as f64
+    }
+
+    fn combine(&self, so_far: f64, page: f64, _index: usize) -> f64 {
+        so_far.max(page)
+    }
+}
+
+#[test]
+fn the_exact_solver_minimises_what_the_objective_combines() {
+    // the sum of the heights is the same for any pagination of these boxes in two pages, and
+    // the sum of the squares is least where they are the same height: the objective takes the
+    // maximum, which is the same
+    let mut flow = GalleyFlow::new();
+    flow.content(30.0)
+        .break_(ALLOWED)
+        .content(30.0)
+        .break_(ALLOWED)
+        .content(30.0)
+        .break_(ALLOWED)
+        .content(30.0);
+    let (problem, mut service) = flow.finish(page(100.0));
+    let problem = problem.with_page_limit(2);
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(Tallest).solve(&mut kernel);
+    let pages = kernel.realize(&solution).unwrap();
+    assert_eq!(used(&pages), [60.0, 60.0]);
+    // with the sum, which is what pages are made of, the fullest pages win
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let pages = kernel.realize(&solution).unwrap();
+    assert_eq!(used(&pages), [90.0, 30.0]);
+}

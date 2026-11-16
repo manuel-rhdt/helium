@@ -181,7 +181,8 @@ pub(super) fn window(
             let forced = matches!(
                 flow.items[item - 1],
                 Item::Break {
-                    kind: BreakKind::Forced | BreakKind::ForcedLeft | BreakKind::ForcedRight
+                    kind: BreakKind::Forced | BreakKind::ForcedLeft | BreakKind::ForcedRight,
+                    ..
                 }
             );
             let leading = match flow.items.get(item) {

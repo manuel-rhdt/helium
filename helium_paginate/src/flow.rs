@@ -38,6 +38,19 @@ impl BreakKind {
     }
 }
 
+/// The kind of fragmentainer that a break is between two parts of: a page or a column.
+///
+/// A problem paginates one kind of fragmentainer ([`Problem::level`]) and only knows the breaks
+/// of that level. A break of the other level is no break there: a forced column break outside of a
+/// multi-column container is like `auto`, and a forced page break inside of a multi-column
+/// container that is not split over pages ends nothing.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
+pub enum BreakLevel {
+    #[default]
+    Page,
+    Column,
+}
+
 /// A piece of the flow, in the manner of TeX. Items carry no sizes: the kernel asks the layout
 /// service for them.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -48,8 +61,10 @@ pub enum Item {
     /// Collapsed margins. Discarded at the start and at the end of a page; kept after a forced
     /// break and at the start of the document.
     Gap { node: NodeRef },
-    /// A place where a page may end. The next page starts behind the item.
-    Break { kind: BreakKind },
+    /// A place where a page may end. The next page starts behind the item. The break is one of
+    /// the `level`; if the problem is of the other level, the place is a break of the kind
+    /// `Allowed`.
+    Break { kind: BreakKind, level: BreakLevel },
     /// A paragraph of the flow. Its lines are rigid: a page can only cut between the lines that
     /// the layout service has for it, which depend on the width of the page and on where the
     /// paragraph starts on it. There is no `Item` for a container that is split yet.
@@ -143,10 +158,42 @@ impl PageTable {
 pub struct Problem {
     pub pages: PageTable,
     pub items: Vec<Item>,
+    /// What the pages are: the pages of a document, or the columns of a multi-column container.
+    pub level: BreakLevel,
+    /// The number of pages there can be. The last of them takes what is left of the content,
+    /// whatever breaks there are in it, and overflows if it is more than it can hold. Without a
+    /// limit there can be any number of pages.
+    pub max_pages: Option<usize>,
 }
 
 impl Problem {
     pub fn new(pages: PageTable, items: Vec<Item>) -> Self {
-        Problem { pages, items }
+        Problem {
+            pages,
+            items,
+            level: BreakLevel::Page,
+            max_pages: None,
+        }
+    }
+
+    /// The pages are fragmentainers of this level.
+    pub fn with_level(mut self, level: BreakLevel) -> Self {
+        self.level = level;
+        self
+    }
+
+    /// There are at most `pages` pages (at least one).
+    pub fn with_page_limit(mut self, pages: usize) -> Self {
+        self.max_pages = Some(pages.max(1));
+        self
+    }
+
+    /// The kind of a break of the level in this problem: a break of the other level is no break.
+    pub fn kind_of(&self, kind: BreakKind, level: BreakLevel) -> BreakKind {
+        if level == self.level {
+            kind
+        } else {
+            BreakKind::Allowed
+        }
     }
 }

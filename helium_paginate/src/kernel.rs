@@ -94,7 +94,11 @@ impl<'a> Kernel<'a> {
         tokens.intern(Position::Item(items.len()));
         let left_right_matter = problem.pages.left_right_differ
             || items.iter().any(|item| {
-                matches!(item, Item::Break { kind: BreakKind::ForcedLeft | BreakKind::ForcedRight })
+                matches!(
+                    item,
+                    Item::Break { kind: BreakKind::ForcedLeft | BreakKind::ForcedRight, level }
+                        if *level == problem.level
+                )
             });
         Kernel {
             problem,
@@ -142,13 +146,24 @@ impl<'a> Kernel<'a> {
     }
 
     /// What a search has to tell apart about a page: the place where it starts and its kind.
-    /// Left and right pages are the same if nothing depends on which one they are.
+    /// Left and right pages are the same if nothing depends on which one they are. If the number
+    /// of pages is limited, the number of the page is part of it (see [`Kernel::slot`]).
     pub fn state(&self, start: &PageStart) -> (BreakToken, PageKind) {
         let kind = self.problem.pages.kind(start.index);
         if kind != PageKind::First && !self.left_right_matter {
             (start.at, PageKind::Right)
         } else {
             (start.at, kind)
+        }
+    }
+
+    /// What else a search has to tell apart about a page: its number, if the number of pages is
+    /// limited (the pages that are left depend on it), else nothing.
+    pub fn slot(&self, start: &PageStart) -> usize {
+        if self.problem.max_pages.is_some() {
+            start.index
+        } else {
+            0
         }
     }
 
@@ -194,11 +209,13 @@ impl<'a> Kernel<'a> {
         let page_kind = problem.pages.kind(start.index);
         let spec = problem.pages.spec(position, page_kind);
         let mut fills = vec![];
+        // The last page that there can be takes the rest of the content, whatever breaks it has.
+        let last_page = problem.max_pages.is_some_and(|max| start.index + 1 >= max);
 
         let (mut item, mut cut, keep_gaps) = match position {
             Position::Item(item) => {
-                let after_forced =
-                    item > 0 && matches!(items[item - 1], Item::Break { kind } if kind.is_forced());
+                let after_forced = item > 0
+                    && matches!(items[item - 1], Item::Break { kind, level } if problem.kind_of(kind, level).is_forced());
                 (item, None, item == 0 || after_forced)
             }
             Position::InParagraph { item, cut } => (item, Some(cut), false),
@@ -236,9 +253,10 @@ impl<'a> Kernel<'a> {
                     }
                     item += 1;
                 }
-                Item::Break { kind } => {
+                Item::Break { kind, level } => {
+                    let kind = problem.kind_of(kind, level);
                     item += 1;
-                    if item < items.len() {
+                    if item < items.len() && !last_page {
                         let token = self.tokens.intern(Position::Item(item));
                         let legal = Legal { kind, cut: None };
                         let widows = widow_violation(start_paragraph, None);
@@ -264,7 +282,7 @@ impl<'a> Kernel<'a> {
                         used += pending + line.extent;
                         pending = 0.0;
                         leading = false;
-                        if number + 1 < lines.len() {
+                        if number + 1 < lines.len() && !last_page {
                             let on_page = number as u32 + 1;
                             let token = self.tokens.intern(Position::InParagraph {
                                 item,
