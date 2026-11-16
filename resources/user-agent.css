@@ -563,3 +563,7 @@ math mo[stretchy="true"], math mstyle[stretchy="true"] mo {
 math mo[stretchy="false"], math mstyle[stretchy="false"] mo {
   -helium-operator-is-stretchy: false;
 }
+
+iframe {
+  border: 2px inset;
+}

@@ -1016,10 +1016,10 @@ impl EntityConstructor {
                     .then(|| table_cell_span(element_data))
                     .flatten();
                 let svg = self.pending_svg.take();
-                // a `<canvas>` is a replaced box of 300 by 150 pixels, or the size of its
+                // a `<canvas>` (and an `<iframe>`, whose document is not loaded) is a replaced box of 300 by 150 pixels, or the size of its
                 // attributes, with nothing drawn in it (scripts do not run)
-                let canvas = (element_data.name
-                    == QualName::new(None, ns!(html), local_name!("canvas")))
+                let canvas = (element_data.name == QualName::new(None, ns!(html), local_name!("canvas"))
+                    || element_data.name == QualName::new(None, ns!(html), local_name!("iframe")))
                 .then(|| {
                     let dimension = |name, default: f32| {
                         element_data
@@ -1071,9 +1071,10 @@ impl EntityConstructor {
                         .unwrap();
                 }
                 if let Some((width, height)) = canvas {
+                    let ratioless = element_data.name == QualName::new(None, ns!(html), local_name!("iframe"));
                     self.world
                         .write_storage::<components::CanvasSize>()
-                        .insert(entity.0, components::CanvasSize { width, height })
+                        .insert(entity.0, components::CanvasSize { width, height, ratioless })
                         .unwrap();
                 }
                 if let Some(span) = span {
@@ -1954,11 +1955,11 @@ impl<'a> InlineShifts<'a> {
     }
 }
 
-/// The presentational hint of the `width` and `height` attributes of an `<img>`: a number of
+/// The presentational hint of the `width` and `height` attributes of an `<img>` or `<iframe>`: a number of
 /// pixels or a percentage (HTML 2.4.4.4 "rules for parsing dimension values": what follows the
 /// number, apart from a `%`, is ignored).
 fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
-    if element.name.local != local_name!("img") {
+    if element.name.local != local_name!("img") && element.name.local != local_name!("iframe") {
         return None;
     }
     let attributes = element.attributes.borrow();

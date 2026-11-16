@@ -483,6 +483,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             let image = self.images.get(entity).map(|image| (image.width, image.height));
             // a `<canvas>` has the ratio of its size, like an image
             let canvas = self.canvases.get(entity).map(|canvas| (canvas.width, canvas.height));
+            let ratioless = self.canvases.get(entity).is_some_and(|canvas| canvas.ratioless);
             let replaced = image.is_some()
                 || canvas.is_some()
                 || self.intrinsic_sizes.get(entity).is_some();
@@ -506,7 +507,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             // by the padding on the right would be taller by it too.
             // A length for one side of a content box gives the other side directly: taffy
             // would apply the ratio to the border box.
-            if let Some((width, height)) = image.filter(|&(w, h)| w > 0.0 && h > 0.0) {
+            if let Some((width, height)) = image.filter(|&(w, h)| w > 0.0 && h > 0.0 && !ratioless) {
                 // (with limits, the proportions are kept by `compute_replaced_layout`)
                 let unlimited = node.style.min_size.width.is_auto()
                     && node.style.min_size.height.is_auto()
@@ -551,7 +552,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             });
             if let Some((width, height)) = image
                 .filter(|&(w, h)| w > 0.0 && h > 0.0)
-                .filter(|_| natural_ratio && !sizes_given && (constrained || !has_edges))
+                .filter(|_| natural_ratio && !ratioless && !sizes_given && (constrained || !has_edges))
             {
                 // the ratio of the logical sides: turned around in a vertical flow
                 let (inline, block) = node.flow.swap((width, height));
@@ -613,8 +614,26 @@ impl HeliumTree<'_, '_> {
             .unwrap_or(self.fallback_line_width)
             .max(0.0);
 
+        // the height of the content box that percentage heights of the boxes on the lines refer
+        // to, if the box has a definite height
+        let style = &self.node(id).style;
+        let height_extras = (style.padding.resolve_or_zero(parent_width, calc)
+            + style.border.resolve_or_zero(parent_width, calc))
+        .vertical_axis_sum();
+        let containing_height = inputs
+            .known_dimensions
+            .height
+            .or_else(|| style.size.height.maybe_resolve(inputs.parent_size.height, calc))
+            .map(|height| {
+                if style.box_sizing == taffy::BoxSizing::BorderBox || inputs.known_dimensions.height.is_some() {
+                    height - height_extras
+                } else {
+                    height
+                }
+                .max(0.0)
+            });
         for &atom in &atoms {
-            self.layout_atom(atom, line_width);
+            self.layout_atom(atom, line_width, containing_height);
         }
 
         let entity = self.node(id).entity;
@@ -634,7 +653,7 @@ impl HeliumTree<'_, '_> {
     /// margin box and its baseline as its [`IntrinsicSize`].
     ///
     /// https://www.w3.org/TR/CSS22/visudet.html#inlineblock-width
-    fn layout_atom(&mut self, atom: NodeId, line_width: f32) {
+    fn layout_atom(&mut self, atom: NodeId, line_width: f32, containing_height: Option<f32>) {
         let style = self.item_style(atom);
         // `auto` margins are 0
         let margin = style.margin.resolve_or_zero(Some(line_width), calc);
@@ -643,7 +662,7 @@ impl HeliumTree<'_, '_> {
 
         let parent_size = Size {
             width: Some(line_width),
-            height: None,
+            height: containing_height,
         };
         let size_input = |available_width| LayoutInput {
             run_mode: RunMode::ComputeSize,
@@ -890,10 +909,13 @@ impl HeliumTree<'_, '_> {
                 to_content(limit(style.max_size.width, parent.width), extras.0).unwrap_or(f32::INFINITY),
                 to_content(limit(style.max_size.height, parent.height), extras.1).unwrap_or(f32::INFINITY),
             );
-            let specified = (
+            let mut specified = (
                 to_content(size(style.size.width, parent.width), extras.0),
                 to_content(size(style.size.height, parent.height), extras.1),
             );
+            if self.canvases.get(node.entity).is_some_and(|canvas| canvas.ratioless) {
+                specified = (specified.0.or(Some(natural.0)), specified.1.or(Some(natural.1)));
+            }
             (natural, specified, min, max)
         });
         // the size of the box, if it has no size from its container yet
@@ -907,6 +929,9 @@ impl HeliumTree<'_, '_> {
             _ => image,
         };
         // the size of an image is physical: in a vertical flow the width is the block size
+        let ratioless = self.canvases.get(node.entity).is_some_and(|canvas| canvas.ratioless);
+        // a box without a ratio is the size that its sides give, as a whole
+        let image = if ratioless { given.or(image) } else { image };
         let image = image.map(|size| node.flow.swap(size));
         let intrinsic = if image.is_some() {
             None
@@ -934,7 +959,7 @@ impl HeliumTree<'_, '_> {
         let ratio = node
             .style
             .aspect_ratio
-            .or_else(|| image.filter(|&(w, h)| w > 0.0 && h > 0.0).map(|(w, h)| w / h));
+            .or_else(|| image.filter(|&(w, h)| !ratioless && w > 0.0 && h > 0.0).map(|(w, h)| w / h));
         let mut output = compute_leaf_layout(inputs, style, calc, |known, _available| Size {
             width: known.width.unwrap_or_else(|| match (known.height, ratio) {
                 (Some(height), Some(ratio)) => ((height - extras.1).max(0.0) * ratio + extras.0),

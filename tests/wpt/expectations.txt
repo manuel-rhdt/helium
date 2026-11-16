@@ -73,7 +73,6 @@ css/css-sizing/aspect-ratio/box-sizing-dimensions.html
 css/css-sizing/aspect-ratio/box-sizing-squashed.html
 css/css-sizing/aspect-ratio/replaced-element-042.html
 css/css-sizing/aspect-ratio/table-element-002.html
-css/css-sizing/available-height-for-replaced-content-001.html
 css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-009.html
 css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-031.html
 css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-032.html

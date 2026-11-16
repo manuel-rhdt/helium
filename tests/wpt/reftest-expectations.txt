@@ -209,10 +209,7 @@ css/CSS2/normal-flow/block-in-inline-whitespace-001a.xht
 css/CSS2/normal-flow/block-non-replaced-height-005.xht
 css/CSS2/normal-flow/block-non-replaced-width-004.xht
 css/CSS2/normal-flow/block-replaced-height-002.xht
-css/CSS2/normal-flow/block-replaced-height-004.xht
-css/CSS2/normal-flow/block-replaced-height-005.xht
 css/CSS2/normal-flow/block-replaced-height-006.xht
-css/CSS2/normal-flow/block-replaced-height-007.xht
 css/CSS2/normal-flow/block-replaced-width-002.xht
 css/CSS2/normal-flow/blocks-018.xht
 css/CSS2/normal-flow/blocks-019.xht
@@ -227,10 +224,7 @@ css/CSS2/normal-flow/height-089.xht
 css/CSS2/normal-flow/height-inherit-001.xht
 css/CSS2/normal-flow/inline-block-non-replaced-width-004.xht
 css/CSS2/normal-flow/inline-block-replaced-height-002.xht
-css/CSS2/normal-flow/inline-block-replaced-height-004.xht
-css/CSS2/normal-flow/inline-block-replaced-height-005.xht
 css/CSS2/normal-flow/inline-block-replaced-height-006.xht
-css/CSS2/normal-flow/inline-block-replaced-height-007.xht
 css/CSS2/normal-flow/inline-block-replaced-height-009.xht
 css/CSS2/normal-flow/inline-block-replaced-width-002.xht
 css/CSS2/normal-flow/inline-block-replaced-width-003.xht
