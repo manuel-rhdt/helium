@@ -1330,6 +1330,26 @@ and 7) are independent of it, except that step 3 here shares `fragment` with ste
 - Orthogonal writing modes. A column is a block-axis fragmentainer, and the inline axis of a
   vertical document is the vertical one. Nothing here has been checked for them.
 
+## How much `looseness` does
+
+`tools/looseness_bench.py` renders generated documents (plain prose, chapters that each start on a
+new page, prose with unbreakable figures; 30 seeds each) with `looseness` 0 and 1 and measures the
+pages, the room left at the foot of the pages that are not the last, and the badness of the lines
+(the log line `LINES:`). Measured at the commit that added it:
+
+| kind | pages | room (lines) | lines | lines worse than 100 | mean badness | documents with fewer pages |
+| --- | --- | --- | --- | --- | --- | --- |
+| prose | 20.40 to 20.30 | 0.31 to 0.40 | 471.1 to 471.4 | 24.8 to 24.9 | 27.5 to 27.6 | 3 of 30 |
+| chapters | 54.77 to 54.60 | 107.9 to 103.4 | 1175.8 to 1177.7 | 62.6 to 63.2 | 28.6 to 28.8 | 5 of 30 |
+| figures | 25.43 to 25.37 | 24.5 to 20.4 | 363.2 to 367.3 | 20.9 to 23.7 | 29.5 to 30.6 | 2 of 30 |
+
+No document got a page more. The effect is small: a third of a percent of the pages, and about a sixth of the room in
+documents with unbreakable boxes. Prose, where a page can be filled by cutting a paragraph, has
+nothing to gain (its room rises slightly, because line quality is paid for with room). Levels
+above 1 give the same result as 1 in every run, which has not been explained: the tolerance
+(`Variants::TOLERANCE`) is the suspect. The exchange rate (`CssObjective::line_room`) is the
+value that decides how much of this is taken, and it is the one to tune with this harness.
+
 ## Open questions
 
 - **Taffy's cache.** Resolved by reading `taffy-0.15.1/src/tree/cache.rs` and the layout
