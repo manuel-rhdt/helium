@@ -336,7 +336,9 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
                     SelfAlignment::Left | SelfAlignment::Right => {
                         let left = value == SelfAlignment::Left;
                         if container_flow.is_vertical() {
-                            SelfAlignment::Start
+                            // (the inline axis is not horizontal: the sides count as the
+                            // start and the end of the axis)
+                            if left { SelfAlignment::Start } else { SelfAlignment::End }
                         } else if left != container_rtl {
                             SelfAlignment::Start
                         } else {
