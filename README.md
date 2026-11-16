@@ -122,7 +122,16 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color()`. The alpha channel is parsed but not painted.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
-- **Cascade:** selectors (`selectors` crate), `inherit`, `initial`, `unset`.
+- **Cascade:** selectors (`selectors` crate, with `:is()` and `:where()`), `inherit`, `initial`,
+  `unset`.
+- **Nesting:** style rules and `@media` blocks inside style rules, with `&` or with relative
+  selectors (`.a { .b { } > p { } &:hover { } }`). A declaration that follows a nested rule is
+  cascaded after it. Not in the `style` attribute.
+- **Custom properties:** `--name: value` (inherited, case sensitive, with `initial`, `inherit` and
+  `unset`) and `var(--name, fallback)` in the value of any supported property, also in shorthands
+  and in other custom properties. Cycles make the properties invalid, and so does a `var()` with
+  neither value nor fallback; the property that uses it is then `unset`. Custom properties are
+  not available in `@page` rules and their margin boxes, nor in the style of inline SVG.
 - **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors, named
   pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
   from strings and `counter(page)` / `counter(pages)`, in the styles `decimal`,
@@ -178,7 +187,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 ## Not supported
 
 Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`,
-`@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
+`@supports`, `@import`, `calc()`, `overflow`, `float`, `position:
 fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
 `outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form

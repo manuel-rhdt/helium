@@ -169,6 +169,59 @@ impl CssWideProperties for CssWideDeclaration {
     }
 }
 
+/// The declaration of a custom property, `--name: value`. The cascade of an element computes its
+/// custom properties before it applies the other declarations (`StyleBuilder::apply_cascade`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomDeclaration {
+    /// With the leading `--`.
+    pub name: String,
+    /// The text of the value, without `!important`.
+    pub value: String,
+}
+
+/// The declaration of a property whose value uses `var()`. It can only be parsed when the custom
+/// properties of the element are known, so the text is kept until then.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnparsedDeclaration {
+    pub name: String,
+    pub value: String,
+}
+
+macro_rules! text_declaration {
+    ($ty:ident) => {
+        impl<'i> ParseDeclaration<'i> for $ty {
+            type Error = StyleParseError;
+
+            /// Made by the style sheet parser, which knows the text of the value.
+            fn parse_declaration(
+                name: CowRcStr<'i>,
+                _input: &mut Parser<'i>,
+            ) -> Result<Self, ParseError<StyleParseError>> {
+                Err(ParseError::custom(StyleParseError::UnknownProperty { name: name.to_string() }))
+            }
+        }
+
+        impl ApplyToComputedValues for $ty {
+            fn apply_to(&self, _: &mut super::computed::ComputedValues) {}
+        }
+
+        impl CssWideProperties for $ty {
+            fn apply_css_wide(
+                _: &str,
+                _: CssWide,
+                _: &mut super::computed::ComputedValues,
+                _: &super::computed::ComputedValues,
+                _: &super::computed::ComputedValues,
+            ) -> bool {
+                false
+            }
+        }
+    };
+}
+
+text_declaration!(CustomDeclaration);
+text_declaration!(UnparsedDeclaration);
+
 pub trait PropertyValue<'i>: Sized {
     type Error: 'i;
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>>
@@ -246,6 +299,8 @@ pub enum PropertyDeclaration<'a> {
     Math(Math),
     Logical(super::logical::Logical),
     CssWide(CssWideDeclaration),
+    Custom(CustomDeclaration),
+    Unparsed(UnparsedDeclaration),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]

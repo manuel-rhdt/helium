@@ -1,6 +1,7 @@
 pub mod background;
 pub mod color;
 pub mod computed;
+pub mod custom;
 pub mod font_features;
 pub mod gradient;
 pub mod logical;

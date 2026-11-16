@@ -3,7 +3,11 @@
 use super::font_face::{FontFaceRule, parse_font_face};
 use super::media::MediaEnv;
 use crate::layout::text::font::FontContext;
-use super::properties::specified::{CssWideDeclaration, Font, ParseDeclaration, PropertyDeclaration};
+use super::properties::custom::{self, CustomProperties};
+use super::properties::specified::{
+    CssWideDeclaration, CustomDeclaration, Font, ParseDeclaration, PropertyDeclaration,
+    UnparsedDeclaration,
+};
 use crate::tree::ElementRef;
 
 use cssparser::{
@@ -391,11 +395,13 @@ impl PropertyDeclarationBlock {
 
     /// Parses a declaration list up to the end of the input.
     fn parse_declarations(input: &mut Parser) -> Self {
-        let mut declaration_parser = StyleDeclarationParser::default();
+        let mut body_parser = StyleBodyParser { raw: vec![], nesting: None };
         let mut block = Self::new();
-        for declaration in RuleBodyParser::new(input, &mut declaration_parser) {
-            match declaration {
-                Ok(declaration) => block.declarations.push(declaration),
+        for item in RuleBodyParser::new(input, &mut body_parser) {
+            match item {
+                Ok(BodyItem::Declaration(declaration)) => block.declarations.push(declaration),
+                // there are no nested rules without `nesting`
+                Ok(BodyItem::Rules { .. }) => {}
                 Err((error, text, _location)) => {
                     // the properties of SVG elements are for the SVG parser
                     if !is_svg_property(text) {
@@ -404,8 +410,12 @@ impl PropertyDeclarationBlock {
                 }
             }
         }
-        block.raw = declaration_parser.raw;
+        block.raw = body_parser.raw;
         block
+    }
+
+    fn is_empty(&self) -> bool {
+        self.declarations.is_empty() && self.raw.is_empty()
     }
 
     /// The declarations as they are written.
@@ -470,7 +480,8 @@ enum TopLevelRule {
 }
 
 impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
-    type Prelude = SelectorList<Selectors>;
+    /// The selectors and their text, for the rules nested in the rule.
+    type Prelude = (SelectorList<Selectors>, String);
     type QualifiedRule = Vec<TopLevelRule>;
     type Error = StyleParseError;
 
@@ -478,22 +489,20 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
         &mut self,
         input: &mut Parser<'i>,
     ) -> Result<Self::Prelude, ParseError<Self::Error>> {
+        let start = input.position();
         let selector_parser = SelectorParser::default();
         let selector_list = SelectorList::parse(&selector_parser, input, ParseRelative::No)
             .map_err(|err| err.into::<StyleParseError>())?;
-        Ok(selector_list)
+        Ok((selector_list, input.slice_from(start).trim().to_owned()))
     }
 
     fn parse_block<'t>(
         &mut self,
-        prelude: Self::Prelude,
+        (selectors, text): Self::Prelude,
         _start: &ParserState,
         input: &mut Parser<'i>,
     ) -> Result<Self::QualifiedRule, ParseError<Self::Error>> {
-        Ok(vec![TopLevelRule::Style(QualifiedRule::new(
-            prelude,
-            PropertyDeclarationBlock::parse_declarations(input),
-        ))])
+        Ok(parse_style_block(selectors, &text, input, self.media, &self.base_dir))
     }
 }
 
@@ -944,6 +953,10 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
     type Impl = Selectors;
     type Error = SelectorParseErrorKind;
 
+    fn parse_is_and_where(&self) -> bool {
+        true
+    }
+
     fn parse_non_ts_pseudo_class(
         &self,
         name: CowRcStr<'i>,
@@ -992,13 +1005,79 @@ fn is_svg_property(declaration: &str) -> bool {
     PROPERTIES.contains(&name.as_str())
 }
 
-#[derive(Default)]
-struct StyleDeclarationParser {
-    raw: Vec<RawDeclaration>,
+/// What is nested in a style rule: the style sheet of its `@media` and rules.
+struct Nesting<'a> {
+    /// The selectors of the rule that a nested rule refers to with `&`.
+    selectors: &'a SelectorList<Selectors>,
+    /// The text of the selectors.
+    selector_text: &'a str,
+    media: MediaEnv,
+    base_dir: &'a Path,
 }
 
-impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
-    type Declaration = ParsedDeclaration;
+/// An item of the body of a style rule.
+enum BodyItem {
+    Declaration(ParsedDeclaration),
+    /// The rules of a nested rule or `@media`, and the declarations that were written (as text)
+    /// before it.
+    Rules { rules: Vec<TopLevelRule>, raw: Vec<RawDeclaration> },
+}
+
+/// Reads the body of a style rule: declarations and, if `nesting` is set, nested rules.
+struct StyleBodyParser<'a> {
+    raw: Vec<RawDeclaration>,
+    nesting: Option<Nesting<'a>>,
+}
+
+impl StyleBodyParser<'_> {
+    fn invalid<'i>(&self, input: &Parser<'i>) -> ParseError<StyleParseError> {
+        ParseError::custom(StyleParseError::InvalidValue)
+    }
+}
+
+/// Reads the body of a style rule. A rule inside of it is the rule of the selector and its
+/// parent, so the declarations after a nested rule are a rule of their own: they come after it
+/// in the cascade.
+fn parse_style_block(
+    selectors: SelectorList<Selectors>,
+    selector_text: &str,
+    input: &mut Parser,
+    media: MediaEnv,
+    base_dir: &Path,
+) -> Vec<TopLevelRule> {
+    let mut body_parser = StyleBodyParser {
+        raw: vec![],
+        nesting: Some(Nesting { selectors: &selectors, selector_text, media, base_dir }),
+    };
+    let mut rules = vec![];
+    let mut block = PropertyDeclarationBlock::new();
+    for item in RuleBodyParser::new(input, &mut body_parser) {
+        match item {
+            Ok(BodyItem::Declaration(declaration)) => block.declarations.push(declaration),
+            Ok(BodyItem::Rules { rules: nested, raw }) => {
+                block.raw = raw;
+                if !block.is_empty() {
+                    let block = std::mem::take(&mut block);
+                    rules.push(TopLevelRule::Style(QualifiedRule::new(selectors.clone(), block)));
+                }
+                rules.extend(nested);
+            }
+            Err((error, text, _location)) => {
+                if !is_svg_property(text) {
+                    warn!("Error while parsing declaration {:?}: {:?}", text, error)
+                }
+            }
+        }
+    }
+    block.raw = body_parser.raw;
+    if !block.is_empty() || rules.is_empty() {
+        rules.push(TopLevelRule::Style(QualifiedRule::new(selectors, block)));
+    }
+    rules
+}
+
+impl<'i> cssparser::DeclarationParser<'i> for StyleBodyParser<'_> {
+    type Declaration = BodyItem;
     type Error = StyleParseError;
 
     fn parse_value<'t>(
@@ -1010,16 +1089,76 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleDeclarationParser {
         // keep the text of the value, whether Helium knows the property or not
         let state = input.state();
         let start = input.position();
-        while input.next_including_whitespace_and_comments().is_ok() {}
+        let mut has_block = false;
+        while let Ok(token) = input.next_including_whitespace_and_comments() {
+            has_block |= matches!(token, cssparser::Token::CurlyBracketBlock);
+        }
         let text = input.slice_from(start).trim();
+        let is_custom = custom::is_custom_property(&name);
+        // The value of a property cannot hold a block. What looks like a declaration and has one
+        // is a nested rule: `a:hover { ... }`.
+        if has_block && !is_custom {
+            return Err(ParseError::custom(StyleParseError::InvalidValue));
+        }
         let (text, important) = split_important(text);
+        if is_custom {
+            self.raw.push(RawDeclaration { name: name.to_string(), value: text.to_owned(), important });
+            let declaration = PropertyDeclaration::Custom(CustomDeclaration {
+                name: name.to_string(),
+                value: text.to_owned(),
+            });
+            return Ok(BodyItem::Declaration(ParsedDeclaration { declaration, important }));
+        }
+        if custom::contains_var(text) {
+            // The property must be known. A value that is empty or not valid does tell
+            // (it is not an unknown property that fails), the real one is only parsed once the
+            // custom properties are.
+            if let Err(error) = Parser::new("").parse_entirely(|input| parse_property(name.clone(), input)) {
+                if matches!(error.kind, cssparser::ParseErrorKind::Custom(StyleParseError::UnknownProperty { .. })) {
+                    return Err(ParseError::custom(StyleParseError::UnknownProperty { name: name.to_string() }));
+                }
+            }
+            self.raw.push(RawDeclaration { name: name.to_string(), value: text.to_owned(), important });
+            let declaration = PropertyDeclaration::Unparsed(UnparsedDeclaration {
+                name: name.to_string(),
+                value: text.to_owned(),
+            });
+            return Ok(BodyItem::Declaration(ParsedDeclaration { declaration, important }));
+        }
         self.raw.push(RawDeclaration { name: name.to_string(), value: text.to_owned(), important });
         input.reset(&state);
         // the value ends at `!important`
         let declaration =
             input.parse_until_before(cssparser::Delimiter::Bang, |input| parse_property(name, input))?;
         let important = input.try_parse(cssparser::parse_important).is_ok();
-        Ok(ParsedDeclaration { declaration, important })
+        Ok(BodyItem::Declaration(ParsedDeclaration { declaration, important }))
+    }
+}
+
+/// The declaration of a property that uses `var()`, with the custom properties of the element
+/// substituted. If the value is not valid, the property is `unset`, as CSS prescribes (`None`
+/// if that is not possible either).
+pub fn resolve_unparsed(
+    unparsed: &UnparsedDeclaration,
+    custom: &CustomProperties,
+) -> Option<PropertyDeclaration<'static>> {
+    let parsed = custom::substitute(&unparsed.value, &mut |name| custom.get(name).map(str::to_owned))
+        .ok_or("a custom property is missing")
+        .and_then(|text| {
+            Parser::new(&text)
+                .parse_entirely(|input| parse_property(CowRcStr::from(unparsed.name.as_str()), input))
+                .map_err(|_| "not a valid value")
+        });
+    match parsed {
+        Ok(declaration) => Some(declaration),
+        Err(reason) => {
+            warn!("Invalid `{}: {}` ({})", unparsed.name, unparsed.value, reason);
+            Parser::new("unset")
+                .parse_entirely(|input| Ok::<_, ParseError<()>>(CssWideDeclaration::parse(&unparsed.name, input).ok_or(())))
+                .ok()
+                .and_then(Result::ok)
+                .map(PropertyDeclaration::CssWide)
+        }
     }
 }
 
@@ -1036,7 +1175,7 @@ fn split_important(text: &str) -> (&str, bool) {
 }
 
 /// Parses the value of a property declaration, which may be a CSS-wide keyword like `inherit`.
-fn parse_property<'i>(
+pub(crate) fn parse_property<'i>(
     name: CowRcStr<'i>,
     input: &mut Parser<'i>,
 ) -> Result<PropertyDeclaration<'static>, ParseError<StyleParseError>> {
@@ -1073,26 +1212,166 @@ fn is_non_negative_property(name: &str) -> bool {
         )
 }
 
-impl<'i> AtRuleParser<'i> for StyleDeclarationParser {
-    type Prelude = ();
-    type AtRule = ParsedDeclaration;
+impl<'i> AtRuleParser<'i> for StyleBodyParser<'_> {
+    /// Whether the media queries match: only `@media` can be nested.
+    type Prelude = bool;
+    type AtRule = BodyItem;
     type Error = StyleParseError;
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
+        match &self.nesting {
+            Some(nesting) if name.eq_ignore_ascii_case("media") => {
+                let matches = super::media::matches(input, &nesting.media);
+                // what is left of an invalid query is skipped with the rule
+                while input.next().is_ok() {}
+                Ok(matches)
+            }
+            _ => Err(ParseError::from_basic_kind(BasicParseErrorKind::AtRuleInvalid)),
+        }
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        matches: Self::Prelude,
+        _start: &ParserState,
+        input: &mut Parser<'i>,
+    ) -> Result<Self::AtRule, ParseError<Self::Error>> {
+        let Some(nesting) = &self.nesting else {
+            return Err(ParseError::custom(StyleParseError::InvalidValue));
+        };
+        // the declarations and rules of the block are the ones of the parent
+        let rules = parse_style_block(
+            nesting.selectors.clone(),
+            nesting.selector_text,
+            input,
+            nesting.media,
+            nesting.base_dir,
+        );
+        let rules = if matches { rules } else { vec![] };
+        Ok(BodyItem::Rules { rules, raw: std::mem::take(&mut self.raw) })
+    }
 }
 
-impl<'i> QualifiedRuleParser<'i> for StyleDeclarationParser {
-    type Prelude = ();
-    type QualifiedRule = ParsedDeclaration;
+impl<'i> QualifiedRuleParser<'i> for StyleBodyParser<'_> {
+    type Prelude = (SelectorList<Selectors>, String);
+    type QualifiedRule = BodyItem;
     type Error = StyleParseError;
+
+    fn parse_prelude<'t>(
+        &mut self,
+        input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
+        let Some(nesting) = &self.nesting else {
+            return Err(ParseError::custom(StyleParseError::InvalidValue));
+        };
+        let text = resolve_nesting(input, nesting.selector_text).ok_or_else(|| ParseError::custom(StyleParseError::InvalidValue))?;
+        let selector_parser = SelectorParser::default();
+        let selectors = SelectorList::parse(&selector_parser, &mut Parser::new(&text), ParseRelative::No)
+            .map_err(|error| match error.kind {
+                cssparser::ParseErrorKind::Custom(kind) => ParseError::custom(StyleParseError::from(kind)),
+                cssparser::ParseErrorKind::Basic(_) => ParseError::custom(StyleParseError::InvalidValue),
+            })?;
+        Ok((selectors, text))
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        (selectors, text): Self::Prelude,
+        _start: &ParserState,
+        input: &mut Parser<'i>,
+    ) -> Result<Self::QualifiedRule, ParseError<Self::Error>> {
+        let Some(nesting) = &self.nesting else {
+            return Err(ParseError::custom(StyleParseError::InvalidValue));
+        };
+        let rules = parse_style_block(selectors, &text, input, nesting.media, nesting.base_dir);
+        Ok(BodyItem::Rules { rules, raw: std::mem::take(&mut self.raw) })
+    }
 }
 
-impl<'i> RuleBodyItemParser<'i, ParsedDeclaration, StyleParseError>
-    for StyleDeclarationParser
-{
+impl<'i> RuleBodyItemParser<'i, BodyItem, StyleParseError> for StyleBodyParser<'_> {
     fn parse_declarations(&self) -> bool {
         true
     }
 
     fn parse_qualified(&self) -> bool {
-        false
+        self.nesting.is_some()
+    }
+}
+
+/// The selectors of a nested rule as the selectors of a rule of its own, in the text: `&` stands
+/// for the selectors of the parent as `:is()` (which also gives the specificity that CSS
+/// prescribes), and a selector without `&` is a descendant of it, or related to it by its first
+/// combinator. https://www.w3.org/TR/css-nesting-1/#nest-selector
+fn resolve_nesting(input: &mut Parser, parent: &str) -> Option<String> {
+    fn copy(
+        input: &mut Parser,
+        parent: &str,
+        out: &mut String,
+        has_parent: &mut bool,
+    ) -> Option<()> {
+        use cssparser::Token;
+        while let Ok(token) = input.next_including_whitespace_and_comments().cloned() {
+            let (open, close) = match &token {
+                Token::Delim('&') => {
+                    *has_parent = true;
+                    out.push_str(":is(");
+                    out.push_str(parent);
+                    out.push(')');
+                    continue;
+                }
+                Token::Function(name) => {
+                    cssparser::serialize_identifier(name, out).ok()?;
+                    ("(", ")")
+                }
+                Token::ParenthesisBlock => ("(", ")"),
+                Token::SquareBracketBlock => ("[", "]"),
+                Token::CurlyBracketBlock => return None,
+                token => {
+                    ToCss::to_css(token, out).ok()?;
+                    continue;
+                }
+            };
+            out.push_str(open);
+            input
+                .parse_nested_block(|input| {
+                    copy(input, parent, out, has_parent).ok_or_else(|| ParseError::<()>::custom(()))
+                })
+                .ok()?;
+            out.push_str(close);
+        }
+        Some(())
+    }
+
+    let mut result = String::new();
+    loop {
+        let mut selector = String::new();
+        let mut has_parent = false;
+        // the selector ends at a comma of the list
+        input
+            .parse_until_before(cssparser::Delimiter::Comma, |input| {
+                copy(input, parent, &mut selector, &mut has_parent)
+                    .ok_or_else(|| ParseError::<()>::custom(()))
+            })
+            .ok()?;
+        let selector = selector.trim();
+        if selector.is_empty() {
+            return None;
+        }
+        if !result.is_empty() {
+            result.push_str(", ");
+        }
+        if !has_parent {
+            result.push_str(":is(");
+            result.push_str(parent);
+            result.push_str(") ");
+        }
+        result.push_str(selector);
+        if input.next().is_err() {
+            return Some(result);
+        }
     }
 }
