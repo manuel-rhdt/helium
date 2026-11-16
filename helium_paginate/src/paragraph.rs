@@ -40,11 +40,57 @@ const FINAL_HYPHEN_DEMERITS: f64 = 5_000.0;
 /// inside the line. Glue at a break is discarded by the caller and must not be included.
 pub fn compute_paragraph_breakpoints(
     opportunities: &[BreakOpportunity],
+    line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
+    line_width: impl FnMut(usize) -> f64,
+) -> Vec<usize> {
+    compute_paragraph_lines(opportunities, line_metrics, line_width, LineStart::PARAGRAPH).breaks
+}
+
+/// What the line in front of the first line is, for a paragraph that does not start where the
+/// breaking starts: the breaker looks at the line before for the demerits of two lines of very
+/// different tightness in a row and of two hyphens in a row, as TeX does within a paragraph.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct LineStart {
+    /// The fitness class of the line in front (0 tight, 1 decent, 2 loose, 3 very loose).
+    pub fitness: u8,
+    /// Whether the line in front ends in a hyphen.
+    pub hyphen: bool,
+}
+
+impl LineStart {
+    /// The fitness class of a line that is neither tight nor loose, which is what the line in front
+    /// of the first line of a paragraph is taken to be.
+    pub const DECENT: u8 = 1;
+    /// The start of a paragraph: there is no line in front.
+    pub const PARAGRAPH: LineStart = LineStart {
+        fitness: Self::DECENT,
+        hyphen: false,
+    };
+}
+
+/// The breaks of a paragraph, and how every line fits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParagraphLines {
+    /// The indices of the break opportunities where lines start and end: the first is 0.
+    pub breaks: Vec<usize>,
+    /// The fitness class of every line: the line that ends at `breaks[i + 1]` has `fitness[i]`.
+    pub fitness: Vec<u8>,
+}
+
+/// Like [`compute_paragraph_breakpoints`], for a paragraph that follows a line `start`, and with
+/// the fitness class of every line, so that the lines in front of a cut can be given to the next
+/// call as its `start`.
+pub fn compute_paragraph_lines(
+    opportunities: &[BreakOpportunity],
     mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
     mut line_width: impl FnMut(usize) -> f64,
-) -> Vec<usize> {
+    start: LineStart,
+) -> ParagraphLines {
     if opportunities.len() < 2 {
-        return opportunities.first().map_or_else(Vec::new, |_| vec![0]);
+        return ParagraphLines {
+            breaks: opportunities.first().map_or_else(Vec::new, |_| vec![0]),
+            fitness: vec![],
+        };
     }
 
     let mut paths = vec![[None; STATE_COUNT]; opportunities.len()];
@@ -53,7 +99,7 @@ pub fn compute_paragraph_breakpoints(
         forced_prefix[index + 1] = forced_prefix[index] + usize::from(opportunity.forced);
     }
     let line_widths: Vec<_> = (0..opportunities.len() - 1).map(&mut line_width).collect();
-    let initial_state = state_index(1, false);
+    let initial_state = state_index(usize::from(start.fitness).min(FITNESS_CLASSES - 1), start.hyphen);
     paths[0][initial_state] = Some(ParagraphNode {
         demerits: 0.0,
         previous: None,
@@ -138,20 +184,31 @@ pub fn compute_paragraph_breakpoints(
         .filter_map(|(state, node)| node.map(|node| (state, node.demerits)))
         .min_by(|left, right| left.1.total_cmp(&right.1))
     else {
-        return vec![0, last];
+        return ParagraphLines {
+            breaks: vec![0, last],
+            fitness: vec![LineStart::DECENT],
+        };
     };
 
     let mut index = last;
     let mut sequence = vec![last];
+    let mut fitness = vec![decode_state(state).0 as u8];
     while let Some((previous_index, previous_state)) =
         paths[index][state].and_then(|node| node.previous)
     {
         index = previous_index;
         state = previous_state;
         sequence.push(index);
+        fitness.push(decode_state(state).0 as u8);
     }
+    // (the last of them is the state in front of the first line)
+    fitness.pop();
     sequence.reverse();
-    sequence
+    fitness.reverse();
+    ParagraphLines {
+        breaks: sequence,
+        fitness,
+    }
 }
 
 fn state_index(fitness: usize, hyphen: bool) -> usize {
@@ -317,6 +374,188 @@ mod test {
         });
 
         println!("{:?}", sequence);
+    }
+
+    /// A paragraph for the tests of the start of the breaking: the widths of the words, which
+    /// opportunities are hyphens, and the width of the lines. The spaces stretch and shrink.
+    struct Paragraph {
+        opportunities: Vec<BreakOpportunity>,
+        advance: Vec<f64>,
+        width: f64,
+    }
+
+    impl Paragraph {
+        fn metrics(&self, from: usize, to: usize) -> Option<(f64, GlueTotals)> {
+            let spaces = (to - from - 1) as f64;
+            Some((
+                self.advance[to] - self.advance[from],
+                GlueTotals { stretch: 1.5 * spaces + 1.0, shrink: 0.5 * spaces },
+            ))
+        }
+
+        fn lines(&self, start: LineStart) -> ParagraphLines {
+            compute_paragraph_lines(&self.opportunities, |from, to| self.metrics(from, to), |_| self.width, start)
+        }
+
+        /// The demerits of a sequence of breaks, as the breaker counts them, or `None` if the
+        /// breaker does not allow it.
+        fn demerits(&self, breaks: &[usize], start: LineStart) -> Option<(f64, Vec<u8>)> {
+            let last = self.opportunities.len() - 1;
+            let (mut fitness, mut hyphen) = (usize::from(start.fitness), start.hyphen);
+            let mut total = 0.0;
+            let mut classes = vec![];
+            for window in breaks.windows(2) {
+                let (from, to) = (window[0], window[1]);
+                if self.opportunities[from + 1..to].iter().any(|opportunity| opportunity.forced) {
+                    return None;
+                }
+                let (natural, glue) = self.metrics(from, to)?;
+                let delta = self.width - natural;
+                let overfull = delta < 0.0 && (glue.shrink <= 0.0 || -delta > glue.shrink);
+                if overfull && to != from + 1 {
+                    return None;
+                }
+                let ragged_final_line = to == last && delta >= 0.0;
+                let ratio = if ragged_final_line { 0.0 } else { adjustment_ratio(delta, glue) };
+                let badness = if ragged_final_line { 0.0 } else { line_badness(ratio) };
+                let class = fitness_class(ratio);
+                let opportunity = self.opportunities[to];
+                let penalty = if opportunity.penalty > 0 && opportunity.penalty < 10_000 {
+                    f64::from(opportunity.penalty)
+                } else {
+                    0.0
+                };
+                total += (LINE_PENALTY + badness + penalty).powi(2);
+                if opportunity.penalty >= 10_000 {
+                    total += f64::from(opportunity.penalty).powi(2);
+                } else if opportunity.penalty < 0 && opportunity.penalty > -10_000 {
+                    total -= f64::from(opportunity.penalty).powi(2);
+                }
+                if class.abs_diff(fitness) > 1 {
+                    total += ADJACENT_FITNESS_DEMERITS;
+                }
+                if hyphen && opportunity.hyphen {
+                    total += DOUBLE_HYPHEN_DEMERITS;
+                }
+                if to == last && hyphen {
+                    total += FINAL_HYPHEN_DEMERITS;
+                }
+                fitness = class;
+                hyphen = opportunity.hyphen;
+                classes.push(class as u8);
+            }
+            Some((total, classes))
+        }
+
+        /// The least demerits of all the ways to break the paragraph.
+        fn least_demerits(&self, start: LineStart) -> Option<f64> {
+            let last = self.opportunities.len() - 1;
+            let inner = last - 1;
+            (0u32..1 << inner)
+                .filter_map(|mask| {
+                    let mut breaks = vec![0];
+                    breaks.extend((1..=inner).filter(|&bit| mask & (1 << (bit - 1)) != 0));
+                    breaks.push(last);
+                    self.demerits(&breaks, start).map(|(total, _)| total)
+                })
+                .min_by(f64::total_cmp)
+        }
+    }
+
+    struct Random(u64);
+
+    impl Random {
+        fn below(&mut self, below: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % below
+        }
+    }
+
+    fn random_paragraph(random: &mut Random) -> Paragraph {
+        let words = 6 + random.below(6) as usize;
+        let mut advance = vec![0.0];
+        for _ in 0..words {
+            advance.push(advance.last().unwrap() + 2.0 + random.below(8) as f64);
+        }
+        let opportunities = (0..=words)
+            .map(|index| {
+                let hyphen = index != 0 && index != words && random.below(4) == 0;
+                BreakOpportunity { forced: false, hyphen, penalty: if hyphen { 50 } else { 0 } }
+            })
+            .collect();
+        Paragraph { opportunities, advance, width: 14.0 + random.below(14) as f64 }
+    }
+
+    const STARTS: [LineStart; 8] = {
+        let mut starts = [LineStart::PARAGRAPH; 8];
+        let mut index = 0;
+        while index < 8 {
+            starts[index] = LineStart { fitness: (index / 2) as u8, hyphen: index % 2 == 1 };
+            index += 1;
+        }
+        starts
+    };
+
+    #[test]
+    fn the_breaks_of_every_start_have_the_least_demerits_of_all_breaks() {
+        let mut random = Random(0x9E37_79B9_7F4A_7C15);
+        let mut differing = 0;
+        let mut checked = 0;
+        for _ in 0..400 {
+            let paragraph = random_paragraph(&mut random);
+            let mut previous: Option<Vec<usize>> = None;
+            for start in STARTS {
+                let found = paragraph.lines(start);
+                let Some(least) = paragraph.least_demerits(start) else {
+                    continue;
+                };
+                let (demerits, classes) = paragraph
+                    .demerits(&found.breaks, start)
+                    .expect("the breaker finds breaks that it allows");
+                assert!(
+                    (demerits - least).abs() < 1e-6,
+                    "{start:?}: the breaks {:?} have {demerits} demerits, the least is {least}",
+                    found.breaks
+                );
+                // the fitness of every line is that of the line as the breaker counted it
+                assert_eq!(found.fitness, classes, "{start:?} {:?}", found.breaks);
+                if previous.as_ref().is_some_and(|breaks| *breaks != found.breaks) {
+                    differing += 1;
+                }
+                previous = Some(found.breaks);
+                checked += 1;
+            }
+        }
+        assert!(checked > 1000, "{checked} paragraphs checked");
+        // the line in front can change the breaks: the test is only worth something if it does
+        assert!(differing > 20, "{differing} paragraphs break differently after another line");
+    }
+
+    #[test]
+    fn a_hyphen_in_front_keeps_the_first_line_from_ending_in_one() {
+        // two hyphens in a row cost the demerits of a double hyphen, so there are paragraphs whose
+        // first line ends in a hyphen if it follows nothing, and does not if it follows a hyphen
+        let mut random = Random(0x1234_5678_9ABC_DEF1);
+        let hyphen_start = LineStart { fitness: LineStart::DECENT, hyphen: true };
+        let (mut avoided, mut never_added) = (0, true);
+        for _ in 0..400 {
+            let paragraph = random_paragraph(&mut random);
+            let ends_in_hyphen = |breaks: &[usize]| paragraph.opportunities[breaks[1]].hyphen;
+            let plain = paragraph.lines(LineStart::PARAGRAPH).breaks;
+            let after = paragraph.lines(hyphen_start).breaks;
+            if ends_in_hyphen(&plain) && !ends_in_hyphen(&after) {
+                avoided += 1;
+            }
+            // a hyphen in front never makes a hyphen at the end of the first line the choice if
+            // it was not one without
+            if !ends_in_hyphen(&plain) && ends_in_hyphen(&after) {
+                never_added = false;
+            }
+        }
+        assert!(avoided > 0, "no paragraph was found where a hyphen in front changes the first line");
+        assert!(never_added);
     }
 
     fn pieces(widths: &[f64], forced: &[usize]) -> (Vec<BreakOpportunity>, Vec<f64>) {

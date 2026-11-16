@@ -408,7 +408,7 @@ struct Writer<'a, 'w> {
     text_runs: &'a ReadStorage<'w, TextRun>,
     aligns: &'a ReadStorage<'w, crate::layout::components::VerticalAlignment>,
     intrinsic_sizes: &'a WriteStorage<'w, IntrinsicSize>,
-    line_cache: &'a mut HashMap<(u32, Option<usize>, u32), std::rc::Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    line_cache: &'a mut tree::LineCache,
     positions: &'a mut WriteStorage<'w, Position>,
     decorations: &'a mut WriteStorage<'w, Decoration>,
     text_list: &'a mut Vec<BlockLevelElement>,

@@ -15,7 +15,7 @@
 //! is laid out for its own width and height ([`super::window`]).
 
 use super::flow::{Anchor, Flow};
-use super::tree::{HeliumTree, lines_from};
+use super::tree::{HeliumTree, LineCut, lines_from};
 use crate::layout::inline::InlineFormattingContext;
 use crate::style::properties::computed::PixelLength;
 use helium_paginate::{BoxRef, ContainerCut, Cut, Fragment, Item, LayoutService, NodeRef, ParId, ParLine};
@@ -179,7 +179,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             cache,
             ifc,
             entity.id(),
-            from.map(|cut| cut.0 as usize),
+            from.map(LineCut::of),
             PixelLength(line_width),
             PixelLength(indent),
             tree.text_runs,
@@ -189,7 +189,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         .iter()
         .map(|line| ParLine {
             extent: f64::from(line.height.0),
-            end: Cut(line.to_break as u32),
+            end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
         })
         .collect()
     }

@@ -135,7 +135,7 @@ pub(super) struct HeliumTree<'a, 'w> {
     pub windowed: Vec<NodeId>,
     /// The lines of the paragraphs: by the box, the break that the lines start at and the width
     /// they are broken for.
-    pub lines: HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    pub lines: LineCache,
     /// The flow of the document, once it is made: the columns are chosen from the flows of the
     /// containers in it.
     pub flow: Option<Rc<super::flow::Flow>>,
@@ -1042,12 +1042,40 @@ impl HeliumTree<'_, '_> {
     }
 }
 
+/// A place where a line of a paragraph ends, in the cut of the paragraph that the kernel stores:
+/// the break and how the line that ends there fits. The breaking of the rest of the paragraph
+/// depends on both, so cuts at the same break that follow lines that fit differently are not the
+/// same place.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub(super) struct LineCut {
+    pub at: usize,
+    pub fitness: u8,
+}
+
+impl LineCut {
+    pub fn of(cut: helium_paginate::Cut) -> LineCut {
+        LineCut {
+            at: (cut.0 >> 2) as usize,
+            fitness: (cut.0 & 3) as u8,
+        }
+    }
+
+    /// The cut, which is ordered by the break first, so that the cuts of a paragraph are in the
+    /// order of the paragraph.
+    pub fn cut(self) -> helium_paginate::Cut {
+        helium_paginate::Cut(((self.at as u32) << 2) | u32::from(self.fitness & 3))
+    }
+}
+
+/// The lines of paragraphs, by the paragraph, the place where they start, and the width.
+pub(super) type LineCache = HashMap<(u32, Option<LineCut>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>;
+
 /// The lines of a paragraph that are on a page: all of them if the page has the whole paragraph,
 /// and else the lines from the cut where the page starts in the paragraph to the cut where it
 /// ends (`cut`: where the paragraph is cut by the page).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lines_between(
-    cache: &mut HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    cache: &mut LineCache,
     ifc: &InlineFormattingContext,
     node: u32,
     cut: Option<(Option<helium_paginate::Cut>, Option<helium_paginate::Cut>)>,
@@ -1062,14 +1090,14 @@ pub(super) fn lines_between(
             .as_ref()
             .clone();
     };
-    let from = from.map(|cut| cut.0 as usize);
+    let from = from.map(LineCut::of);
     let lines = lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns);
     match to {
         None => lines.as_ref().clone(),
         Some(to) => {
             let end = lines
                 .iter()
-                .position(|line| line.to_break == to.0 as usize)
+                .position(|line| line.to_break == LineCut::of(to).at)
                 .map_or(lines.len(), |index| index + 1);
             lines[..end].to_vec()
         }
@@ -1083,10 +1111,10 @@ pub(super) fn lines_between(
 /// for the width of the page.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lines_from(
-    cache: &mut HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    cache: &mut LineCache,
     ifc: &InlineFormattingContext,
     node: u32,
-    from: Option<usize>,
+    from: Option<LineCut>,
     line_width: PixelLength,
     indent: PixelLength,
     text_runs: &ReadStorage<TextRun>,
@@ -1106,10 +1134,13 @@ pub(super) fn lines_from(
             }),
         Some(from) => {
             let whole = lines_from(cache, ifc, node, None, line_width, indent, text_runs, intrinsic_sizes, aligns);
-            match whole.iter().position(|line| line.to_break == from) {
+            // (the lines after a line of the whole paragraph that ends there and fits the same way
+            // are those of the whole paragraph; after one that fits another way, the rest is
+            // broken for the line in front)
+            match whole.iter().position(|line| line.to_break == from.at && line.fitness == from.fitness) {
                 Some(index) => whole[index + 1..].to_vec(),
                 None => ifc
-                    .compute_lines_from(from, line_width, PixelLength(0.0), text_runs, intrinsic_sizes, aligns)
+                    .compute_lines_from(from.at, from.fitness, line_width, PixelLength(0.0), text_runs, intrinsic_sizes, aligns)
                     .unwrap_or_else(|error| {
                         log::error!("cannot break lines of {:?}: {}", node, error);
                         vec![]
@@ -1380,4 +1411,27 @@ pub(super) fn node_is_out_of_flow(tree: &HeliumTree, id: NodeId) -> bool {
     tree.computed_values
         .get(tree.node(id).entity)
         .is_some_and(is_out_of_flow)
+}
+
+#[cfg(test)]
+mod line_cut_tests {
+    use super::LineCut;
+
+    #[test]
+    fn a_cut_keeps_the_break_and_the_fitness_of_the_line() {
+        for at in [0usize, 1, 7, 1000, 1 << 20] {
+            for fitness in 0..4u8 {
+                assert_eq!(LineCut::of(LineCut { at, fitness }.cut()), LineCut { at, fitness });
+            }
+        }
+    }
+
+    #[test]
+    fn the_cuts_of_a_paragraph_are_in_the_order_of_the_paragraph() {
+        // the break decides, and the fitness only where the break is the same
+        let cut = |at, fitness| LineCut { at, fitness }.cut();
+        assert!(cut(3, 3) < cut(4, 0));
+        assert!(cut(3, 0) < cut(3, 2));
+        assert_ne!(cut(3, 1), cut(3, 2));
+    }
 }

@@ -17,6 +17,7 @@ use specs::storage::GenericReadStorage;
 use specs::{Component, DenseVecStorage, Entity};
 use specs::{Entities, Join, Read, ReadStorage, System, Write, WriteStorage};
 
+use helium_paginate::paragraph::LineStart;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Copy, Clone)]
@@ -35,6 +36,9 @@ pub struct MeasuredLine {
     pub baseline: Px,
     pub from_break: usize,
     pub to_break: usize,
+    /// How the line fits (`helium_paginate::paragraph::LineStart::fitness`): the breaking of the
+    /// rest of the paragraph after it counts lines that are far apart in it.
+    pub fitness: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -342,14 +346,19 @@ impl InlineFormattingContext {
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
         aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> Result<Vec<MeasuredLine>, String> {
-        self.compute_lines_from(0, line_width, indent, text_runs, intrinsic_sizes, aligns)
+        self.compute_lines_from(0, LineStart::DECENT, line_width, indent, text_runs, intrinsic_sizes, aligns)
     }
 
     /// Breaks the part of the paragraph that follows the break point `from` into lines. The first
-    /// line is indented by `indent` only if `from` is the start of the paragraph.
+    /// line is indented by `indent` only if `from` is the start of the paragraph. `fitness` is that
+    /// of the line that ends at `from`, which the breaker counts like a line in front of the first
+    /// one in a paragraph (see [`MeasuredLine::fitness`]); it is not used at the start of the
+    /// paragraph.
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_lines_from(
         &self,
         from: usize,
+        fitness: u8,
         line_width: Px,
         indent: Px,
         text_runs: &ReadStorage<components::TextRun>,
@@ -413,16 +422,25 @@ impl InlineFormattingContext {
         let width_of = |at: usize| {
             f64::from((line_width - if at + from == 0 { indent } else { Px(0.0) }).0)
         };
-        // the paragraph from the break point `from` on, which is the start of its first line
-        let sequence = helium_paginate::paragraph::compute_paragraph_breakpoints(
+        // the paragraph from the break point `from` on, which is the start of its first line; it
+        // follows the line that ends there, which is hyphenated if the break is
+        let start = if from == 0 {
+            LineStart::PARAGRAPH
+        } else {
+            LineStart { fitness, hyphen: breakpoints[from].hyphen }
+        };
+        let broken = helium_paginate::paragraph::compute_paragraph_lines(
             &opportunities[from..],
             |start, end| metrics(from + start, from + end),
             width_of,
+            start,
         );
 
-        let lines = sequence
+        let lines = broken
+            .breaks
             .windows(2)
-            .map(|window| {
+            .zip(broken.fitness.iter().copied())
+            .map(|(window, fitness)| {
                 let (window_from, window_to) = (from + window[0], from + window[1]);
                 let (baseline, height) =
                     self.line_height(window_from, window_to, text_runs, intrinsic_sizes, aligns);
@@ -432,6 +450,7 @@ impl InlineFormattingContext {
                     to_break: window_to,
                     height,
                     baseline,
+                    fitness,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;

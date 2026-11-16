@@ -52,7 +52,7 @@ struct Kept {
     ifc: InlineFormattingContext,
     before: Option<Box<(InlineFormattingContext, f32, Option<f32>)>>,
     /// The lines that were cached for the paragraph, by the entity.
-    lines: Vec<((u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>)>,
+    lines: Vec<((u32, Option<super::tree::LineCut>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>)>,
 }
 
 impl HeliumTree<'_, '_> {
