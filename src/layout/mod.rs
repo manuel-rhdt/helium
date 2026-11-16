@@ -225,6 +225,7 @@ pub fn layout(
         media = found;
         flow_constructor.styles.clear_author_rules();
     }
+    flow_constructor.use_document_fonts();
     dom.traverse(&mut flow_constructor);
     flow_constructor.ensure_root();
     info!("TIMED: construct {:?}", time_before.elapsed());

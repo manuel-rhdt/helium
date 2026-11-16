@@ -139,8 +139,21 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
   scripts), script itemization, kerning and ligatures, per-character font fallback.
 - **Line breaking:** Unicode line breaking, hyphenation with built-in dictionaries (`hyphens:
   auto` and soft hyphens), CJK line breaking, justification.
+- **`@font-face`:** the descriptors `font-family`, `src`, `font-weight` (also a range) and
+  `font-style`. A source is `url()` of a file inside of the directory of the document (relative
+  to its style sheet; or `--resource-root`) or of a `data:` URI, or `local()` (an installed font
+  by its PostScript or family name); `format()` and `tech()` are read, and sources of formats
+  that cannot be read (WOFF, WOFF2) are skipped like the ones that fail to load, so the next
+  one is used. Faces are chosen like in CSS Fonts 4 § 5.2 (style, then weight; of equal faces
+  the later rule wins), also for the text of SVG images. The faces of a family hide the
+  installed fonts of the same name, even if none of its sources loads; then the next family of
+  `font-family` is used. Nothing is fetched from the network. Not supported: `unicode-range`,
+  `font-stretch`, `font-display`, `font-variation-settings` (a variable font is drawn in its
+  default instance), the metric overrides (`size-adjust`, `ascent-override`, ...), a face other
+  than the first of a collection, `@font-face` in `@import`ed sheets (`@import` is not
+  supported), and `local()` by the full name of a font.
 - **Font formats:** TrueType and OpenType (`.ttf`, `.otf`, `.ttc`, with TrueType or CFF
-  outlines). Fonts are subset into the PDF. `@font-face` is not supported: fonts come from the
+  outlines). Fonts are subset into the PDF. Besides the faces of `@font-face`, fonts come from the
   system (fontconfig on Linux, and the font directories) or from the built-in set: TeX Gyre
   Heros, Termes and Cursor (the sans, serif and monospace defaults), DejaVu Sans (fallback), STIX
   Two Math and Latin Modern Math. The generic families `serif`, `sans-serif`, `monospace` and
@@ -156,7 +169,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 ## Not supported
 
-Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`,
+Other image formats (GIF, WebP, ...), `url()` backgrounds,
 `@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
 fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
 `outline`, `word-break`/`overflow-wrap`,

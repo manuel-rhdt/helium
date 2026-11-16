@@ -12,7 +12,7 @@ use usvg::{ShapeRequest, ShapedGlyph, TextShaper};
 
 use crate::layout::FontMap;
 use crate::layout::text::fallback::{FallbackKey, FontResolver, register_font};
-use crate::layout::text::font::{Font, svg_face_id};
+use crate::layout::text::font::{Font, FontContext};
 use crate::layout::text::shape_directed;
 use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight, Language};
 
@@ -27,9 +27,20 @@ struct State {
     primary: HashMap<usvg::fontdb::ID, Arc<Font>>,
 }
 
-#[derive(Default)]
 pub struct HeliumShaper {
     state: Mutex<State>,
+    /// The fonts of the document that the images are in.
+    fonts: std::sync::Weak<FontContext>,
+}
+
+impl HeliumShaper {
+    pub fn new(fonts: std::sync::Weak<FontContext>) -> Self {
+        let mut state = State::default();
+        if let Some(fonts) = fonts.upgrade() {
+            state.resolver.set_fonts(fonts);
+        }
+        HeliumShaper { state: Mutex::new(state), fonts }
+    }
 }
 
 impl std::fmt::Debug for HeliumShaper {
@@ -70,6 +81,7 @@ pub fn helium_style(font: &usvg::Font) -> FontStyle {
 
 impl TextShaper for HeliumShaper {
     fn shape(&self, request: &ShapeRequest<'_>) -> Option<Vec<ShapedGlyph>> {
+        let context = self.fonts.upgrade()?;
         let mut state = self.state.lock().ok()?;
         let State { resolver, font_map, primary } = &mut *state;
 
@@ -118,7 +130,7 @@ impl TextShaper for HeliumShaper {
                         n => fallbacks.get(n as usize - 1),
                     };
                     // a glyph of a font that the images do not have is a missing glyph
-                    let face = glyph_font.and_then(|font| Some((svg_face_id(font)?, font.upem)));
+                    let face = glyph_font.and_then(|font| Some((context.svg_face_id(font)?, font.upem)));
                     let (id, upem) = face.unwrap_or((request.id, font.upem));
                     let missing = face.is_none();
                     // from thousandths of an em to the units of the font
