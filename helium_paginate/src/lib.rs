@@ -20,7 +20,8 @@ pub use flow::{BreakKind, Item, ItemId, NodeRef, PageKind, PageSpec, PageTable, 
 pub use kernel::{Invalid, Kernel, PageFill, PageStart, Solution};
 pub use service::{GalleyFlow, GalleyService, LayoutService};
 pub use solver::{CssObjective, ExactSolver, Objective, Solver};
-pub use token::{BreakToken, Position};
+pub use service::ParLine;
+pub use token::{BreakToken, Cut, Position};
 
 #[cfg(test)]
 mod tests;

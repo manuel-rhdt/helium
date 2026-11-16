@@ -1,21 +1,35 @@
 use crate::flow::{BreakKind, Item, NodeRef, PageTable, ParId, Problem};
+use crate::token::Cut;
+use std::rc::Rc;
+
+/// A line of a paragraph of the flow.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct ParLine {
+    /// The height of the line.
+    pub extent: f64,
+    /// The cut behind the line, where a page that ends after the line is continued. Meaningless
+    /// for the last line of the paragraph.
+    pub end: Cut,
+}
 
 /// Answers the questions of the kernel about sizes.
 ///
 /// Extents are `f64` so that a service that has the positions of a galley can answer with their
-/// differences, which add up exactly.
+/// differences, which add up exactly. There are no width classes: everything is asked for the
+/// inline size of the page that it is on, and a service that caches does so by that size.
 pub trait LayoutService {
     /// The extent of a `Box` or a `Gap` on a page.
     fn extent(&mut self, node: NodeRef, page_inline: f32) -> f64;
 
-    /// The extent of the line `line` of a paragraph of the flow on a page.
-    ///
-    /// The lines are the ones that the paragraph has, since the paragraphs are rigid.
-    fn line_extent(&mut self, par: ParId, line: u32, page_inline: f32) -> f64;
+    /// The lines of a paragraph of the flow on a page, from `from` (`None`: from the start of
+    /// the paragraph) to its end. The paragraphs are rigid: the lines are what the paragraph
+    /// has when it is broken for the page. The same arguments give the same lines.
+    fn lines(&mut self, par: ParId, from: Option<Cut>, page_inline: f32) -> Rc<[ParLine]>;
 }
 
 /// A layout service that is backed by a galley: the document laid out once, at one width. The
-/// extents are what the layout of the galley has computed.
+/// extents are what the layout of the galley has computed, whatever the width of the page. The
+/// cut of a paragraph is the number of the line that follows it.
 #[derive(Debug, Default, Clone)]
 pub struct GalleyService {
     nodes: Vec<f64>,
@@ -39,8 +53,17 @@ impl LayoutService for GalleyService {
         self.nodes[node.0 as usize]
     }
 
-    fn line_extent(&mut self, par: ParId, line: u32, _page_inline: f32) -> f64 {
-        self.paragraphs[par.0 as usize][line as usize]
+    fn lines(&mut self, par: ParId, from: Option<Cut>, _page_inline: f32) -> Rc<[ParLine]> {
+        let first = from.map_or(0, |cut| cut.0 as usize);
+        self.paragraphs[par.0 as usize]
+            .iter()
+            .enumerate()
+            .skip(first)
+            .map(|(line, &extent)| ParLine {
+                extent,
+                end: Cut(line as u32 + 1),
+            })
+            .collect()
     }
 }
 
@@ -93,7 +116,6 @@ impl GalleyFlow {
         let id = self.service.add_paragraph(line_extents.to_vec());
         self.items.push(Item::Paragraph {
             id,
-            lines: line_extents.len() as u32,
             orphans,
             widows,
             avoid_inside,

@@ -61,6 +61,10 @@ struct GalleyProblem {
     break_point_at: HashMap<helium_paginate::Position, usize>,
 }
 
+fn in_paragraph(item: usize, line: usize) -> helium_paginate::Position {
+    helium_paginate::Position::InParagraph { item, cut: helium_paginate::Cut(line as u32) }
+}
+
 /// The run of breaks between the lines of a paragraph that starts at `break_points[first]`: the
 /// number of breaks, if the run has a break between every two lines of the paragraph and they
 /// all have the same properties.
@@ -114,7 +118,7 @@ fn galley_problem(
                 let item = flow.len();
                 flow.paragraph(&lines, lines_in.orphans as u32, lines_in.widows as u32, avoid_inside);
                 for line in 1..=count {
-                    places.push(helium_paginate::Position::InParagraph { item, line: line as u32 });
+                    places.push(in_paragraph(item, line));
                 }
                 index += count + 1;
             }
@@ -145,16 +149,14 @@ fn galley_problem(
     // it starts alone. The table is filled with those guesses, and the kernel's page kind is
     // ignored by it. The exact solver then handles the page class no better than the code it
     // replaces. Likewise `stop_at_forced` is off, since the paginator never stopped there.
-    let spec = |index: usize| PageSpec { inline_size, block_size: content_heights[index].0 };
-    let mut pages = PageTable::uniform(spec(0));
-    pages.rtl = rtl;
     let mut break_point_at = HashMap::new();
+    let mut specs = HashMap::new();
     for (index, &place) in places.iter().enumerate() {
-        pages.starts.insert(place, spec(index));
+        specs.insert(place, PageSpec { inline_size, block_size: content_heights[index].0 });
         break_point_at.insert(place, index);
     }
-    let (mut problem, service) = flow.finish(pages);
-    problem.stop_at_forced = false;
+    let pages = PageTable::new(rtl, move |place, _| specs[&place]).left_right_differ(false);
+    let (problem, service) = flow.finish(pages);
     GalleyProblem { problem, service, break_point_at }
 }
 
@@ -167,7 +169,7 @@ fn choose_breaks(galley: &mut GalleyProblem) -> Vec<usize> {
         .pages
         .iter()
         .skip(1)
-        .map(|&token| galley.break_point_at[&kernel.position(token)])
+        .map(|start| galley.break_point_at[&kernel.position(start.at)])
         .collect()
 }
 
@@ -766,7 +768,7 @@ mod tests {
             [
                 Item::Box { .. },
                 Item::Break { kind: BreakKind::Allowed },
-                Item::Paragraph { lines: 4, orphans: 2, widows: 3, avoid_inside: false, .. },
+                Item::Paragraph { orphans: 2, widows: 3, avoid_inside: false, .. },
                 Item::Break { kind: BreakKind::Allowed },
                 Item::Box { .. },
             ]
@@ -780,9 +782,9 @@ mod tests {
             [
                 Position::Item(0),
                 Position::Item(2),
-                Position::InParagraph { item: 2, line: 1 },
-                Position::InParagraph { item: 2, line: 2 },
-                Position::InParagraph { item: 2, line: 3 },
+                in_paragraph(2, 1),
+                in_paragraph(2, 2),
+                in_paragraph(2, 3),
                 Position::Item(4),
                 Position::Item(5),
             ]

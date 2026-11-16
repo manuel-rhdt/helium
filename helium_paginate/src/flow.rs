@@ -1,5 +1,6 @@
 use crate::token::Position;
-use std::collections::HashMap;
+use std::fmt;
+use std::sync::Arc;
 
 /// The index of an item in the flow.
 pub type ItemId = usize;
@@ -44,12 +45,11 @@ pub enum Item {
     Gap { node: NodeRef },
     /// A place where a page may end. The next page starts behind the item.
     Break { kind: BreakKind },
-    /// A paragraph of the flow. Its lines are rigid: a page can only cut between the `lines`
-    /// lines that the layout service has for it. There is no `Item` for a container that is
-    /// split yet.
+    /// A paragraph of the flow. Its lines are rigid: a page can only cut between the lines that
+    /// the layout service has for it, which depend on the width of the page and on where the
+    /// paragraph starts on it. There is no `Item` for a container that is split yet.
     Paragraph {
         id: ParId,
-        lines: u32,
         orphans: u32,
         widows: u32,
         /// Whether the breaks between the lines are `BreakKind::Avoid`.
@@ -74,25 +74,46 @@ pub struct PageSpec {
     pub block_size: f32,
 }
 
-/// The geometry of the page that starts at a position.
-#[derive(Debug, Clone)]
+/// The geometry of the pages: of the page that starts at a position and has a kind.
+///
+/// The geometry follows from the kind of the page, from the name of the first content on it and
+/// from whether it starts a page group. The name and the group are properties of the place where
+/// the page starts, the kind is the one of the page number. The state of an exact search is
+/// therefore the place and the kind.
+#[derive(Clone)]
 pub struct PageTable {
     /// Whether the pages are bound on the right: the first page is a left page.
     pub rtl: bool,
-    /// The geometry of a page that is not in `starts`.
-    pub default: PageSpec,
-    /// The geometry of the page that starts at a position.
-    pub starts: HashMap<Position, PageSpec>,
+    /// Whether the geometry of the pages depends on whether they are left or right pages. If it
+    /// does not, a search does not have to tell the two kinds of page apart (breaks to a left or
+    /// a right page do tell them apart, however).
+    pub left_right_differ: bool,
+    spec: Arc<dyn Fn(Position, PageKind) -> PageSpec + Send + Sync>,
+}
+
+impl fmt::Debug for PageTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PageTable").field("rtl", &self.rtl).finish_non_exhaustive()
+    }
 }
 
 impl PageTable {
     /// All pages are the same.
     pub fn uniform(spec: PageSpec) -> Self {
-        PageTable {
-            rtl: false,
-            default: spec,
-            starts: HashMap::new(),
-        }
+        PageTable::new(false, move |_, _| spec).left_right_differ(false)
+    }
+
+    /// The geometry of a page is given by a function of the position it starts at and its kind.
+    pub fn new(
+        rtl: bool,
+        spec: impl Fn(Position, PageKind) -> PageSpec + Send + Sync + 'static,
+    ) -> Self {
+        PageTable { rtl, left_right_differ: true, spec: Arc::new(spec) }
+    }
+
+    pub fn left_right_differ(mut self, differ: bool) -> Self {
+        self.left_right_differ = differ;
+        self
     }
 
     /// The kind of the page with the number `index` (the first page has the number 0).
@@ -107,13 +128,8 @@ impl PageTable {
     }
 
     /// The geometry of the page of the given kind that starts at `at`.
-    ///
-    /// The table that the paginator has so far (step 1 of the plan) knows the geometry by the
-    /// position alone. The kind is the one that the path to the position leads to, which for
-    /// the paginator is guessed beforehand, so the table ignores `kind`. Because of this the
-    /// state of the exact solver is the position only.
-    pub fn spec(&self, at: Position, _kind: PageKind) -> PageSpec {
-        self.starts.get(&at).copied().unwrap_or(self.default)
+    pub fn spec(&self, at: Position, kind: PageKind) -> PageSpec {
+        (self.spec)(at, kind)
     }
 }
 
@@ -122,21 +138,10 @@ impl PageTable {
 pub struct Problem {
     pub pages: PageTable,
     pub items: Vec<Item>,
-    /// Whether the pages that [`Kernel::candidates`](crate::Kernel::candidates) lists end at
-    /// the first forced break.
-    ///
-    /// The design says they do. The paginator that this one replaces does not stop there: a page
-    /// may span a forced break when the pages on both sides of it do not fit. Until step 2 of
-    /// the plan the paginator of helium sets this to `false` to keep its output.
-    pub stop_at_forced: bool,
 }
 
 impl Problem {
     pub fn new(pages: PageTable, items: Vec<Item>) -> Self {
-        Problem {
-            pages,
-            items,
-            stop_at_forced: true,
-        }
+        Problem { pages, items }
     }
 }

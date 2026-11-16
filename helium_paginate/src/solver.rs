@@ -1,6 +1,7 @@
+use crate::flow::PageKind;
 use crate::kernel::{Kernel, PageFill, PageStart, Solution};
 use crate::token::BreakToken;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 /// The cost of a page. A solver minimises the sum of the costs of the pages.
 pub trait Objective {
@@ -65,9 +66,9 @@ impl Objective for CssObjective {
 /// wins, like in the least-weight subsequence of the line breaker
 /// ([`crate::paragraph::compute_breakpoints`]).
 ///
-/// The state of the search is the place where a page starts. The geometry of a page cannot
-/// depend on its kind yet (see [`PageTable::spec`](crate::PageTable::spec)); once it can, the
-/// state is the place and the kind.
+/// The state of the search is the place where a page starts and the kind of the page: the
+/// geometry of a page, and with it everything that follows, depends on nothing else about the
+/// path that led to it.
 #[derive(Debug, Copy, Clone, Default)]
 pub struct ExactSolver<O> {
     pub objective: O,
@@ -79,71 +80,99 @@ impl<O: Objective> ExactSolver<O> {
     }
 }
 
+type State = (BreakToken, PageKind);
+
 struct Node {
     cost: f64,
-    previous: Option<BreakToken>,
+    previous: Option<State>,
     start: PageStart,
 }
 
 impl<O: Objective> Solver for ExactSolver<O> {
     fn solve(&self, kernel: &mut Kernel<'_>) -> Solution {
         let first = kernel.first_page();
-        let mut nodes: HashMap<BreakToken, Node> = HashMap::new();
+        let state_of = |kernel: &Kernel<'_>, start: &PageStart| kernel.state(start);
+        let mut nodes: HashMap<State, Node> = HashMap::new();
+        let first_state = state_of(kernel, &first);
         nodes.insert(
-            first.at,
+            first_state,
             Node {
                 cost: 0.0,
                 previous: None,
                 start: first,
             },
         );
-        // The tokens are numbered in the order of the flow: all pages that end at a token start
-        // at an earlier token, so by the time a token is taken from the queue its cost is final.
-        let mut queue = BTreeSet::from([first.at]);
-        let mut end = None;
-        while let Some(at) = queue.pop_first() {
-            if kernel.is_end(at) {
-                end = Some(at);
+        // The states are taken in the order of the flow: all pages that end at a place start at
+        // an earlier one, so by the time a state is taken from the queue its cost is final.
+        let order = |kernel: &Kernel<'_>, state: State| (kernel.position(state.0).order(), state.1 as u8);
+        let mut queue = BTreeMap::from([(order(kernel, first_state), first_state)]);
+        // the ways to the end of the document
+        let mut ends: Vec<State> = vec![];
+        while let Some((_, state)) = queue.pop_first() {
+            if kernel.is_end(state.0) {
+                ends.push(state);
                 continue;
             }
-            let start = nodes[&at].start;
-            let cost_so_far = nodes[&at].cost;
+            let start = nodes[&state].start;
+            let cost_so_far = nodes[&state].cost;
             for fill in kernel.candidates(&start) {
                 let next = kernel.next_page(&start, &fill);
                 let cost = self.objective.page_cost(&fill, next.is_none()) + cost_so_far;
                 if !cost.is_finite() {
                     continue;
                 }
-                let better = nodes.get(&fill.end).is_none_or(|node| cost < node.cost);
+                let next = next.unwrap_or(PageStart {
+                    at: fill.end,
+                    index: start.index + 1,
+                });
+                let next_state = state_of(kernel, &next);
+                let better = nodes.get(&next_state).is_none_or(|node| cost < node.cost);
                 if better {
-                    let start = next.unwrap_or(PageStart {
-                        at: fill.end,
-                        index: start.index + 1,
-                    });
                     nodes.insert(
-                        fill.end,
+                        next_state,
                         Node {
                             cost,
-                            previous: Some(at),
-                            start,
+                            previous: Some(state),
+                            start: next,
                         },
                     );
-                    queue.insert(fill.end);
+                    queue.insert(order(kernel, next_state), next_state);
                 }
             }
         }
-        let mut pages = vec![];
-        let mut at = end;
-        while let Some(token) = at {
-            let node = &nodes[&token];
-            at = node.previous;
-            if let Some(previous) = node.previous {
-                pages.push(previous);
+        // The pages of a way to the end, from the last to the first.
+        let path = |end: State| {
+            let mut pages = vec![];
+            let mut at = nodes[&end].previous;
+            while let Some(state) = at {
+                pages.push(nodes[&state].start);
+                at = nodes[&state].previous;
             }
-        }
+            pages
+        };
+        // Among the cheapest ways, the one with the earlier start of the last page wins, and
+        // where those are the same, the one with the earlier start of the page before it, and
+        // so on, as in the least-weight subsequence. The kind of the page is a state of its own,
+        // so equal ways with other kinds are found, too, and one of them has to be chosen.
+        let cheapest = ends
+            .iter()
+            .map(|state| nodes[state].cost)
+            .fold(f64::INFINITY, f64::min);
+        let key = |kernel: &Kernel<'_>, state: State| -> Vec<(usize, u32)> {
+            path(state)
+                .iter()
+                .map(|start| kernel.position(start.at).order())
+                .collect()
+        };
+        let best = ends
+            .iter()
+            .copied()
+            .filter(|state| nodes[state].cost == cheapest)
+            .min_by_key(|&state| (key(kernel, state), state.1 as u8));
+        let mut pages = best.map_or_else(Vec::new, path);
         pages.reverse();
         if pages.is_empty() {
-            pages.push(first.at);
+            pages.push(first);
         }
         Solution { pages }
     }
