@@ -2153,8 +2153,10 @@ impl<'a> System<'a> for LineBoxCreator {
                 if let Some(next_line) = lines.get(line_num + 1).filter(|_| !flow.is_vertical()) {
                     let next_line_pos = *positions.get(next_line.entity).unwrap();
                     // The next line is below this one, unless a column ends between them: then it
-                    // is at the top of the next column, where its position says.
-                    let below = (next_line_pos.y - (line_pos.y + line.height)).0.abs() < 0.01;
+                    // is at the top of the next column, where its position says. (On another
+                    // page it starts a paragraph of its own.)
+                    let below = next_line_pos.page != line_pos.page
+                        || (next_line_pos.y - (line_pos.y + line.height)).0.abs() < 0.01;
                     let leading = if below {
                         (line.height - line.baseline) + next_line.baseline
                     } else {

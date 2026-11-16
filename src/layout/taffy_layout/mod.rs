@@ -143,7 +143,6 @@ impl TaffyBlockLayout {
             lines: HashMap::new(),
             flow: None,
             icb_height: 0.0,
-            write_columns: false,
             plain_root: None,
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
@@ -252,7 +251,6 @@ impl TaffyBlockLayout {
                 },
             );
             let tree = &mut *service.tree;
-            tree.write_columns = true;
             tree.set_window(window, root);
             taffy::compute_root_layout(
                 tree,
@@ -262,7 +260,6 @@ impl TaffyBlockLayout {
                     height: AvailableSpace::Definite(spec.block_size),
                 },
             );
-            tree.write_columns = false;
             let height = tree.node(root).layout.size.height;
             if !fill.overflow && (height - fill.used).abs() > 0.5 {
                 log::warn!(

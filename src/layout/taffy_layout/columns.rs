@@ -41,7 +41,8 @@ pub(super) struct ColumnsNode {
     pub inner: Option<Inner>,
     /// The plans, by the width of the content box and the height of it, if it is definite.
     plans: HashMap<(u32, Option<u32>), Rc<ColumnPlan>>,
-    /// The layouts of the columns of the last layout of the pages (see [`HeliumTree::write_columns`]).
+    /// The layouts of the columns of the last layout of the container. The last layout is the one
+    /// that the layouts of the boxes around it are of, which a box that has a cached layout keeps.
     pub layouts: Option<Rc<ColumnLayouts>>,
 }
 
@@ -248,7 +249,7 @@ impl HeliumTree<'_, '_> {
             planned = Some(plan);
             size
         });
-        if inputs.run_mode == RunMode::PerformLayout && self.write_columns {
+        if inputs.run_mode == RunMode::PerformLayout {
             if let Some(plan) = planned {
                 self.layout_columns(id, plan);
             }

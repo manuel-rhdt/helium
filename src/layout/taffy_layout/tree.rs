@@ -141,9 +141,6 @@ pub(super) struct HeliumTree<'a, 'w> {
     pub flow: Option<Rc<super::flow::Flow>>,
     /// The height of the initial containing block of the galleys.
     pub icb_height: f32,
-    /// Whether the layout of a container with columns lays out every column, to be written
-    /// (the layout of the pages) and not only to find its height.
-    pub write_columns: bool,
     /// The container with columns that is laid out as a plain block, to find the extents of its
     /// content for the width of a column (see [`super::subtree`]).
     pub plain_root: Option<NodeId>,

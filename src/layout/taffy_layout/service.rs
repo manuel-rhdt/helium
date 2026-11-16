@@ -187,8 +187,6 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         let tree = &mut *self.tree;
         tree.clear_window();
         let root = self.flow.root;
-        // (a galley only finds the sizes, the columns of the containers are not laid out)
-        let write_columns = std::mem::replace(&mut tree.write_columns, false);
         taffy::compute_root_layout(
             tree,
             root,
@@ -197,7 +195,6 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                 height: AvailableSpace::Definite(self.icb_height),
             },
         );
-        tree.write_columns = write_columns;
         let mut tops = vec![0.0f64; tree.nodes.len()];
         place(tree, root, 0.0, true, &mut tops);
         let extents = self

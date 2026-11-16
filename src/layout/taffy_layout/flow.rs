@@ -275,8 +275,9 @@ impl Extractor<'_, '_, '_> {
         if node.orthogonal || node.flow.is_vertical() || self.has_block_size(id) {
             return Kind::Whole;
         }
-        // (a container with columns is one box in the flow of its page)
-        if node.columns.is_some() && self.level == BreakLevel::Page {
+        // (a container with columns is one box in the flow that it is in: its content is a flow of
+        // its own, which `emit_columns` makes)
+        if node.columns.is_some() {
             return Kind::Whole;
         }
         match node.content {
