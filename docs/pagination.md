@@ -1408,10 +1408,13 @@ break nor are the last):
 
 | kind | pages | room in lines | sum of the cubes of the room | the most room on a page |
 | --- | --- | --- | --- | --- |
-| headings, only the fragment that fills the page | 386 | 74 | 212 | 4 |
-| headings, with the earlier ones | 386 | 63 | 81 | 2 |
-| columns, only the fragment that fills the page | 357 | 42 | 132 | 4 |
-| columns, with the earlier ones | 357 | 36 | 42 | 2 |
+| headings, only the fragment that fills the page | 398 | 141 | 1131 | 6 |
+| headings, with the earlier ones | 398 | 113 | 209 | 3 |
+| columns, only the fragment that fills the page | 370 | 145 | 1597 | 10 |
+| columns, with the earlier ones | 370 | 130 | 190 | 2 |
+
+(Measured after the margin between containers was counted, see below; before it the numbers were
+smaller, because the pages were counted too short.)
 
 No page broke a rule of orphans and widows or ended at an avoided break in either case, so the
 gain is in the room, and not in the rules: the inner choice already keeps the rules, and what it
