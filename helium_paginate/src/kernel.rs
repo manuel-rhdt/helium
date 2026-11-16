@@ -29,6 +29,17 @@ pub struct PageFill {
     pub overflow: bool,
 }
 
+impl PageFill {
+    /// Whether the page does not fit, ends where a break should be avoided, or has too few lines
+    /// of a paragraph at its start or end.
+    pub fn breaks_a_rule(&self) -> bool {
+        self.overflow
+            || self.end_kind == BreakKind::Avoid
+            || self.orphan_violation
+            || self.widow_violation
+    }
+}
+
 /// A fragment of a container that is on a page: what the layout of the page needs to know to lay
 /// out the container. The kernel asked the layout service for it when it listed the page
 /// ([`Kernel::fragments`]).

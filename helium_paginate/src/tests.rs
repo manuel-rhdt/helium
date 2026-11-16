@@ -203,15 +203,24 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         overflow: false,
     };
     let css = CssObjective;
-    assert_eq!(css.page_cost(&fill, false), 1000.0);
-    assert_eq!(css.page_cost(&fill, true), 0.0);
+    // 10 px are left on the page
+    let slack = CssCost {
+        slack: CssCost::slack_of(10.0),
+        ..CssCost::default()
+    };
+    assert_eq!(slack.slack, 640 * 640 * 640);
+    assert_eq!(css.page_cost(&fill, false), Some(slack));
+    assert_eq!(css.page_cost(&fill, true), Some(CssCost::default()));
     let avoid = PageFill {
         end_kind: BreakKind::Avoid,
         ..fill
     };
     assert_eq!(
         css.page_cost(&avoid, false),
-        1000.0 + CssObjective::AVOID_BREAK_COST
+        Some(CssCost {
+            avoided_breaks: 1,
+            ..slack
+        })
     );
     let widow = PageFill {
         widow_violation: true,
@@ -220,23 +229,51 @@ fn the_cost_of_a_page_follows_the_css_objective() {
     };
     assert_eq!(
         css.page_cost(&widow, false),
-        1000.0 + CssObjective::ORPHANS_WIDOWS_COST
+        Some(CssCost {
+            orphans_and_widows: 1,
+            ..slack
+        })
     );
+    // how empty a page is does not matter where it ends at a forced break
     let forced = PageFill {
         end_kind: BreakKind::Forced,
         ..fill
     };
-    assert_eq!(
-        css.page_cost(&forced, true),
-        CssObjective::FORCED_BREAK_COST
-    );
+    assert_eq!(css.page_cost(&forced, true), Some(CssCost::default()));
+    assert_eq!(css.page_cost(&forced, false), Some(CssCost::default()));
     let overflow = PageFill {
         overflow: true,
         used: 150.0,
         end_kind: BreakKind::Avoid,
         ..fill
     };
-    assert_eq!(css.page_cost(&overflow, false), CssObjective::OVERFLOW_COST);
+    assert_eq!(
+        css.page_cost(&overflow, false),
+        Some(CssCost {
+            overflows: 1,
+            ..CssCost::default()
+        })
+    );
+}
+
+#[test]
+fn a_cost_is_compared_by_its_fields_in_the_order_of_their_priority() {
+    // a page that does not fit is worse than any number of avoided breaks, which are worse than
+    // any number of widows, which are worse than any amount of empty pages
+    let cost = |overflows, avoided_breaks, orphans_and_widows, slack: u128| CssCost {
+        overflows,
+        avoided_breaks,
+        orphans_and_widows,
+        slack,
+    };
+    assert!(cost(1, 0, 0, 0) > cost(0, 1000, 1000, u128::MAX / 2));
+    assert!(cost(0, 1, 0, 0) > cost(0, 0, 1000, u128::MAX / 2));
+    assert!(cost(0, 0, 1, 0) > cost(0, 0, 0, u128::MAX / 2));
+    assert!(cost(0, 0, 0, 2) > cost(0, 0, 0, 1));
+    // rounding errors of single precision positions do not make costs differ
+    assert_eq!(CssCost::slack_of(20.8), CssCost::slack_of(20.800_04));
+    // the sum adds the fields
+    assert_eq!(cost(1, 2, 3, 4).plus(&cost(1, 1, 1, 1)), cost(2, 3, 4, 5));
 }
 
 fn solve(flow: GalleyFlow, block_size: f32) -> (Vec<Position>, Vec<PageFill>) {
@@ -416,7 +453,11 @@ fn reference_solution(reference: &Reference) -> Vec<usize> {
         let height = reference.advance[to] - reference.advance[from];
         let content = reference.heights[from];
         if height > content {
-            if to == from + 1 { 1e30 } else { f64::INFINITY }
+            // (The paginator had 1e30 here. A sum with it has no digits left for any cost below
+            // 1e14, so every pagination of a flow with such a page cost the same and the earliest
+            // one won, whatever it broke. The typed cost compares the rest, so the reference has
+            // a cost that leaves room for them.)
+            if to == from + 1 { 1e18 } else { f64::INFINITY }
         } else {
             let mut cost = if reference.forced[to] {
                 -1e15
@@ -884,12 +925,18 @@ fn balanced_columns_cut_a_paragraph_where_the_widows_allow_it() {
 struct Tallest;
 
 impl Objective for Tallest {
-    fn page_cost(&self, fill: &PageFill, _is_last: bool) -> f64 {
-        fill.used as f64
+    type Cost = f64;
+
+    fn zero(&self) -> f64 {
+        0.0
     }
 
-    fn combine(&self, so_far: f64, page: f64, _index: usize) -> f64 {
-        so_far.max(page)
+    fn page_cost(&self, fill: &PageFill, _is_last: bool) -> Option<f64> {
+        Some(fill.used as f64)
+    }
+
+    fn combine(&self, so_far: &f64, page: &f64, _index: usize) -> f64 {
+        so_far.max(*page)
     }
 }
 
@@ -1142,4 +1189,96 @@ fn the_pages_of_a_fragment_end_where_the_last_of_them_does() {
     assert_eq!(used(&kernel.realize(&solution).unwrap()), [40.0, 40.0]);
     assert!(!kernel.is_end(end.at));
     assert!(kernel.is_final(&end));
+}
+
+// The search in a graph, on graphs that are not the pages of a document.
+
+/// A graph given by its edges: `(from, to, cost)`. The nodes are numbered in the order in which
+/// they are taken, and the last one is the end.
+struct Toy {
+    edges: Vec<(usize, usize, u32)>,
+    last: usize,
+}
+
+impl Graph for Toy {
+    type Node = usize;
+    type Edge = u32;
+    type Key = usize;
+    type Rank = usize;
+
+    fn start(&mut self) -> usize {
+        0
+    }
+
+    fn key(&mut self, node: &usize) -> usize {
+        *node
+    }
+
+    fn rank(&mut self, key: usize) -> usize {
+        key
+    }
+
+    fn is_end(&mut self, node: &usize) -> bool {
+        *node == self.last
+    }
+
+    fn edges(&mut self, node: &usize) -> Vec<(u32, usize)> {
+        self.edges
+            .iter()
+            .filter(|(from, ..)| from == node)
+            .map(|&(_, to, cost)| (cost, to))
+            .collect()
+    }
+}
+
+fn toy_path(edges: &[(usize, usize, u32)], last: usize, sum: bool) -> Option<Vec<usize>> {
+    let mut graph = Toy {
+        edges: edges.to_vec(),
+        last,
+    };
+    let path = shortest_path(
+        &mut graph,
+        0u32,
+        &mut |edge: &u32| Some(*edge),
+        &mut |so_far, edge, _| if sum { so_far + edge } else { (*so_far).max(*edge) },
+    )?;
+    let mut nodes = path.nodes;
+    nodes.push(path.end);
+    Some(nodes)
+}
+
+#[test]
+fn the_search_finds_the_cheapest_path_of_any_graph() {
+    // 0 -> 1 -> 3 costs 10 and 0 -> 2 -> 3 costs 9
+    let edges = [(0, 1, 5), (1, 3, 5), (0, 2, 1), (2, 3, 8)];
+    assert_eq!(toy_path(&edges, 3, true), Some(vec![0, 2, 3]));
+    // the maximum of the costs of the edges is 5 and 8: the other path is the one
+    assert_eq!(toy_path(&edges, 3, false), Some(vec![0, 1, 3]));
+}
+
+#[test]
+fn of_paths_that_cost_the_same_the_one_that_goes_through_the_earlier_node_wins() {
+    let edges = [(0, 2, 1), (0, 1, 1), (2, 3, 1), (1, 3, 1)];
+    assert_eq!(toy_path(&edges, 3, true), Some(vec![0, 1, 3]));
+}
+
+#[test]
+fn a_graph_without_a_way_to_its_end_has_no_path() {
+    assert_eq!(toy_path(&[(0, 1, 1)], 2, true), None);
+}
+
+#[test]
+fn an_edge_that_cannot_be_taken_is_left_out() {
+    let mut graph = Toy {
+        edges: vec![(0, 1, 1), (0, 2, 7), (1, 3, 1), (2, 3, 1)],
+        last: 3,
+    };
+    // the cheap way is not allowed
+    let path = shortest_path(
+        &mut graph,
+        0u32,
+        &mut |edge: &u32| (*edge != 1).then_some(*edge),
+        &mut |so_far, edge, _| so_far + edge,
+    );
+    assert!(path.is_none(), "every way to the end has an edge of cost 1: {path:?}");
 }

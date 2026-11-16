@@ -376,21 +376,77 @@ disagree about what a solution means.
 
 ## Solvers and objectives
 
+The pagination of a document is a path in a graph, and a solver searches it. A node is a place
+where a page can start, with everything that the pages after it depend on (the kind of the page,
+and its number if the number of pages is limited) and nothing else. An edge is a page, from the
+place where it starts to a place where it can end. The graph is a DAG that is never built as a
+whole: the edges of a node are made when the search gets to it. The edges carry facts (a
+`PageFill`), and an objective makes the cost of a path from them, so the graph and the costs can
+change independently.
+
 ```rust
+/// A graph that is searched for the cheapest path from its start to one of its ends.
+pub trait Graph {
+    type Node: Clone;
+    type Edge;
+    type Key: Copy + Eq + Hash;   // nodes with the same key have the same future
+    type Rank: Ord;               // every edge goes to a node of a greater rank
+    fn start(&mut self) -> Self::Node;
+    fn key(&mut self, node: &Self::Node) -> Self::Key;
+    fn rank(&mut self, key: Self::Key) -> Self::Rank;
+    fn is_end(&mut self, node: &Self::Node) -> bool;
+    fn edges(&mut self, node: &Self::Node) -> Vec<(Self::Edge, Self::Node)>;
+}
+
+/// The cheapest path, found by taking the nodes in the order of their rank.
+pub fn shortest_path<G: Graph, C: Clone + PartialOrd>(
+    graph: &mut G, zero: C,
+    weigh: &mut dyn FnMut(&G::Edge) -> Option<C>,
+    combine: &mut dyn FnMut(&C, &C, &G::Edge) -> C,
+) -> Option<Path<G::Node>>;
+
 pub trait Solver {
     fn solve(&self, kernel: &mut Kernel) -> Solution;
 }
 
 pub trait Objective {
-    fn page_cost(&self, fill: &PageFill, is_last: bool) -> f64;
-    /// The cost of the pages so far and one more. The sum by default.
-    fn combine(&self, so_far: f64, page: f64, index: usize) -> f64;
+    type Cost: Clone + Debug + PartialOrd;
+    fn zero(&self) -> Self::Cost;
+    /// The cost of a page, or `None` if it cannot be used.
+    fn page_cost(&self, fill: &PageFill, is_last: bool) -> Option<Self::Cost>;
+    /// The cost of the pages so far and one more: a sum, or a maximum.
+    fn combine(&self, so_far: &Self::Cost, page: &Self::Cost, index: usize) -> Self::Cost;
 }
 ```
 
+`Kernel` is a graph through the adapter `PageGraph` (the node is a `PageStart`, the edge a
+`PageEdge`: the `PageFill`, the number of the page and whether it is the last). The exact solver
+is `shortest_path` on that graph. A policy that does not search everything (greedy, a beam, a
+learned one) chooses among the edges of a node and is written against the same trait.
+
+**A cost is a type.** The costs of CSS have a priority: a page that does not fit is worse than any
+number of avoided breaks, which are worse than any number of orphans and widows, which are worse
+than any amount of empty pages. This is a struct of fields in the order of their priority,
+compared field by field (`CssCost`, with `#[derive(PartialOrd)]`), and not one number with large
+constants for "very bad" (the paginator had 1e12 for an avoided break, 1e11 for orphans and
+widows, 1e30 for a page that does not fit and -1e15 for a forced break). Those encoded the
+priorities in magnitudes, and a sum with a large constant has no digits left for the costs below
+it: with the 1e30 of one page that does not fit, every pagination of the document cost the same,
+whatever else it broke; with the -1e15 of the forced breaks of a book of 61 chapters, differences
+of the empty room below about 2 px were lost. A forced break is not a cost at all now:
+`candidates` ends every page at it, so all paginations have the same ones.
+
+The room that is left on a page is counted in whole units of 1/64 px (`CssCost::slack_of`). The
+positions are single precision numbers and the room is a difference of two of them, so two
+paginations with the same pages in another order differ in the last digits of their cost. A
+rounding error should not decide between them: the rule of the exact solver does (of paginations
+of the same cost the one that has the earlier start of the last page wins). Without the whole
+units the layout of `gallery/book` changed at a page where a page with 20.8 px left and one with
+1.5 px left swapped places.
+
 The exact solver minimises what `combine` makes of the costs of the pages: the sum for pages, the
-maximum for balanced columns (`BalanceObjective`). If the number of pages is limited, the number
-of the page is part of the state of the search.
+maximum for balanced columns (`ColumnCost`, `TallestColumn`, `FullestFirst`). If the number of
+pages is limited, the number of the page is part of the state of the search.
 
 Planned solvers:
 
@@ -403,9 +459,9 @@ Planned solvers:
 - **Joint.** The exact solver with a positive tolerance.
 - **Pruned and evolved solvers.** Any policy over `candidates`.
 
-`CssObjective` holds the constants of the current paginator: the cube of the
-unused height, `AVOID_BREAK_COST`, `ORPHANS_WIDOWS_COST`, and nothing for the
-last page.
+`CssObjective` has the costs of the paginator as a `CssCost`: pages that do not
+fit, avoided breaks, orphans and widows, and the cube of the unused height, and nothing
+for the last page and for pages that end at a forced break.
 
 The joint solver adds line demerits and page costs, which needs an exchange
 rate between the two. There is no principled value for it. It is a field of
@@ -742,15 +798,15 @@ containers with columns first: see "A container that is split over pages".)
 
 **Balancing is a min-max problem.** With `column-fill: balance` (the default) a container with an
 `auto` height is as short as it can be while its content still fits in N columns. The exact solver
-adds up the costs of the pages by default. `Objective` has a combine operator for this
-(`combine(so_far, page, index)`, with the sum as the default, so `CssObjective` and everything
-else is as before). Balancing takes the maximum, in two exact steps (`balance`, `BalanceObjective`):
+adds up the costs of the pages by default. `Objective::combine` is the operator for this (the
+sum for `CssObjective`, so everything else is as before). Balancing takes the maximum, in two
+exact steps (`balance`, with the objectives `TallestColumn` and `FullestFirst`):
 
 1. The maximum of the heights of the columns is minimised. The height of a column is its content
-   plus a cost for every rule that it breaks: a break that is to be avoided, orphans and widows,
-   and content that does not fit. Each of these costs more than any content (the costs are in the
-   order that `CssObjective` has), so a column is only as tall as it takes to keep the rules, if
-   that is possible.
+   plus the rules that it breaks: a column that does not fit is worse than any column that ends where a
+   break is to be avoided, which is worse than any with orphans or widows, which is worse than any
+   height (`ColumnCost`, compared field by field, in the order that `CssCost` has). So a column is
+   only as tall as it takes to keep the rules, if that is possible.
 2. Among the paginations in which no column is taller than the least maximum, the sum of the
    heights of the columns, each weighted by its number plus one, is minimised. With the same
    tallest column the first columns are therefore the fullest, as in browsers: five boxes in two

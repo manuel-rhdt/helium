@@ -32,7 +32,7 @@ use super::window::Window;
 use crate::style::properties::computed::{ColumnWidth, GenericSize, PixelLength};
 use crate::style::properties::specified::{ColumnCount, ColumnFill, Display};
 use helium_paginate::{
-    BalanceObjective, BoxRef, BreakLevel, ContainerCut, Cut, Item, Kernel, LayoutService, NodeRef, PageSpec, PageTable,
+    BoxRef, BreakLevel, ContainerCut, Cut, Item, Kernel, LayoutService, NodeRef, PageSpec, PageTable,
     ParId, ParLine, Position, Problem, balance, plan_fragment,
 };
 use std::collections::HashMap;
@@ -433,7 +433,7 @@ fn choose(
         };
         // Within the bound, nothing was found that keeps all the rules, and there is room for a
         // taller column: look again with a higher bound.
-        let broken = fills.iter().any(|fill| BalanceObjective::height(fill) >= BalanceObjective::ORPHANS_WIDOWS_COST);
+        let broken = fills.iter().any(|fill| fill.breaks_a_rule());
         if height.is_none() && broken && bound < content + 1.0 {
             bound = (bound * 1.6).min(content + 1.0);
             continue;
