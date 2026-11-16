@@ -536,6 +536,11 @@ pub enum Font {
     /// Inherited, so it lives here as well.
     #[property]
     ListStyleType(ListStyleType),
+    /// The marker type and position in one declaration. Markers are always outside of their
+    /// item, so the position is accepted and not used.
+    #[property]
+    #[shorthand("list-style-type", method = "style_type")]
+    ListStyle(ListStyleShorthand),
     /// Inherited instead of propagated to the inline boxes of the descendants, which has the same
     /// effect for everything that is supported.
     #[property]
@@ -2011,6 +2016,52 @@ pub enum ListStyleType {
     LowerRoman,
     UpperRoman,
     None,
+}
+
+/// `inside` or `outside`, in the `list-style` shorthand.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+pub enum ListStylePosition {
+    Outside,
+    Inside,
+}
+
+/// The value of the `list-style` shorthand: the marker type and the position, in any order. What
+/// is left out has its initial value. `<image>` markers are not supported.
+#[derive(Debug, Copy, Clone)]
+pub struct ListStyleShorthand {
+    style_type: ListStyleType,
+}
+
+impl ListStyleShorthand {
+    pub fn style_type(&self) -> ListStyleType {
+        self.style_type
+    }
+}
+
+impl<'i> PropertyValue<'i> for ListStyleShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let mut style_type = None;
+        let mut position = None;
+        for _ in 0..2 {
+            if style_type.is_none()
+                && let Ok(value) = input.try_parse(ListStyleType::from_css_property_value)
+            {
+                style_type = Some(value);
+            } else if position.is_none()
+                && let Ok(value) = input.try_parse(ListStylePosition::from_css_property_value)
+            {
+                position = Some(value);
+            } else {
+                break;
+            }
+        }
+        if style_type.is_none() && position.is_none() {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(ListStyleShorthand { style_type: style_type.unwrap_or_default() })
+    }
 }
 
 impl Default for ListStyleType {

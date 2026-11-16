@@ -87,7 +87,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
   `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space` (`normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`), `hyphens`,
-  `direction`, `unicode-bidi`, `list-style-type`.
+  `direction`, `unicode-bidi`, `list-style-type` and the `list-style` shorthand (the position, `inside` or
+  `outside`, is accepted and not used: markers are always outside; `<image>` markers are not supported).
 - **OpenType features:** `font-feature-settings`, `font-kerning`, and `font-variant` with
   `font-variant-ligatures`, `-caps`, `-numeric`, `-east-asian` and `-position`; the `font`
   shorthand resets them and takes `small-caps`. They are handed to the shaper in the order of the
