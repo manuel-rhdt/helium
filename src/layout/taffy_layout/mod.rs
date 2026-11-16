@@ -248,6 +248,7 @@ impl TaffyBlockLayout {
         let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
         let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
         let mut rules: Vec<Rule> = vec![];
+        let mut line_stats = LineStats::default();
         let mut positions = world.write_storage::<Position>();
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
@@ -356,6 +357,7 @@ impl TaffyBlockLayout {
                 fragments: &mut fragments,
                 overlay: None,
                 rules: &mut rules,
+                line_stats: &mut line_stats,
             };
             // The root is placed at the top left corner of the content area of the page.
             writer.write_box(
@@ -371,6 +373,13 @@ impl TaffyBlockLayout {
             page_contexts.push(context);
         }
         log::info!("TIMED: layout of the pages {:?}", before.elapsed());
+        log::info!(
+            "LINES: {} lines, mean badness {:.2}, worst {:.1}, {} over 100",
+            line_stats.lines,
+            line_stats.badness / line_stats.lines.max(1) as f64,
+            line_stats.worst,
+            line_stats.loose
+        );
         drop(service);
         drop(tree);
 
@@ -477,6 +486,8 @@ struct Writer<'a, 'w> {
     overlay: Option<&'a HashMap<NodeId, columns::Snap>>,
     /// The rules between the columns.
     rules: &'a mut Vec<Rule>,
+    /// How well the lines that are written are broken (for the log).
+    line_stats: &'a mut LineStats,
 }
 
 /// A rule between two columns: a filled rectangle.
@@ -959,6 +970,9 @@ impl<'a> Writer<'a, '_> {
             self.intrinsic_sizes,
             self.aligns,
         );
+        for line in &measured {
+            self.line_stats.add(line.badness);
+        }
         let first = ifc.push_lines(measured, self.entities);
         let align = ifc.resolved_text_align();
         let indent_offset = ifc.indent_offset(PixelLength(indent)).0;
@@ -992,6 +1006,27 @@ impl<'a> Writer<'a, '_> {
             y += height;
         }
         Ok(())
+    }
+}
+
+/// How well the lines of the document are broken: the badness of TeX (100 for a line that is
+/// stretched or shrunk by its whole stretch), which is infinite for a line that does not fit.
+#[derive(Debug, Default)]
+struct LineStats {
+    lines: usize,
+    badness: f64,
+    worst: f64,
+    loose: usize,
+}
+
+impl LineStats {
+    fn add(&mut self, badness: f64) {
+        // (the badness of a line that cannot be stretched, as the last one, is not a measure)
+        let badness = if badness.is_finite() { badness.min(10_000.0) } else { 10_000.0 };
+        self.lines += 1;
+        self.badness += badness;
+        self.worst = self.worst.max(badness);
+        self.loose += usize::from(badness > 100.0);
     }
 }
 
