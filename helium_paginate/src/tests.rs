@@ -1070,3 +1070,76 @@ fn the_fragments_that_a_page_has_are_listed_for_its_layout() {
     assert_eq!(second[0].available, 100.0);
     assert_eq!(second[0].end, None);
 }
+
+#[test]
+fn a_fragment_that_breaks_a_rule_inside_makes_the_container_start_on_the_next_page() {
+    // A paragraph of three lines of 10 in two columns has room for two lines on the first page: it
+    // would be an orphan in one column and a widow in the other. The container starts on the next
+    // page, where the three lines are in one column.
+    let mut flow = GalleyFlow::new();
+    flow.content(80.0).break_(ALLOWED);
+    let mut inner = GalleyFlow::new();
+    inner.paragraph(&[10.0; 3], 2, 2, false);
+    flow.container(inner, 2, ColumnFill::Balance, (0.0, 0.0));
+    let (pages, fills) = container_pages(flow, 100.0);
+    assert_eq!(pages, [START, Position::Item(2)]);
+    assert_eq!(used(&fills), [80.0, 30.0]);
+    assert!(fills.iter().all(|fill| !fill.orphan_violation && !fill.widow_violation));
+}
+
+#[test]
+fn the_lines_that_the_next_fragment_starts_with_are_counted_against_the_widows() {
+    // 61 lines of 10 in two columns of 300: the lines of a page are 30 and 29, so that the next
+    // fragment has two lines and not one
+    let mut inner = GalleyFlow::new();
+    inner.paragraph(&[10.0; 61], 2, 2, false);
+    let mut flow = GalleyFlow::new();
+    flow.container(inner, 2, ColumnFill::Balance, (0.0, 0.0));
+    let (problem, mut service) = flow.finish(page(300.0));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let fills = kernel.realize(&solution).unwrap();
+    assert_eq!(used(&fills), [300.0, 20.0]);
+    assert!(fills.iter().all(|fill| !fill.widow_violation && !fill.orphan_violation));
+    // the second fragment starts 59 lines into the paragraph
+    let second = kernel.position(solution.pages[1].at);
+    assert_eq!(second, Position::InContainer { item: 0, cut: ContainerCut { item: 0, cut: Some(Cut(59)) } });
+}
+
+#[test]
+fn a_problem_can_start_in_the_middle_of_its_items() {
+    let mut flow = GalleyFlow::new();
+    flow.content(10.0).break_(ALLOWED).content(20.0).break_(ALLOWED).content(30.0);
+    let (problem, mut service) = flow.finish(page(100.0));
+    let problem = problem.starting_at(Position::Item(2));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let first = kernel.first_page();
+    assert_eq!(kernel.position(first.at), Position::Item(2));
+    assert_eq!(used(&kernel.candidates(&first)), [20.0, 50.0]);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    assert_eq!(solution.pages, [first]);
+    assert_eq!(used(&kernel.realize(&solution).unwrap()), [50.0]);
+}
+
+#[test]
+fn the_pages_of_a_fragment_end_where_the_last_of_them_does() {
+    // five boxes in two columns of 40: the fragment ends after the fourth box
+    let mut inner = GalleyFlow::new();
+    for index in 0..5 {
+        if index > 0 {
+            inner.break_at(ALLOWED, BreakLevel::Column);
+        }
+        inner.content(20.0);
+    }
+    let (problem, mut service) = inner.finish(page(40.0));
+    let problem = problem.with_level(BreakLevel::Column).with_page_limit(2).as_fragment();
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    // two pages, and the place where the fragment ends
+    let (pages, end) = solution.fragment_end().unwrap();
+    assert_eq!(pages.len(), 2);
+    assert_eq!(kernel.position(end.at), Position::Item(8));
+    assert_eq!(used(&kernel.realize(&solution).unwrap()), [40.0, 40.0]);
+    assert!(!kernel.is_end(end.at));
+    assert!(kernel.is_final(&end));
+}

@@ -154,7 +154,7 @@ impl TaffyBlockLayout {
             .collect();
 
         // the flow of the document, and the geometry of the page at every place of it
-        let flow = std::rc::Rc::new(flow::extract(&mut tree, root, page_margins.rtl));
+        let flow = std::rc::Rc::new(flow::extract(&mut tree, root, page_margins.rtl, self.page_height.0 > 0.0));
         tree.flow = Some(flow.clone());
         let geometry = paginate::Geometry {
             margins: &page_margins,

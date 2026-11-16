@@ -35,7 +35,20 @@ struct Layout {
     log: String,
 }
 
+/// Lays a document out, and checks that no content is cut off at the bottom of a page.
 fn layout(name: &str, html: &str) -> Layout {
+    let layout = layout_with_cut_off(name, html);
+    assert!(
+        !layout.log.contains("the content below the page is not printed"),
+        "the log has a warning about content that is below its page:\n{}",
+        layout.log
+    );
+    layout
+}
+
+/// Lays a document out. Content that is below its page (a box that cannot be split and is taller
+/// than a page) is reported in the log.
+fn layout_with_cut_off(name: &str, html: &str) -> Layout {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("multicol__{}.html", name));
     let output = dir.join(format!("multicol__{}.pdf", name));
@@ -903,7 +916,7 @@ fn a_box_that_is_cut_between_columns_has_the_border_of_its_parts() {
 /// than a page.
 #[test]
 fn a_box_taller_than_a_page_in_a_container_says_that_its_content_is_cut_off() {
-    let layout = layout(
+    let layout = layout_with_cut_off(
         "tall_warning",
         &doc("", "<div id=m style=\"column-count: 2\"><div id=tall style=\"height: 800px\"></div></div>"),
     );
@@ -1104,4 +1117,343 @@ fn the_first_page_of_a_container_is_as_high_as_the_rest_of_the_page_with_no_gap(
     assert_on(&layout, "i50", 0, 200.0, 580.0);
     assert_on(&layout, "i51", 1, 0.0, 0.0);
     assert_on(&layout, "i80", 1, 0.0, 580.0);
+}
+
+// More about a container that is split over pages.
+
+#[test]
+fn a_container_that_starts_in_the_middle_of_a_page_ends_in_the_middle_of_another() {
+    // 100px of content, then 70 items in two columns without a gap: 500px are left on the first
+    // page (25 items per column), the second page has the last 20 items balanced (10 and 10),
+    // and the paragraph after the container is under them
+    let layout = layout(
+        "mid_to_mid",
+        &doc(
+            "",
+            &format!(
+                "<div id=top style=\"height:100px\"></div>{}<p id=after style=\"margin:0;height:20px\"></p>",
+                container("column-count: 2; column-gap: 0", 70)
+            ),
+        ),
+    );
+    assert_on(&layout, "i1", 0, 0.0, 100.0);
+    assert_on(&layout, "i25", 0, 0.0, 580.0);
+    assert_on(&layout, "i26", 0, 200.0, 100.0);
+    assert_on(&layout, "i50", 0, 200.0, 580.0);
+    assert_on(&layout, "i51", 1, 0.0, 0.0);
+    assert_on(&layout, "i60", 1, 0.0, 180.0);
+    assert_on(&layout, "i61", 1, 200.0, 0.0);
+    assert_on(&layout, "i70", 1, 200.0, 180.0);
+    assert_on(&layout, "after", 1, 0.0, 200.0);
+    // the container is one box that starts on the first page and is as high as the rest of it
+    assert_on(&layout, "m", 0, 0.0, 100.0);
+    assert_height(&layout, "m", 500.0);
+}
+
+#[test]
+fn two_containers_in_a_row_follow_each_other() {
+    // the first container is 40 items (balanced in the first page: 30 and 10 are not, 20 and
+    // 20 are: it fits), the second starts where it ends and is split over two pages
+    let first = "<div id=m1 style=\"column-count: 2; column-gap: 0\">".to_owned() + &items(1, 40) + "</div>";
+    let second = "<div id=m2 style=\"column-count: 2; column-gap: 0\">".to_owned() + &items(41, 80) + "</div>";
+    let layout = layout("two", &doc("", &format!("{first}{second}")));
+    // the first: 20 items per column, 400px high
+    assert_on(&layout, "i20", 0, 0.0, 380.0);
+    assert_on(&layout, "i21", 0, 200.0, 0.0);
+    assert_height(&layout, "m1", 400.0);
+    // the second starts at 400 and has 200px on the first page: 10 items per column
+    assert_on(&layout, "i41", 0, 0.0, 400.0);
+    assert_on(&layout, "i50", 0, 0.0, 580.0);
+    assert_on(&layout, "i51", 0, 200.0, 400.0);
+    assert_on(&layout, "i60", 0, 200.0, 580.0);
+    // 60 items are left (page 1, full: 30 and 30), and none for a third page
+    assert_on(&layout, "i61", 1, 0.0, 0.0);
+    assert_on(&layout, "i90", 1, 0.0, 580.0);
+    assert_on(&layout, "i91", 1, 200.0, 0.0);
+    assert_on(&layout, "i120", 1, 200.0, 580.0);
+}
+
+#[test]
+fn a_paragraph_after_a_container_is_split_over_the_pages_that_follow() {
+    // a container of 4 items (80px), then a paragraph of 40 lines of 20px: 26 lines fit on the
+    // first page and 14 on the second
+    let lines = vec!["line"; 40].join("<br>");
+    let layout = layout(
+        "then_paragraph",
+        &doc(
+            "p { margin: 0; line-height: 20px; font-size: 16px; background: rgb(0, 128, 0) }",
+            &format!("{}<p id=p>{lines}</p>", container("column-count: 2; column-gap: 0", 8)),
+        ),
+    );
+    // 8 items in two columns are 80px
+    assert_height(&layout, "m", 80.0);
+    let green = layout.filled([0, 128, 0]);
+    assert_eq!(green.len(), 2, "{green:?}");
+    assert_eq!((green[0].page, green[1].page), (0, 1));
+    assert_close(green[0].rect[1], 80.0, "top of the first part of the paragraph");
+    assert_close(green[0].rect[3], 520.0, "height of the first part (26 lines)");
+    assert_close(green[1].rect[3], 280.0, "height of the second part (14 lines)");
+}
+
+#[test]
+fn a_box_with_a_background_is_cut_between_columns_and_pages() {
+    // A box of 70 items with padding and a border, in the first and only column of a container with
+    // two columns: it is cut after 29 items in the first column, after 29 in the second
+    // (the border and the padding of 15px are on the first column), and goes on over the page break
+    let layout = layout(
+        "cut_pages",
+        &doc(
+            "",
+            &format!(
+                "<div id=m style=\"column-count: 2; column-gap: 0\"><div id=b style=\"border: 5px solid rgb(0, 0, 255); padding: 10px; background: rgb(0, 128, 0)\">{}</div></div>",
+                items(1, 100)
+            ),
+        ),
+    );
+    // the columns are 200 wide: the box is 200 wide in each of them; page 0 has two parts of the
+    // box (one per column), page 1 has two more (or a part and the end of it)
+    let green = layout.filled([0, 128, 0]);
+    let on_page = |page: u64| green.iter().filter(|rect| rect.page == page).collect::<Vec<_>>();
+    assert_eq!(on_page(0).len(), 2, "{green:?}");
+    assert_eq!(on_page(1).len(), 2, "{green:?}");
+    // the first part has the top edges (15) and 585 of content, which ends at the bottom of the page
+    let first = on_page(0)[0];
+    assert_close(first.rect[0], 0.0, "x of the first part");
+    assert_close(first.rect[1], 0.0, "top of the first part");
+    // no border at the cuts: the box has a top border on the first part and a bottom border on the
+    // last one, and a left and a right border on every part
+    let blue = layout.filled([0, 0, 255]);
+    let horizontal: Vec<_> = blue.iter().filter(|rect| rect.rect[2] > rect.rect[3]).collect();
+    assert_eq!(horizontal.len(), 2, "one top and one bottom border: {blue:?}");
+    let vertical = blue.len() - horizontal.len();
+    assert_eq!(vertical, 8, "two sides of four parts: {blue:?}");
+}
+
+#[test]
+fn the_rules_of_a_container_are_drawn_in_every_fragment() {
+    let red = [255, 0, 0];
+    let layout = layout(
+        "rules_pages",
+        &doc("", &container("column-count: 2; column-gap: 20px; column-rule: 2px solid rgb(255, 0, 0)", 100)),
+    );
+    let rules = layout.filled(red);
+    // a rule per page: between two columns that have content on it
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    assert_eq!((rules[0].page, rules[1].page), (0, 1));
+    assert_close(rules[0].rect[0], 199.0, "x of the rule on the first page");
+    assert_close(rules[0].rect[3], 600.0, "height of the rule on the first page");
+    // the last page is balanced: 20 items per column
+    assert_close(rules[1].rect[3], 400.0, "height of the rule on the last page");
+}
+
+#[test]
+fn a_rule_is_not_drawn_where_the_last_fragment_has_one_column() {
+    // 62 items: 60 on the first page, two on the second, balanced as one and one; with `auto`
+    // they are in the first column only
+    let red = [255, 0, 0];
+    let style = "column-count: 2; column-gap: 20px; column-rule: 2px solid rgb(255, 0, 0)";
+    let balanced = layout("rules_last", &doc("", &container(style, 62)));
+    assert_eq!(balanced.filled(red).len(), 2);
+    let auto = layout("rules_last_auto", &doc("", &container(&format!("{style}; column-fill: auto"), 62)));
+    assert_eq!(auto.filled(red).len(), 1);
+    assert_on(&auto, "i62", 1, 0.0, 20.0);
+}
+
+#[test]
+fn a_link_in_a_column_on_the_second_page_is_where_the_text_is() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("multicol__link_second_page.html");
+    let output = dir.join("multicol__link_second_page.pdf");
+    // The link is in the fifth item of the first column of the second page (60 items fit on the first
+    // page), 80px = 60pt below the top.
+    std::fs::write(
+        &input,
+        doc(
+            "",
+            &format!(
+                "<div style=\"column-count: 2; column-gap: 0\">{}<div style=\"height: 20px\"><a href=\"https://example.com/\">link</a></div>{}</div>",
+                items(1, 64),
+                items(66, 10)
+            ),
+        ),
+    )
+    .unwrap();
+    let out = common::helium().unwrap().args(["--no-system-fonts"]).arg(&input).arg(&output).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let pdf = common::expand_object_streams(&std::fs::read(&output).unwrap());
+    let text = String::from_utf8_lossy(&pdf);
+    let link = text.find("/Subtype /Link").expect("the PDF has a link annotation");
+    let window = &text[link.saturating_sub(400)..(link + 400).min(text.len())];
+    let start = window.find("/Rect").expect("the annotation has a rectangle");
+    let rect: Vec<f64> = window[start..]
+        .split(['[', ']'])
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .map(|number| number.parse().unwrap())
+        .collect();
+    // in points, from the bottom left corner of a page that is 300pt by 450pt: in the first column,
+    // between 60pt and 75pt from the top
+    assert!(rect[0] >= -0.5 && rect[2] <= 150.0 + 0.5, "{rect:?}");
+    assert!(rect[3] <= 450.0 - 60.0 + 0.5 && rect[3] >= 450.0 - 75.0, "{rect:?}");
+    // the annotation is on the second page: it is in the dictionary of the second page
+    let annots = text.find("/Annots").expect("a page has annotations");
+    let pages_before = text[..annots]
+        .match_indices("/Type /Page")
+        .filter(|(at, _)| text.as_bytes()[at + "/Type /Page".len()] != b's')
+        .count();
+    assert_eq!(pages_before, 2, "the annotation is on the second page");
+}
+
+#[test]
+fn a_box_that_avoids_a_break_moves_to_the_next_column_and_to_the_next_page() {
+    // 28 items fill 560px of the first column, where a box of 60px (two items of 30px, with
+    // `break-inside: avoid`) does not fit: it is the start of the second column, with 27 items under
+    // it (60 + 540 = 600). The next such box starts the next page.
+    let boxed = |id: &str| {
+        format!(
+            "<div id={id} style=\"break-inside: avoid\"><div style=\"height:30px\"></div><div style=\"height:30px\"></div></div>"
+        )
+    };
+    let body = format!(
+        "<div id=m style=\"column-count: 2; column-gap: 0\">{}{}{}{}{}</div>",
+        items(1, 28),
+        boxed("b"),
+        items(29, 27),
+        boxed("c"),
+        items(56, 3)
+    );
+    let layout = layout("avoid_pages", &doc("", &body));
+    assert_on(&layout, "i28", 0, 0.0, 540.0);
+    assert_on(&layout, "b", 0, 200.0, 0.0);
+    assert_on(&layout, "i29", 0, 200.0, 60.0);
+    assert_on(&layout, "i55", 0, 200.0, 580.0);
+    assert_on(&layout, "c", 1, 0.0, 0.0);
+    // the last page is balanced: the box (60px) is the first column and the three items (60px)
+    // are the second
+    assert_on(&layout, "i56", 1, 200.0, 0.0);
+}
+
+#[test]
+fn widows_and_orphans_hold_at_the_end_of_the_last_column_of_a_page() {
+    // A paragraph of 61 lines of 20px is 30 lines in each column of a page and one line more.
+    // That line would be a widow on the next page, so the second column has 29 lines and the
+    // next page has two.
+    let style = "p { margin: 0; line-height: 20px; font-size: 16px; background: rgb(0, 128, 0) }";
+    let lines = vec!["line"; 61].join("<br>");
+    let layout = layout(
+        "widows_pages",
+        &doc(style, &format!("<div id=m style=\"column-count: 2; column-gap: 0\"><p>{lines}</p></div>")),
+    );
+    let green = layout.filled([0, 128, 0]);
+    assert_eq!(green.len(), 3, "{green:?}");
+    // (the part in the second column reaches the bottom of the page: it goes on)
+    assert_eq!((green[0].page, green[1].page, green[2].page), (0, 0, 1));
+    assert_close(green[0].rect[3], 600.0, "height of the first column");
+    assert_close(green[1].rect[3], 600.0, "height of the second column (29 lines and the end of the page)");
+    assert_close(green[2].rect[3], 40.0, "height of the two lines on the second page");
+    // and one line on the first page less than a column could take (a paragraph of 59 lines does
+    // not leave a widow behind it: it has 30 and 29 and is balanced on its own page)
+}
+
+#[test]
+fn orphans_hold_where_a_container_starts_at_the_bottom_of_a_page() {
+    // A paragraph of 6 lines that follows content of 560px: only two lines fit in the first
+    // column, so a container of two columns has room for four lines (two and two) on the first
+    // page, and three on the second page
+    let style = "p { margin: 0; line-height: 20px; font-size: 16px; background: rgb(0, 128, 0) }";
+    let lines = vec!["line"; 6].join("<br>");
+    let layout = layout(
+        "bottom_start",
+        &doc(
+            style,
+            &format!(
+                "<div style=\"height:560px\"></div><div id=m style=\"column-count: 2; column-gap: 0; column-fill: auto\"><p>{lines}</p></div>"
+            ),
+        ),
+    );
+    let green = layout.filled([0, 128, 0]);
+    // two lines in each of the columns on the first page (the widow of the third and fourth is not
+    // one: two lines are left), and two on the next
+    assert_eq!(green.len(), 3, "{green:?}");
+    assert_close(green[0].rect[3], 40.0, "the first column");
+    assert_eq!(green[2].page, 1);
+}
+
+#[test]
+fn balance_all_balances_a_fragment_that_ends_at_a_forced_page_break() {
+    // ten items, a forced page break, ten items: the first fragment has ten items, and the break ends
+    // it. With `balance` the columns of that fragment are filled in turn (all ten fit in the
+    // first one). With `balance-all` they are balanced (five and five).
+    let body = |fill: &str| {
+        format!(
+            "<div id=m style=\"column-count: 2; column-gap: 0; column-fill: {fill}\">{}\
+             <div class=i id=i11 style=\"height:20px;break-before:page\"></div>{}</div>",
+            items(1, 10),
+            items(12, 9)
+        )
+    };
+    let balance = layout("forced_balance", &doc("", &body("balance")));
+    assert_on(&balance, "i10", 0, 0.0, 180.0);
+    assert_on(&balance, "i11", 1, 0.0, 0.0);
+    // (the last fragment is balanced: ten items are five and five)
+    assert_on(&balance, "i16", 1, 200.0, 0.0);
+    let all = layout("forced_balance_all", &doc("", &body("balance-all")));
+    assert_on(&all, "i6", 0, 200.0, 0.0);
+    assert_on(&all, "i10", 0, 200.0, 80.0);
+    assert_height(&all, "m", 100.0);
+    assert_on(&all, "i11", 1, 0.0, 0.0);
+    assert_on(&all, "i16", 1, 200.0, 0.0);
+}
+
+#[test]
+fn the_padding_and_the_border_of_a_container_are_on_its_first_and_last_fragment() {
+    // 100 items in two columns with 10px of padding and a border of 5px on all sides: the content
+    // width is 370, a column 185 (no gap). The first page has 585px for the columns: 29 items per
+    // column. The last page has 42 items left, balanced: 21 in each, 420px, with the edges of 15px
+    // at the bottom, and no top edge
+    let layout = layout(
+        "edges_pages",
+        &doc(
+            "",
+            &container(
+                "column-count: 2; column-gap: 0; padding: 10px; border: 5px solid rgb(0, 0, 255); \
+                 background: rgb(0, 128, 0)",
+                100,
+            ),
+        ),
+    );
+    assert_on(&layout, "i1", 0, 15.0, 15.0);
+    assert_on(&layout, "i29", 0, 15.0, 15.0 + 28.0 * 20.0);
+    assert_on(&layout, "i30", 0, 200.0, 15.0);
+    assert_on(&layout, "i59", 1, 15.0, 0.0);
+    assert_on(&layout, "i100", 1, 200.0, 20.0 * 20.0);
+    let green = layout.filled([0, 128, 0]);
+    assert_eq!(green.len(), 2, "{green:?}");
+    // the box reaches the bottom of the first page, and ends after the 15px of edge on the last
+    assert_close(green[0].rect[1] + green[0].rect[3], 600.0, "bottom of the first fragment");
+    assert_close(green[1].rect[1], 0.0, "top of the second fragment");
+    assert_close(green[1].rect[3], 420.0 + 15.0, "height of the second fragment");
+    // a top and a left and right border on the first page, a bottom, a left and a right one on the second
+    let blue = layout.filled([0, 0, 255]);
+    let horizontal: Vec<_> = blue.iter().filter(|rect| rect.rect[2] > rect.rect[3]).collect();
+    assert_eq!(horizontal.len(), 2, "{blue:?}");
+    assert_eq!((horizontal[0].page, horizontal[1].page), (0, 1));
+    assert_close(horizontal[0].rect[1], 0.0, "top border");
+    assert_close(horizontal[1].rect[1], 435.0 - 5.0, "bottom border");
+}
+
+#[test]
+fn an_article_that_fills_every_page_has_as_many_pages_as_its_content_needs() {
+    // 590 items of 20px in two columns of 30 items: ten pages with 59 items and a last one that has
+    // the rest. The container is the only content, so no page has anything else.
+    let layout = layout("ten_pages", &doc("", &container("column-count: 2; column-gap: 0", 600)));
+    for page in 0..10u64 {
+        let first = 60 * page as usize + 1;
+        assert_on(&layout, &format!("i{first}"), page, 0.0, 0.0);
+        assert_on(&layout, &format!("i{}", first + 59), page, 200.0, 580.0);
+    }
+    assert_eq!(layout.get("i600").page, 9);
+    // nothing is on an eleventh page
+    assert!(layout.items.iter().all(|item| item.page <= 9));
 }

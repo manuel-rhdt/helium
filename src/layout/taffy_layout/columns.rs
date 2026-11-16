@@ -260,7 +260,7 @@ impl HeliumTree<'_, '_> {
             // A container that is split over pages has the height of its fragment on the page. In
             // a layout that is not of a page (the galley, which only gives extents) its height is
             // not used, and nothing in it is laid out.
-            let plan = self.page_fragments.get(&id).and_then(|key| {
+            let plan = self.page_fragments.get(&id).filter(|_| self.window.is_some()).and_then(|key| {
                 self.node(id).columns.as_ref().and_then(|columns| columns.fragments.get(key).cloned())
             });
             let output = compute_leaf_layout(inputs, &style, calc, |_, available| Size {
