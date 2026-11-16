@@ -1308,6 +1308,10 @@ pub enum Unit {
     Em,
     /// The font size of the root element.
     Rem,
+    /// The x-height of the font.
+    Ex,
+    /// The advance of the glyph `0` of the font.
+    Ch,
     In,
 }
 
@@ -1328,6 +1332,8 @@ impl FromStr for Unit {
             "pc" => Ok(Unit::Pc),
             "em" => Ok(Unit::Em),
             "rem" => Ok(Unit::Rem),
+            "ex" => Ok(Unit::Ex),
+            "ch" => Ok(Unit::Ch),
             "mm" => Ok(Unit::Mm),
             "in" => Ok(Unit::In),
             _ => Err(()),

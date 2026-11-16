@@ -52,11 +52,15 @@ pub type CssFloat = f32;
 pub struct FontSizes {
     pub font: PixelLength,
     pub root: PixelLength,
+    /// The x-height and the advance of `0` of the font (`ex` and `ch`).
+    pub ex: PixelLength,
+    pub ch: PixelLength,
 }
 
 impl From<&Font> for FontSizes {
     fn from(font: &Font) -> Self {
-        FontSizes { font: font.font_size, root: font.root_font_size }
+        let (ex, ch) = crate::layout::text::font::unit_metrics(font);
+        FontSizes { font: font.font_size, root: font.root_font_size, ex, ch }
     }
 }
 
@@ -93,6 +97,8 @@ impl PixelLength {
             Unit::Pc => Self::from_val_unit(val * 12.0, Unit::Pt, sizes),
             Unit::Em => val * sizes.font,
             Unit::Rem => val * sizes.root,
+            Unit::Ex => val * sizes.ex,
+            Unit::Ch => val * sizes.ch,
             Unit::Mm => Self::from_val_unit(0.1 * val, Unit::Cm, sizes),
             Unit::In => Self::from_val_unit(val * 72.0, Unit::Pt, sizes),
         }
