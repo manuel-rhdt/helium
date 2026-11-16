@@ -1,6 +1,8 @@
 //! This module provides CSS declaration parsing using the `cssparser` and `selectors` crates.
 
+use super::font_face::{FontFaceRule, parse_font_face};
 use super::media::MediaEnv;
+use crate::layout::text::font::FontContext;
 use super::properties::specified::{CssWideDeclaration, Font, ParseDeclaration, PropertyDeclaration};
 use crate::tree::ElementRef;
 
@@ -43,12 +45,16 @@ pub struct Styles {
     user_agent_rules: usize,
     /// What the media queries of the style sheets are evaluated against.
     media: MediaEnv,
+    /// The `@font-face` rules of the document, in order.
+    font_faces: Vec<FontFaceRule>,
+    /// The fonts of the document, made from `font_faces` when they are first needed.
+    fonts: std::sync::OnceLock<std::sync::Arc<FontContext>>,
 }
 
 impl Default for Styles {
     fn default() -> Self {
         let ua_style = include_str!("../../resources/user-agent.css");
-        let mut styles = Styles { rules: vec![], user_agent_rules: 0, media: MediaEnv::default() };
+        let mut styles = Styles::empty();
         styles.parse_css(ua_style);
         styles.user_agent_rules = styles.rules.len();
         styles
@@ -59,7 +65,20 @@ impl Styles {
     /// Style sheets without any rule, not even the ones of the user agent. Cheap, unlike
     /// `default()`, which parses the user agent style sheet.
     pub fn empty() -> Self {
-        Styles { rules: vec![], user_agent_rules: 0, media: MediaEnv::default() }
+        Styles {
+            rules: vec![],
+            user_agent_rules: 0,
+            media: MediaEnv::default(),
+            font_faces: vec![],
+            fonts: Default::default(),
+        }
+    }
+
+    /// The fonts of the document: the installed and built-in ones and the faces of its
+    /// `@font-face` rules. The faces are loaded the first time this is called after the style
+    /// sheets changed.
+    pub fn font_context(&self) -> std::sync::Arc<FontContext> {
+        self.fonts.get_or_init(|| FontContext::new(&self.font_faces)).clone()
     }
 
     /// Sets the page that the media queries of the style sheets read from now on are evaluated
@@ -73,7 +92,14 @@ impl Styles {
         super::media::matches_text(queries, &self.media)
     }
 
+    /// Reads a style sheet whose relative URLs (`@font-face` sources) are relative to the
+    /// current directory.
     pub fn parse_css(&mut self, input: &str) {
+        self.parse_css_in(input, Path::new("."))
+    }
+
+    /// Reads a style sheet whose relative URLs are relative to `base_dir`.
+    pub fn parse_css_in(&mut self, input: &str, base_dir: &Path) {
         // The content of a `<style>` of an XHTML document may be wrapped in a CDATA section,
         // which the HTML parser keeps as text.
         let unwrapped;
@@ -84,14 +110,22 @@ impl Styles {
             input
         };
         let mut parser = Parser::new(input);
-        let mut top_level = TopLevelParser { media: self.media };
+        let mut top_level = TopLevelParser { media: self.media, base_dir: base_dir.to_path_buf() };
+        self.fonts.take();
 
         for rule in StyleSheetParser::new(&mut parser, &mut top_level) {
             match rule {
                 Err((error, text, _location)) => {
                     warn!("Could not parse CSS rule {:?}: {:?}", text, error)
                 }
-                Ok(rules) => self.rules.extend(rules),
+                Ok(rules) => {
+                    for rule in rules {
+                        match rule {
+                            TopLevelRule::Style(rule) => self.rules.push(rule),
+                            TopLevelRule::FontFace(rule) => self.font_faces.push(rule),
+                        }
+                    }
+                }
             }
         }
     }
@@ -114,7 +148,7 @@ impl Styles {
         };
 
         match std::fs::read_to_string(&path) {
-            Ok(css) => self.parse_css(&css),
+            Ok(css) => self.parse_css_in(&css, path.parent().unwrap_or(base_dir)),
             Err(error) => warn!(
                 "Could not read stylesheet \"{}\": {}",
                 path.display(),
@@ -131,6 +165,8 @@ impl Styles {
     /// Removes the rules of the document, to read its style sheets again.
     pub fn clear_author_rules(&mut self) {
         self.rules.truncate(self.user_agent_rules);
+        self.font_faces.clear();
+        self.fonts.take();
     }
 
     pub fn rules_iter(&self) -> impl DoubleEndedIterator<Item = &QualifiedRule> {
@@ -419,11 +455,19 @@ impl PropertyDeclarationBlock {
 #[derive(Debug, Default)]
 struct TopLevelParser {
     media: MediaEnv,
+    /// The directory of the style sheet, for the URLs in it.
+    base_dir: std::path::PathBuf,
+}
+
+/// A rule of the top level of a style sheet, or in a `@media` block.
+enum TopLevelRule {
+    Style(QualifiedRule),
+    FontFace(FontFaceRule),
 }
 
 impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
     type Prelude = SelectorList<Selectors>;
-    type QualifiedRule = Vec<QualifiedRule>;
+    type QualifiedRule = Vec<TopLevelRule>;
     type Error = StyleParseError;
 
     fn parse_prelude<'t>(
@@ -442,10 +486,10 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelParser {
         _start: &ParserState,
         input: &mut Parser<'i>,
     ) -> Result<Self::QualifiedRule, ParseError<Self::Error>> {
-        Ok(vec![QualifiedRule::new(
+        Ok(vec![TopLevelRule::Style(QualifiedRule::new(
             prelude,
             PropertyDeclarationBlock::parse_declarations(input),
-        )])
+        ))])
     }
 }
 
@@ -454,11 +498,12 @@ enum AtPrelude {
     Page(PageSelector),
     /// Whether the media queries match.
     Media(bool),
+    FontFace,
 }
 
 impl<'i> AtRuleParser<'i> for TopLevelParser {
     type Prelude = AtPrelude;
-    type AtRule = Vec<QualifiedRule>;
+    type AtRule = Vec<TopLevelRule>;
     type Error = StyleParseError;
 
     fn parse_prelude<'t>(
@@ -471,6 +516,9 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
             // what is left of an invalid query is skipped with the rule
             while input.next().is_ok() {}
             return Ok(AtPrelude::Media(matches));
+        }
+        if name.eq_ignore_ascii_case("font-face") {
+            return Ok(AtPrelude::FontFace);
         }
         if !name.eq_ignore_ascii_case("page") {
             return Err(ParseError::from_basic_kind(
@@ -522,13 +570,19 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
                 }
                 return Ok(if matches { rules } else { vec![] });
             }
+            AtPrelude::FontFace => {
+                return Ok(parse_font_face(input, &self.base_dir)
+                    .map(TopLevelRule::FontFace)
+                    .into_iter()
+                    .collect());
+            }
         };
         let body = parse_page_body(input);
-        Ok(vec![QualifiedRule {
+        Ok(vec![TopLevelRule::Style(QualifiedRule {
             selectors: GeneralizedSelector::AtPage(prelude),
             properties: body.properties,
             margin_boxes: body.margin_boxes,
-        }])
+        })])
     }
 }
 

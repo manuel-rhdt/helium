@@ -44,7 +44,6 @@ counters(
 counter(
 
 # at-rules, functions and units
-@font-face
 @supports
 @import
 var(

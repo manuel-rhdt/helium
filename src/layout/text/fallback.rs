@@ -40,7 +40,7 @@
 //! Characters that no font covers are collected in the `MissingGlyphs` resource and reported
 //! to the user (see `MissingGlyphs::report`).
 
-use super::font::{Font, color_emoji_font, system_font, use_system_fonts};
+use super::font::{Font, FontContext, color_emoji_font, use_system_fonts};
 use super::fallback_data::*;
 use super::segment::{clusters, is_emoji_cluster, needs_font};
 use crate::style::properties::font_features::Feature;
@@ -483,6 +483,8 @@ pub struct FontResolver {
     /// The colour emoji font, once it has been looked for.
     emoji_font: Option<Option<Arc<Font>>>,
     missing: MissingGlyphs,
+    /// The fonts that the document can use.
+    fonts: Option<Arc<FontContext>>,
 }
 
 impl std::fmt::Debug for FontResolver {
@@ -496,14 +498,33 @@ impl std::fmt::Debug for FontResolver {
 ///
 /// Fonts are referred to by name in the display list, so there must only ever be one `Font` per
 /// name: glyphs that are recorded in a second instance would be missing from the embedded font.
-pub(crate) fn register_font(font_map: &mut FontMap, font: Font) -> Arc<Font> {
-    font_map
-        .entry(font.postscript_name())
-        .or_insert_with(|| Arc::new(font))
-        .clone()
+pub(crate) fn register_font(font_map: &mut FontMap, mut font: Font) -> Arc<Font> {
+    // Different fonts can have the same PostScript name (a font of the document and an installed
+    // one, or two fonts of the document): the later ones get a numbered name, which is what
+    // identifies them from then on.
+    let base = font.postscript_name();
+    let mut name = base.clone();
+    let mut number = 1;
+    while let Some(existing) = font_map.get(&name) {
+        if existing.is_same_file(&font) {
+            return existing.clone();
+        }
+        number += 1;
+        name = format!("{base}-{number}");
+    }
+    font.postscript_name = name.clone();
+    font_map.entry(name).or_insert_with(|| Arc::new(font)).clone()
 }
 
 impl FontResolver {
+    /// Uses the fonts of the document, with its `@font-face` rules, to find fallback fonts.
+    pub fn set_fonts(&mut self, fonts: Arc<FontContext>) {
+        self.fonts = Some(fonts);
+        // (the fonts found so far were found without the faces of the document)
+        self.family_cache.clear();
+        self.cluster_cache.clear();
+    }
+
     /// Makes sure that every cluster of `text`, which is rendered with `font` (the font matched
     /// for `style`), is covered by `font` or by a fallback font of `font` for the font
     /// description of `style`, adding fallback fonts where necessary. Characters that no
@@ -725,10 +746,11 @@ impl FontResolver {
         style: &FontStyle,
         font_map: &mut FontMap,
     ) -> Option<Arc<Font>> {
+        let fonts = self.fonts.get_or_insert_with(FontContext::system).clone();
         self.family_cache
             .entry((format!("{:?}", family), weight.clone(), style.clone()))
             .or_insert_with(|| {
-                system_font(&[family], weight, style).map(|font| register_font(font_map, font))
+                fonts.font(&[family], weight, style).map(|font| register_font(font_map, font))
             })
             .clone()
     }
@@ -1047,6 +1069,7 @@ mod system {
 
 #[cfg(test)]
 mod tests {
+    use crate::layout::text::font::system_font;
     use super::*;
 
     fn named(name: &str) -> FontFamily {

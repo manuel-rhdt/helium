@@ -111,9 +111,16 @@ impl FlowConstructor {
     ) -> Self {
         let mut constructor = FlowConstructor::with_styles(world, stylesheet_base_dir, styles);
         *constructor.entity_constructor.world.write_resource::<FontMap>() = fonts;
+        constructor.use_document_fonts();
         constructor.island_root = Some(island);
         constructor.islands = islands;
         constructor
+    }
+
+    /// Uses the fonts of the style sheets that were read (their `@font-face` rules).
+    pub fn use_document_fonts(&mut self) {
+        let fonts = self.styles.font_context();
+        self.entity_constructor.set_fonts(fonts);
     }
 
     /// Takes the style sheets and the `foreignObject` elements out of the constructor.
@@ -153,7 +160,12 @@ impl FlowConstructor {
         };
         let document =
             crate::svg_dom::document(node, &roots, &self.styles, &inherited, &mut self.islands);
-        match crate::image::svg_from_dom(&document, &self.stylesheet_base_dir, style.font.font_size.0) {
+        match crate::image::svg_from_dom(
+            &document,
+            &self.stylesheet_base_dir,
+            &self.entity_constructor.fonts,
+            style.font.font_size.0,
+        ) {
             Ok(image) => {
                 if let crate::image::LoadedImage::Svg(svg) = &image {
                     foreign_sizes(svg.tree.root(), &mut self.islands);
@@ -423,7 +435,7 @@ impl FlowConstructor {
             if name == &QualName::new(None, ns!(html), local_name!("style")) {
                 for child in TreeLinked::children(node) {
                     if let ParsedData::Text(css) = &child.html_data {
-                        self.styles.parse_css(&css.borrow())
+                        self.styles.parse_css_in(&css.borrow(), &self.stylesheet_base_dir)
                     } else {
                         log::warn!("<style> element did not contain any style information.")
                     }
@@ -768,6 +780,8 @@ impl FontSelector {
 
 pub struct EntityConstructor {
     font_match_cache: HashMap<FontSelector, String>,
+    /// The fonts that the document can use, with its `@font-face` rules.
+    fonts: Arc<super::text::font::FontContext>,
     font_resolver: FontResolver,
     /// Whether the traversal is inside a `<math>` element.
     in_math: bool,
@@ -828,6 +842,7 @@ impl EntityConstructor {
         EntityConstructor {
             world,
             font_match_cache: Default::default(),
+            fonts: super::text::font::FontContext::system(),
             font_resolver: Default::default(),
             in_math: false,
             trim_next_inline_whitespace: true,
@@ -836,6 +851,13 @@ impl EntityConstructor {
             images: Default::default(),
             pending_svg: None,
         }
+    }
+
+    /// Uses the fonts of the document, which are made from its `@font-face` rules.
+    pub fn set_fonts(&mut self, fonts: Arc<super::text::font::FontContext>) {
+        self.font_resolver.set_fonts(fonts.clone());
+        self.font_match_cache.clear();
+        self.fonts = fonts;
     }
 
     /// Records the transform of the node, if it has one, and that the node is inside of the
@@ -886,12 +908,13 @@ impl EntityConstructor {
 
     fn match_font(&mut self, style: &ComputedValues) -> Arc<Font> {
         let font_selector = FontSelector::from_style(&style);
+        let fonts = &self.fonts;
         let mut font_map = self.world.write_resource::<FontMap>();
         let font_name = self
             .font_match_cache
             .entry(font_selector)
             .or_insert_with(|| {
-                let font = crate::layout::text::font::match_font(&style);
+                let font = fonts.match_font(&style);
                 register_font(&mut font_map, font).postscript_name()
             });
         font_map[font_name].clone()
@@ -899,7 +922,7 @@ impl EntityConstructor {
 
     /// Like `match_font`, but prefers a font with an OpenType `MATH` table.
     fn match_math_font(&mut self, style: &ComputedValues) -> Arc<Font> {
-        let font = crate::layout::text::font::match_math_font(style);
+        let font = self.fonts.match_math_font(style);
         let mut font_map = self.world.write_resource::<FontMap>();
         let name = register_font(&mut font_map, font).postscript_name();
         font_map[&name].clone()
@@ -1139,7 +1162,7 @@ impl EntityConstructor {
         let image = self
             .images
             .entry(src.clone())
-            .or_insert_with(|| match crate::image::load(&src, &self.base_dir) {
+            .or_insert_with(|| match crate::image::load(&src, &self.base_dir, &self.fonts) {
                 Ok(image) => Some(Arc::new(image)),
                 Err(error) => {
                     log::warn!("cannot load the image `{}`: {}", src, error);

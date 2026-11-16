@@ -7,7 +7,9 @@
 //! PNG), so the only thing needed to lay an image out is its size in pixels. Only the PNG files
 //! that PDF cannot take as they are (with an alpha channel, or interlaced) are decoded.
 
+use crate::layout::text::font::FontContext;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use lemon_pdf::image::{Image, ImageError};
 
@@ -41,40 +43,34 @@ impl LoadedImage {
 
     /// Reads an image file. The format is recognized by the contents: PNG and JPEG by their
     /// signatures, and everything that looks like XML is read as SVG.
-    pub fn from_bytes(data: Vec<u8>, base_dir: &Path) -> Result<LoadedImage, String> {
+    pub fn from_bytes(data: Vec<u8>, base_dir: &Path, fonts: &Arc<FontContext>) -> Result<LoadedImage, String> {
         if data.starts_with(&[0x89, b'P', b'N', b'G']) || data.starts_with(&[0xFF, 0xD8]) {
             return RasterImage::from_bytes(data).map(LoadedImage::Raster);
         }
         let text = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&data);
         if text.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'<') {
-            return parse_svg(&data, base_dir).map(|tree| LoadedImage::Svg(SvgImage { tree }));
+            return parse_svg(&data, base_dir, fonts).map(|tree| LoadedImage::Svg(SvgImage { tree }));
         }
         Err("only JPEG, PNG and SVG images are supported".to_owned())
     }
 }
 
-/// The shaper of the text of SVG images, shared by all of them so that it keeps the fonts it has
-/// loaded.
-fn shaper() -> std::sync::Arc<dyn usvg::TextShaper> {
-    static SHAPER: std::sync::OnceLock<std::sync::Arc<crate::svg_text::HeliumShaper>> =
-        std::sync::OnceLock::new();
-    SHAPER.get_or_init(Default::default).clone()
-}
 
 /// The options for reading SVG: its own images are resolved under the same rules as the images
 /// of the document (files only inside of `base_dir`, and no network) and its text uses the fonts
 /// of the document.
-fn svg_options(base_dir: &Path) -> usvg::Options<'static> {
+fn svg_options(base_dir: &Path, fonts: &Arc<FontContext>) -> usvg::Options<'static> {
     let mut options = usvg::Options::default();
     options.resources_dir = Some(base_dir.to_path_buf());
-    options.fontdb = crate::layout::text::font::svg_font_database();
+    options.fontdb = fonts.database();
     options.font_family = "serif".to_owned();
-    options.text_shaper = Some(shaper());
+    options.text_shaper = Some(fonts.shaper());
     // the font of a text is the one that the document would choose for it
-    options.font_resolver.select_font = Box::new(|font, _| {
+    let font_context = fonts.clone();
+    options.font_resolver.select_font = Box::new(move |font, _| {
         let mut families = crate::svg_text::helium_families(font);
         families.push(crate::style::properties::computed::FontFamily::SansSerif);
-        crate::layout::text::font::system_font_id(
+        font_context.font_id(
             &families,
             &crate::style::properties::computed::FontWeight(f32::from(font.weight())),
             &crate::svg_text::helium_style(font),
@@ -97,8 +93,8 @@ fn svg_options(base_dir: &Path) -> usvg::Options<'static> {
 }
 
 /// Parses an SVG file.
-fn parse_svg(data: &[u8], base_dir: &Path) -> Result<usvg::Tree, String> {
-    let options = svg_options(base_dir);
+fn parse_svg(data: &[u8], base_dir: &Path, fonts: &Arc<FontContext>) -> Result<usvg::Tree, String> {
+    let options = svg_options(base_dir, fonts);
     // `usvg` is meant for untrusted files, but a panic must not take the document down
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| usvg::Tree::from_data(data, &options)))
         .map_err(|_| "the SVG image could not be processed".to_owned())?
@@ -112,9 +108,10 @@ fn parse_svg(data: &[u8], base_dir: &Path) -> Result<usvg::Tree, String> {
 pub fn svg_from_dom(
     document: &usvg::xml::Document,
     base_dir: &Path,
+    fonts: &Arc<FontContext>,
     font_size: f32,
 ) -> Result<LoadedImage, String> {
-    let mut options = svg_options(base_dir);
+    let mut options = svg_options(base_dir, fonts);
     options.font_size = font_size;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| usvg::Tree::from_xml(document, &options)))
         .map_err(|_| "the SVG image could not be processed".to_owned())?
@@ -236,7 +233,12 @@ fn decode_png(data: &[u8]) -> Result<Image, String> {
 /// `src` is a `data:` URI with base64 data or the path of a file inside of `base_dir` (the
 /// directory of the document). Other files are not read, so that a document cannot embed
 /// arbitrary files of the machine that renders it, and nothing is fetched from the network.
-pub fn load(src: &str, base_dir: &Path) -> Result<LoadedImage, String> {
+pub fn load(src: &str, base_dir: &Path, fonts: &Arc<FontContext>) -> Result<LoadedImage, String> {
+    LoadedImage::from_bytes(read_resource(src, base_dir)?, base_dir, fonts)
+}
+
+/// The bytes that `src` refers to: a `data:` URI or a file inside of `base_dir` (see `load`).
+pub(crate) fn read_resource(src: &str, base_dir: &Path) -> Result<Vec<u8>, String> {
     let src = src.trim();
     if src.is_empty() {
         return Err("the `src` attribute is empty".to_owned());
@@ -245,18 +247,15 @@ pub fn load(src: &str, base_dir: &Path) -> Result<LoadedImage, String> {
         let (header, payload) = rest
             .split_once(',')
             .ok_or_else(|| "a data URI needs a comma before its data".to_owned())?;
-        let data = if header.to_ascii_lowercase().ends_with(";base64") {
-            decode_base64(payload)?
+        return if header.to_ascii_lowercase().ends_with(";base64") {
+            decode_base64(payload)
         } else {
             // text, mostly SVG: percent-encoded
-            percent_decode_bytes(payload)?
+            percent_decode_bytes(payload)
         };
-        return LoadedImage::from_bytes(data, base_dir);
     }
     let path = resolve_path(src, base_dir)?;
-    let data = std::fs::read(&path)
-        .map_err(|error| format!("cannot read {}: {}", path.display(), error))?;
-    LoadedImage::from_bytes(data, base_dir)
+    std::fs::read(&path).map_err(|error| format!("cannot read {}: {}", path.display(), error))
 }
 
 static RESOURCE_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -437,10 +436,10 @@ mod tests {
     #[test]
     fn rejects_other_places() {
         let dir = std::path::Path::new(".");
-        assert!(load("https://example.com/a.jpg", dir).unwrap_err().contains("not supported"));
-        assert!(load("file:///etc/passwd", dir).unwrap_err().contains("not supported"));
-        assert!(load("", dir).is_err());
-        assert!(load("data:image/png,abc", dir).unwrap_err().contains("JPEG, PNG and SVG"));
-        assert!(load("../../etc/passwd", dir).is_err());
+        assert!(load("https://example.com/a.jpg", dir, &FontContext::system()).unwrap_err().contains("not supported"));
+        assert!(load("file:///etc/passwd", dir, &FontContext::system()).unwrap_err().contains("not supported"));
+        assert!(load("", dir, &FontContext::system()).is_err());
+        assert!(load("data:image/png,abc", dir, &FontContext::system()).unwrap_err().contains("JPEG, PNG and SVG"));
+        assert!(load("../../etc/passwd", dir, &FontContext::system()).is_err());
     }
 }

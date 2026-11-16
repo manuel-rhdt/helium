@@ -1,6 +1,7 @@
 pub use super::HarfbuzzFont;
 pub use lemon_pdf::font::FontUnit;
 
+use crate::style::font_face::{FontFaceRule, FontSource};
 use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, PixelLength,
 };
@@ -188,6 +189,12 @@ impl Font {
                 .is_ok_and(|face| face.is_color_glyph(ttf_parser::GlyphId(glyph.0 as u16)))
     }
 
+    /// Whether `other` is the same face of the same font file.
+    pub(crate) fn is_same_file(&self, other: &Font) -> bool {
+        self.index == other.index
+            && (Arc::ptr_eq(&self.data, &other.data) || self.data == other.data)
+    }
+
     /// Whether this font has a glyph for `ch`.
     pub fn covers(&self, ch: char) -> bool {
         self.hb_font.get_nominal_glyph(ch).is_some()
@@ -371,12 +378,6 @@ pub(crate) fn use_system_fonts() -> bool {
     USE_SYSTEM_FONTS.load(Ordering::Relaxed)
 }
 
-/// The font database for the text of SVG images: the same fonts as for the document.
-pub(crate) fn svg_font_database() -> Arc<fontdb::Database> {
-    static DATABASE: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
-    DATABASE.get_or_init(|| Arc::new(system_fonts().clone())).clone()
-}
-
 /// The built-in fonts in the font database, by ID.
 static BUNDLED_IDS: OnceLock<HashMap<fontdb::ID, &'static EmbeddedFont>> = OnceLock::new();
 
@@ -392,7 +393,12 @@ fn face_data(db: &fontdb::Database, id: fontdb::ID) -> Option<(Arc<Vec<u8>>, u32
 /// The fonts installed on the system (unless disabled, see `use_system_fonts`) and the fonts
 /// built into Helium, scanned once.
 fn system_fonts() -> &'static fontdb::Database {
-    static DATABASE: OnceLock<fontdb::Database> = OnceLock::new();
+    system_database()
+}
+
+/// The database of `system_fonts`, shared by the font contexts of the documents.
+fn system_database() -> &'static Arc<fontdb::Database> {
+    static DATABASE: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
     DATABASE.get_or_init(|| {
         let mut db = fontdb::Database::new();
         if use_system_fonts() {
@@ -436,7 +442,7 @@ fn system_fonts() -> &'static fontdb::Database {
                 }
             }
         }
-        db
+        Arc::new(db)
     })
 }
 
@@ -474,32 +480,266 @@ pub(crate) fn color_emoji_font() -> Option<Font> {
     Font::load(data, index)
 }
 
-/// The face of the font database that best matches the first available of `families`.
+/// The faces of a family that a document defines with `@font-face`.
+#[derive(Debug)]
+struct AuthorFace {
+    id: fontdb::ID,
+    /// The weights that the face is for.
+    weight: (f32, f32),
+    style: FontStyle,
+}
+
+/// The fonts that a document can use: the installed fonts and the ones built into Helium, and
+/// the faces of its `@font-face` rules. The faces of a family that the document defines hide the
+/// installed fonts of the same name.
 ///
-/// The font database of the SVG images is a copy of this one, so the IDs are the same.
-pub(crate) fn system_font_id(
-    families: &[FontFamily],
+/// There is one for every document, made from its style sheets (see `Styles::font_context`);
+/// documents without `@font-face` rules share the one of the system.
+pub struct FontContext {
+    /// The faces of the installed fonts, of the built-in ones and of the `@font-face` rules. The
+    /// same database is used for the text of SVG images.
+    db: Arc<fontdb::Database>,
+    /// The faces of the families defined by `@font-face`, by lowercase family name. A family
+    /// whose sources cannot all be loaded is in here too, without faces: it does not fall back to
+    /// the installed fonts of that name.
+    author: HashMap<String, Vec<AuthorFace>>,
+    /// The face of the database for a font, by PostScript name and size of the font file.
+    face_ids: Mutex<BTreeMap<(String, usize), Option<fontdb::ID>>>,
+    /// The shaper of the text of SVG images, shared by all of them so that it keeps the fonts it
+    /// has loaded.
+    shaper: OnceLock<Arc<crate::svg_text::HeliumShaper>>,
+}
+
+impl std::fmt::Debug for FontContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("FontContext").field("author_families", &self.author.keys()).finish()
+    }
+}
+
+impl FontContext {
+    /// The fonts of the system (and the built-in ones) alone.
+    pub fn system() -> Arc<FontContext> {
+        static SYSTEM: OnceLock<Arc<FontContext>> = OnceLock::new();
+        SYSTEM
+            .get_or_init(|| Arc::new(FontContext::with_database(system_database().clone(), HashMap::new())))
+            .clone()
+    }
+
+    fn with_database(db: Arc<fontdb::Database>, author: HashMap<String, Vec<AuthorFace>>) -> Self {
+        FontContext { db, author, face_ids: Default::default(), shaper: Default::default() }
+    }
+
+    /// The fonts of a document with the given `@font-face` rules.
+    pub fn new(rules: &[FontFaceRule]) -> Arc<FontContext> {
+        if rules.is_empty() {
+            return FontContext::system();
+        }
+        let system = system_database();
+        // the faces in order of the rules; a family is defined even if none of its faces loads
+        let mut loaded: HashMap<String, Vec<(fontdb::FaceInfo, (f32, f32), FontStyle)>> = HashMap::new();
+        for rule in rules {
+            let faces = loaded.entry(rule.family.to_lowercase()).or_default();
+            match load_face(system, rule) {
+                Some(info) => faces.push((info, rule.weight, rule.style.clone())),
+                None => log::warn!(
+                    "@font-face \"{}\": none of the sources could be used",
+                    rule.family
+                ),
+            }
+        }
+
+        let mut db = (**system).clone();
+        let hidden: Vec<fontdb::ID> = db
+            .faces()
+            .filter(|face| {
+                face.families.iter().any(|(name, _)| loaded.contains_key(&name.to_lowercase()))
+            })
+            .map(|face| face.id)
+            .collect();
+        for id in hidden {
+            db.remove_face(id);
+        }
+        let author = loaded
+            .into_iter()
+            .map(|(family, faces)| {
+                let faces = faces
+                    .into_iter()
+                    .map(|(info, weight, style)| AuthorFace { id: db.push_face_info(info), weight, style })
+                    .collect();
+                (family, faces)
+            })
+            .collect();
+        Arc::new(FontContext::with_database(Arc::new(db), author))
+    }
+
+    /// The font database of the document, which the text of SVG images uses too.
+    pub(crate) fn database(&self) -> Arc<fontdb::Database> {
+        self.db.clone()
+    }
+
+    /// The shaper of the text of SVG images.
+    pub(crate) fn shaper(self: &Arc<Self>) -> Arc<dyn usvg::TextShaper> {
+        self.shaper
+            .get_or_init(|| Arc::new(crate::svg_text::HeliumShaper::new(Arc::downgrade(self))))
+            .clone()
+    }
+
+    /// The face of the font database that best matches the first available of `families`.
+    pub(crate) fn font_id(
+        &self,
+        families: &[FontFamily],
+        weight: &FontWeight,
+        style: &FontStyle,
+    ) -> Option<fontdb::ID> {
+        families.iter().find_map(|family| {
+            if let FontFamily::Named(name) = family {
+                if let Some(faces) = self.author.get(&name.to_lowercase()) {
+                    // the family is the document's: the installed fonts of that name are hidden
+                    return best_author_face(faces, weight.0, style);
+                }
+            }
+            query_family(&self.db, family, weight, style)
+        })
+    }
+
+    /// The font that best matches the first available of `families`.
+    pub(crate) fn font(
+        &self,
+        families: &[FontFamily],
+        weight: &FontWeight,
+        style: &FontStyle,
+    ) -> Option<Font> {
+        let id = self.font_id(families, weight, style)?;
+        let (data, index) = face_data(&self.db, id)?;
+        Font::load(data, index)
+    }
+
+    /// The font for `style`: the first available family of `font-family`, else the sans-serif
+    /// font, else the font built into Helium.
+    pub fn match_font(&self, style: &ComputedValues) -> Font {
+        let families = style
+            .font
+            .font_family
+            .iter()
+            .cloned()
+            .chain([FontFamily::SansSerif])
+            .collect::<Vec<_>>();
+        self.font(&families, &style.font.font_weight, &style.font.font_style)
+            .unwrap_or_else(|| Font::bundled(&style.font.font_weight))
+    }
+
+    /// The font for MathML text: the font of `font-family` if it has a `MATH` table, else Latin
+    /// Modern Math, else STIX Two Math (both are built in), else the font of `match_font`.
+    pub fn match_math_font(&self, style: &ComputedValues) -> Font {
+        let font = self.match_font(style);
+        if font.has_math_table() {
+            return font;
+        }
+        let bundled = MATH_FAMILIES
+            .iter()
+            .map(|name| [FontFamily::Named((*name).to_owned())])
+            .find_map(|family| self.font(&family, &style.font.font_weight, &style.font.font_style))
+            .filter(Font::has_math_table);
+        bundled.unwrap_or(font)
+    }
+
+    /// The face of the font database that is `font`, if the font is in it: fonts that were found
+    /// by other means (fontconfig) are not.
+    pub(crate) fn svg_face_id(&self, font: &Font) -> Option<fontdb::ID> {
+        let key = (font.postscript_name.clone(), font.data.len());
+        let mut cache = self.face_ids.lock();
+        if let Some(id) = cache.get(&key) {
+            return *id;
+        }
+        let db = &*self.db;
+        // fonts of the same name (the bitmap and the vector build of one family) are told apart
+        // by their data
+        let id = db
+            .faces()
+            .filter(|face| face.post_script_name == font.postscript_name)
+            .find(|face| {
+                db.with_face_data(face.id, |data, index| {
+                    index == font.index && data == font.data.as_slice()
+                })
+                .unwrap_or(false)
+            })
+            .map(|face| face.id);
+        cache.insert(key, id);
+        id
+    }
+}
+
+/// The face of the document's family whose descriptors match the request best (CSS Fonts 4,
+/// § 5.2): first the style, then the weight. Of equal faces the one of the later rule is taken.
+fn best_author_face(faces: &[AuthorFace], weight: f32, style: &FontStyle) -> Option<fontdb::ID> {
+    // the preferred styles in order
+    let styles: [FontStyle; 3] = match style {
+        FontStyle::Normal => [FontStyle::Normal, FontStyle::Oblique, FontStyle::Italic],
+        FontStyle::Italic => [FontStyle::Italic, FontStyle::Oblique, FontStyle::Normal],
+        FontStyle::Oblique => [FontStyle::Oblique, FontStyle::Italic, FontStyle::Normal],
+    };
+    let candidates: Vec<&AuthorFace> = styles
+        .iter()
+        .find_map(|wanted| {
+            let found: Vec<&AuthorFace> = faces.iter().filter(|face| &face.style == wanted).collect();
+            (!found.is_empty()).then_some(found)
+        })?;
+    // a face that is for the weight, or else the nearest one in the direction that the weight
+    // asks for: heavier first for weights above 500 and lighter first for those below 400, and
+    // for the weights in between up to 500, then lighter ones, then heavier ones
+    let covers = |face: &AuthorFace| face.weight.0 <= weight && weight <= face.weight.1;
+    let heavier = |face: &AuthorFace| face.weight.0 > weight;
+    let rank = |face: &AuthorFace| -> (u8, f32) {
+        if covers(face) {
+            return (0, 0.0);
+        }
+        // the distance from the requested weight to the nearest weight of the face
+        let distance = if heavier(face) { face.weight.0 - weight } else { weight - face.weight.1 };
+        let group = if weight < 400.0 {
+            if heavier(face) { 2 } else { 1 }
+        } else if weight > 500.0 {
+            if heavier(face) { 1 } else { 2 }
+        } else if heavier(face) {
+            // 400 to 500: heavier faces up to 500 come first
+            if face.weight.0 <= 500.0 { 1 } else { 3 }
+        } else {
+            2
+        };
+        (group, distance)
+    };
+    candidates
+        .into_iter()
+        .enumerate()
+        // later faces win ties: compare the rank, then prefer the higher index
+        .min_by(|(i, a), (j, b)| {
+            let (ra, rb) = (rank(a), rank(b));
+            ra.0.cmp(&rb.0)
+                .then(ra.1.partial_cmp(&rb.1).unwrap_or(std::cmp::Ordering::Equal))
+                .then(j.cmp(i))
+        })
+        .map(|(_, face)| face.id)
+}
+
+/// The face of `db` that best matches `family`, with the bundled stand-in of a standard font
+/// name, which is only used when the name itself is not installed.
+fn query_family(
+    db: &fontdb::Database,
+    family: &FontFamily,
     weight: &FontWeight,
     style: &FontStyle,
 ) -> Option<fontdb::ID> {
-    let db = system_fonts();
-    // A requested standard font name is followed by its bundled stand-in, which is only used
-    // when the name itself is not installed.
-    let families = families
-        .iter()
-        .flat_map(|family| match family {
-            FontFamily::Monospace => vec![fontdb::Family::Monospace],
-            FontFamily::SansSerif => vec![fontdb::Family::SansSerif],
-            FontFamily::Serif => vec![fontdb::Family::Serif],
-            FontFamily::Named(name) => {
-                let alias = BUNDLED_ALIASES
-                    .iter()
-                    .find(|(from, _)| from.eq_ignore_ascii_case(name))
-                    .map(|(_, to)| fontdb::Family::Name(to));
-                [Some(fontdb::Family::Name(name)), alias].into_iter().flatten().collect()
-            }
-        })
-        .collect::<Vec<_>>();
+    let families: Vec<fontdb::Family> = match family {
+        FontFamily::Monospace => vec![fontdb::Family::Monospace],
+        FontFamily::SansSerif => vec![fontdb::Family::SansSerif],
+        FontFamily::Serif => vec![fontdb::Family::Serif],
+        FontFamily::Named(name) => {
+            let alias = BUNDLED_ALIASES
+                .iter()
+                .find(|(from, _)| from.eq_ignore_ascii_case(name))
+                .map(|(_, to)| fontdb::Family::Name(to));
+            [Some(fontdb::Family::Name(name)), alias].into_iter().flatten().collect()
+        }
+    };
     db.query(&fontdb::Query {
         families: &families,
         weight: fontdb::Weight(weight.0.round().clamp(1.0, 1000.0) as u16),
@@ -512,74 +752,98 @@ pub(crate) fn system_font_id(
     })
 }
 
+/// The face for the first of the sources of `rule` that can be used, as an entry of a font
+/// database under the family name of the rule.
+fn load_face(system: &fontdb::Database, rule: &FontFaceRule) -> Option<fontdb::FaceInfo> {
+    let style = match rule.style {
+        FontStyle::Normal => fontdb::Style::Normal,
+        FontStyle::Italic => fontdb::Style::Italic,
+        FontStyle::Oblique => fontdb::Style::Oblique,
+    };
+    let families = vec![(rule.family.clone(), fontdb::Language::English_UnitedStates)];
+    for source in &rule.sources {
+        match source {
+            FontSource::Local(name) => {
+                let found = system
+                    .faces()
+                    .find(|face| face.post_script_name.eq_ignore_ascii_case(name))
+                    .map(|face| face.id)
+                    .or_else(|| {
+                        query_family(
+                            system,
+                            &FontFamily::Named(name.clone()),
+                            &FontWeight(rule.weight.0),
+                            &rule.style,
+                        )
+                    })
+                    .and_then(|id| system.face(id));
+                match found {
+                    Some(face) => {
+                        let mut info = face.clone();
+                        info.families = families;
+                        info.style = style;
+                        return Some(info);
+                    }
+                    None => log::info!("@font-face \"{}\": no installed font \"{}\"", rule.family, name),
+                }
+            }
+            FontSource::Url(url) => {
+                let data = match crate::image::read_resource(url, &rule.base_dir) {
+                    Ok(data) => data,
+                    Err(error) => {
+                        log::warn!("@font-face \"{}\": cannot read the font `{}`: {}", rule.family, url, error);
+                        continue;
+                    }
+                };
+                if data.starts_with(b"wOFF") || data.starts_with(b"wOF2") {
+                    log::warn!("@font-face \"{}\": `{}` is a WOFF file, which is not supported", rule.family, url);
+                    continue;
+                }
+                let data = Arc::new(data);
+                let Some(font) = Font::load(data.clone(), 0) else {
+                    log::warn!("@font-face \"{}\": `{}` is not a valid font", rule.family, url);
+                    continue;
+                };
+                let monospaced = ttf_parser::Face::parse(&data, 0).is_ok_and(|face| face.is_monospaced());
+                return Some(fontdb::FaceInfo {
+                    id: fontdb::ID::dummy(),
+                    source: fontdb::Source::Binary(data),
+                    index: 0,
+                    families,
+                    post_script_name: font.postscript_name,
+                    style,
+                    weight: fontdb::Weight(rule.weight.0.round().clamp(1.0, 1000.0) as u16),
+                    stretch: fontdb::Stretch::Normal,
+                    monospaced,
+                });
+            }
+        }
+    }
+    None
+}
+
 /// The installed font that best matches the first available of `families`.
+#[cfg(test)]
 pub(crate) fn system_font(
     families: &[FontFamily],
     weight: &FontWeight,
     style: &FontStyle,
 ) -> Option<Font> {
-    let id = system_font_id(families, weight, style)?;
-    let (data, index) = face_data(system_fonts(), id)?;
-    Font::load(data, index)
+    FontContext::system().font(families, weight, style)
 }
 
-/// The face of the font database of the SVG images that is `font`, if the font is in it: fonts
-/// that were found by other means (fontconfig) are not.
-pub(crate) fn svg_face_id(font: &Font) -> Option<fontdb::ID> {
-    use std::sync::Mutex;
-    static CACHE: OnceLock<Mutex<BTreeMap<(String, usize), Option<fontdb::ID>>>> = OnceLock::new();
-    let key = (font.postscript_name.clone(), font.data.len());
-    let mut cache = CACHE.get_or_init(Default::default).lock().ok()?;
-    if let Some(id) = cache.get(&key) {
-        return *id;
-    }
-    let db = system_fonts();
-    // fonts of the same name (the bitmap and the vector build of one family) are told apart by
-    // their data
-    let id = db
-        .faces()
-        .filter(|face| face.post_script_name == font.postscript_name)
-        .find(|face| {
-            db.with_face_data(face.id, |data, index| index == font.index && data == font.data.as_slice())
-                .unwrap_or(false)
-        })
-        .map(|face| face.id);
-    cache.insert(key, id);
-    id
-}
-
-/// The font for `style`: the first installed family of `font-family`, else the system's
-/// sans-serif font, else the font built into Helium.
+/// The font for `style` among the installed fonts (see `FontContext::match_font`).
 pub fn match_font(style: &ComputedValues) -> Font {
-    let families = style
-        .font
-        .font_family
-        .iter()
-        .cloned()
-        .chain([FontFamily::SansSerif])
-        .collect::<Vec<_>>();
-    system_font(&families, &style.font.font_weight, &style.font.font_style)
-        .unwrap_or_else(|| Font::bundled(&style.font.font_weight))
+    FontContext::system().match_font(style)
 }
 
-/// The font for MathML text: the font of `font-family` if it has a `MATH` table, else Latin
-/// Modern Math, else STIX Two Math (both are built in), else the font of `match_font`.
+/// The font for MathML text among the installed fonts (see `FontContext::match_math_font`).
 pub fn match_math_font(style: &ComputedValues) -> Font {
-    let font = match_font(style);
-    if font.has_math_table() {
-        return font;
-    }
-    let bundled = MATH_FAMILIES
-        .iter()
-        .map(|name| [FontFamily::Named((*name).to_owned())])
-        .find_map(|family| system_font(&family, &style.font.font_weight, &style.font.font_style))
-        .filter(Font::has_math_table);
-    bundled.unwrap_or(font)
+    FontContext::system().match_math_font(style)
 }
-
 #[cfg(test)]
 mod tests {
-    use super::{ComputedValues, Font, FontWeight, match_font};
+    use super::{AuthorFace, ComputedValues, Font, FontStyle, FontWeight, best_author_face, match_font};
     use crate::style::properties::specified::FontFamily;
 
     #[test]
@@ -667,6 +931,74 @@ mod tests {
             .unwrap();
             assert_eq!(installed.postscript_name(), name, "{weight}");
         }
+    }
+
+    fn faces(descriptors: &[(f32, f32, FontStyle)]) -> Vec<AuthorFace> {
+        let mut db = fontdb::Database::new();
+        descriptors
+            .iter()
+            .map(|(lo, hi, style)| AuthorFace {
+                id: db.push_face_info(fontdb::FaceInfo {
+                    id: fontdb::ID::dummy(),
+                    source: fontdb::Source::Binary(std::sync::Arc::new(Vec::<u8>::new())),
+                    index: 0,
+                    families: vec![],
+                    post_script_name: String::new(),
+                    style: fontdb::Style::Normal,
+                    weight: fontdb::Weight::NORMAL,
+                    stretch: fontdb::Stretch::Normal,
+                    monospaced: false,
+                }),
+                weight: (*lo, *hi),
+                style: style.clone(),
+            })
+            .collect()
+    }
+
+    /// The index of the face that is chosen for `weight` and `style`.
+    fn chosen(faces: &[AuthorFace], weight: f32, style: FontStyle) -> Option<usize> {
+        let id = best_author_face(faces, weight, &style)?;
+        faces.iter().position(|face| face.id == id)
+    }
+
+    #[test]
+    fn author_faces_are_matched_like_css_fonts_4() {
+        use FontStyle::{Italic, Normal, Oblique};
+        let f = faces(&[(300.0, 300.0, Normal), (400.0, 400.0, Normal), (600.0, 600.0, Normal), (800.0, 800.0, Normal)]);
+        // a face for the weight
+        assert_eq!(chosen(&f, 400.0, Normal), Some(1));
+        assert_eq!(chosen(&f, 800.0, Normal), Some(3));
+        // above 500: heavier first, then lighter
+        assert_eq!(chosen(&f, 700.0, Normal), Some(3));
+        assert_eq!(chosen(&f, 900.0, Normal), Some(3));
+        // below 400: lighter first, then heavier
+        assert_eq!(chosen(&f, 200.0, Normal), Some(0));
+        assert_eq!(chosen(&f, 350.0, Normal), Some(0));
+        // 500: 400 if there is no 500, before the heavier faces
+        assert_eq!(chosen(&f, 500.0, Normal), Some(1));
+        // 400 to 500: a face between the weight and 500 comes first
+        let g = faces(&[(300.0, 300.0, Normal), (450.0, 450.0, Normal), (700.0, 700.0, Normal)]);
+        assert_eq!(chosen(&g, 400.0, Normal), Some(1));
+        assert_eq!(chosen(&g, 500.0, Normal), Some(1));
+        // ranges contain their weights
+        let r = faces(&[(100.0, 300.0, Normal), (500.0, 900.0, Normal)]);
+        assert_eq!(chosen(&r, 250.0, Normal), Some(0));
+        assert_eq!(chosen(&r, 700.0, Normal), Some(1));
+        // 400 looks at the weights up to 500 first, and the second face starts at 500
+        assert_eq!(chosen(&r, 400.0, Normal), Some(1));
+        assert_eq!(chosen(&r, 450.0, Normal), Some(1));
+        assert_eq!(chosen(&r, 350.0, Normal), Some(0));
+        // styles: italic prefers oblique, normal prefers oblique to italic; the style wins
+        let s = faces(&[(400.0, 400.0, Normal), (700.0, 700.0, Italic), (400.0, 400.0, Oblique)]);
+        assert_eq!(chosen(&s, 700.0, Normal), Some(0));
+        assert_eq!(chosen(&s, 400.0, Italic), Some(1));
+        assert_eq!(chosen(&s, 700.0, Oblique), Some(2));
+        let o = faces(&[(400.0, 400.0, Normal), (400.0, 400.0, Oblique)]);
+        assert_eq!(chosen(&o, 400.0, Italic), Some(1));
+        // the later of equal faces wins
+        let twice = faces(&[(400.0, 400.0, Normal), (400.0, 400.0, Normal)]);
+        assert_eq!(chosen(&twice, 400.0, Normal), Some(1));
+        assert_eq!(chosen(&[], 400.0, Normal), None);
     }
 }
 #[cfg(test)]
