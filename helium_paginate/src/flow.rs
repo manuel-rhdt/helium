@@ -9,6 +9,11 @@ pub type ItemId = usize;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct NodeRef(pub u32);
 
+/// A box of the document that the layout service can lay out on its own, at a width that is not
+/// the width of any box around it: the root of a subtree (see `LayoutService::content_extent`).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct BoxRef(pub u32);
+
 /// A paragraph of the flow.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ParId(pub u32);

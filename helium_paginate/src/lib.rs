@@ -16,7 +16,7 @@ mod service;
 mod solver;
 mod token;
 
-pub use flow::{BreakKind, Item, ItemId, NodeRef, PageKind, PageSpec, PageTable, ParId, Problem};
+pub use flow::{BoxRef, BreakKind, Item, ItemId, NodeRef, PageKind, PageSpec, PageTable, ParId, Problem};
 pub use kernel::{Invalid, Kernel, PageFill, PageStart, Solution};
 pub use service::{GalleyFlow, GalleyService, LayoutService};
 pub use solver::{CssObjective, ExactSolver, Objective, Solver};

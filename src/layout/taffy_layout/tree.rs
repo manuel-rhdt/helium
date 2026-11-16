@@ -104,6 +104,10 @@ pub(super) struct Node {
     /// The width the lines of the paragraph were last broken for, and the indent of the first
     /// line, as the measure function was given them when the box was laid out for real.
     pub measured: Option<(f32, f32)>,
+    /// The inline context of a box with `inline-block` boxes as it was before their widths were
+    /// applied, and the line width and the height that the boxes were laid out for. Together
+    /// they let a layout at another width size the boxes again (see [`super::subtree`]).
+    pub atoms_before: Option<Box<(InlineFormattingContext, f32, Option<f32>)>>,
     pub cache: Cache,
     pub layout: Layout,
 }
@@ -204,6 +208,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             window_style: None,
             windowed: false,
             measured: None,
+            atoms_before: None,
             cache: Cache::new(),
             layout: Layout::new(),
         });
@@ -610,7 +615,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
 
 // --- layout of the leaves ---
 
-fn calc(_val: *const (), _basis: f32) -> f32 {
+pub(super) fn calc(_val: *const (), _basis: f32) -> f32 {
     0.0
 }
 
@@ -657,11 +662,14 @@ impl HeliumTree<'_, '_> {
                 }
                 .max(0.0)
             });
+        let entity = self.node(id).entity;
+        if let Some(ifc) = self.inline_ctxs.get(entity) {
+            self.node_mut(id).atoms_before = Some(Box::new((ifc.clone(), line_width, containing_height)));
+        }
         for &atom in &atoms {
             self.layout_atom(atom, line_width, containing_height);
         }
 
-        let entity = self.node(id).entity;
         let widths = atoms
             .iter()
             .filter_map(|&atom| {
@@ -678,7 +686,7 @@ impl HeliumTree<'_, '_> {
     /// margin box and its baseline as its [`IntrinsicSize`].
     ///
     /// https://www.w3.org/TR/CSS22/visudet.html#inlineblock-width
-    fn layout_atom(&mut self, atom: NodeId, line_width: f32, containing_height: Option<f32>) {
+    pub(super) fn layout_atom(&mut self, atom: NodeId, line_width: f32, containing_height: Option<f32>) {
         let style = self.item_style(atom);
         // `auto` margins are 0
         let margin = style.margin.resolve_or_zero(Some(line_width), calc);

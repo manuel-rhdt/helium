@@ -1,4 +1,4 @@
-use crate::flow::{BreakKind, Item, NodeRef, PageTable, ParId, Problem};
+use crate::flow::{BoxRef, BreakKind, Item, NodeRef, PageTable, ParId, Problem};
 use crate::token::Cut;
 use std::rc::Rc;
 
@@ -25,21 +25,52 @@ pub trait LayoutService {
     /// the paragraph) to its end. The paragraphs are rigid: the lines are what the paragraph
     /// has when it is broken for the page. The same arguments give the same lines.
     fn lines(&mut self, par: ParId, from: Option<Cut>, page_inline: f32) -> Rc<[ParLine]>;
+
+    // The questions about a subtree. They are for a box whose content is laid out at a width that
+    // is not the width of any box around it: the columns of a multi-column container, or the
+    // table that continues on a page of another width. The box `root` is laid out on its own, as
+    // the root of a formatting context, with the *content box* of `root` `inline` wide: its own
+    // `width` (and `min-width` and `max-width`) do not apply, its padding and border are added
+    // around the width, and percentages in its own padding refer to `inline`. Everything inside
+    // it is laid out by the usual rules for that content width. The same arguments give the same
+    // answers, and asking does not change what the other methods answer.
+
+    /// The block size of the content box of `root` when its content box is `inline` wide.
+    fn content_extent(&mut self, root: BoxRef, inline: f32) -> f64;
+
+    /// The extent of a `Box` or a `Gap` that is inside `root`, when the content box of `root` is
+    /// `inline` wide. `extent` answers for the same boxes on a page.
+    fn extent_in(&mut self, root: BoxRef, node: NodeRef, inline: f32) -> f64;
+
+    /// The lines of a paragraph that is inside `root`, when the content box of `root` is
+    /// `inline` wide: the lines for the width and the indent that the paragraph is given there.
+    /// `lines` answers for the same paragraphs on a page.
+    fn lines_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> Rc<[ParLine]>;
 }
 
 /// A layout service that is backed by a galley: the document laid out once, at one width. The
 /// extents are what the layout of the galley has computed, whatever the width of the page. The
 /// cut of a paragraph is the number of the line that follows it.
+///
+/// The answers for a subtree are the same whatever the width: the service has one layout only.
 #[derive(Debug, Default, Clone)]
 pub struct GalleyService {
     nodes: Vec<f64>,
     paragraphs: Vec<Vec<f64>>,
+    /// The extent of the content of every box that can be a subtree root.
+    boxes: Vec<f64>,
 }
 
 impl GalleyService {
     pub fn add_node(&mut self, extent: f64) -> NodeRef {
         self.nodes.push(extent);
         NodeRef(self.nodes.len() as u32 - 1)
+    }
+
+    /// A box that can be asked about as the root of a subtree, with the extent of its content.
+    pub fn add_box(&mut self, content_extent: f64) -> BoxRef {
+        self.boxes.push(content_extent);
+        BoxRef(self.boxes.len() as u32 - 1)
     }
 
     pub fn add_paragraph(&mut self, line_extents: Vec<f64>) -> ParId {
@@ -64,6 +95,18 @@ impl LayoutService for GalleyService {
                 end: Cut(line as u32 + 1),
             })
             .collect()
+    }
+
+    fn content_extent(&mut self, root: BoxRef, _inline: f32) -> f64 {
+        self.boxes[root.0 as usize]
+    }
+
+    fn extent_in(&mut self, _root: BoxRef, node: NodeRef, inline: f32) -> f64 {
+        self.extent(node, inline)
+    }
+
+    fn lines_in(&mut self, _root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> Rc<[ParLine]> {
+        self.lines(par, from, inline)
     }
 }
 
@@ -125,5 +168,31 @@ impl GalleyFlow {
 
     pub fn finish(self, pages: PageTable) -> (Problem, GalleyService) {
         (Problem::new(pages, self.items), self.service)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_galley_answers_for_a_subtree_with_what_it_has_whatever_the_width() {
+        let mut flow = GalleyFlow::new();
+        flow.content(30.0).paragraph(&[10.0, 12.0, 14.0], 2, 2, false);
+        let (_, mut service) = flow.finish(PageTable::uniform(Default::default()));
+        let root = service.add_box(36.0);
+        for inline in [100.0, 250.0] {
+            assert_eq!(service.content_extent(root, inline), 36.0);
+            assert_eq!(service.extent_in(root, NodeRef(0), inline), 30.0);
+            let lines = service.lines_in(root, ParId(0), Some(Cut(1)), inline);
+            assert_eq!(lines.iter().map(|line| line.extent).collect::<Vec<_>>(), [12.0, 14.0]);
+            assert_eq!(lines[0].end, Cut(2));
+            assert_eq!(lines, service.lines(ParId(0), Some(Cut(1)), inline));
+        }
+        // a second box has an extent of its own
+        let other = service.add_box(5.0);
+        assert_ne!(other, root);
+        assert_eq!(service.content_extent(other, 100.0), 5.0);
+        assert_eq!(service.content_extent(root, 100.0), 36.0);
     }
 }

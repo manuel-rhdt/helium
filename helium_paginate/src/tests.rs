@@ -686,6 +686,19 @@ impl LayoutService for Characters {
         }
         lines.into()
     }
+
+    // (the paragraph does not have subtrees)
+    fn content_extent(&mut self, _: BoxRef, _: f32) -> f64 {
+        0.0
+    }
+
+    fn extent_in(&mut self, _: BoxRef, _: NodeRef, _: f32) -> f64 {
+        0.0
+    }
+
+    fn lines_in(&mut self, _: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> std::rc::Rc<[ParLine]> {
+        self.lines(par, from, inline)
+    }
 }
 
 #[test]

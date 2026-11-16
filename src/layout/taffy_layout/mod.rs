@@ -15,6 +15,7 @@ mod paginate;
 mod replaced;
 mod service;
 mod style;
+mod subtree;
 mod table;
 mod tree;
 mod window;
@@ -48,6 +49,27 @@ const ABS_Z_STEP: i64 = 100000;
 /// be bigger than the depth of any tree, and it is smaller than [`ABS_Z_STEP`] to leave room
 /// for the absolutely positioned boxes above.
 const REL_Z_STEP: i64 = 1000;
+
+/// Hooks for the tests of the layout service: a test can ask the service questions in front of
+/// the pagination and behind it (before the pages are laid out), in the middle of a real layout.
+#[cfg(test)]
+pub(super) mod probe {
+    use super::service::TreeService;
+    use std::cell::RefCell;
+
+    pub type Hook = Box<dyn FnOnce(&mut TreeService<'_, '_, '_>)>;
+
+    thread_local! {
+        pub static BEFORE: RefCell<Option<Hook>> = const { RefCell::new(None) };
+        pub static AFTER: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    pub fn call(which: &'static std::thread::LocalKey<RefCell<Option<Hook>>>, service: &mut TreeService<'_, '_, '_>) {
+        if let Some(hook) = which.with(|hook| hook.borrow_mut().take()) {
+            hook(service);
+        }
+    }
+}
 
 pub struct TaffyBlockLayout {
     pub root_entity: Entity,
@@ -139,6 +161,8 @@ impl TaffyBlockLayout {
         // choose the pages
         let before = std::time::Instant::now();
         let mut service = service::TreeService::new(&mut tree, &flow, first_spec.block_size);
+        #[cfg(test)]
+        probe::call(&probe::BEFORE, &mut service);
         // (start of the page, its end, the page)
         let mut planned: Vec<(helium_paginate::PageStart, helium_paginate::Position, helium_paginate::Position, helium_paginate::PageFill)> = vec![];
         {
@@ -170,6 +194,8 @@ impl TaffyBlockLayout {
                 ));
             }
         }
+        #[cfg(test)]
+        probe::call(&probe::AFTER, &mut service);
         log::info!("TIMED: paginate {:?}", before.elapsed());
         log::debug!("{} pages, laid out for {} widths", planned.len(), service.galleys());
         let before = std::time::Instant::now();
@@ -745,6 +771,9 @@ impl Frame {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod subtree_tests;
 
 #[cfg(test)]
 mod tests {
