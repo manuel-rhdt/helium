@@ -234,11 +234,28 @@ fn decode_png(data: &[u8]) -> Result<Image, String> {
 /// directory of the document). Other files are not read, so that a document cannot embed
 /// arbitrary files of the machine that renders it, and nothing is fetched from the network.
 pub fn load(src: &str, base_dir: &Path, fonts: &Arc<FontContext>) -> Result<LoadedImage, String> {
-    LoadedImage::from_bytes(read_resource(src, base_dir)?, base_dir, fonts)
+    load_relative(src, base_dir, base_dir, fonts)
+}
+
+/// Like [`load`] for a `src` that is relative to `relative_to`, which is not the directory of the
+/// document if it is the one of a style sheet; the file must be inside of `root` (the directory
+/// of the document, or the resource root, see `set_resource_root`).
+pub fn load_relative(
+    src: &str,
+    relative_to: &Path,
+    root: &Path,
+    fonts: &Arc<FontContext>,
+) -> Result<LoadedImage, String> {
+    LoadedImage::from_bytes(read_resource_in(src, relative_to, root)?, root, fonts)
 }
 
 /// The bytes that `src` refers to: a `data:` URI or a file inside of `base_dir` (see `load`).
 pub(crate) fn read_resource(src: &str, base_dir: &Path) -> Result<Vec<u8>, String> {
+    read_resource_in(src, base_dir, base_dir)
+}
+
+/// [`read_resource`] for a `src` that is relative to `relative_to`, inside of `root`.
+pub(crate) fn read_resource_in(src: &str, relative_to: &Path, root: &Path) -> Result<Vec<u8>, String> {
     let src = src.trim();
     if src.is_empty() {
         return Err("the `src` attribute is empty".to_owned());
@@ -254,7 +271,7 @@ pub(crate) fn read_resource(src: &str, base_dir: &Path) -> Result<Vec<u8>, Strin
             percent_decode_bytes(payload)
         };
     }
-    let path = resolve_path(src, base_dir)?;
+    let path = resolve_path_in(src, relative_to, root)?;
     std::fs::read(&path).map_err(|error| format!("cannot read {}: {}", path.display(), error))
 }
 
@@ -270,6 +287,11 @@ pub fn set_resource_root(root: PathBuf) {
 /// The file that a relative URL refers to, if it is inside of `base_dir` (or of the resource
 /// root, see `set_resource_root`).
 fn resolve_path(src: &str, base_dir: &Path) -> Result<PathBuf, String> {
+    resolve_path_in(src, base_dir, base_dir)
+}
+
+/// [`resolve_path`] for a URL that is relative to `relative_to`, inside of `root`.
+fn resolve_path_in(src: &str, relative_to: &Path, root: &Path) -> Result<PathBuf, String> {
     let src = src.trim();
     if let Some(colon) = src.find(':') {
         // a scheme (`https:`), not a directory with a colon in its name
@@ -287,11 +309,11 @@ fn resolve_path(src: &str, base_dir: &Path) -> Result<PathBuf, String> {
     // a path in a URL: percent-encoded, and without the query or fragment
     let path = src.split(['?', '#']).next().unwrap_or(src);
     let path = percent_decode(path)?;
-    let full = base_dir.join(&path);
+    let full = relative_to.join(&path);
     let canonical = full
         .canonicalize()
         .map_err(|error| format!("cannot read {}: {}", full.display(), error))?;
-    let allowed = RESOURCE_ROOT.get().map_or(base_dir, |root| root.as_path());
+    let allowed = RESOURCE_ROOT.get().map_or(root, |root| root.as_path());
     let base = allowed
         .canonicalize()
         .map_err(|error| format!("cannot read {}: {}", allowed.display(), error))?;

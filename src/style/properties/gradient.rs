@@ -29,6 +29,64 @@ type ParseResult<T> = Result<T, ParseError<StyleParseError>>;
 pub enum Image<L, C> {
     None,
     Gradient(Gradient<L, C>),
+    /// `url()`: a file or a `data:` URI.
+    Url(UrlImage),
+}
+
+/// The image that a `url()` refers to. It is read when it is first painted; the copies of the
+/// value (the style of an element is shared by many boxes) share what was read.
+#[derive(Clone)]
+pub struct UrlImage {
+    href: String,
+    sheet_dir: Option<std::path::PathBuf>,
+    document_dir: Option<std::path::PathBuf>,
+    loaded: std::sync::Arc<std::sync::OnceLock<Option<std::sync::Arc<crate::image::LoadedImage>>>>,
+}
+
+impl UrlImage {
+    /// The image at `href`, relative to the style sheet that is being parsed.
+    pub fn new(href: &str) -> Self {
+        let context = crate::style::url_context::current();
+        UrlImage {
+            href: href.to_owned(),
+            sheet_dir: context.sheet_dir,
+            document_dir: context.document_dir,
+            loaded: Default::default(),
+        }
+    }
+
+    /// The image, or `None` if it cannot be read (which is logged once).
+    pub fn load(&self) -> Option<&std::sync::Arc<crate::image::LoadedImage>> {
+        self.loaded
+            .get_or_init(|| {
+                let dot = std::path::Path::new(".");
+                let document = self.document_dir.as_deref().unwrap_or(dot);
+                let sheet = self.sheet_dir.as_deref().unwrap_or(document);
+                // text in an SVG image is set in the fonts of the system and the built-in ones
+                // (not those of the `@font-face` rules of the document, which are not known here)
+                let fonts = crate::layout::text::font::FontContext::system();
+                match crate::image::load_relative(&self.href, sheet, document, &fonts) {
+                    Ok(image) => Some(std::sync::Arc::new(image)),
+                    Err(error) => {
+                        log::warn!("Cannot load the background image `{}`: {}", self.href, error);
+                        None
+                    }
+                }
+            })
+            .as_ref()
+    }
+}
+
+impl PartialEq for UrlImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.href == other.href && self.sheet_dir == other.sheet_dir && self.document_dir == other.document_dir
+    }
+}
+
+impl std::fmt::Debug for UrlImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "url({:?})", self.href)
+    }
 }
 
 /// A gradient with lengths of type `L` and colours of type `C`.
@@ -145,6 +203,9 @@ impl<'i> PropertyValue<'i> for SpecifiedImage {
     fn from_css_property_value(input: &mut Parser<'i>) -> ParseResult<Self> {
         if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
             return Ok(Image::None);
+        }
+        if let Ok(url) = input.try_parse(|input| input.expect_url()) {
+            return Ok(Image::Url(UrlImage::new(&url)));
         }
         let name = input.expect_function()?.clone();
         let (function, repeating) = match_ignore_ascii_case! { &name,
@@ -585,6 +646,7 @@ impl ComputedValue<CommaSeparated<SpecifiedImage>> for Vec<ComputedImage> {
             .map(|image| match image {
                 Image::None => Image::None,
                 Image::Gradient(gradient) => Image::Gradient(gradient.compute(computed)),
+                Image::Url(url) => Image::Url(url.clone()),
             })
             .collect()
     }
