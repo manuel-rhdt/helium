@@ -203,13 +203,9 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
     }
     // Tables are always laid out as `box-sizing: border-box` (their `width` includes the border
     // and padding). Everything else follows the `box-sizing` property.
-    let box_sizing = if is_table {
-        TBoxSizing::BorderBox
-    } else {
-        match box_.box_sizing {
-            BoxSizing::ContentBox => TBoxSizing::ContentBox,
-            BoxSizing::BorderBox => TBoxSizing::BorderBox,
-        }
+    let box_sizing = match box_.box_sizing {
+        BoxSizing::ContentBox => TBoxSizing::ContentBox,
+        BoxSizing::BorderBox => TBoxSizing::BorderBox,
     };
     taffy::Style {
         display,

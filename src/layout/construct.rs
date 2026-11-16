@@ -1963,6 +1963,7 @@ fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
     }
     let attributes = element.attributes.borrow();
     let mut css = String::new();
+    let mut has_percentage = false;
     for name in [local_name!("width"), local_name!("height")] {
         let Some(attribute) = attributes.get(&QualName::new(None, ns!(), name.clone())) else {
             continue;
@@ -1978,7 +1979,9 @@ fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
             continue;
         }
         let unit = if value[end..].starts_with('%') { "%" } else { "px" };
+        has_percentage |= unit == "%";
         css.push_str(&format!("{}: {}{};", &*name, number, unit));
     }
-    (!css.is_empty()).then(|| PropertyDeclarationBlock::parse_inline(&css))
+    // pixels are the size of the image box itself (see `image_of`)
+    has_percentage.then(|| PropertyDeclarationBlock::parse_inline(&css))
 }
