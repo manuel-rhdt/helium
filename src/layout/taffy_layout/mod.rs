@@ -149,6 +149,8 @@ impl TaffyBlockLayout {
             icb_height: 0.0,
             plain_root: None,
             page_fragments: HashMap::new(),
+            paragraph_variants: 0,
+            page_variants: HashMap::new(),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
         tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
@@ -169,6 +171,15 @@ impl TaffyBlockLayout {
         let first_class = classes.of(helium_paginate::Position::Item(0)).clone();
         let first_spec = geometry.spec(&geometry.context(0, &first_class));
         let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone());
+        // the pages choose among the ways to break the paragraphs that ask for it (`looseness`)
+        let looseness = flow
+            .paragraphs
+            .iter()
+            .map(|&paragraph| tree.computed_values.get(tree.node(paragraph).entity).map_or(0, |style| style.page.looseness as u32))
+            .max()
+            .unwrap_or(0);
+        let problem = problem.with_variants(looseness, helium_paginate::Variants::TOLERANCE);
+        tree.paragraph_variants = looseness;
         tree.icb_height = first_spec.block_size;
 
         // choose the pages
@@ -184,6 +195,8 @@ impl TaffyBlockLayout {
             helium_paginate::Position,
             helium_paginate::PageFill,
             Vec<helium_paginate::PageFragment>,
+            // the ways to break the paragraphs of the page that are not the first
+            Vec<helium_paginate::Choice>,
         )> = vec![];
         {
             use helium_paginate::Solver;
@@ -200,7 +213,8 @@ impl TaffyBlockLayout {
                 let start = solution.pages[page];
                 let finish = kernel.position(fill.end);
                 let fragments = kernel.fragments(&start, fill.end);
-                planned.push((start, kernel.position(start.at), finish, *fill, fragments));
+                let choices = kernel.choices(fill.choices).to_vec();
+                planned.push((start, kernel.position(start.at), finish, *fill, fragments, choices));
             }
             if fills.is_empty() {
                 planned.push((
@@ -216,7 +230,11 @@ impl TaffyBlockLayout {
                         orphan_violation: false,
                         widow_violation: false,
                         overflow: false,
+                        line_demerits: 0.0,
+                        line_extent: 0.0,
+                        choices: helium_paginate::ChoiceId::NONE,
                     },
+                    vec![],
                     vec![],
                 ));
             }
@@ -234,7 +252,7 @@ impl TaffyBlockLayout {
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
-        for (start, from, to, fill, on_page) in &planned {
+        for (start, from, to, fill, on_page, choices) in &planned {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
                 let index = page_contexts.len();
@@ -277,6 +295,13 @@ impl TaffyBlockLayout {
                     (NodeId::from(fragment.container.0 as usize), key)
                 })
                 .collect();
+            tree.page_variants = choices
+                .iter()
+                .filter_map(|choice| match flow.items[choice.item] {
+                    helium_paginate::Item::Paragraph { id, .. } => Some((flow.paragraphs[id.0 as usize], choice.variant)),
+                    _ => None,
+                })
+                .collect();
             tree.set_window(window, root);
             taffy::compute_root_layout(
                 tree,
@@ -304,7 +329,9 @@ impl TaffyBlockLayout {
                     spec.block_size
                 );
             }
-            let HeliumTree { nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, .. } = tree;
+            let HeliumTree {
+                nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, page_variants, paragraph_variants, ..
+            } = tree;
             let mut writer = Writer {
                 nodes,
                 out_of_flow: &out_of_flow,
@@ -315,6 +342,8 @@ impl TaffyBlockLayout {
                 aligns,
                 intrinsic_sizes,
                 line_cache: lines,
+                page_variants: &*page_variants,
+                paragraph_variants: *paragraph_variants,
                 positions: &mut positions,
                 decorations: &mut decorations,
                 text_list: &mut text_list_resource.list,
@@ -422,6 +451,10 @@ struct Writer<'a, 'w> {
     aligns: &'a ReadStorage<'w, crate::layout::components::VerticalAlignment>,
     intrinsic_sizes: &'a WriteStorage<'w, IntrinsicSize>,
     line_cache: &'a mut tree::LineCache,
+    /// The ways that the paragraphs of the page are broken that are not the first, and the most lines
+    /// more or fewer than the best breaking that the paragraphs may have.
+    page_variants: &'a HashMap<NodeId, usize>,
+    paragraph_variants: u32,
     positions: &'a mut WriteStorage<'w, Position>,
     decorations: &'a mut WriteStorage<'w, Decoration>,
     text_list: &'a mut Vec<BlockLevelElement>,
@@ -912,11 +945,14 @@ impl<'a> Writer<'a, '_> {
         let Some(ifc) = self.inline_ctxs.get_mut(entity) else {
             return Ok(());
         };
+        let looseness = style.map_or(0, |style| style.page.looseness as u32);
+        let variant = (self.page_variants.get(&id).copied().unwrap_or(0), self.paragraph_variants.min(looseness));
         let measured = lines_between(
             self.line_cache,
             ifc,
             entity.id(),
             cut,
+            variant,
             PixelLength(line_width),
             PixelLength(indent),
             self.text_runs,

@@ -343,13 +343,51 @@ paragraph, so the state of the search is as it is without them. The service keep
 paragraph, cut, width and `extra`; the engine's service computes them with
 `InlineFormattingContext::compute_variants_from` (`variants_from` in `taffy_layout/tree.rs`).
 
-The kernel, which this is not connected to yet, would see a paragraph as a choice of variants:
-a page that has the whole paragraph has an edge for every variant (with a height and the demerits
-of its lines), and a page that ends in it continues with variants of the rest of the paragraph
-from the cut, so the state of a node is as it is now. The edges of one pair of places that differ
-in height and demerits are kept if neither dominates the other. What is still open is the rate
-between the demerits of the lines and the cost of a page, and a cap on the demerits that a variant
-may add (TeX's tolerance), so that a page is not bought with very loose lines.
+**The pages choose among them.** `Problem::variants` (`extra`, `tolerance`) asks for it, and the
+engine sets it from the property `looseness` (not in CSS: the number of lines more or fewer than
+the best breaking that a paragraph may have, inherited, 0 initially, which is the breaking that
+there is without it; the value for the whole document is the greatest of its paragraphs, and a
+paragraph has at most the ways that its own value allows). With 0 the kernel does what it did.
+
+The walk through a page (`Kernel::walk`) carries a *label* for every way to break the paragraphs
+that are on it so far: the room used, the demerits of the lines, which ways were chosen
+(`Choice`: the item and the number in the list of the ways that the service gives for the
+paragraph from the cut where the page starts in it, if it does, and else from its start), and, for
+the paragraph that the page starts in, how many lines of it are on the page. A paragraph branches
+every label into one for every way, and a page is listed for each (`PageFill` has
+`line_demerits`, `line_extent` and `choices`). Of the labels that use the same room, the one with the
+least demerits stays, so a page has at most about two labels for every line that the ways of its
+paragraphs can differ by. A page that ends in a paragraph ends at a line of a way, and the next
+page continues with ways of its own from the cut, so the state of a node is as it is without
+ways. A way whose worst line is worse than the tolerance (TeX's `\tolerance`, 200) is left out,
+and the first way is never left out. `Solution::choices` has the ways of the pages, and
+`realize` checks them; the layout breaks the paragraphs of a page as the page chose
+(`HeliumTree::page_variants`, `lines_between`).
+
+**The exchange rate.** TeX has none: its page builder does not change how paragraphs are broken,
+and an author who wants another number of lines sets `\looseness` by hand. What TeX gives are the
+scales. Line demerits are squares of a badness-like number (`\linepenalty` + badness + penalties,
+squared), and the cost of a page is a badness-like number as well (100 times the cube of how far
+its glue stretches or shrinks, and penalties such as `\widowpenalty`, 150). The rule that is used
+(`CssObjective::line_room`) is the one that the use of `\looseness` shows: an author accepts lines
+as loose as the tolerance allows to gain a line. The demerits of the lines of a page are taken as
+the room that the page would be short of, with the square root of the demerits as the badness and a
+badness of the tolerance (200) as one line:
+
+    room = line extent x sqrt(demerits of the lines on the page) / 200
+
+and the cost of that room is the cost of the same room left on the page (the cube, in the same
+units). A page with lines of badness 200 therefore costs as much as a page that is a line short,
+and one with decent lines (badness near 0, demerits about 100 a line) costs next to nothing, so the
+extra freedom is used for pages that are empty, not for pages that are full. This is an initial
+value that follows the scales of TeX: it has not been compared with anything, and there is nothing
+yet that says what is better (see the harness in "Order of work"). The tolerance of the ways and
+the one of the rate are the same number, 200.
+
+Restrictions: the ways are chosen for the paragraphs of the flow of the document. A container
+with columns has the ways that its paragraphs have inside it narrowed to one (the room that it
+has depends on what is in front of it, so the label with the least demerits is kept), the columns
+of a container choose no ways, and `Kernel::fill_at` lists a page for the first way only.
 
 For a flexible paragraph the breaker computes *profiles*: for each line count
 within a tolerance of the optimum, the least demerits.
@@ -830,8 +868,9 @@ the first page.
 4. Done. Page size per page; empty pages for `left` and `right`.
 5. Cuts with state in the line breaker (done); a page that ends at any break of a paragraph (done);
    variants of a paragraph by number of lines in the breaker (done) and in the layout service
-   (done); variants in the kernel and the layout, the exchange rate, and the joint solver;
-   profiles after that.
+   (done); variants in the kernel and the layout, with TeX's tolerance and an exchange rate that
+   follows its scales (done, opt-in with `looseness`); the harness that says whether it is better;
+   a better rate from it; profiles after that.
 6. `fragment` for tables between rows, with pinned columns.
 7. `fragment` for grid and flex, with parallel parts.
 

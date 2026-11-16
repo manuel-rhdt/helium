@@ -201,6 +201,9 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         orphan_violation: false,
         widow_violation: false,
         overflow: false,
+        line_demerits: 0.0,
+        line_extent: 0.0,
+        choices: ChoiceId::NONE,
     };
     let css = CssObjective;
     // 10 px are left on the page
@@ -366,6 +369,7 @@ fn realize_rejects_what_is_not_a_page_sequence() {
     let (problem, mut service) = flow.finish(page(100.0));
     let mut kernel = Kernel::new(&problem, &mut service);
     let mut solution = |pages: &[usize]| Solution {
+        choices: vec![],
         pages: pages
             .iter()
             .enumerate()
@@ -395,7 +399,7 @@ fn realize_rejects_what_is_not_a_page_sequence() {
         Err(Invalid::NotACandidate { page: 1 })
     );
     assert_eq!(
-        kernel.realize(&Solution { pages: vec![] }),
+        kernel.realize(&Solution::new(vec![])),
         Err(Invalid::FirstPage)
     );
 }
@@ -655,6 +659,7 @@ fn a_break_to_a_right_page_leaves_a_left_page_empty() {
     assert!(kernel.realize(&solution).is_ok());
     // a solution that does not leave the page empty is not valid
     let wrong = Solution {
+        choices: vec![],
         pages: solution
             .pages
             .iter()
@@ -722,6 +727,7 @@ impl LayoutService for Characters {
             at = (at + per_line).min(80);
             lines.push(ParLine {
                 demerits: 0.0,
+                badness: 0.0,
                 extent: 10.0,
                 end: Cut(at),
             });
@@ -1302,6 +1308,7 @@ impl Units {
             let end = (at + 3).min(to);
             lines.push(ParLine {
                 demerits: 0.0,
+                badness: 0.0,
                 extent: 10.0 * f64::from(end - at),
                 end: Cut(end),
             });
@@ -1383,7 +1390,7 @@ fn a_page_can_end_at_a_cut_that_no_line_of_the_paragraph_ends_at() {
     assert_eq!(rest.last().map(|fill| (fill.used, kernel.is_end(fill.end))), Some((60.0, true)));
     // a solution with such a page is valid
     let pages = kernel
-        .realize(&Solution { pages: vec![start, next] })
+        .realize(&Solution::new(vec![start, next]))
         .expect("a page can end at any cut");
     assert_eq!(pages.iter().map(|fill| fill.used).collect::<Vec<_>>(), [40.0, 60.0]);
 }
@@ -1440,4 +1447,203 @@ fn a_service_that_does_not_count_demerits_has_one_way_to_break_a_paragraph() {
     }
     // (and it has no demerits to count)
     assert!(service.lines(ParId(0), None, 300.0).iter().all(|line| line.demerits == 0.0));
+}
+
+// Pages that choose among the ways to break a paragraph.
+
+/// A layout service with paragraphs of `units` units that has a few ways to break each of them,
+/// into lines of 20: lines of three units (the first way), of four (a line fewer, looser), of two
+/// (a line more, which is too bad for a tolerance of 200). A cut is the number of units in front of
+/// it.
+struct Ways {
+    units: Vec<u32>,
+}
+
+impl Ways {
+    /// The lines of `per_line` units from `from` to `to`, whose demerits and badness are given.
+    fn breaking(from: u32, to: u32, per_line: u32, demerits: f64, badness: f64) -> Vec<ParLine> {
+        let mut lines = vec![];
+        let mut at = from;
+        while at < to {
+            let end = (at + per_line).min(to);
+            lines.push(ParLine {
+                extent: 20.0,
+                end: Cut(end),
+                demerits,
+                badness,
+            });
+            at = end;
+        }
+        lines
+    }
+}
+
+impl LayoutService for Ways {
+    fn extent(&mut self, _node: NodeRef, _page_inline: f32) -> f64 {
+        unimplemented!()
+    }
+
+    fn lines(&mut self, par: ParId, from: Option<Cut>, _page_inline: f32) -> std::rc::Rc<[ParLine]> {
+        Self::breaking(from.map_or(0, |cut| cut.0), self.units[par.0 as usize], 3, 100.0, 0.0).into()
+    }
+
+    fn variants(&mut self, par: ParId, from: Option<Cut>, _page_inline: f32, extra: u32) -> Vec<std::rc::Rc<[ParLine]>> {
+        let (from, total) = (from.map_or(0, |cut| cut.0), self.units[par.0 as usize]);
+        let mut ways = vec![Self::breaking(from, total, 3, 100.0, 0.0).into()];
+        if extra > 0 {
+            // a line fewer: looser lines, which a tolerance of 200 allows
+            ways.push(Self::breaking(from, total, 4, 600.0, 150.0).into());
+            // a line more: lines that are tighter than they should be
+            ways.push(Self::breaking(from, total, 2, 900.0, 300.0).into());
+        }
+        ways
+    }
+
+    fn content_extent(&mut self, _root: BoxRef, _inline: f32) -> f64 {
+        unimplemented!()
+    }
+
+    fn extent_in(&mut self, _root: BoxRef, _node: NodeRef, _inline: f32) -> f64 {
+        unimplemented!()
+    }
+
+    fn lines_in(&mut self, _root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> std::rc::Rc<[ParLine]> {
+        self.lines(par, from, inline)
+    }
+}
+
+fn ways_problem(block: f32, extra: u32) -> Problem {
+    Problem::new(
+        page(block),
+        vec![Item::Paragraph {
+            id: ParId(0),
+            orphans: 1,
+            widows: 1,
+            avoid_inside: false,
+        }],
+    )
+    .with_variants(extra, Variants::TOLERANCE)
+}
+
+#[test]
+fn without_variants_a_page_has_one_way_to_break_its_paragraphs() {
+    let problem = ways_problem(70.0, 0);
+    let mut service = Ways { units: vec![12] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let fills = kernel.candidates(&start);
+    assert!(fills.iter().all(|fill| fill.choices == ChoiceId::NONE && fill.line_demerits == 0.0));
+    // 12 units in lines of 3 are four lines of 20: the pages of three lines and of all four
+    assert_eq!(fills.iter().map(|fill| fill.used).collect::<Vec<_>>(), [20.0, 40.0, 60.0]);
+}
+
+#[test]
+fn with_variants_a_page_is_listed_for_every_way_that_fits() {
+    let problem = ways_problem(70.0, 1);
+    let mut service = Ways { units: vec![12] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let fills = kernel.candidates(&start);
+    // the first way has four lines, which do not fit; the second has three lines (four units
+    // each), and the whole paragraph is on the page. The third has lines that are too bad.
+    let whole: Vec<_> = fills.iter().filter(|fill| kernel.is_end(fill.end)).collect();
+    assert_eq!(whole.len(), 1, "{fills:?}");
+    assert_eq!(whole[0].used, 60.0);
+    assert_ne!(whole[0].choices, ChoiceId::NONE);
+    assert_eq!(&*kernel.choices(whole[0].choices), &[Choice { item: 0, variant: 1 }]);
+    // its lines have the demerits of the way: three lines of 600
+    assert_eq!(whole[0].line_demerits, 1800.0);
+    assert_eq!(whole[0].line_extent, 20.0);
+    // a page that ends in the paragraph has the demerits of the lines that it has
+    let cut: Vec<_> = fills.iter().filter(|fill| !kernel.is_end(fill.end)).collect();
+    assert!(!cut.is_empty());
+    assert!(cut.iter().all(|fill| fill.line_demerits > 0.0));
+    // the ways are listed with a page of the same room only once: of two ways that use the same
+    // room, the one with the least demerits
+    let mut seen = vec![];
+    for fill in &fills {
+        assert!(!seen.contains(&(fill.end, (fill.used * 64.0).round() as i64, fill.choices)));
+        seen.push((fill.end, (fill.used * 64.0).round() as i64, fill.choices));
+    }
+}
+
+#[test]
+fn a_tolerance_keeps_the_ways_with_lines_that_are_too_bad_out() {
+    // with a looser tolerance the third way, with a line more, is a way, too
+    let problem = ways_problem(500.0, 1).with_variants(1, 400.0);
+    let mut service = Ways { units: vec![12] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let used: Vec<f32> = kernel
+        .candidates(&start)
+        .iter()
+        .filter(|fill| kernel.is_end(fill.end))
+        .map(|fill| fill.used)
+        .collect();
+    // four lines of three units, three of four, six of two (in the order of the service's ways)
+    assert_eq!(used, [80.0, 60.0, 120.0]);
+    let problem = ways_problem(500.0, 1);
+    let mut service = Ways { units: vec![12] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let used: Vec<f32> = kernel
+        .candidates(&start)
+        .iter()
+        .filter(|fill| kernel.is_end(fill.end))
+        .map(|fill| fill.used)
+        .collect();
+    assert_eq!(used, [80.0, 60.0]);
+}
+
+#[test]
+fn the_exact_solver_takes_a_way_to_break_a_paragraph_that_fits_a_page() {
+    // the paragraph has four lines of 20 and the page 70: the first way needs two pages, the
+    // second has three lines and fits, with the lines that are looser
+    for (extra, pages) in [(0, 2), (1, 1)] {
+        let problem = ways_problem(70.0, extra);
+        let mut service = Ways { units: vec![12] };
+        let mut kernel = Kernel::new(&problem, &mut service);
+        let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+        assert_eq!(solution.pages.len(), pages, "extra {extra}");
+        let fills = kernel.realize(&solution).expect("the solution is valid");
+        assert_eq!(fills.len(), pages);
+        if extra == 1 {
+            assert_eq!(&*kernel.choices(fills[0].choices), &[Choice { item: 0, variant: 1 }]);
+            assert_eq!(solution.choices, [fills[0].choices]);
+        } else {
+            assert!(solution.choices.is_empty());
+        }
+    }
+}
+
+#[test]
+fn a_solution_names_the_ways_that_it_breaks_its_paragraphs() {
+    let problem = ways_problem(70.0, 1);
+    let mut service = Ways { units: vec![12] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    assert!(kernel.realize(&solution).is_ok());
+    // another way for the page is a page too: the first way does not fit it, though
+    let wrong = Solution {
+        choices: vec![ChoiceId::NONE],
+        pages: solution.pages.clone(),
+    };
+    assert_eq!(kernel.realize(&wrong), Err(Invalid::NotACandidate { page: 0 }));
+}
+
+#[test]
+fn the_rest_of_a_paragraph_after_a_cut_chooses_among_ways_of_its_own() {
+    // a page of 40 holds two lines: the paragraph is cut after two lines, and the rest of it is
+    // broken from the cut, in ways of its own
+    let problem = ways_problem(40.0, 1);
+    let mut service = Ways { units: vec![12] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let first: Vec<_> = kernel.candidates(&start);
+    let two_lines = first.iter().find(|fill| fill.used == 40.0).expect("a page of two lines");
+    let next = kernel.next_page(&start, two_lines).expect("the paragraph goes on");
+    let rest = kernel.candidates(&next);
+    // from the cut after six units, the rest is six units: two lines of three, or of four and two
+    assert!(rest.iter().any(|fill| kernel.is_end(fill.end)));
+    assert!(rest.iter().all(|fill| fill.line_demerits > 0.0));
 }

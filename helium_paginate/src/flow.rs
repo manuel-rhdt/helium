@@ -187,6 +187,36 @@ pub struct Problem {
     /// Whether a forced break of the page level is a break here, too (the pages are the columns
     /// of a container: a page break is always a column break, too).
     pub page_breaks: bool,
+    /// How many ways to break a paragraph a page chooses among.
+    pub variants: Variants,
+}
+
+/// The ways to break a paragraph that a page can choose among (see
+/// [`LayoutService::variants`](crate::LayoutService::variants)).
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Variants {
+    /// The number of lines more or fewer than the optimum that a paragraph can have: 0 asks for
+    /// the way that the layout service breaks the paragraph, and nothing else, as the kernel
+    /// has done without them. It is TeX's `\looseness`, for every paragraph, and the kernel
+    /// chooses it.
+    pub extra: u32,
+    /// The worst badness that a line of a way to break a paragraph can have, except that of the
+    /// first way, which the paragraph has anyway. TeX's `\tolerance`: 200.
+    pub tolerance: f64,
+}
+
+impl Variants {
+    /// TeX's `\tolerance`.
+    pub const TOLERANCE: f64 = 200.0;
+}
+
+impl Default for Variants {
+    fn default() -> Self {
+        Variants {
+            extra: 0,
+            tolerance: Self::TOLERANCE,
+        }
+    }
 }
 
 impl Problem {
@@ -199,7 +229,15 @@ impl Problem {
             start: Position::Item(0),
             fragment: false,
             page_breaks: false,
+            variants: Variants::default(),
         }
+    }
+
+    /// A page chooses among the ways to break a paragraph that have up to `extra` lines more or
+    /// fewer than the optimum, and lines that are not worse than `tolerance`.
+    pub fn with_variants(mut self, extra: u32, tolerance: f64) -> Self {
+        self.variants = Variants { extra, tolerance };
+        self
     }
 
     /// The first page starts at this place.

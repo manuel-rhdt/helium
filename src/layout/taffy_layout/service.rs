@@ -217,6 +217,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                 extent: f64::from(line.height.0),
                 end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
                 demerits: line.demerits,
+                badness: line.badness,
             })
             .collect()
     }
@@ -232,6 +233,8 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
     ) -> Vec<Rc<[ParLine]>> {
         let tree = &mut *self.tree;
         let entity = tree.node(node).entity;
+        // (a paragraph has at most the ways that its `looseness` allows)
+        let extra = extra.min(tree.computed_values.get(entity).map_or(0, |style| style.page.looseness as u32));
         let ifc = inline_context.or_else(|| tree.inline_ctxs.get(entity));
         let Some(ifc) = ifc else {
             return vec![Rc::from(vec![])];
@@ -258,6 +261,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                     extent: f64::from(line.height.0),
                     end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
                     demerits: line.demerits,
+                    badness: line.badness,
                 })
                 .collect()
         })

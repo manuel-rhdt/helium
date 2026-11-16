@@ -454,7 +454,7 @@ fn a_solution_with_pages_that_end_at_any_break_of_a_paragraph_is_laid_out() {
             start = kernel.next_page(&start, &fill).expect("the paragraph goes on");
             pages.push(start);
         }
-        Solution { pages }
+        Solution::new(pages)
     });
     probe::SOLVE.with(|slot| *slot.borrow_mut() = Some(solve));
     let text = TEXT.repeat(12);
@@ -478,7 +478,7 @@ fn a_solution_with_pages_that_end_at_any_break_of_a_paragraph_is_laid_out() {
 // The ways to break a paragraph.
 
 fn variants_of(extra: u32, justified: bool) -> (Vec<Rc<[helium_paginate::ParLine]>>, Rc<[helium_paginate::ParLine]>, Vec<Rc<[helium_paginate::ParLine]>>, Rc<[helium_paginate::ParLine]>) {
-    let style = if justified { "text-align: justify" } else { "" };
+    let style = if justified { "looseness: 2; text-align: justify" } else { "looseness: 2" };
     let html = document(style, &format!("<p id=a>{TEXT}{TEXT}{TEXT}{TEXT}</p>"));
     let found = Rc::new(RefCell::new(None));
     let sink = found.clone();
@@ -552,7 +552,7 @@ fn the_rest_of_a_paragraph_after_a_cut_has_ways_to_be_broken_of_its_own() {
 
 #[test]
 fn the_ways_to_break_a_paragraph_are_kept_by_the_service() {
-    let html = document("", &format!("<p id=a>{TEXT}{TEXT}{TEXT}</p>"));
+    let html = document("looseness: 2", &format!("<p id=a>{TEXT}{TEXT}{TEXT}</p>"));
     let same = Rc::new(RefCell::new(false));
     let sink = same.clone();
     lay_out(

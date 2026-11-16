@@ -23,6 +23,8 @@ pub struct GlueTotals {
 #[derive(Debug, Copy, Clone)]
 struct ParagraphNode {
     demerits: f64,
+    /// The badness of the line that ends at the node.
+    badness: f64,
     previous: Option<(usize, usize)>,
 }
 
@@ -81,6 +83,10 @@ pub struct ParagraphLines {
     /// part of the paragraph. A line that no breaking can have has no demerits that mean
     /// anything (`f64::INFINITY`).
     pub demerits: Vec<f64>,
+    /// The badness of every line, which TeX's `\tolerance` is about: 100 times the cube of how far
+    /// its spaces stretch or shrink (the adjustment ratio), at most 10 000. The last line of a
+    /// paragraph that is allowed to be short has none.
+    pub badness: Vec<f64>,
 }
 
 impl ParagraphLines {
@@ -115,6 +121,7 @@ pub fn compute_paragraph_lines(
             breaks: opportunities.first().map_or_else(Vec::new, |_| vec![0]),
             fitness: vec![],
             demerits: vec![],
+            badness: vec![],
         };
     }
 
@@ -127,6 +134,7 @@ pub fn compute_paragraph_lines(
     let initial_state = state_index(usize::from(start.fitness).min(FITNESS_CLASSES - 1), start.hyphen);
     paths[0][initial_state] = Some(ParagraphNode {
         demerits: 0.0,
+        badness: 0.0,
         previous: None,
     });
 
@@ -195,6 +203,7 @@ pub fn compute_paragraph_lines(
                 if replace {
                     paths[to][next_state] = Some(ParagraphNode {
                         demerits,
+                        badness,
                         previous: Some((from, previous_state)),
                     });
                 }
@@ -213,6 +222,7 @@ pub fn compute_paragraph_lines(
             breaks: vec![0, last],
             fitness: vec![LineStart::DECENT],
             demerits: vec![f64::INFINITY],
+            badness: vec![f64::INFINITY],
         };
     };
 
@@ -220,6 +230,7 @@ pub fn compute_paragraph_lines(
     let mut sequence = vec![last];
     let mut fitness = vec![decode_state(state).0 as u8];
     let mut cumulative = vec![paths[last][state].map_or(0.0, |node| node.demerits)];
+    let mut badness = vec![paths[last][state].map_or(0.0, |node| node.badness)];
     while let Some((previous_index, previous_state)) =
         paths[index][state].and_then(|node| node.previous)
     {
@@ -228,23 +239,29 @@ pub fn compute_paragraph_lines(
         sequence.push(index);
         fitness.push(decode_state(state).0 as u8);
         cumulative.push(paths[index][state].map_or(0.0, |node| node.demerits));
+        badness.push(paths[index][state].map_or(0.0, |node| node.badness));
     }
     // (the last of them is the state in front of the first line)
     fitness.pop();
+    badness.pop();
     sequence.reverse();
     fitness.reverse();
+    badness.reverse();
     cumulative.reverse();
     let demerits = cumulative.windows(2).map(|window| window[1] - window[0]).collect();
     ParagraphLines {
         breaks: sequence,
         fitness,
         demerits,
+        badness,
     }
 }
 
 #[derive(Debug, Copy, Clone)]
 struct CountedNode {
     demerits: f64,
+    /// The badness of the line that ends at the node.
+    badness: f64,
     /// The break, the state and the number of lines of the node in front.
     previous: Option<(usize, usize, usize)>,
 }
@@ -287,6 +304,7 @@ pub fn compute_paragraph_variants(
     let initial_state = state_index(usize::from(start.fitness).min(FITNESS_CLASSES - 1), start.hyphen);
     paths[0][slot(initial_state, 0)] = Some(CountedNode {
         demerits: 0.0,
+        badness: 0.0,
         previous: None,
     });
 
@@ -342,6 +360,7 @@ pub fn compute_paragraph_variants(
                     if replace {
                         paths[to][next] = Some(CountedNode {
                             demerits,
+                            badness,
                             previous: Some((from, previous_state, lines_before)),
                         });
                     }
@@ -366,6 +385,7 @@ pub fn compute_paragraph_variants(
         let mut breaks = vec![last];
         let mut fitness = vec![decode_state(state).0 as u8];
         let mut cumulative = vec![paths[last][slot(state, lines)].map_or(0.0, |node| node.demerits)];
+        let mut badness = vec![paths[last][slot(state, lines)].map_or(0.0, |node| node.badness)];
         while let Some((previous_index, previous_state, previous_lines)) =
             paths[index][slot(state, lines_left)].and_then(|node| node.previous)
         {
@@ -375,16 +395,20 @@ pub fn compute_paragraph_variants(
             breaks.push(index);
             fitness.push(decode_state(state).0 as u8);
             cumulative.push(paths[index][slot(state, lines_left)].map_or(0.0, |node| node.demerits));
+            badness.push(paths[index][slot(state, lines_left)].map_or(0.0, |node| node.badness));
         }
         fitness.pop();
+        badness.pop();
         breaks.reverse();
         fitness.reverse();
+        badness.reverse();
         cumulative.reverse();
         let demerits = cumulative.windows(2).map(|window| window[1] - window[0]).collect();
         variants.push(ParagraphLines {
             breaks,
             fitness,
             demerits,
+            badness,
         });
     }
     variants
@@ -634,6 +658,23 @@ mod test {
             Some((total, classes))
         }
 
+        /// The badness of every line of a sequence of breaks that the breaker allows.
+        fn badness_of(&self, breaks: &[usize], ends_paragraph: bool) -> Vec<f64> {
+            let last = self.opportunities.len() - 1;
+            breaks
+                .windows(2)
+                .map(|window| {
+                    let (natural, glue) = self.metrics(window[0], window[1]).unwrap();
+                    let delta = self.width - natural;
+                    if ends_paragraph && window[1] == last && delta >= 0.0 {
+                        0.0
+                    } else {
+                        line_badness(adjustment_ratio(delta, glue))
+                    }
+                })
+                .collect()
+        }
+
         /// The least demerits of all the ways to break the paragraph.
         fn least_demerits(&self, start: LineStart) -> Option<f64> {
             self.least_demerits_of(start, true)
@@ -825,6 +866,8 @@ mod test {
                                 least[&lines]
                             );
                             assert_eq!(variant.fitness, classes);
+                            assert_eq!(variant.badness.len(), variant.lines());
+                            assert_eq!(variant.badness, paragraph.badness_of(&variant.breaks, ends_paragraph));
                             assert!((variant.total_demerits() - total).abs() < 1e-6);
                             // the demerits of every line are what it adds to the lines in front
                             let mut before = 0.0;

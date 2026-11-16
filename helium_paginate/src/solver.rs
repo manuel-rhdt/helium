@@ -1,5 +1,5 @@
 use crate::graph::{shortest_path, PageEdge, PageGraph};
-use crate::kernel::{Kernel, PageFill, Solution};
+use crate::kernel::{ChoiceId, Kernel, PageFill, Solution};
 use std::fmt::Debug;
 
 /// The cost of a page, and how the costs of the pages make the cost of a pagination, which a
@@ -84,6 +84,29 @@ impl CssCost {
 #[derive(Debug, Copy, Clone, Default)]
 pub struct CssObjective;
 
+impl CssObjective {
+    /// How bad a line has to be for a page that is one line short to cost as much as the page
+    /// that has the line: TeX's `\tolerance`, the worst badness that a line is allowed to have.
+    ///
+    /// TeX has no exchange rate between the demerits of lines and the cost of a page, because its
+    /// page builder does not change how paragraphs are broken: `\looseness` is what an author
+    /// does by hand when a page is a line too long or short, and the author accepts lines that
+    /// are as loose as the tolerance allows. This is that, as a rule: the demerits that the lines
+    /// of a page have are taken as the room that a page would have to be short of, in lines of the
+    /// page, where the square root of the demerits (which are squares, as the badness that
+    /// they are made of is) is the badness, and a badness of the tolerance is a whole line.
+    pub const LINE_TOLERANCE: f64 = 200.0;
+
+    /// The room on a page that costs as much as the lines of the page that are broken in other ways
+    /// than the first (see [`Variants`](crate::Variants)): zero for a page that is not.
+    pub fn line_room(fill: &PageFill) -> f64 {
+        if fill.line_demerits <= 0.0 || fill.line_extent <= 0.0 {
+            return 0.0;
+        }
+        f64::from(fill.line_extent) * fill.line_demerits.sqrt() / Self::LINE_TOLERANCE
+    }
+}
+
 impl Objective for CssObjective {
     type Cost = CssCost;
 
@@ -101,11 +124,12 @@ impl Objective for CssObjective {
         // A forced break is always taken, but how the page in front of it is filled still
         // matters for the widows of its last paragraph, and it does not matter how empty it is.
         // The last page is allowed to be partially filled.
-        let slack = if fill.end_kind.is_forced() || is_last {
+        let empty_room = if fill.end_kind.is_forced() || is_last {
             0
         } else {
             CssCost::slack_of(fill.spec.block_size as f64 - fill.used as f64)
         };
+        let slack = empty_room + CssCost::slack_of(Self::line_room(fill));
         Some(CssCost {
             overflows: 0,
             avoided_breaks: u32::from(fill.end_kind == crate::BreakKind::Avoid),
@@ -155,13 +179,19 @@ impl<O: Objective> Solver for ExactSolver<O> {
         if pages.is_empty() {
             pages.push(first);
         }
+        // the ways to break the paragraphs of the pages, if they are not the first for all
+        let choices: Vec<ChoiceId> = found
+            .as_ref()
+            .map(|path| path.edges.iter().map(|edge| edge.fill.choices).collect())
+            .unwrap_or_default();
+        let choices = if choices.iter().all(|&choice| choice == ChoiceId::NONE) { vec![] } else { choices };
         // the solution of a fragment ends with the place where its last page ends
         if fragment {
             if let Some(path) = &found {
                 pages.push(path.end);
             }
         }
-        Solution { pages }
+        Solution { pages, choices }
     }
 }
 

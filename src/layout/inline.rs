@@ -41,6 +41,8 @@ pub struct MeasuredLine {
     pub fitness: u8,
     /// The demerits of the line as the breaker counts them (`ParagraphLines::demerits`).
     pub demerits: f64,
+    /// The badness of the line (`ParagraphLines::badness`).
+    pub badness: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -479,8 +481,14 @@ impl InlineFormattingContext {
                 broken
                     .breaks
                     .windows(2)
-                    .zip(broken.fitness.iter().copied().zip(broken.demerits.iter().copied()))
-                    .map(|(window, (fitness, demerits))| {
+                    .zip(
+                        broken
+                            .fitness
+                            .iter()
+                            .copied()
+                            .zip(broken.demerits.iter().copied().zip(broken.badness.iter().copied())),
+                    )
+                    .map(|(window, (fitness, (demerits, badness)))| {
                         let (window_from, window_to) = (from + window[0], from + window[1]);
                         let (baseline, height) =
                             self.line_height(window_from, window_to, text_runs, intrinsic_sizes, aligns);
@@ -492,6 +500,7 @@ impl InlineFormattingContext {
                             baseline,
                             fitness,
                             demerits,
+                            badness,
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()

@@ -148,6 +148,11 @@ pub(super) struct HeliumTree<'a, 'w> {
     /// every container, the arguments that the kernel asked the layout service about its
     /// fragment with (see [`super::columns`]).
     pub page_fragments: HashMap<NodeId, super::columns::FragmentKey>,
+    /// The most lines more or fewer than the best breaking that the paragraphs may have (the pages
+    /// choose, see `looseness`), and the way that the paragraphs of the page that is laid out are
+    /// broken, if it is not the first: the number in the list of the ways of the paragraph.
+    pub paragraph_variants: u32,
+    pub page_variants: HashMap<NodeId, usize>,
 }
 
 // --- building the tree ---
@@ -169,6 +174,14 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
 
     /// Finds the orthogonal flows in the tree below `id` (which is laid out in `parent`'s flow):
     /// a box whose flow is vertical in a horizontal one, or horizontal in a vertical one.
+    /// The way that the paragraph in the box is broken on the page that is laid out (its number
+    /// in the list of ways, 0 for the first), and the most lines more or fewer than the best
+    /// breaking that the list has.
+    pub(super) fn variant_of(&self, id: NodeId) -> (usize, u32) {
+        let looseness = self.computed_values.get(self.node(id).entity).map_or(0, |style| style.page.looseness as u32);
+        (self.page_variants.get(&id).copied().unwrap_or(0), self.paragraph_variants.min(looseness))
+    }
+
     pub(super) fn mark_orthogonal(&mut self, id: NodeId, parent: Flow) {
         let flow = self.node(id).flow;
         if flow.is_vertical() != parent.is_vertical() {
@@ -800,6 +813,7 @@ impl HeliumTree<'_, '_> {
     /// Lays out a box with inline content: its content size is the size of its lines.
     pub(super) fn compute_inline_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
         self.ensure_atoms(id, &inputs);
+        let variant = self.variant_of(id);
 
         let node = &self.nodes[usize::from(id)];
         let entity = node.entity;
@@ -867,6 +881,7 @@ impl HeliumTree<'_, '_> {
                 ifc,
                 entity.id(),
                 cut,
+                variant,
                 PixelLength(line_width),
                 indent,
                 text_runs,
@@ -1124,19 +1139,31 @@ pub(super) fn lines_between(
     ifc: &InlineFormattingContext,
     node: u32,
     cut: Option<(Option<helium_paginate::Cut>, Option<helium_paginate::Cut>)>,
+    variant: (usize, u32),
     line_width: PixelLength,
     indent: PixelLength,
     text_runs: &ReadStorage<TextRun>,
     intrinsic_sizes: &WriteStorage<IntrinsicSize>,
     aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
 ) -> Vec<crate::layout::inline::MeasuredLine> {
+    // the lines to the end of the paragraph, from the cut where the page starts in it: in the way
+    // that the page chose, which is a number in the list of the ways to break it
+    let from_start = |cache: &mut LineCache, from: Option<LineCut>| {
+        let (way, extra) = variant;
+        if way > 0 {
+            if let Some(lines) =
+                variants_from(cache, ifc, node, from, line_width, indent, extra, text_runs, intrinsic_sizes, aligns).get(way)
+            {
+                return lines.clone();
+            }
+        }
+        lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns)
+    };
     let Some((from, to)) = cut else {
-        return lines_from(cache, ifc, node, None, line_width, indent, text_runs, intrinsic_sizes, aligns)
-            .as_ref()
-            .clone();
+        return from_start(cache, None).as_ref().clone();
     };
     let from = from.map(LineCut::of);
-    let lines = lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns);
+    let lines = from_start(cache, from);
     match to {
         None => lines.as_ref().clone(),
         Some(to) => lines_until(&lines, ifc, from, LineCut::of(to), line_width, indent, text_runs, intrinsic_sizes, aligns),

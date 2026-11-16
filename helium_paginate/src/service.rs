@@ -16,6 +16,11 @@ pub struct ParLine {
     /// optimum has the least of them), or 0 for a service that does not count them. A page that
     /// has some of the lines of a breaking has their demerits.
     pub demerits: f64,
+    /// The badness of the line (TeX's, 0 for a line whose spaces are as they are, and 100 for
+    /// a line that stretches or shrinks them as far as their stretch or shrink), or 0 for a
+    /// service that does not count it. A breaking with a line that is worse than the tolerance is
+    /// not a way that a document that asks for tolerable lines takes.
+    pub badness: f64,
 }
 
 /// A way for a fragment of a container to end: what a page has of the container.
@@ -203,6 +208,7 @@ impl LayoutService for GalleyService {
             .skip(first)
             .map(|(line, &extent)| ParLine {
                 demerits: 0.0,
+                badness: 0.0,
                 extent,
                 end: Cut(line as u32 + 1),
             })
