@@ -7,12 +7,13 @@
 //! page (see [`super::window`]).
 
 use super::flow::Flow;
+use taffy::tree::NodeId;
 use super::tree::HeliumTree;
 use super::window::{Leading, Window};
 use crate::layout::components::EdgeValues;
 use crate::layout::pages::{PageContext, PageMargins};
 use crate::style::properties::computed::PixelLength;
-use helium_paginate::{BreakKind, Item, PageKind, PageSpec, PageTable, Position};
+use helium_paginate::{BreakLevel, Item, PageKind, PageSpec, PageTable, Position};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -166,26 +167,28 @@ impl Geometry<'_> {
     }
 }
 
-/// The window of the page that starts at `start` and ends at `end`.
+/// The window of the page that starts at `start` and ends at `end`: in the items of the flow of
+/// a document, or in the ones of the content of a multi-column container, which `level` and
+/// `scope` tell (the pages are its columns).
 pub(super) fn window(
-    flow: &Flow,
+    items: &[Item],
+    leaves: &[Option<NodeId>],
+    level: BreakLevel,
+    scope: Option<NodeId>,
     start: Position,
     end: Position,
     leading_gap: impl FnOnce(usize) -> f32,
 ) -> Window {
-    let len = flow.items.len();
-    let paragraph = |item: usize| flow.leaves[item].expect("a paragraph has its box");
+    let len = items.len();
+    let paragraph = |item: usize| leaves[item].expect("a paragraph has its box");
     let (first, start_cut, leading) = match start {
         Position::Item(0) => (0, None, Leading::Natural),
         Position::Item(item) => {
             let forced = matches!(
-                flow.items[item - 1],
-                Item::Break {
-                    kind: BreakKind::Forced | BreakKind::ForcedLeft | BreakKind::ForcedRight,
-                    ..
-                }
+                items[item - 1],
+                Item::Break { kind, level: of } if level == of && kind.is_forced()
             );
-            let leading = match flow.items.get(item) {
+            let leading = match items.get(item) {
                 Some(Item::Gap { .. }) if forced => Leading::Gap(leading_gap(item)),
                 _ => Leading::Discard,
             };
@@ -205,6 +208,8 @@ pub(super) fn window(
         start_cut,
         end_cut,
         leading,
-        at_end,
+        // (the margins at the end of the content of a column are not part of it)
+        at_end: at_end && scope.is_none(),
+        scope,
     }
 }

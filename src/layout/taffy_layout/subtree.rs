@@ -92,7 +92,10 @@ impl HeliumTree<'_, '_> {
         icb_height: f32,
         parents: &[Option<NodeId>],
     ) -> HashMap<NodeId, InlineFormattingContext> {
-        assert!(self.node(root).span.is_some(), "a subtree is the subtree of a box of the flow");
+        assert!(
+            self.node(root).span.is_some() || self.node(root).columns.is_some(),
+            "a subtree is the subtree of a box of the flow or of a container with columns"
+        );
         assert!(!self.node(root).orthogonal, "a subtree is not an orthogonal flow");
         self.clear_window();
 
@@ -154,7 +157,10 @@ impl HeliumTree<'_, '_> {
             run_mode: RunMode::PerformLayout,
             vertical_margins_are_collapsible: Line::FALSE,
         };
+        // (a container with columns is laid out as a block)
+        let plain = self.plain_root.replace(root);
         let output = self.compute_child_layout(root, inputs);
+        self.plain_root = plain;
         self.node_mut(root).layout = Layout {
             size: output.size,
             padding,

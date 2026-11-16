@@ -13,12 +13,17 @@
 //!
 //! Every box that is part of the flow knows its items ([`Span`]), which are what the window of a
 //! page is made from.
+//!
+//! A multi-column container is one box of the flow of its page. Its content is a flow of its own
+//! ([`Inner`]), which the columns are chosen from. The items of both are numbered from 0 (the
+//! spans of the boxes in the content of the container are in the numbers of its flow), the
+//! extents and the paragraphs have one numbering for all of them.
 
 use super::tree::{Content, HeliumTree, node_is_out_of_flow};
 use super::window::Span;
 use crate::style::properties::computed::Break;
 use crate::style::properties::specified::Display;
-use helium_paginate::{BreakKind, Item, NodeRef, ParId};
+use helium_paginate::{BreakKind, BreakLevel, Item, NodeRef, ParId};
 use taffy::tree::NodeId;
 
 /// A place in a box that the layout of a galley knows the position of.
@@ -31,6 +36,19 @@ pub(super) enum Anchor {
     ContentBottom(NodeId),
     /// The bottom of the border box.
     Bottom(NodeId),
+}
+
+/// The flow of the content of a multi-column container: the items that its columns are chosen
+/// from.
+#[derive(Debug, Clone)]
+pub(super) struct Inner {
+    pub items: Vec<Item>,
+    /// For every item, the box or the paragraph of it if it is one.
+    pub leaves: Vec<Option<NodeId>>,
+    /// Where the items of the content are: the span that the container has in its own flow. Its
+    /// kids are the boxes of the content, and it is split between them if the content is made of
+    /// blocks.
+    pub span: Span,
 }
 
 /// The flow of a document.
@@ -48,6 +66,9 @@ pub(super) struct Flow {
     pub parents: Vec<Option<NodeId>>,
     /// Whether the pages are bound on the right.
     pub rtl: bool,
+    /// The number of extents that are the ones of the flow of the page: the extents of the flows
+    /// of the multi-column containers come behind them.
+    pub page_extents: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +83,10 @@ enum Kind {
 /// What `break-before` or `break-after` values of the boxes at a break add up to.
 #[derive(Debug, Default, Clone, Copy)]
 struct Breaks {
-    forced: bool,
-    avoid: bool,
+    forced_page: bool,
+    forced_column: bool,
+    avoid_page: bool,
+    avoid_column: bool,
     /// The side that a forced break asks for.
     side: Option<Side>,
 }
@@ -74,10 +97,29 @@ enum Side {
     Right,
 }
 
+/// The kinds of break that `break-inside` of the boxes around a box asks to avoid.
+#[derive(Debug, Default, Clone, Copy)]
+struct Avoid {
+    page: bool,
+    column: bool,
+}
+
+impl Avoid {
+    /// Whether the breaks of the level inside the box are to be avoided.
+    fn at(self, level: BreakLevel) -> bool {
+        match level {
+            BreakLevel::Page => self.page,
+            BreakLevel::Column => self.column,
+        }
+    }
+}
+
 impl Breaks {
     fn add(&mut self, value: Break, rtl: bool) {
-        self.forced |= value.forces_page();
-        self.avoid |= value.avoids_page();
+        self.forced_page |= value.forces_page();
+        self.forced_column |= value.forces_column();
+        self.avoid_page |= value.avoids_page();
+        self.avoid_column |= value.avoids_column();
         let side = match value {
             Break::Left => Some(Side::Left),
             Break::Right => Some(Side::Right),
@@ -90,8 +132,10 @@ impl Breaks {
     }
 
     fn merge(&mut self, other: Breaks) {
-        self.forced |= other.forced;
-        self.avoid |= other.avoid;
+        self.forced_page |= other.forced_page;
+        self.forced_column |= other.forced_column;
+        self.avoid_page |= other.avoid_page;
+        self.avoid_column |= other.avoid_column;
         self.side = self.side.or(other.side);
     }
 }
@@ -138,15 +182,40 @@ pub(super) fn extract(tree: &mut HeliumTree, root: NodeId, rtl: bool) -> Flow {
             root,
             parents: vec![None; nodes],
             rtl,
+            page_extents: 0,
         },
+        level: BreakLevel::Page,
     };
-    extractor.emit(root, None, false);
+    extractor.emit(root, None, Avoid::default());
+    extractor.flow.page_extents = extractor.flow.extents.len();
+    // the content of the containers with columns, which are no part of the flow of the page
+    for index in 0..nodes {
+        let id = NodeId::from(index);
+        if extractor.tree.node(id).columns.is_some() {
+            extractor.emit_columns(id);
+        }
+    }
+    // the parents of the boxes that are not in a flow are needed to find the boxes around a box
+    for index in 0..nodes {
+        let id = NodeId::from(index);
+        let node = extractor.tree.node(id);
+        let kids: Vec<NodeId> = node.children.iter().chain(node.atoms.iter()).copied().collect();
+        for kid in kids {
+            let parent = &mut extractor.flow.parents[usize::from(kid)];
+            if parent.is_none() && kid != root {
+                *parent = Some(id);
+            }
+        }
+    }
     extractor.flow
 }
 
 struct Extractor<'t, 'a, 'w> {
     tree: &'t mut HeliumTree<'a, 'w>,
     flow: Flow,
+    /// What the pages are that the flow is made for: the pages of the document, or the columns
+    /// of a multi-column container.
+    level: BreakLevel,
 }
 
 impl Extractor<'_, '_, '_> {
@@ -206,14 +275,19 @@ impl Extractor<'_, '_, '_> {
         if node.orthogonal || node.flow.is_vertical() || self.has_block_size(id) {
             return Kind::Whole;
         }
+        // (a container with columns is one box in the flow of its page)
+        if node.columns.is_some() && self.level == BreakLevel::Page {
+            return Kind::Whole;
+        }
         match node.content {
             Content::Replaced => Kind::Whole,
             Content::Inline => {
                 let lines = self.tree.inline_ctxs.get(node.entity).is_some_and(|ifc| ifc.break_points.len() >= 2);
                 if lines { Kind::Paragraph } else { Kind::Whole }
             }
+            // a table is not split between columns
             Content::Table => {
-                if self.tree.table_kids(id).is_some() {
+                if self.level == BreakLevel::Page && self.tree.table_kids(id).is_some() {
                     Kind::Table
                 } else {
                     Kind::Whole
@@ -242,6 +316,10 @@ impl Extractor<'_, '_, '_> {
     /// https://www.w3.org/TR/css-break-3/#break-propagation
     fn edge_kid(&self, id: NodeId, last: bool) -> Option<NodeId> {
         let node = self.tree.node(id);
+        // breaks inside a container with columns are breaks between its columns
+        if node.columns.is_some() {
+            return None;
+        }
         let kids: Vec<NodeId> = match node.content {
             Content::Blocks => self.in_flow_children(id),
             Content::Table => node.table.iter().flat_map(|table| table.boxes.iter().copied()).collect(),
@@ -271,38 +349,65 @@ impl Extractor<'_, '_, '_> {
             .map(|style| style.page.page.0.clone())
     }
 
-    /// The kind of the break between two boxes that follow each other.
-    fn break_kind(&self, before: NodeId, after: NodeId, avoid_inside: bool) -> BreakKind {
+    /// The kind of the break between two boxes that follow each other, and the level of the
+    /// value that decides it. A value of the other level than the one of the flow is no break
+    /// there, and the kernel knows it from the level.
+    fn break_kind(&self, before: NodeId, after: NodeId, avoid: Avoid) -> (BreakKind, BreakLevel) {
         let mut breaks = self.breaks_of(before, true);
         breaks.merge(self.breaks_of(after, false));
         // a change of the page name forces a page break
         if let (Some(a), Some(b)) = (self.page_name(before), self.page_name(after)) {
-            breaks.forced |= a != b;
+            breaks.forced_page |= a != b;
         }
-        if breaks.forced {
-            match breaks.side {
-                Some(Side::Left) => BreakKind::ForcedLeft,
-                Some(Side::Right) => BreakKind::ForcedRight,
-                None => BreakKind::Forced,
+        breaks.avoid_page |= avoid.page;
+        breaks.avoid_column |= avoid.column;
+        let forced = |side: Option<Side>| match side {
+            Some(Side::Left) => BreakKind::ForcedLeft,
+            Some(Side::Right) => BreakKind::ForcedRight,
+            None => BreakKind::Forced,
+        };
+        let (forced_here, forced_there, avoid_here, avoid_there, there) = match self.level {
+            BreakLevel::Page => {
+                (breaks.forced_page, breaks.forced_column, breaks.avoid_page, breaks.avoid_column, BreakLevel::Column)
             }
-        } else if breaks.avoid || avoid_inside {
-            BreakKind::Avoid
+            BreakLevel::Column => {
+                (breaks.forced_column, breaks.forced_page, breaks.avoid_column, breaks.avoid_page, BreakLevel::Page)
+            }
+        };
+        if forced_here {
+            // (a side is a property of a page)
+            let side = if self.level == BreakLevel::Page { breaks.side } else { None };
+            (forced(side), self.level)
+        } else if avoid_here {
+            (BreakKind::Avoid, self.level)
+        } else if forced_there {
+            (BreakKind::Forced, there)
+        } else if avoid_there {
+            (BreakKind::Avoid, there)
         } else {
-            BreakKind::Allowed
+            (BreakKind::Allowed, self.level)
         }
     }
 
+    fn push_break(&mut self, before: NodeId, after: NodeId, avoid: Avoid) {
+        let (kind, level) = self.break_kind(before, after, avoid);
+        self.push(Item::Break { kind, level });
+    }
+
     /// Emits the items of a box and sets its span.
-    fn emit(&mut self, id: NodeId, parent: Option<NodeId>, avoid_inside: bool) {
+    fn emit(&mut self, id: NodeId, parent: Option<NodeId>, avoid: Avoid) {
         self.flow.parents[usize::from(id)] = parent;
         let start = self.flow.items.len() as u32;
         let kind = self.classify(id);
-        let avoid_inside = avoid_inside
-            || self
-                .tree
-                .computed_values
-                .get(self.tree.node(id).entity)
-                .is_some_and(|style| style.page.break_inside.avoids_page());
+        let inside = self
+            .tree
+            .computed_values
+            .get(self.tree.node(id).entity)
+            .map(|style| style.page.break_inside);
+        let avoid = Avoid {
+            page: avoid.page || inside.is_some_and(|inside| inside.avoids_page()),
+            column: avoid.column || inside.is_some_and(|inside| inside.avoids_column()),
+        };
         let mut kids = vec![];
         match kind {
             Kind::Whole => {
@@ -319,7 +424,7 @@ impl Extractor<'_, '_, '_> {
                     id: paragraph,
                     orphans: orphans as u32,
                     widows: widows as u32,
-                    avoid_inside,
+                    avoid_inside: avoid.at(self.level),
                 });
                 self.flow.leaves[item as usize] = Some(id);
                 self.box_item(Anchor::ContentBottom(id), Anchor::Bottom(id));
@@ -330,32 +435,10 @@ impl Extractor<'_, '_, '_> {
                 let mut end = Anchor::ContentTop(id);
                 let mut previous: Option<NodeId> = None;
                 if split {
-                    for &child in &self.tree.node(id).children.clone() {
-                        if !self.in_flow(child) {
-                            // out of the flow: shown on the page of the item in front of it
-                            let anchor = (self.flow.items.len() as u32).saturating_sub(1);
-                            self.tree.node_mut(child).span = Some(Span {
-                                start: anchor,
-                                end: anchor + 1,
-                                kids: vec![],
-                                split: false,
-                                anchored: true,
-                            });
-                            continue;
-                        }
-                        if let Some(before) = previous {
-                            let kind = self.break_kind(before, child, avoid_inside);
-                            self.push(Item::Break { kind, level: helium_paginate::BreakLevel::Page });
-                        }
-                        self.gap_item(end, Anchor::Top(child));
-                        self.emit(child, Some(id), avoid_inside);
-                        end = Anchor::Bottom(child);
-                        previous = Some(child);
-                        kids.push(child);
-                    }
+                    self.emit_blocks(id, avoid, &mut end, &mut kids);
                 } else {
                     let table_kids = self.tree.table_kids(id).unwrap_or_default();
-                    self.emit_table_kids(id, id, &table_kids, avoid_inside, &mut end, &mut previous, &mut kids);
+                    self.emit_table_kids(id, id, &table_kids, avoid, &mut end, &mut previous, &mut kids);
                     // the out-of-flow children of the table are anchored to its start
                     for &child in &self.tree.node(id).children.clone() {
                         if !self.in_flow(child) {
@@ -384,13 +467,74 @@ impl Extractor<'_, '_, '_> {
         });
     }
 
+    /// The children of a block container: the breaks and gaps between them, and their items.
+    /// `end` is where the box in front of the first one ends, and where the last one does.
+    fn emit_blocks(&mut self, id: NodeId, avoid: Avoid, end: &mut Anchor, kids: &mut Vec<NodeId>) {
+        let mut previous: Option<NodeId> = None;
+        for &child in &self.tree.node(id).children.clone() {
+            if !self.in_flow(child) {
+                // out of the flow: shown on the page of the item in front of it
+                let anchor = (self.flow.items.len() as u32).saturating_sub(1);
+                self.tree.node_mut(child).span = Some(Span {
+                    start: anchor,
+                    end: anchor + 1,
+                    kids: vec![],
+                    split: false,
+                    anchored: true,
+                });
+                continue;
+            }
+            if let Some(before) = previous {
+                self.push_break(before, child, avoid);
+            }
+            self.gap_item(*end, Anchor::Top(child));
+            self.emit(child, Some(id), avoid);
+            *end = Anchor::Bottom(child);
+            previous = Some(child);
+            kids.push(child);
+        }
+    }
+
+    /// The content of a multi-column container, as a flow of its own.
+    fn emit_columns(&mut self, id: NodeId) {
+        let items = std::mem::take(&mut self.flow.items);
+        let leaves = std::mem::take(&mut self.flow.leaves);
+        self.level = BreakLevel::Column;
+        let mut kids = vec![];
+        let split = self.tree.node(id).content == Content::Blocks;
+        if split {
+            let mut end = Anchor::ContentTop(id);
+            self.emit_blocks(id, Avoid::default(), &mut end, &mut kids);
+        } else {
+            // the content is one paragraph, which is the container itself
+            let page = self.tree.computed_values.get(self.tree.node(id).entity).map(|style| &style.page);
+            let (orphans, widows) = page.map_or((2, 2), |page| (page.orphans, page.widows));
+            let paragraph = ParId(self.flow.paragraphs.len() as u32);
+            self.flow.paragraphs.push(id);
+            let item = self.push(Item::Paragraph {
+                id: paragraph,
+                orphans: orphans as u32,
+                widows: widows as u32,
+                avoid_inside: false,
+            });
+            self.flow.leaves[item as usize] = Some(id);
+        }
+        self.level = BreakLevel::Page;
+        let items = std::mem::replace(&mut self.flow.items, items);
+        let leaves = std::mem::replace(&mut self.flow.leaves, leaves);
+        let span = Span { start: 0, end: items.len() as u32, kids, split, anchored: false };
+        if let Some(columns) = self.tree.node_mut(id).columns.as_mut() {
+            columns.inner = Some(Inner { items, leaves, span });
+        }
+    }
+
     /// The boxes of a table. Breaks are only possible where no cell spans over them.
     fn emit_table_kids(
         &mut self,
         table: NodeId,
         owner: NodeId,
         boxes: &[super::table::TableKid],
-        avoid_inside: bool,
+        avoid: Avoid,
         end: &mut Anchor,
         previous: &mut Option<NodeId>,
         kids: &mut Vec<NodeId>,
@@ -404,8 +548,7 @@ impl Extractor<'_, '_, '_> {
                     .as_ref()
                     .is_some_and(|rows| rows.end > 0 && self.tree.table_row_blocked(table, rows.end - 1));
                 if !blocked {
-                    let kind = self.break_kind(before, kid.node, avoid_inside);
-                    self.push(Item::Break { kind, level: helium_paginate::BreakLevel::Page });
+                    self.push_break(before, kid.node, avoid);
                 } else {
                     // no break: the boxes are in one piece
                     let _ = before;
@@ -415,7 +558,7 @@ impl Extractor<'_, '_, '_> {
             if kid.kids.is_empty() {
                 self.emit_whole(kid.node, owner);
             } else {
-                self.emit_group(table, kid, avoid_inside);
+                self.emit_group(table, kid, avoid);
             }
             *end = Anchor::Bottom(kid.node);
             *previous = Some(kid.node);
@@ -440,7 +583,7 @@ impl Extractor<'_, '_, '_> {
     }
 
     /// A row group: its rows are split like the boxes of a table.
-    fn emit_group(&mut self, table: NodeId, group: &super::table::TableKid, avoid_inside: bool) {
+    fn emit_group(&mut self, table: NodeId, group: &super::table::TableKid, avoid: Avoid) {
         let id = group.node;
         self.flow.parents[usize::from(id)] = Some(table);
         let start = self.flow.items.len() as u32;
@@ -448,7 +591,7 @@ impl Extractor<'_, '_, '_> {
         let mut end = Anchor::ContentTop(id);
         let mut previous = None;
         let mut kids = vec![];
-        self.emit_table_kids(table, id, &group.kids, avoid_inside, &mut end, &mut previous, &mut kids);
+        self.emit_table_kids(table, id, &group.kids, avoid, &mut end, &mut previous, &mut kids);
         self.gap_item(end, Anchor::ContentBottom(id));
         self.box_item(Anchor::ContentBottom(id), Anchor::Bottom(id));
         let end_item = self.flow.items.len() as u32;

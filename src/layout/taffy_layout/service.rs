@@ -102,10 +102,17 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         place(tree, root_id, 0.0, true, &mut tops);
         let content_extent = y(tree, &tops, Anchor::ContentBottom(root_id))
             - y(tree, &tops, Anchor::ContentTop(root_id));
-        let span = tree.node(root_id).span.as_ref().expect("the root is part of the flow");
+        // the items of the box: its own, or the ones of the content of a container with columns
+        let items: &[Item] = match tree.node(root_id).columns.as_ref().and_then(|columns| columns.inner.as_ref()) {
+            Some(inner) => &inner.items,
+            None => {
+                let span = tree.node(root_id).span.as_ref().expect("the root is part of the flow");
+                &self.flow.items[span.start as usize..span.end as usize]
+            }
+        };
         let mut extents = HashMap::new();
         let mut lines = HashMap::new();
-        for item in &self.flow.items[span.start as usize..span.end as usize] {
+        for item in items {
             match *item {
                 Item::Box { node } | Item::Gap { node } => {
                     let (from, to) = self.flow.extents[node.0 as usize];
@@ -180,6 +187,8 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         let tree = &mut *self.tree;
         tree.clear_window();
         let root = self.flow.root;
+        // (a galley only finds the sizes, the columns of the containers are not laid out)
+        let write_columns = std::mem::replace(&mut tree.write_columns, false);
         taffy::compute_root_layout(
             tree,
             root,
@@ -188,12 +197,14 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                 height: AvailableSpace::Definite(self.icb_height),
             },
         );
+        tree.write_columns = write_columns;
         let mut tops = vec![0.0f64; tree.nodes.len()];
         place(tree, root, 0.0, true, &mut tops);
         let extents = self
             .flow
             .extents
             .iter()
+            .take(self.flow.page_extents)
             .map(|&(from, to)| y(tree, &tops, to) - y(tree, &tops, from))
             .collect();
         let lines = self
@@ -224,7 +235,9 @@ fn place(tree: &HeliumTree, id: NodeId, parent: f64, is_root: bool, tops: &mut V
     // (the root is where the content area of the page starts)
     let top = if is_root { 0.0 } else { parent + f64::from(node.layout.location.y) };
     tops[usize::from(id)] = top;
-    if let Some(span) = &node.span {
+    // the boxes in a container with columns are in its own flow, if it is the root
+    let inner = node.columns.as_ref().filter(|_| is_root).and_then(|columns| columns.inner.as_ref());
+    if let Some(span) = inner.map(|inner| &inner.span).or(node.span.as_ref()) {
         for &kid in &span.kids {
             place(tree, kid, top, false, tops);
         }
