@@ -1,24 +1,16 @@
 use super::components::{
     AbsoluteGroups, BlockLevelElement, Decoration, DecorationFragment, EdgeValues, Fragmented,
-    PageGroupBox, Position, TextList,
+    PageGeometry, PageGroupBox, Position, TextList,
 };
 use super::inline::InlineFormattingContext;
 use super::pages::{PageContext, PageMargins, Pages};
 use crate::style::properties::computed::{ComputedValues, Display, PixelLength};
+use helium_paginate::{
+    BreakKind, CssObjective, ExactSolver, GalleyFlow, Kernel, PageSpec, PageTable, Solver,
+};
 use specs::{Entities, Entity, Join, Read, ReadStorage, System, Write, WriteStorage};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-
-/// The cost of a page break at a place where a break should be avoided (`break-inside: avoid`
-/// or `break-before`/`break-after: avoid`). It is larger than the cost of any page that is
-/// merely not full, so a break is only avoided if the content fits otherwise, but finite so
-/// that content that does not fit on a page is broken anyway.
-const AVOID_BREAK_COST: f64 = 1e12;
-/// The cost of a page that ends at a forced break; it outweighs all other costs.
-const FORCED_BREAK_COST: f64 = -1e15;
-/// The cost of a page that has fewer lines of a paragraph at its end than `orphans` or at its
-/// start than `widows`. Violating these is preferred to violating an `avoid` value.
-const ORPHANS_WIDOWS_COST: f64 = 1e11;
 
 pub struct Paginator {
     pub page_height: PixelLength,
@@ -61,27 +53,122 @@ impl PageBreakOpportunity {
     }
 }
 
-/// Whether the page between two breaks has too few lines of a paragraph at its start or end.
-fn violates_orphans_or_widows(from: &PageBreakOpportunity, to: &PageBreakOpportunity) -> bool {
-    if let Some(end) = to.in_lines {
-        let start = from
-            .in_lines
-            .filter(|start| start.block == end.block)
-            .map_or(0, |start| start.before);
-        if end.before - start < end.orphans {
-            return true;
+/// The pagination problem of the galley: the break points as a flow of items, and the break
+/// point that every place where a page can start stands for.
+struct GalleyProblem {
+    problem: helium_paginate::Problem,
+    service: helium_paginate::GalleyService,
+    break_point_at: HashMap<helium_paginate::Position, usize>,
+}
+
+/// The run of breaks between the lines of a paragraph that starts at `break_points[first]`: the
+/// number of breaks, if the run has a break between every two lines of the paragraph and they
+/// all have the same properties.
+fn paragraph_run(break_points: &[PageBreakOpportunity], first: usize) -> Option<usize> {
+    let head = break_points.get(first)?;
+    let lines = head.in_lines?;
+    if lines.before != 1 {
+        return None;
+    }
+    let count = lines.total - 1;
+    for number in 1..=count {
+        let point = break_points.get(first + number - 1)?;
+        let same = point.in_lines.is_some_and(|other| {
+            other.block == lines.block
+                && other.before == number
+                && other.total == lines.total
+                && other.orphans == lines.orphans
+                && other.widows == lines.widows
+        });
+        if !same || point.forced || point.avoid != head.avoid {
+            return None;
         }
     }
-    if let Some(start) = from.in_lines {
-        let end = to
-            .in_lines
-            .filter(|end| end.block == start.block)
-            .map_or(start.total, |end| end.before);
-        if end - start.before < start.widows {
-            return true;
+    Some(count)
+}
+
+/// The break points of the galley as a flow of boxes, paragraphs and breaks.
+///
+/// The extent of every box and of every line of a paragraph is the distance of the places where
+/// a page that ends there and the one that starts there begin (`advance_after`), so the
+/// extent of a page is the difference of two positions of the galley.
+fn galley_problem(
+    break_points: &[PageBreakOpportunity],
+    content_heights: &[PixelLength],
+    inline_size: f32,
+    rtl: bool,
+) -> GalleyProblem {
+    let extent = |from: usize| {
+        f64::from(break_points[from + 1].advance_after.0) - f64::from(break_points[from].advance_after.0)
+    };
+    let mut flow = GalleyFlow::new();
+    // the place where a page that starts at the break point starts
+    let mut places = vec![helium_paginate::Position::Item(0)];
+    let mut index = 0;
+    while index + 1 < break_points.len() {
+        match paragraph_run(break_points, index + 1) {
+            Some(count) => {
+                let lines: Vec<f64> = (index..=index + count).map(extent).collect();
+                let lines_in = break_points[index + 1].in_lines.unwrap();
+                let avoid_inside = break_points[index + 1].avoid;
+                let item = flow.len();
+                flow.paragraph(&lines, lines_in.orphans as u32, lines_in.widows as u32, avoid_inside);
+                for line in 1..=count {
+                    places.push(helium_paginate::Position::InParagraph { item, line: line as u32 });
+                }
+                index += count + 1;
+            }
+            None => {
+                flow.content(extent(index));
+                index += 1;
+            }
         }
+        let point = &break_points[index];
+        if index + 1 < break_points.len() {
+            if point.in_lines.is_some() {
+                log::warn!("a break in a paragraph that is not part of a complete run");
+            }
+            flow.break_(if point.forced {
+                BreakKind::Forced
+            } else if point.avoid {
+                BreakKind::Avoid
+            } else {
+                BreakKind::Allowed
+            });
+        }
+        places.push(helium_paginate::Position::Item(flow.len()));
     }
-    false
+
+    // COMPATIBILITY, to be removed in step 2 of docs/pagination.md: The paginator has always
+    // guessed the page class (`PageMargins::edges_of_page_start`) and treated the number of a
+    // break point as a page number, so the geometry of a page is a function of the place where
+    // it starts alone. The table is filled with those guesses, and the kernel's page kind is
+    // ignored by it. The exact solver then handles the page class no better than the code it
+    // replaces. Likewise `stop_at_forced` is off, since the paginator never stopped there.
+    let spec = |index: usize| PageSpec { inline_size, block_size: content_heights[index].0 };
+    let mut pages = PageTable::uniform(spec(0));
+    pages.rtl = rtl;
+    let mut break_point_at = HashMap::new();
+    for (index, &place) in places.iter().enumerate() {
+        pages.starts.insert(place, spec(index));
+        break_point_at.insert(place, index);
+    }
+    let (mut problem, service) = flow.finish(pages);
+    problem.stop_at_forced = false;
+    GalleyProblem { problem, service, break_point_at }
+}
+
+/// The break points at which the pages after the first start.
+fn choose_breaks(galley: &mut GalleyProblem) -> Vec<usize> {
+    let mut kernel = Kernel::new(&galley.problem, &mut galley.service);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    debug_assert!(kernel.realize(&solution).is_ok());
+    solution
+        .pages
+        .iter()
+        .skip(1)
+        .map(|&token| galley.break_point_at[&kernel.position(token)])
+        .collect()
 }
 
 impl<'world> System<'world> for Paginator {
@@ -90,6 +177,7 @@ impl<'world> System<'world> for Paginator {
         Read<'world, TextList>,
         Read<'world, AbsoluteGroups>,
         Read<'world, PageMargins>,
+        Read<'world, PageGeometry>,
         Write<'world, Pages>,
         WriteStorage<'world, Position>,
         WriteStorage<'world, Decoration>,
@@ -106,6 +194,7 @@ impl<'world> System<'world> for Paginator {
             text_list,
             absolute_groups,
             page_margins,
+            geometry,
             mut pages,
             mut positions,
             mut decorations,
@@ -365,48 +454,11 @@ impl<'world> System<'world> for Paginator {
             .map(|edges| self.page_height - edges.top - edges.bottom)
             .collect();
 
-        let last_break_point = break_points.len() - 1;
-        let optimal_sequence =
-            helium_paginate::paragraph::compute_breakpoints(break_points.len(), &mut |from, to| {
-                // a page starts where the content before the break ends (`advance_after`), which keeps
-                // the margin and padding that follow a forced break
-                let height = break_points[to].advance_after - break_points[from].advance_after;
+        let inline_size = (geometry.width - geometry.margin.left - geometry.margin.right).0;
+        let mut galley = galley_problem(&break_points, &content_heights, inline_size, page_margins.rtl);
+        let chosen_breaks = choose_breaks(&mut galley);
 
-                let content_height = content_heights[from];
-                if height > content_height {
-                    if to == from + 1 {
-                        // There is no break opportunity in between: an unbreakable box that is
-                        // taller than a page gets a page of its own and overflows it, so that
-                        // the content after it is not lost.
-                        1e30
-                    } else {
-                        f64::INFINITY
-                    }
-                } else {
-                    // A forced break is always taken, but how the page in front of it is
-                    // filled still matters for the widows of its last paragraph.
-                    let mut cost = if break_points[to].forced {
-                        FORCED_BREAK_COST
-                    } else if to == last_break_point {
-                        // the last page is allowed to be partially filled
-                        0.0
-                    } else {
-                        (content_height.0 as f64 - height.0 as f64).powi(3)
-                    };
-                    if break_points[to].avoid {
-                        cost += AVOID_BREAK_COST;
-                    }
-                    if violates_orphans_or_widows(&break_points[from], &break_points[to]) {
-                        cost += ORPHANS_WIDOWS_COST;
-                    }
-                    cost
-                }
-            });
-
-        let mut optimal_sequence_iter = optimal_sequence
-            .iter()
-            .skip(1)
-            .map(|&index| break_points[index]);
+        let mut optimal_sequence_iter = chosen_breaks.iter().map(|&index| break_points[index]);
         let mut next_break = optimal_sequence_iter.next();
 
         let mut current_page = 0;
@@ -676,48 +728,113 @@ impl<'world> System<'world> for Paginator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use helium_paginate::{Item, Position};
     use specs::{Builder, World, WorldExt};
 
-    fn break_in(block: Entity, before: usize, total: usize) -> PageBreakOpportunity {
+    fn point(advance: f32) -> PageBreakOpportunity {
+        PageBreakOpportunity::start(PixelLength(advance))
+    }
+
+    fn break_in(block: Entity, advance: f32, before: usize, total: usize) -> PageBreakOpportunity {
         PageBreakOpportunity {
-            in_lines: Some(BreakInLines {
-                block,
-                before,
-                total,
-                orphans: 2,
-                widows: 2,
-            }),
-            ..PageBreakOpportunity::start(PixelLength(0.0))
+            in_lines: Some(BreakInLines { block, before, total, orphans: 2, widows: 3 }),
+            ..point(advance)
         }
     }
 
-    #[test]
-    fn orphans_and_widows_count_the_lines_on_the_page() {
-        let mut world = World::new();
-        let block = world.create_entity().build();
-        let start = PageBreakOpportunity::start(PixelLength(0.0));
-        // a ten-line paragraph broken after 1, 2, 8 and 9 lines
-        assert!(violates_orphans_or_widows(&start, &break_in(block, 1, 10)));
-        assert!(!violates_orphans_or_widows(&start, &break_in(block, 2, 10)));
-        assert!(!violates_orphans_or_widows(&break_in(block, 8, 10), &start));
-        assert!(violates_orphans_or_widows(&break_in(block, 9, 10), &start));
+    fn problem(points: &[PageBreakOpportunity]) -> GalleyProblem {
+        let heights = vec![PixelLength(100.0); points.len()];
+        galley_problem(points, &heights, 300.0, false)
     }
 
     #[test]
-    fn a_page_in_the_middle_of_a_paragraph_counts_its_own_lines() {
+    fn the_breaks_between_the_lines_of_a_paragraph_become_one_item() {
         let mut world = World::new();
         let block = world.create_entity().build();
-        // lines 4 to 5 of 12 are on the page: too few for both orphans and widows
-        let from = break_in(block, 3, 12);
-        assert!(!violates_orphans_or_widows(&from, &break_in(block, 5, 12)));
-        assert!(violates_orphans_or_widows(&from, &break_in(block, 4, 12)));
+        let points = [
+            point(0.0),
+            point(10.0),
+            break_in(block, 30.0, 1, 4),
+            break_in(block, 50.0, 2, 4),
+            break_in(block, 70.0, 3, 4),
+            point(90.0),
+            point(100.0),
+        ];
+        let galley = problem(&points);
+        assert!(matches!(
+            galley.problem.items[..],
+            [
+                Item::Box { .. },
+                Item::Break { kind: BreakKind::Allowed },
+                Item::Paragraph { lines: 4, orphans: 2, widows: 3, avoid_inside: false, .. },
+                Item::Break { kind: BreakKind::Allowed },
+                Item::Box { .. },
+            ]
+        ));
+        // every break point is a place where a page can start
+        let mut places: Vec<_> = galley.break_point_at.iter().map(|(&at, &index)| (index, at)).collect();
+        places.sort_by_key(|&(index, _)| index);
+        let places: Vec<_> = places.into_iter().map(|(_, at)| at).collect();
+        assert_eq!(
+            places,
+            [
+                Position::Item(0),
+                Position::Item(2),
+                Position::InParagraph { item: 2, line: 1 },
+                Position::InParagraph { item: 2, line: 2 },
+                Position::InParagraph { item: 2, line: 3 },
+                Position::Item(4),
+                Position::Item(5),
+            ]
+        );
     }
 
     #[test]
-    fn breaks_in_other_blocks_do_not_interact() {
+    fn a_page_of_the_galley_is_the_difference_of_two_positions() {
+        let points = [point(0.0), point(10.1), point(30.3), point(30.3 + 0.7)];
+        let mut galley = problem(&points);
+        let mut kernel = Kernel::new(&galley.problem, &mut galley.service);
+        let first = kernel.first_page();
+        let used: Vec<f32> = kernel.candidates(&first).iter().map(|fill| fill.used).collect();
+        let expected = [10.1f32 - 0.0, 30.3 - 0.0, (30.3f32 + 0.7) - 0.0];
+        assert_eq!(used, expected);
+    }
+
+    #[test]
+    fn forced_and_avoid_breaks_keep_their_kind() {
+        let points = [
+            point(0.0),
+            PageBreakOpportunity { forced: true, ..point(10.0) },
+            PageBreakOpportunity { avoid: true, ..point(20.0) },
+            point(30.0),
+        ];
+        let galley = problem(&points);
+        assert!(matches!(
+            galley.problem.items[..],
+            [
+                Item::Box { .. },
+                Item::Break { kind: BreakKind::Forced },
+                Item::Box { .. },
+                Item::Break { kind: BreakKind::Avoid },
+                Item::Box { .. },
+            ]
+        ));
+    }
+
+    #[test]
+    fn breaks_inside_a_paragraph_with_other_properties_are_not_a_run() {
         let mut world = World::new();
-        let (a, b) = (world.create_entity().build(), world.create_entity().build());
-        // the page ends after the second line of b; the lines of a at its start are all there
-        assert!(!violates_orphans_or_widows(&break_in(a, 8, 10), &break_in(b, 2, 5)));
+        let block = world.create_entity().build();
+        // the second break is avoided, the first is not
+        let points = [
+            point(0.0),
+            break_in(block, 10.0, 1, 3),
+            PageBreakOpportunity { avoid: true, ..break_in(block, 20.0, 2, 3) },
+            point(30.0),
+        ];
+        assert_eq!(paragraph_run(&points, 1), None);
+        // a paragraph that starts before its first line is not a run either
+        let points = [point(0.0), break_in(block, 10.0, 2, 3), point(30.0)];
+        assert_eq!(paragraph_run(&points, 1), None);
     }
 }
