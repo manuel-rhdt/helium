@@ -5,6 +5,8 @@
 //! the measure functions access to the inline formatting contexts.
 
 use specs::{Entity, ReadStorage, WriteStorage};
+use std::collections::HashMap;
+use std::rc::Rc;
 use taffy::geometry::{Line, Point, Size};
 use taffy::style::{AvailableSpace, Position};
 use taffy::tree::{
@@ -92,6 +94,16 @@ pub(super) struct Node {
     /// The borders of a cell, row, row group or table of a table with collapsing borders (see
     /// [`super::collapse`]).
     pub collapsed: Option<crate::layout::components::EdgeValues<crate::layout::components::CollapsedEdge>>,
+    /// Where the box is in the flow of the document, if it is part of it (see [`super::flow`]).
+    pub span: Option<super::window::Span>,
+    /// The style of the box in the window that is shown to Taffy (see [`super::window`]).
+    pub window_style: Option<taffy::Style>,
+    /// Whether the box is laid out differently in the window than as a whole. Its layouts do not
+    /// go to the cache of Taffy.
+    pub windowed: bool,
+    /// The width the lines of the paragraph were last broken for, and the indent of the first
+    /// line, as the measure function was given them when the box was laid out for real.
+    pub measured: Option<(f32, f32)>,
     pub cache: Cache,
     pub layout: Layout,
 }
@@ -111,6 +123,13 @@ pub(super) struct HeliumTree<'a, 'w> {
     /// The line width to use for the `inline-block` boxes of an inline context if its width is
     /// not known when it is first measured.
     pub fallback_line_width: f32,
+    /// The window that Taffy is shown, if any.
+    pub window: Option<super::window::Window>,
+    /// The boxes that are laid out differently in the window.
+    pub windowed: Vec<NodeId>,
+    /// The lines of the paragraphs: by the box, the break that the lines start at and the width
+    /// they are broken for.
+    pub lines: HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
 }
 
 // --- building the tree ---
@@ -127,7 +146,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
     /// The style of a box as an item of its parent: in the logical axes of the parent.
     fn item_style(&self, id: NodeId) -> &taffy::Style {
         let node = self.node(id);
-        node.item_style.as_ref().unwrap_or(&node.style)
+        node.item_style.as_ref().unwrap_or_else(|| self.active_style(id))
     }
 
     /// Finds the orthogonal flows in the tree below `id` (which is laid out in `parent`'s flow):
@@ -181,6 +200,10 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             mirrored_oof: false,
             content_shift: 0.0,
             collapsed: None,
+            span: None,
+            window_style: None,
+            windowed: false,
+            measured: None,
             cache: Cache::new(),
             layout: Layout::new(),
         });
@@ -435,7 +458,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         };
         let content_left = resolve(style.border.left) + resolve(style.padding.left);
         let content_right = width - resolve(style.border.right) - resolve(style.padding.right);
-        for child in self.node(id).children.clone() {
+        for child in self.window_children(id).to_vec() {
             let node = self.node_mut(child);
             if node.style.position == taffy::Position::Absolute
                 || node.style.display == taffy::Display::None
@@ -760,15 +783,19 @@ impl HeliumTree<'_, '_> {
         let ifc = self.inline_ctxs.get(entity);
         let text_runs = self.text_runs;
         let intrinsic_sizes = &*self.intrinsic_sizes;
+        let aligns = self.aligns;
+        let line_cache = &mut self.lines;
         let text_indent = self.computed_values.get(entity).map(|s| s.text.text_indent);
         let run_mode = inputs.run_mode;
+        // the lines that the page has of the paragraph, if it is cut (see `super::window`)
+        let cut = self.window.as_ref().and_then(|window| window.cut_of(id));
+        let style = node.window_style.as_ref().unwrap_or(&node.style);
         // Taffy gives the measure function a known size of the border box (`known`) but the
         // available space of the content box, so the lines must not be broken for `known`
         // itself: a cell that a grid track makes 16px wider than its content would otherwise
         // be measured with fewer lines than it gets when it is laid out for real.
         let horizontal_extras = {
             let parent_width = inputs.parent_size.width;
-            let style = &node.style;
             (style.padding.resolve_or_zero(parent_width, calc)
                 + style.border.resolve_or_zero(parent_width, calc))
             .horizontal_axis_sum()
@@ -776,7 +803,9 @@ impl HeliumTree<'_, '_> {
 
         // (first baseline, last baseline) relative to the top of the content box
         let mut baselines = None;
-        let mut output = compute_leaf_layout(inputs, &node.style, calc, |known, available| {
+        // the width and the indent that the lines were broken for
+        let mut measured = None;
+        let mut output = compute_leaf_layout(inputs, style, calc, |known, available| {
             let Some(ifc) = ifc else {
                 return Size::ZERO;
             };
@@ -807,12 +836,20 @@ impl HeliumTree<'_, '_> {
                 AvailableSpace::Definite(width) => shrink_to_fit(min.0, max.0, width),
                 _ => line_width,
             });
-            let lines = ifc
-                .compute_lines(PixelLength(line_width), indent, text_runs, intrinsic_sizes, self.aligns)
-                .unwrap_or_else(|error| {
-                    log::error!("cannot break lines of {:?}: {}", entity, error);
-                    vec![]
-                });
+            if run_mode == RunMode::PerformLayout {
+                measured = Some((line_width, indent.0));
+            }
+            let lines = lines_between(
+                line_cache,
+                ifc,
+                entity.id(),
+                cut,
+                PixelLength(line_width),
+                indent,
+                text_runs,
+                intrinsic_sizes,
+                aligns,
+            );
             let height: f32 = lines.iter().map(|line| line.height.0).sum();
             if let (Some(first), Some(last)) = (lines.first(), lines.last()) {
                 baselines = Some((first.baseline.0, height - last.height.0 + last.baseline.0));
@@ -823,7 +860,6 @@ impl HeliumTree<'_, '_> {
             }
         });
 
-        let style = &node.style;
         let parent_width = inputs.parent_size.width;
         let border = style.border.resolve_or_zero(parent_width, calc);
         let padding = style.padding.resolve_or_zero(parent_width, calc);
@@ -835,13 +871,14 @@ impl HeliumTree<'_, '_> {
             };
         }
 
-        if inputs.run_mode == RunMode::PerformLayout && !node.children.is_empty() {
+        let has_children = !self.window_children(id).is_empty();
+        if inputs.run_mode == RunMode::PerformLayout && has_children {
             // The out-of-flow boxes in inline content are placed as if they were at the start
             // of the content.
             // TODO: use the position in the line where the box was
             let content_left = border.left + padding.left;
             let content_top = border.top + padding.top;
-            for (order, &child) in node.children.iter().enumerate() {
+            for (order, &child) in self.window_children(id).iter().enumerate() {
                 output.oof_candidates.push(OofCandidate {
                     node: child,
                     order: order as u32,
@@ -862,6 +899,9 @@ impl HeliumTree<'_, '_> {
                     y: border.top,
                 },
             });
+        }
+        if measured.is_some() {
+            self.node_mut(id).measured = measured;
         }
         output
     }
@@ -979,6 +1019,86 @@ impl HeliumTree<'_, '_> {
     }
 }
 
+/// The lines of a paragraph that are on a page: all of them if the page has the whole paragraph,
+/// and else the lines from the cut where the page starts in the paragraph to the cut where it
+/// ends (`cut`: where the paragraph is cut by the page).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lines_between(
+    cache: &mut HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    ifc: &InlineFormattingContext,
+    node: u32,
+    cut: Option<(Option<helium_paginate::Cut>, Option<helium_paginate::Cut>)>,
+    line_width: PixelLength,
+    indent: PixelLength,
+    text_runs: &ReadStorage<TextRun>,
+    intrinsic_sizes: &WriteStorage<IntrinsicSize>,
+    aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
+) -> Vec<crate::layout::inline::MeasuredLine> {
+    let Some((from, to)) = cut else {
+        return lines_from(cache, ifc, node, None, line_width, indent, text_runs, intrinsic_sizes, aligns)
+            .as_ref()
+            .clone();
+    };
+    let from = from.map(|cut| cut.0 as usize);
+    let lines = lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns);
+    match to {
+        None => lines.as_ref().clone(),
+        Some(to) => {
+            let end = lines
+                .iter()
+                .position(|line| line.to_break == to.0 as usize)
+                .map_or(lines.len(), |index| index + 1);
+            lines[..end].to_vec()
+        }
+    }
+}
+
+/// The lines of a paragraph from the break `from` (the start of the paragraph if there is none)
+/// to its end, for a line width. The lines of the paragraph that follow a break that ends a line of
+/// the paragraph in the same width are the lines that the whole paragraph has: they do not
+/// depend on how the paragraph got to the break. Otherwise the rest of the paragraph is broken
+/// for the width of the page.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lines_from(
+    cache: &mut HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    ifc: &InlineFormattingContext,
+    node: u32,
+    from: Option<usize>,
+    line_width: PixelLength,
+    indent: PixelLength,
+    text_runs: &ReadStorage<TextRun>,
+    intrinsic_sizes: &WriteStorage<IntrinsicSize>,
+    aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
+) -> Rc<Vec<crate::layout::inline::MeasuredLine>> {
+    let key = (node, from, line_width.0.to_bits());
+    if let Some(lines) = cache.get(&key) {
+        return lines.clone();
+    }
+    let lines = match from {
+        None => ifc
+            .compute_lines(line_width, indent, text_runs, intrinsic_sizes, aligns)
+            .unwrap_or_else(|error| {
+                log::error!("cannot break lines of {:?}: {}", node, error);
+                vec![]
+            }),
+        Some(from) => {
+            let whole = lines_from(cache, ifc, node, None, line_width, indent, text_runs, intrinsic_sizes, aligns);
+            match whole.iter().position(|line| line.to_break == from) {
+                Some(index) => whole[index + 1..].to_vec(),
+                None => ifc
+                    .compute_lines_from(from, line_width, PixelLength(0.0), text_runs, intrinsic_sizes, aligns)
+                    .unwrap_or_else(|error| {
+                        log::error!("cannot break lines of {:?}: {}", node, error);
+                        vec![]
+                    }),
+            }
+        }
+    };
+    let lines = Rc::new(lines);
+    cache.insert(key, lines.clone());
+    lines
+}
+
 /// The input of the layout of an orthogonal flow, seen from the flow itself: the axes turned
 /// around.
 fn transpose_input(inputs: LayoutInput) -> LayoutInput {
@@ -1030,15 +1150,15 @@ impl TraversePartialTree for HeliumTree<'_, '_> {
         Self: 't;
 
     fn child_ids(&self, parent: NodeId) -> Self::ChildIter<'_> {
-        ChildIter(self.node(parent).children.iter())
+        ChildIter(self.window_children(parent).iter())
     }
 
     fn child_count(&self, parent: NodeId) -> usize {
-        self.node(parent).children.len()
+        self.window_children(parent).len()
     }
 
     fn get_child_id(&self, parent: NodeId, index: usize) -> NodeId {
-        self.node(parent).children[index]
+        self.window_children(parent)[index]
     }
 }
 
@@ -1052,7 +1172,7 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
     type CustomIdent = String;
 
     fn get_core_container_style(&self, id: NodeId) -> Self::CoreContainerStyle<'_> {
-        &self.node(id).style
+        self.active_style(id)
     }
 
     fn set_unrounded_layout(&mut self, id: NodeId, layout: &Layout) {
@@ -1082,7 +1202,25 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
                 }
                 Content::Inline => tree.compute_inline_layout(id, inputs),
                 Content::Replaced => tree.compute_replaced_layout(id, inputs),
-                Content::Table => tree.compute_table_layout(id, inputs),
+                Content::Table => {
+                    let mut output = tree.compute_table_layout(id, inputs);
+                    // a table that the window cuts is as high as its part in the window
+                    if inputs.run_mode == RunMode::PerformLayout && tree.node(id).windowed {
+                        if let Some(window) = &tree.window {
+                            let node = tree.node(id);
+                            if node.span.as_ref().is_some_and(|span| !span.kids.is_empty()) {
+                                let (top, bottom) = super::window::table_fragment(
+                                    &tree.nodes,
+                                    window,
+                                    node,
+                                    output.size.height,
+                                );
+                                output.size.height = bottom - top;
+                            }
+                        }
+                    }
+                    output
+                }
             };
             // lay out the out-of-flow boxes this node is the containing block of
             if inputs.run_mode == RunMode::PerformLayout {
@@ -1122,11 +1260,19 @@ impl LayoutContainingBlock for HeliumTree<'_, '_> {
 
 impl CacheTree for HeliumTree<'_, '_> {
     fn cache_get(&mut self, id: NodeId, input: &LayoutInput) -> Option<LayoutOutput> {
-        self.node_mut(id).cache.get(input)
+        // (what is laid out for a window is not what the cache has been filled with)
+        let node = self.node_mut(id);
+        if node.windowed {
+            return None;
+        }
+        node.cache.get(input)
     }
 
     fn cache_store(&mut self, id: NodeId, input: &LayoutInput, output: LayoutOutput) {
-        self.node_mut(id).cache.store(input, output)
+        let node = self.node_mut(id);
+        if !node.windowed {
+            node.cache.store(input, output)
+        }
     }
 
     fn cache_clear(&mut self, id: NodeId) {
@@ -1145,7 +1291,7 @@ impl LayoutBlockContainer for HeliumTree<'_, '_> {
         Self: 't;
 
     fn get_block_container_style(&self, id: NodeId) -> Self::BlockContainerStyle<'_> {
-        &self.node(id).style
+        self.active_style(id)
     }
 
     fn get_block_child_style(&self, id: NodeId) -> Self::BlockItemStyle<'_> {
@@ -1164,7 +1310,7 @@ impl LayoutFlexboxContainer for HeliumTree<'_, '_> {
         Self: 't;
 
     fn get_flexbox_container_style(&self, id: NodeId) -> Self::FlexboxContainerStyle<'_> {
-        &self.node(id).style
+        self.active_style(id)
     }
 
     fn get_flexbox_child_style(&self, id: NodeId) -> Self::FlexboxItemStyle<'_> {
@@ -1183,7 +1329,7 @@ impl LayoutGridContainer for HeliumTree<'_, '_> {
         Self: 't;
 
     fn get_grid_container_style(&self, id: NodeId) -> Self::GridContainerStyle<'_> {
-        &self.node(id).style
+        self.active_style(id)
     }
 
     fn get_grid_child_style(&self, id: NodeId) -> Self::GridItemStyle<'_> {

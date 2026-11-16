@@ -318,6 +318,20 @@ impl InlineFormattingContext {
         Ok(())
     }
 
+    /// Adds lines that were computed for the paragraph, one entity for each. Returns the number
+    /// of the first of them.
+    pub fn push_lines(&mut self, lines: Vec<MeasuredLine>, entities: &Entities) -> usize {
+        let first = self.lines.len();
+        self.lines.extend(lines.into_iter().map(|line| Line {
+            from_break: line.from_break,
+            to_break: line.to_break,
+            height: line.height,
+            baseline: line.baseline,
+            entity: entities.create(),
+        }));
+        first
+    }
+
     /// Breaks the paragraph into lines without storing them or creating entities for them, so
     /// that it can be used to measure the paragraph for a given line width.
     pub fn compute_lines(
@@ -328,8 +342,22 @@ impl InlineFormattingContext {
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
         aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> Result<Vec<MeasuredLine>, String> {
+        self.compute_lines_from(0, line_width, indent, text_runs, intrinsic_sizes, aligns)
+    }
+
+    /// Breaks the part of the paragraph that follows the break point `from` into lines. The first
+    /// line is indented by `indent` only if `from` is the start of the paragraph.
+    pub fn compute_lines_from(
+        &self,
+        from: usize,
+        line_width: Px,
+        indent: Px,
+        text_runs: &ReadStorage<components::TextRun>,
+        intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+        aligns: &ReadStorage<components::VerticalAlignment>,
+    ) -> Result<Vec<MeasuredLine>, String> {
         let breakpoints = &self.break_points;
-        if breakpoints.is_empty() {
+        if breakpoints.is_empty() || from >= breakpoints.len() {
             return Ok(vec![]);
         }
         if breakpoints.len() < 2 {
@@ -341,17 +369,17 @@ impl InlineFormattingContext {
 
         let opportunities: Vec<_> = breakpoints
             .iter()
-            .map(|breakpoint| super::paragraph::BreakOpportunity {
+            .map(|breakpoint| helium_paginate::paragraph::BreakOpportunity {
                 forced: breakpoint.forced,
                 hyphen: breakpoint.hyphen,
                 penalty: breakpoint.penalty,
             })
             .collect();
         let mut glue_prefix = Vec::with_capacity(breakpoints.len() + 1);
-        glue_prefix.push(super::paragraph::GlueTotals::default());
+        glue_prefix.push(helium_paginate::paragraph::GlueTotals::default());
         for breakpoint in breakpoints {
             let previous = *glue_prefix.last().unwrap();
-            glue_prefix.push(super::paragraph::GlueTotals {
+            glue_prefix.push(helium_paginate::paragraph::GlueTotals {
                 stretch: previous.stretch + f64::from(breakpoint.glue_stretch.0),
                 shrink: previous.shrink + f64::from(breakpoint.glue_shrink.0),
             });
@@ -367,7 +395,7 @@ impl InlineFormattingContext {
             // and, like TeX's \raggedright, a finite stretch of 2em at the end of every line, so
             // lines are balanced by the same algorithm without ever being squeezed.
             let glue = if justified {
-                super::paragraph::GlueTotals {
+                helium_paginate::paragraph::GlueTotals {
                     stretch: end_glue.stretch - start_glue.stretch,
                     shrink: end_glue.shrink - start_glue.shrink,
                 }
@@ -375,27 +403,33 @@ impl InlineFormattingContext {
                 let font_size = text_runs
                     .get(breakpoints[to].entity)
                     .map_or(16.0, |run| run.face.font_size.0);
-                super::paragraph::GlueTotals {
+                helium_paginate::paragraph::GlueTotals {
                     stretch: f64::from(2.0 * font_size),
                     shrink: 0.0,
                 }
             };
             Some((f64::from(natural_width.0), glue))
         };
-        let width_of =
-            |from: usize| f64::from((line_width - if from == 0 { indent } else { Px(0.0) }).0);
-        let sequence =
-            super::paragraph::compute_paragraph_breakpoints(&opportunities, metrics, width_of);
+        let width_of = |at: usize| {
+            f64::from((line_width - if at + from == 0 { indent } else { Px(0.0) }).0)
+        };
+        // the paragraph from the break point `from` on, which is the start of its first line
+        let sequence = helium_paginate::paragraph::compute_paragraph_breakpoints(
+            &opportunities[from..],
+            |start, end| metrics(from + start, from + end),
+            width_of,
+        );
 
         let lines = sequence
             .windows(2)
             .map(|window| {
+                let (window_from, window_to) = (from + window[0], from + window[1]);
                 let (baseline, height) =
-                    self.line_height(window[0], window[1], text_runs, intrinsic_sizes, aligns);
+                    self.line_height(window_from, window_to, text_runs, intrinsic_sizes, aligns);
                 // a line can have no height (see `line_height`)
                 Ok(MeasuredLine {
-                    from_break: window[0],
-                    to_break: window[1],
+                    from_break: window_from,
+                    to_break: window_to,
                     height,
                     baseline,
                 })

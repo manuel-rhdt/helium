@@ -15,6 +15,7 @@ cssparser = "0.38"
 selectors = "0.41"
 specs = { version = "0.20", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
+helium_paginate = { path = "./helium_paginate" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "master" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "master" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }

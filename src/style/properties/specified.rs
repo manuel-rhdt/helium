@@ -2663,8 +2663,8 @@ pub enum Break {
     /// A forced page break (the CSS 2 name; the same as `page`).
     Always,
     Page,
-    /// Forced breaks to a left or right page. Pages are not numbered, so these are forced page
-    /// breaks without the empty page that may be needed to get to the right side.
+    /// Forced breaks to a left or right page. An empty page is left where the next page would be
+    /// of the other side.
     Left,
     Right,
     Recto,

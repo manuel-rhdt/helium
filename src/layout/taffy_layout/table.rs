@@ -58,6 +58,23 @@ pub(super) struct TableStructure {
     /// The cells with the box they are placed relative to (their row, their row group, or the
     /// table).
     cells: Vec<(NodeId, Option<NodeId>)>,
+    /// For every table row, whether a cell spans the row and the one after it: a page break
+    /// between the two rows would cut the cell.
+    blocked_after: Vec<bool>,
+    /// Whether there are cells that are in no row box, so that the table cannot be split between
+    /// the boxes of its rows.
+    loose_cells: bool,
+}
+
+/// A box of a table that a page break can come in front of or behind: a caption, a row group or
+/// a row.
+#[derive(Debug, Clone)]
+pub(super) struct TableKid {
+    pub node: NodeId,
+    /// The table rows of the box.
+    pub rows: std::ops::Range<usize>,
+    /// The rows of a row group.
+    pub kids: Vec<TableKid>,
 }
 
 #[derive(Debug)]
@@ -266,6 +283,7 @@ impl HeliumTree<'_, '_> {
                     }
                     placements.push((cell, row_index, column, rows, columns));
                     let parent = row.node.or(group.node);
+                    structure.loose_cells |= row.node.is_none();
                     structure.cells.push((cell, parent));
                     column += columns;
                 }
@@ -296,6 +314,12 @@ impl HeliumTree<'_, '_> {
         }
         structure.rows = row_index;
         structure.columns = slots.0.iter().map(Vec::len).max().unwrap_or(0);
+        structure.blocked_after = vec![false; structure.rows];
+        for &(_, row, _, rows, _) in &placements {
+            for blocked in structure.blocked_after.iter_mut().skip(row).take(rows.saturating_sub(1)) {
+                *blocked = true;
+            }
+        }
         if self.has_collapsed_borders(table) {
             let parts: Vec<super::collapse::Part> = structure
                 .parts
@@ -453,6 +477,50 @@ impl HeliumTree<'_, '_> {
             node.style.gap.width = taffy::style::LengthPercentage::length(0.0);
         }
         node.table = Some(Box::new(structure));
+    }
+
+    /// The boxes of a table that a page may break between, in the order of the grid, or `None`
+    /// if the table cannot be split between them.
+    pub(super) fn table_kids(&self, table: NodeId) -> Option<Vec<TableKid>> {
+        let structure = self.node(table).table.as_deref()?;
+        if structure.loose_cells || structure.rows == 0 {
+            return None;
+        }
+        let mut kids: Vec<TableKid> = structure
+            .boxes
+            .iter()
+            .filter(|&&node| self.display(node) == Display::TableCaption)
+            .map(|&node| TableKid { node, rows: 0..0, kids: vec![] })
+            .collect();
+        for part in &structure.parts {
+            if part.parent.is_some() {
+                continue;
+            }
+            let rows = part.start..part.end;
+            let is_group = self.display(part.node).is_table_row_group();
+            let inner = if is_group {
+                structure
+                    .parts
+                    .iter()
+                    .filter(|row| row.parent == Some(part.node))
+                    .map(|row| TableKid { node: row.node, rows: row.start..row.end, kids: vec![] })
+                    .collect()
+            } else {
+                vec![]
+            };
+            kids.push(TableKid { node: part.node, rows, kids: inner });
+        }
+        Some(kids)
+    }
+
+    /// Whether a page break behind the table row `row` would cut a cell that spans it and the
+    /// next one.
+    pub(super) fn table_row_blocked(&self, table: NodeId, row: usize) -> bool {
+        self.node(table)
+            .table
+            .as_ref()
+            .and_then(|structure| structure.blocked_after.get(row).copied())
+            .unwrap_or(false)
     }
 
     /// A definite length of a node from its Taffy style.

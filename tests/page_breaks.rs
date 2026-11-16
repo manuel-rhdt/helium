@@ -188,7 +188,9 @@ fn forced_breaks_before_and_after() {
         &format!("{}{}", lines(RED_CSS, 2, "break-after: page"), lines(GREEN_CSS, 2, "")),
     );
     assert_eq!((pages(&after, RED), pages(&after, GREEN)), (vec![0], vec![1]));
-    for value in ["always", "left", "right", "recto", "verso"] {
+    // The first page is a right page: a break to a right (recto) page leaves the second page
+    // empty.
+    for (value, page) in [("always", 1), ("left", 1), ("right", 2), ("recto", 2), ("verso", 1)] {
         let dump = dump(
             &format!("before_{}", value),
             &format!(
@@ -197,7 +199,7 @@ fn forced_breaks_before_and_after() {
                 lines(GREEN_CSS, 2, &format!("break-before: {}", value))
             ),
         );
-        assert_eq!(pages(&dump, GREEN), [1], "break-before: {}", value);
+        assert_eq!(pages(&dump, GREEN), [page], "break-before: {}", value);
     }
 }
 

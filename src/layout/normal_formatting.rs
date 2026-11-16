@@ -80,10 +80,17 @@ impl<'a> System<'a> for PagesCreate {
         Entities<'a>,
         ReadStorage<'a, Position>,
         Write<'a, Option<Pages>>,
+        Read<'a, super::pages::Pages>,
+        Read<'a, super::pages::PageMargins>,
     );
 
-    fn run(&mut self, (entities, positions, mut pages): Self::SystemData) {
+    fn run(&mut self, (entities, positions, mut pages, contexts, margins): Self::SystemData) {
         let mut page_list = Pages::default();
+        // every page has its own size, and the pages that are empty are there, too
+        for (index, context) in contexts.0.iter().enumerate() {
+            let (width, height) = margins.size(context, (self.page_width, self.page_height));
+            page_list.0.insert(index, Page::new(width, height));
+        }
         for (entity, &Position { page, .. }) in (&entities, &positions).join() {
             let page = page_list
                 .0

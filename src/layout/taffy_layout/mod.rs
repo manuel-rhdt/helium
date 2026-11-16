@@ -2,19 +2,22 @@
 //!
 //! Taffy computes the sizes and positions of all boxes (block, flex and grid containers and
 //! absolutely positioned boxes). Helium keeps doing what Taffy cannot do: inline content is
-//! broken into lines by [`InlineFormattingContext`], and the document is split into pages by the
-//! paginator afterwards.
+//! broken into lines by [`InlineFormattingContext`]. The pages are chosen by the kernel of
+//! `helium_paginate`, and every page is laid out for its own geometry (see `docs/pagination.md`).
 //!
 //! The result is written to the same components the rest of the layout pipeline reads:
 //! [`Position`] (content box in document coordinates), [`Decoration`], the [`TextList`] of the
 //! paginator and the [`AbsoluteGroups`].
 
 mod collapse;
-mod page_groups;
+mod flow;
+mod paginate;
 mod replaced;
+mod service;
 mod style;
 mod table;
 mod tree;
+mod window;
 
 use std::collections::HashMap;
 
@@ -33,7 +36,8 @@ use crate::layout::normal_formatting::BlockFormattingContext;
 use crate::style::properties::computed::{ComputedValues, PixelLength, TextAlign};
 
 use crate::layout::writing_mode::Flow;
-use tree::{Content, HeliumTree, Node};
+use tree::{Content, HeliumTree, Node, lines_between};
+use window::Window;
 
 /// Distance between the z indices of boxes at different levels of nested absolutely positioned
 /// boxes. Absolutely positioned boxes are painted on top of the in-flow content.
@@ -52,13 +56,18 @@ pub struct TaffyBlockLayout {
     pub margin: EdgeValues<PixelLength>,
 }
 
+/// The part of a box on one page.
+struct Fragment {
+    position: Position,
+    decoration: Decoration,
+}
+
 impl TaffyBlockLayout {
     pub fn run(self, world: &mut World) -> Result<(), String> {
         world.register::<Position>();
         world.register::<Decoration>();
         world.register::<IntrinsicSize>();
         world.register::<ImageBox>();
-        world.register::<crate::layout::components::PageGroupBox>();
         world.register::<BlockFormattingContext>();
         world.register::<InlineFormattingContext>();
         world.register::<TextRun>();
@@ -66,9 +75,14 @@ impl TaffyBlockLayout {
         world.register::<crate::layout::components::CanvasSize>();
         world.register::<TableCellSpan>();
         world.register::<TableColumns>();
+        world.register::<crate::layout::components::Fragmented>();
+        world.register::<crate::layout::components::DecorationFragment>();
         world.entry::<TextList>().or_insert_with(Default::default);
         world
             .entry::<crate::layout::pages::PageMargins>()
+            .or_insert_with(Default::default);
+        world
+            .entry::<crate::layout::pages::Pages>()
             .or_insert_with(Default::default);
         world
             .entry::<AbsoluteGroups>()
@@ -82,17 +96,12 @@ impl TaffyBlockLayout {
         let images = world.read_storage::<ImageBox>();
         let canvases = world.read_storage::<crate::layout::components::CanvasSize>();
         let page_margins = world.read_resource::<crate::layout::pages::PageMargins>();
-        let mut group_boxes = world.write_storage::<crate::layout::components::PageGroupBox>();
         let text_runs = world.read_storage::<TextRun>();
         let aligns = world.read_storage::<crate::layout::components::VerticalAlignment>();
         let table_spans = world.read_storage::<TableCellSpan>();
         let table_columns = world.read_storage::<TableColumns>();
 
         let content_width = (self.page_width - self.margin.left - self.margin.right).0;
-        let icb_height = (self.page_height - self.margin.top - self.margin.bottom)
-            .0
-            .max(0.0);
-
         let mut tree = HeliumTree {
             nodes: vec![],
             computed_values: &computed_values,
@@ -105,74 +114,213 @@ impl TaffyBlockLayout {
             table_spans: &table_spans,
             table_columns: &table_columns,
             fallback_line_width: content_width.max(0.0),
+            window: None,
+            windowed: vec![],
+            lines: HashMap::new(),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
-        page_groups::wrap_page_groups(
-            &mut tree,
-            root,
-            &page_margins,
-            &entities,
-            &mut group_boxes,
-        );
         tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
-        // The initial containing block is the content area of the first page.
-        taffy::compute_root_layout(
-            &mut tree,
-            root,
-            Size {
-                width: AvailableSpace::Definite(content_width),
-                height: AvailableSpace::Definite(icb_height),
-            },
-        );
         let out_of_flow: Vec<bool> = (0..tree.nodes.len())
             .map(|index| tree::node_is_out_of_flow(&tree, NodeId::from(index)))
             .collect();
-        let nodes = std::mem::take(&mut tree.nodes);
+
+        // the flow of the document, and the geometry of the page at every place of it
+        let flow = flow::extract(&mut tree, root, page_margins.rtl);
+        let geometry = paginate::Geometry {
+            margins: &page_margins,
+            size: (self.page_width, self.page_height),
+            margin: self.margin,
+        };
+        let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow));
+        let first_class = classes.of(helium_paginate::Position::Item(0)).clone();
+        let first_spec = geometry.spec(&geometry.context(0, &first_class));
+        let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone());
+
+        // choose the pages
+        let before = std::time::Instant::now();
+        let mut service = service::TreeService::new(&mut tree, &flow, first_spec.block_size);
+        // (start of the page, its end, the page)
+        let mut planned: Vec<(helium_paginate::PageStart, helium_paginate::Position, helium_paginate::Position, helium_paginate::PageFill)> = vec![];
+        {
+            use helium_paginate::Solver;
+            let mut kernel = helium_paginate::Kernel::new(&problem, &mut service);
+            let solution = helium_paginate::ExactSolver::new(helium_paginate::CssObjective).solve(&mut kernel);
+            let fills = kernel.realize(&solution).map_err(|error| format!("invalid pagination: {error:?}"))?;
+            let end = helium_paginate::Position::Item(flow.items.len());
+            for (page, fill) in fills.iter().enumerate() {
+                let start = solution.pages[page];
+                let finish = kernel.position(fill.end);
+                planned.push((start, kernel.position(start.at), finish, *fill));
+            }
+            if fills.is_empty() {
+                planned.push((
+                    solution.pages[0],
+                    helium_paginate::Position::Item(0),
+                    end,
+                    helium_paginate::PageFill {
+                        end: solution.pages[0].at,
+                        spec: first_spec,
+                        kind: helium_paginate::PageKind::First,
+                        used: 0.0,
+                        end_kind: helium_paginate::BreakKind::Allowed,
+                        orphan_violation: false,
+                        widow_violation: false,
+                        overflow: false,
+                    },
+                ));
+            }
+        }
+        log::info!("TIMED: paginate {:?}", before.elapsed());
+        log::debug!("{} pages, laid out for {} widths", planned.len(), service.galleys());
+        let before = std::time::Instant::now();
+
+        let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
+        let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
+        let mut positions = world.write_storage::<Position>();
+        let mut decorations = world.write_storage::<Decoration>();
+        let mut text_list_resource = world.write_resource::<TextList>();
+        let mut groups_resource = world.write_resource::<AbsoluteGroups>();
+        for (start, from, to, fill) in &planned {
+            // the pages that a break to a left or right page left empty
+            while page_contexts.len() < start.index {
+                let index = page_contexts.len();
+                page_contexts.push(crate::layout::pages::PageContext {
+                    index,
+                    name: None,
+                    first_in_group: false,
+                    rtl: page_margins.rtl,
+                });
+            }
+            let class = if start.index == 0 {
+                let mut class = classes.of(*from).clone();
+                class.1 = true;
+                class
+            } else {
+                classes.of(*from).clone()
+            };
+            let context = geometry.context(start.index, &class);
+            let (edges, _) = geometry.of_page(&context);
+            let spec = geometry.spec(&context);
+            let window = paginate::window(&flow, *from, *to, |item| match flow.items[item] {
+                helium_paginate::Item::Gap { node } => {
+                    helium_paginate::LayoutService::extent(&mut service, node, spec.inline_size) as f32
+                }
+                _ => 0.0,
+            });
+            let tree = &mut *service.tree;
+            tree.set_window(window, root);
+            taffy::compute_root_layout(
+                tree,
+                root,
+                Size {
+                    width: AvailableSpace::Definite(spec.inline_size),
+                    height: AvailableSpace::Definite(spec.block_size),
+                },
+            );
+            let height = tree.node(root).layout.size.height;
+            if !fill.overflow && (height - fill.used).abs() > 0.5 {
+                log::warn!(
+                    "page {} is {height} high, but the paginator counted {}",
+                    start.index + 1,
+                    fill.used
+                );
+            }
+            let HeliumTree { nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, .. } = tree;
+            let mut writer = Writer {
+                nodes,
+                out_of_flow: &out_of_flow,
+                entities: &entities,
+                computed_values: &computed_values,
+                inline_ctxs,
+                text_runs,
+                aligns,
+                intrinsic_sizes,
+                line_cache: lines,
+                positions: &mut positions,
+                decorations: &mut decorations,
+                text_list: &mut text_list_resource.list,
+                groups: &mut groups_resource.groups,
+                group_stack: vec![],
+                last_flow_entity: None,
+                window: window.as_ref().expect("the window is set"),
+                page: start.index,
+                page_bottom: edges.top.0 + spec.block_size,
+                fragments: &mut fragments,
+            };
+            // The root is placed at the top left corner of the content area of the page.
+            writer.write_box(
+                root,
+                Point {
+                    x: edges.left.0,
+                    y: edges.top.0,
+                },
+                Flow::HorizontalTb,
+                1,
+                0,
+            )?;
+            page_contexts.push(context);
+        }
+        log::info!("TIMED: layout of the pages {:?}", before.elapsed());
+        drop(service);
         drop(tree);
 
-        let mut writer = Writer {
-            nodes: &nodes,
-            out_of_flow,
-            root,
-            entities: &entities,
-            computed_values: &computed_values,
-            inline_ctxs: &mut inline_ctxs,
-            text_runs: &text_runs,
-            aligns: &aligns,
-            intrinsic_sizes: &intrinsic_sizes,
-            positions: &mut world.write_storage::<Position>(),
-            decorations: &mut world.write_storage::<Decoration>(),
-            text_list: &mut world.write_resource::<TextList>().list,
-            groups: &mut world.write_resource::<AbsoluteGroups>().groups,
-            group_stack: vec![],
-            last_flow_entity: None,
-            anchors: HashMap::new(),
-        };
-        // The root is placed relative to the top left corner of the content area of the first
-        // page. The paginator moves everything to its page.
-        writer.write_box(
-            root,
-            Point {
-                x: self.margin.left.0,
-                y: 0.0,
-            },
-            Flow::HorizontalTb,
-            1,
-            0,
-        )
+        // Boxes that are on more than one page are split: every page gets the part of the
+        // decoration that is on that page.
+        let mut fragmented_storage = world.write_storage::<crate::layout::components::Fragmented>();
+        let mut fragment_storage = world.write_storage::<crate::layout::components::DecorationFragment>();
+        for (entity, parts) in fragments {
+            if parts.len() < 2 {
+                continue;
+            }
+            let first = &parts[0];
+            let deco = first.decoration;
+            let visible = deco.background_color.alpha > 0
+                || deco.has_background_image
+                || deco.border.top > PixelLength(0.0)
+                || deco.border.bottom > PixelLength(0.0)
+                || deco.border.left > PixelLength(0.0)
+                || deco.border.right > PixelLength(0.0)
+                || parts.iter().any(|part| {
+                    part.decoration.border.top > PixelLength(0.0)
+                        || part.decoration.border.bottom > PixelLength(0.0)
+                });
+            if !visible {
+                continue;
+            }
+            fragmented_storage.insert(entity, crate::layout::components::Fragmented).unwrap();
+            for part in &parts {
+                entities
+                    .build_entity()
+                    .with(part.position, &mut positions)
+                    .with(part.decoration, &mut decorations)
+                    .with(crate::layout::components::DecorationFragment(entity), &mut fragment_storage)
+                    .build();
+            }
+        }
+        drop(fragmented_storage);
+        drop(fragment_storage);
+        drop(text_list_resource);
+        drop(groups_resource);
+        drop(positions);
+        drop(decorations);
+        drop(page_margins);
+        drop(inline_ctxs);
+        drop(intrinsic_sizes);
+        *world.write_resource::<crate::layout::pages::Pages>() = crate::layout::pages::Pages(page_contexts);
+        Ok(())
     }
 }
 
 struct Writer<'a, 'w> {
     nodes: &'a [Node],
-    out_of_flow: Vec<bool>,
-    root: NodeId,
+    out_of_flow: &'a [bool],
     entities: &'a Entities<'w>,
     computed_values: &'a ReadStorage<'w, ComputedValues>,
     inline_ctxs: &'a mut WriteStorage<'w, InlineFormattingContext>,
     text_runs: &'a ReadStorage<'w, TextRun>,
     aligns: &'a ReadStorage<'w, crate::layout::components::VerticalAlignment>,
     intrinsic_sizes: &'a WriteStorage<'w, IntrinsicSize>,
+    line_cache: &'a mut HashMap<(u32, Option<usize>, u32), std::rc::Rc<Vec<crate::layout::inline::MeasuredLine>>>,
     positions: &'a mut WriteStorage<'w, Position>,
     decorations: &'a mut WriteStorage<'w, Decoration>,
     text_list: &'a mut Vec<BlockLevelElement>,
@@ -183,8 +331,13 @@ struct Writer<'a, 'w> {
     group_stack: Vec<usize>,
     /// The last entity that was placed in the main flow.
     last_flow_entity: Option<Entity>,
-    /// For every absolutely positioned box, the entity in the main flow in front of it.
-    anchors: HashMap<NodeId, Option<Entity>>,
+    /// The part of the document that is on the page, and the number of the page.
+    window: &'a Window,
+    page: usize,
+    /// The bottom of the content area of the page.
+    page_bottom: f32,
+    /// The parts of the boxes that are on more than one page.
+    fragments: &'a mut HashMap<Entity, Vec<Fragment>>,
 }
 
 impl<'a> Writer<'a, '_> {
@@ -208,7 +361,7 @@ impl<'a> Writer<'a, '_> {
                 width: PixelLength(width.max(0.0)),
                 height: PixelLength(height.max(0.0)),
                 z: ZIndex(z),
-                page: 0,
+                page: self.page,
             },
         );
     }
@@ -231,9 +384,9 @@ impl<'a> Writer<'a, '_> {
         }
     }
 
-    fn open_group(&mut self, containing_block: Option<Entity>, owner: Option<Entity>) {
+    fn open_group(&mut self, owner: Option<Entity>) {
         self.groups.push(AbsoluteGroup {
-            containing_block,
+            containing_block: None,
             entities: vec![],
             owner,
             parent: self.group_stack.last().copied(),
@@ -242,8 +395,8 @@ impl<'a> Writer<'a, '_> {
         self.group_stack.push(self.groups.len() - 1);
     }
 
-    /// Writes the layout of a box and everything in it.
-    ///   origin       the top left corner of the border box of the box in document coordinates
+    /// Writes the layout of a box and everything in it that is on the page.
+    ///   origin       the top left corner of the border box of the box on the page
     ///   parent_flow  the flow that the layout of the box (its size and its edges) is in: the
     ///                one of its parent
     ///   z            the z index of the box
@@ -260,10 +413,29 @@ impl<'a> Writer<'a, '_> {
         let entity = node.entity;
         let layout = node.layout;
         let content = node.content;
+        let in_flow_box = node.span.as_ref().filter(|span| !span.anchored && self.group_stack.is_empty());
+        let open_start = in_flow_box.is_some_and(|span| self.window.open_at_start(span));
+        let open_end = in_flow_box.is_some_and(|span| self.window.open_at_end(span));
+        // A table or a row group is laid out as a whole: the part on the page is cut from it.
+        let table_part = node
+            .span
+            .as_ref()
+            .filter(|span| !span.split && !span.kids.is_empty() && content != Content::Inline);
+        let (cut_top, cut_height) = match table_part {
+            Some(_) => {
+                let (top, bottom) =
+                    window::table_fragment(self.nodes, self.window, node, layout.size.height);
+                (top, Some(bottom - top))
+            }
+            None => (0.0, None),
+        };
 
         // The layout is in the logical axes of the parent: the physical size and edges of the
         // box are found by turning them around if the parent is vertical.
-        let (width, height) = parent_flow.swap((layout.size.width, layout.size.height));
+        let (width, mut height) = parent_flow.swap((layout.size.width, layout.size.height));
+        if let Some(cut) = cut_height {
+            height = cut;
+        }
         let margin = parent_flow.edges_to_physical(layout.margin);
         let border = parent_flow.edges_to_physical(layout.border);
         let padding = parent_flow.edges_to_physical(layout.padding);
@@ -278,14 +450,9 @@ impl<'a> Writer<'a, '_> {
         let content_y = origin.y + border.top + padding.top;
         let content_width = width - (border.left + border.right) - (padding.left + padding.right);
         let content_height = height - (border.top + border.bottom) - (padding.top + padding.bottom);
-        self.set_position(
-            entity,
-            content_x,
-            content_y,
-            content_width,
-            content_height,
-            z,
-        );
+        if !open_start {
+            self.set_position(entity, content_x, content_y, content_width, content_height, z);
+        }
 
         let mut decoration = self
             .computed_values
@@ -302,29 +469,85 @@ impl<'a> Writer<'a, '_> {
         decoration.border = edges(border);
         decoration.padding = edges(padding);
         decoration.collapsed = node.collapsed;
-        let _ = self.decorations.insert(entity, decoration);
+        // A box that goes on over the page break has no border and padding at the break (they are
+        // not in its layout) and no rounded corners there.
+        if open_start {
+            decoration.radius.top_left = Default::default();
+            decoration.radius.top_right = Default::default();
+            if let Some(edges) = &mut decoration.collapsed {
+                edges.top.paint = false;
+                edges.left.extend_start = PixelLength(0.0);
+                edges.right.extend_start = PixelLength(0.0);
+            }
+        }
+        if open_end {
+            decoration.radius.bottom_left = Default::default();
+            decoration.radius.bottom_right = Default::default();
+            if let Some(edges) = &mut decoration.collapsed {
+                edges.bottom.paint = false;
+                edges.left.extend_end = PixelLength(0.0);
+                edges.right.extend_end = PixelLength(0.0);
+            }
+        }
+        if !open_start {
+            let _ = self.decorations.insert(entity, decoration);
+        }
+        if open_start || open_end {
+            // The part of a box that goes on on the next page reaches the bottom of the content
+            // area of its page, also where the content on the page ends above it.
+            let fragment_height = if open_end {
+                content_height.max(self.page_bottom - content_y)
+            } else {
+                content_height
+            };
+            self.fragments.entry(entity).or_default().push(Fragment {
+                position: Position {
+                    x: PixelLength(content_x),
+                    y: PixelLength(content_y),
+                    width: PixelLength(content_width.max(0.0)),
+                    height: PixelLength(fragment_height.max(0.0)),
+                    z: ZIndex(z),
+                    page: self.page,
+                },
+                decoration,
+            });
+        }
 
-        self.emit(BlockLevelElement::ContainerStart(entity));
+        if !open_start {
+            self.emit(BlockLevelElement::ContainerStart(entity));
+        }
 
         // An orthogonal flow is not split between pages: it is a leaf of the main flow, and its
         // content is placed with it once the page it is on is known.
         let anchored = node.orthogonal && content == Content::Blocks;
         if anchored {
             self.emit(BlockLevelElement::Leaf(entity));
-            self.open_group(None, None);
+            self.open_group(None);
             if let Some(&group) = self.group_stack.last() {
                 self.groups[group].anchor = Some((entity, Point { x: content_x, y: content_y }));
             }
         }
 
-        let children = &node.children;
         // the content of a table cell that `vertical-align` moves down
         let shift = node.content_shift;
+        let kid_shift = shift - cut_top;
         match content {
+            Content::Blocks if table_part.is_some() => {
+                for &child in &table_part.unwrap().kids {
+                    if !self.in_window(child) {
+                        continue;
+                    }
+                    let mut child_origin = frame.child_origin(&self.node(child).layout);
+                    child_origin.y += kid_shift + self.part_top(child);
+                    let (child_z, child_base) = self.child_z(child, z, z_base);
+                    self.write_box(child, child_origin, flow, child_z, child_base)?;
+                }
+            }
             Content::Blocks => {
-                for &child in children {
-                    if self.out_of_flow[usize::from(child)] {
-                        self.anchors.insert(child, self.last_flow_entity);
+                for &child in self.window.children(self.nodes, node) {
+                    if self.out_of_flow[usize::from(child)]
+                        || self.node(child).style.display == taffy::Display::None
+                    {
                         continue;
                     }
                     let mut child_origin = frame.child_origin(&self.node(child).layout);
@@ -334,19 +557,20 @@ impl<'a> Writer<'a, '_> {
                 }
             }
             Content::Inline => {
-                for &child in children {
-                    self.anchors.insert(child, self.last_flow_entity);
-                }
-                for &atom in &node.atoms {
-                    // The contents of an `inline-block` box are placed relative to the top left
-                    // corner of its margin box. They are moved to the line the box is on later.
-                    self.open_group(None, Some(self.node(atom).entity));
-                    // the border box is inside of the margin box, which is placed on the line
-                    let margin = flow.edges_to_physical(self.node(atom).layout.margin);
-                    let location = Point { x: margin.left, y: margin.top };
-                    let (atom_z, atom_base) = self.child_z(atom, z, z_base);
-                    self.write_box(atom, location, flow, atom_z, atom_base)?;
-                    self.group_stack.pop();
+                // the `inline-block` boxes are written once, with the first part of the paragraph
+                if !open_start {
+                    for &atom in &node.atoms {
+                        // The contents of an `inline-block` box are placed relative to the top
+                        // left corner of its margin box. They are moved to the line the box is
+                        // on later.
+                        self.open_group(Some(self.node(atom).entity));
+                        // the border box is inside of the margin box, which is placed on the line
+                        let margin = flow.edges_to_physical(self.node(atom).layout.margin);
+                        let location = Point { x: margin.left, y: margin.top };
+                        let (atom_z, atom_base) = self.child_z(atom, z, z_base);
+                        self.write_box(atom, location, flow, atom_z, atom_base)?;
+                        self.group_stack.pop();
+                    }
                 }
                 let content_offset = (
                     logical_border.left + logical_padding.left,
@@ -355,7 +579,7 @@ impl<'a> Writer<'a, '_> {
                 let content_inline_size = frame.inline_size
                     - (logical_border.left + logical_border.right)
                     - (logical_padding.left + logical_padding.right);
-                self.write_lines(entity, &frame, content_offset, content_inline_size, z + 1)?;
+                self.write_lines(id, &frame, content_offset, content_inline_size, z + 1)?;
             }
             Content::Replaced => {
                 if self.intrinsic_sizes.get(entity).is_some() {
@@ -365,16 +589,15 @@ impl<'a> Writer<'a, '_> {
             Content::Table => {
                 // The captions, row groups and rows in document order. The rows and groups
                 // contain their cells, which are placed relative to them.
-                for &child in node.table.iter().flat_map(|table| &table.boxes) {
+                let parts: Vec<NodeId> = match table_part {
+                    Some(span) => span.kids.iter().copied().filter(|&kid| self.in_window(kid)).collect(),
+                    None => node.table.iter().flat_map(|table| table.boxes.iter().copied()).collect(),
+                };
+                for child in parts {
                     let mut child_origin = frame.child_origin(&self.node(child).layout);
-                    child_origin.y += shift;
+                    child_origin.y += kid_shift + if table_part.is_some() { self.part_top(child) } else { 0.0 };
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
-                }
-                for &child in children {
-                    if self.out_of_flow[usize::from(child)] {
-                        self.anchors.insert(child, self.last_flow_entity);
-                    }
                 }
             }
         }
@@ -382,23 +605,13 @@ impl<'a> Writer<'a, '_> {
         if anchored {
             self.group_stack.pop();
         }
-        self.emit(BlockLevelElement::ContainerEnd(entity));
+        if !open_end {
+            self.emit(BlockLevelElement::ContainerEnd(entity));
+        }
 
         // the absolutely positioned boxes this box is the containing block of
         for &child in &node.hoisted {
-            let containing_block = if id == self.root && !self.out_of_flow[usize::from(id)] {
-                // The initial containing block is on the first page, but a box that is placed
-                // by its static position goes on the page of the content in front of it.
-                let inset = &self.node(child).style.inset;
-                if inset.top.is_auto() && inset.bottom.is_auto() {
-                    self.anchors.get(&child).copied().flatten()
-                } else {
-                    None
-                }
-            } else {
-                Some(entity)
-            };
-            self.open_group(containing_block, None);
+            self.open_group(None);
             let child_origin = frame.child_origin(&self.node(child).layout);
             let abs_base = z_base + ABS_Z_STEP;
             self.write_box(child, child_origin, flow, abs_base + 1, abs_base)?;
@@ -407,37 +620,63 @@ impl<'a> Writer<'a, '_> {
         Ok(())
     }
 
-    /// Breaks the inline content of a box into lines and places them. The lines are laid out in
-    /// the logical axes of `frame`: `content_offset` is the position of the content box relative to
-    /// the border box and `width` its inline size.
+    /// How far the top of the part of a row group that is on the page is below its top.
+    fn part_top(&self, id: NodeId) -> f32 {
+        let node = self.node(id);
+        if node.span.as_ref().is_some_and(|span| !span.split && !span.kids.is_empty()) {
+            window::table_fragment(self.nodes, self.window, node, node.layout.size.height).0
+        } else {
+            0.0
+        }
+    }
+
+    /// Whether a box of the flow has items on the page.
+    fn in_window(&self, id: NodeId) -> bool {
+        self.node(id)
+            .span
+            .as_ref()
+            .is_some_and(|span| span.start < self.window.end && span.end > self.window.start)
+    }
+
+    /// Places the lines of the inline content of a box that are on the page. The lines are laid
+    /// out in the logical axes of `frame`: `content_offset` is the position of the content box
+    /// relative to the border box and `width` its inline size.
     fn write_lines(
         &mut self,
-        entity: Entity,
+        id: NodeId,
         frame: &Frame,
         content_offset: (f32, f32),
         width: f32,
         z: i64,
     ) -> Result<(), String> {
+        let entity = self.node(id).entity;
         let style = self.computed_values.get(entity);
         let indent = style
             .map(|s| s.text.text_indent.absolute(PixelLength(width)).0)
             .unwrap_or(0.0);
+        // what the measure function of Taffy broke the lines for
+        let (line_width, indent) = self.node(id).measured.unwrap_or((width, indent));
+        let cut = self.window.cut_of(id);
+        // the indent is the one of the first line of the paragraph
+        let indent = if cut.is_some_and(|(from, _)| from.is_some()) { 0.0 } else { indent };
         let Some(ifc) = self.inline_ctxs.get_mut(entity) else {
             return Ok(());
         };
-        ifc.break_lines(
-            PixelLength(width),
+        let measured = lines_between(
+            self.line_cache,
+            ifc,
+            entity.id(),
+            cut,
+            PixelLength(line_width),
             PixelLength(indent),
-            self.entities,
             self.text_runs,
             self.intrinsic_sizes,
             self.aligns,
-        )
-        .map_err(|e| format!("cannot break lines of {:?}: {}", entity, e))?;
+        );
+        let first = ifc.push_lines(measured, self.entities);
         let align = ifc.resolved_text_align();
         let indent_offset = ifc.indent_offset(PixelLength(indent)).0;
-        let lines: Vec<_> = ifc
-            .lines
+        let lines: Vec<_> = ifc.lines[first..]
             .iter()
             .map(|line| {
                 (
