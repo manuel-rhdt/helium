@@ -144,6 +144,10 @@ pub(super) struct HeliumTree<'a, 'w> {
     /// The container with columns that is laid out as a plain block, to find the extents of its
     /// content for the width of a column (see [`super::subtree`]).
     pub plain_root: Option<NodeId>,
+    /// The fragments of the containers with columns that are on the page that is laid out: for
+    /// every container, the arguments that the kernel asked the layout service about its
+    /// fragment with (see [`super::columns`]).
+    pub page_fragments: HashMap<NodeId, super::columns::FragmentKey>,
 }
 
 // --- building the tree ---

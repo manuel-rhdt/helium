@@ -18,7 +18,7 @@ use super::flow::{Anchor, Flow};
 use super::tree::{HeliumTree, lines_from};
 use crate::layout::inline::InlineFormattingContext;
 use crate::style::properties::computed::PixelLength;
-use helium_paginate::{BoxRef, Cut, Item, LayoutService, NodeRef, ParId, ParLine};
+use helium_paginate::{BoxRef, ContainerCut, Cut, Fragment, Item, LayoutService, NodeRef, ParId, ParLine};
 use std::collections::HashMap;
 use std::rc::Rc;
 use taffy::geometry::Size;
@@ -31,6 +31,17 @@ struct Galley {
     extents: Vec<f64>,
     /// The width and the indent that the lines of every paragraph were broken for.
     lines: HashMap<NodeId, (f32, f32)>,
+    /// The containers that are split over pages.
+    containers: HashMap<NodeId, ContainerEdges>,
+}
+
+/// What a container that is split over pages is in a galley: the width of its content box, and the
+/// padding and the border at its top and at its bottom.
+#[derive(Debug, Clone, Copy)]
+struct ContainerEdges {
+    width: f32,
+    top: f32,
+    bottom: f32,
 }
 
 /// A box laid out for one width of its content box.
@@ -56,6 +67,9 @@ pub(super) struct TreeService<'t, 'a, 'w> {
     /// By the root and the content width that were asked for.
     subtrees: HashMap<(u32, u32), Rc<Subtree>>,
     subtree_lines: HashMap<(u32, u32, Option<u32>, u32), Rc<[ParLine]>>,
+    /// By the container, where the fragment starts, the width of the page and the height that is
+    /// left on it.
+    fragments: HashMap<(u32, Option<ContainerCut>, u32, u64), Rc<[Fragment]>>,
 }
 
 impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
@@ -68,6 +82,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             lines: HashMap::new(),
             subtrees: HashMap::new(),
             subtree_lines: HashMap::new(),
+            fragments: HashMap::new(),
         }
     }
 
@@ -129,7 +144,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                     }
                     lines.insert(node, paragraph_width(tree, node));
                 }
-                Item::Break { .. } => {}
+                Item::Break { .. } | Item::Container { .. } => {}
             }
         }
         let subtree = Rc::new(Subtree {
@@ -210,7 +225,26 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             .iter()
             .filter_map(|&node| Some((node, tree.node(node).measured?)))
             .collect();
-        let galley = Rc::new(Galley { extents, lines });
+        let containers = self
+            .flow
+            .items
+            .iter()
+            .filter_map(|item| match *item {
+                Item::Container { node, .. } => {
+                    let id = NodeId::from(node.0 as usize);
+                    let layout = &tree.node(id).layout;
+                    let (border, padding) = (layout.border, layout.padding);
+                    let edges = ContainerEdges {
+                        width: (layout.size.width - border.horizontal_axis_sum() - padding.horizontal_axis_sum()).max(0.0),
+                        top: border.top + padding.top,
+                        bottom: border.bottom + padding.bottom,
+                    };
+                    Some((id, edges))
+                }
+                _ => None,
+            })
+            .collect();
+        let galley = Rc::new(Galley { extents, lines, containers });
         self.galleys.insert(key, galley.clone());
         galley
     }
@@ -283,6 +317,35 @@ impl LayoutService for TreeService<'_, '_, '_> {
         let lines = self.paragraph_lines(node, from, width, None);
         self.lines.insert(key, lines.clone());
         lines
+    }
+
+    fn fragment(
+        &mut self,
+        container: BoxRef,
+        from: Option<ContainerCut>,
+        page_inline: f32,
+        available: f64,
+    ) -> Rc<[Fragment]> {
+        let key = (container.0, from, page_inline.to_bits(), available.to_bits());
+        if let Some(fragments) = self.fragments.get(&key) {
+            return fragments.clone();
+        }
+        let id = NodeId::from(container.0 as usize);
+        let edges = *self.galley(page_inline).containers.get(&id).expect("the container is in the flow");
+        // (the padding and the border at the top are the first fragment's)
+        let top = if from.is_none() { edges.top } else { 0.0 };
+        let (_, plan) = super::columns::fragment_plan(self, id, edges.width, from, page_inline, available, top, edges.bottom);
+        let bottom = if plan.end.is_none() { edges.bottom } else { 0.0 };
+        let fragments: Rc<[Fragment]> = Rc::from(vec![Fragment {
+            end: plan.end.map(|cut| cut),
+            used: f64::from(plan.height + top + bottom),
+            end_kind: plan.end_kind,
+            orphan_violation: plan.orphan_violation,
+            widow_violation: plan.widow_violation,
+            avoid_violation: plan.avoid_violation,
+        }]);
+        self.fragments.insert(key, fragments.clone());
+        fragments
     }
 
     fn content_extent(&mut self, root: BoxRef, inline: f32) -> f64 {

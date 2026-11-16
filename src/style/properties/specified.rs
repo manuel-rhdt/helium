@@ -1386,13 +1386,15 @@ impl<'i> PropertyValue<'i> for ColumnsShorthand {
     }
 }
 
-/// The value of `column-fill`. `auto` is parsed and balances like `balance` (see
-/// `docs/pagination.md`).
+/// The value of `column-fill`: only the last fragment of a container that is split over pages
+/// is balanced with `balance`, every fragment that is not full with `balance-all`, and none with
+/// `auto` (see `docs/pagination.md`).
 /// https://www.w3.org/TR/css-multicol-1/#cf
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
 pub enum ColumnFill {
     #[default]
     Balance,
+    BalanceAll,
     Auto,
 }
 

@@ -355,14 +355,19 @@ fn a_break_that_is_to_be_avoided_is_not_taken_if_another_is_possible() {
 
 #[test]
 fn breaks_of_a_level_that_does_not_apply_are_ignored() {
-    // a forced page break in a container that is not split ends nothing there
+    // A forced page break in a container is a column break, too, and it ends the fragment: the
+    // container continues on the next page, with its content balanced there
+    // (https://www.w3.org/TR/css-break-3/#forced-breaks).
     let page = layout(
         "page_break_in_columns",
         &doc("#i2 { break-before: page }", &container("column-count: 2; column-gap: 0", 4)),
     );
-    assert_height(&page, "m", 40.0);
-    assert_at(&page, "i2", 0.0, 20.0, 200.0);
-    assert_at(&page, "i3", 200.0, 0.0, 200.0);
+    assert_eq!(page.get("i1").page, 0);
+    assert_height(&page, "m", 20.0);
+    assert_eq!(page.get("i2").page, 1);
+    assert_at(&page, "i2", 0.0, 0.0, 200.0);
+    assert_at(&page, "i3", 0.0, 20.0, 200.0);
+    assert_at(&page, "i4", 200.0, 0.0, 200.0);
     // a forced column break outside of a container with columns is like `auto`
     let outside = layout(
         "column_break_outside",
@@ -524,7 +529,7 @@ fn a_container_that_does_not_fit_in_the_rest_of_the_page_moves_to_the_next_page(
             "",
             &format!(
                 "<div id=before style=\"height: 500px\"></div>{}",
-                container("column-count: 2; column-gap: 0", 20)
+                container("column-count: 2; column-gap: 0; break-inside: avoid", 20)
             ),
         ),
     );
@@ -550,7 +555,8 @@ fn a_container_that_does_not_fit_in_the_rest_of_the_page_moves_to_the_next_page(
     assert_eq!(layout_b.get("m").page, 0);
     assert_at(&layout_b, "m", 0.0, 300.0, 400.0);
 
-    // a container that is taller than a page: the content after it is not lost
+    // a container that is taller than a page is split over pages: the first fragment is as high
+    // as the page, and the content after it is not lost
     let layout_c = layout(
         "pages_tall",
         &doc(
@@ -561,9 +567,10 @@ fn a_container_that_does_not_fit_in_the_rest_of_the_page_moves_to_the_next_page(
             ),
         ),
     );
-    assert_height(&layout_c, "m", 700.0);
+    assert_height(&layout_c, "m", 600.0);
+    assert_eq!(layout_c.get("m").page, 0);
     assert!(layout_c.get("after").page >= 1);
-    assert_eq!(layout_c.get("i70").page, layout_c.get("m").page);
+    assert_eq!(layout_c.get("i70").page, 1);
 }
 
 #[test]
@@ -890,16 +897,24 @@ fn a_box_that_is_cut_between_columns_has_the_border_of_its_parts() {
     assert_eq!(horizontal.len(), 2, "one top and one bottom border: {blue:?}");
 }
 
-/// The log of a container that is taller than a page: the content below the page is not printed,
-/// and the program says so until a container can be split over pages (step 3).
+/// The log of a box that cannot be split and is taller than a page: it overflows its page, and the
+/// part of it that is below the page is not printed. A container that can be split over its columns
+/// and pages does not lose content (see the tests below), so the box here is one item that is taller
+/// than a page.
 #[test]
-fn a_container_taller_than_a_page_says_that_its_content_is_cut_off() {
-    let layout = layout("tall_warning", &doc("", &container("column-count: 2", 100)));
+fn a_box_taller_than_a_page_in_a_container_says_that_its_content_is_cut_off() {
+    let layout = layout(
+        "tall_warning",
+        &doc("", "<div id=m style=\"column-count: 2\"><div id=tall style=\"height: 800px\"></div></div>"),
+    );
     assert!(
         layout.log.contains("the content below the page is not printed"),
         "no warning about the cut content in the log:\n{}",
         layout.log
     );
+    // the box is on the page, and it is as tall as it is
+    assert_height(&layout, "tall", 800.0);
+    assert_eq!(layout.get("tall").page, 0);
 }
 
 // A container that is split over pages. These tests describe what step 3 of the multi-column
@@ -916,7 +931,6 @@ fn assert_on(layout: &Layout, id: &str, page: u64, x: f64, y: f64) {
 }
 
 #[test]
-#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
 fn no_content_of_a_tall_container_is_below_its_page() {
     // 100 items of 20px in two columns are 2000px of content on pages that are 600px high
     let layout = layout("tall_invariant", &doc("", &container("column-count: 2", 100)));
@@ -933,7 +947,7 @@ fn no_content_of_a_tall_container_is_below_its_page() {
 }
 
 #[test]
-#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
+#[ignore = "x of the second column is 208 and not 200: the default column-gap is 1em = 16px (see the same test with column-gap: 0 below)"]
 fn the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto() {
     // a page holds 30 items per column and 60 per page
     let layout = layout(
@@ -960,7 +974,7 @@ fn the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto() {
 }
 
 #[test]
-#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
+#[ignore = "x of the second column is 208 and not 200: the default column-gap is 1em = 16px (see the same test with column-gap: 0 below)"]
 fn only_the_last_page_of_a_container_is_balanced() {
     // the columns are balanced by default: the pages before the last are full all the same
     let layout = layout(
@@ -986,7 +1000,7 @@ fn only_the_last_page_of_a_container_is_balanced() {
 }
 
 #[test]
-#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
+#[ignore = "x of the second column is 208 and not 200: the default column-gap is 1em = 16px (see the same test with column-gap: 0 below)"]
 fn the_first_page_of_a_container_is_as_high_as_the_rest_of_the_page() {
     // 100px of content in front of the container leave 500px: 25 items per column
     let layout = layout(
@@ -1009,7 +1023,6 @@ fn the_first_page_of_a_container_is_as_high_as_the_rest_of_the_page() {
 }
 
 #[test]
-#[ignore = "needs step 3 of the multi-column order of work: a container is not split over pages"]
 fn a_forced_page_break_in_a_container_ends_the_page() {
     // ten items fill part of the first column; the item with the break starts the next page
     let body = format!(
@@ -1022,4 +1035,73 @@ fn a_forced_page_break_in_a_container_ends_the_page() {
     assert_on(&layout, "i10", 0, 0.0, 180.0);
     assert_on(&layout, "i11", 1, 0.0, 0.0);
     assert_on(&layout, "i20", 1, 0.0, 180.0);
+}
+
+// The three tests above that are ignored with the default `column-gap: normal` (1em = 16px, so a
+// column is 192px wide and the second one starts at 208px, not at 200px as they assert), with a gap
+// of 0, which is the arithmetic that they describe. Nothing else is different.
+
+#[test]
+fn the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto_and_no_gap() {
+    let layout = layout(
+        "fill_auto_pages_no_gap",
+        &doc(
+            "",
+            &format!(
+                "{}<p id=after style=\"margin:0;height:20px\"></p>",
+                container("column-count: 2; column-gap: 0; column-fill: auto", 100)
+            ),
+        ),
+    );
+    assert_on(&layout, "i1", 0, 0.0, 0.0);
+    assert_on(&layout, "i30", 0, 0.0, 580.0);
+    assert_on(&layout, "i31", 0, 200.0, 0.0);
+    assert_on(&layout, "i60", 0, 200.0, 580.0);
+    assert_on(&layout, "i61", 1, 0.0, 0.0);
+    assert_on(&layout, "i90", 1, 0.0, 580.0);
+    assert_on(&layout, "i91", 1, 200.0, 0.0);
+    assert_on(&layout, "i100", 1, 200.0, 180.0);
+    assert_on(&layout, "after", 2, 0.0, 0.0);
+}
+
+#[test]
+fn only_the_last_page_of_a_container_is_balanced_with_no_gap() {
+    let layout = layout(
+        "balance_last_page_no_gap",
+        &doc(
+            "",
+            &format!(
+                "{}<p id=after style=\"margin:0;height:20px\"></p>",
+                container("column-count: 2; column-gap: 0", 100)
+            ),
+        ),
+    );
+    assert_on(&layout, "i30", 0, 0.0, 580.0);
+    assert_on(&layout, "i31", 0, 200.0, 0.0);
+    assert_on(&layout, "i60", 0, 200.0, 580.0);
+    assert_on(&layout, "i61", 1, 0.0, 0.0);
+    assert_on(&layout, "i80", 1, 0.0, 380.0);
+    assert_on(&layout, "i81", 1, 200.0, 0.0);
+    assert_on(&layout, "i100", 1, 200.0, 380.0);
+    assert_on(&layout, "after", 1, 0.0, 400.0);
+}
+
+#[test]
+fn the_first_page_of_a_container_is_as_high_as_the_rest_of_the_page_with_no_gap() {
+    let layout = layout(
+        "first_fragment_no_gap",
+        &doc(
+            "",
+            &format!(
+                "<div style=\"height:100px\"></div>{}",
+                container("column-count: 2; column-gap: 0; column-fill: auto", 100)
+            ),
+        ),
+    );
+    assert_on(&layout, "i1", 0, 0.0, 100.0);
+    assert_on(&layout, "i25", 0, 0.0, 580.0);
+    assert_on(&layout, "i26", 0, 200.0, 100.0);
+    assert_on(&layout, "i50", 0, 200.0, 580.0);
+    assert_on(&layout, "i51", 1, 0.0, 0.0);
+    assert_on(&layout, "i80", 1, 0.0, 580.0);
 }

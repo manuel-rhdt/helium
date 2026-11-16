@@ -917,3 +917,156 @@ fn the_exact_solver_minimises_what_the_objective_combines() {
     let pages = kernel.realize(&solution).unwrap();
     assert_eq!(used(&pages), [90.0, 30.0]);
 }
+
+// Containers that are split over pages.
+
+/// A container of `count` boxes of 20 in `columns` columns, as the content of a flow.
+fn container(count: usize, columns: usize, fill: ColumnFill) -> GalleyFlow {
+    let mut inner = items(count);
+    // the container is one box in the flow of the page
+    let mut flow = GalleyFlow::new();
+    flow.container(std::mem::take(&mut inner), columns, fill, (0.0, 0.0));
+    flow
+}
+
+/// The pages of a flow of the exact solver: where each one starts, and what it holds.
+fn container_pages(flow: GalleyFlow, block_size: f32) -> (Vec<Position>, Vec<PageFill>) {
+    solve(flow, block_size)
+}
+
+fn in_container(item: usize, inner: usize) -> Position {
+    Position::InContainer { item, cut: ContainerCut::at_item(inner) }
+}
+
+#[test]
+fn a_container_that_fits_is_one_fragment_with_balanced_columns() {
+    let (pages, fills) = container_pages(container(5, 2, ColumnFill::Balance), 100.0);
+    assert_eq!(pages, [START]);
+    // three boxes and two (the breaks between the boxes are items, too)
+    assert_eq!(used(&fills), [60.0]);
+    // filled in turn, the columns are the ones of the page
+    let (pages, fills) = container_pages(container(5, 2, ColumnFill::Auto), 100.0);
+    assert_eq!(pages, [START]);
+    assert_eq!(used(&fills), [100.0]);
+}
+
+#[test]
+fn a_container_that_does_not_fit_has_a_fragment_on_every_page() {
+    // 25 boxes in two columns of five: two full fragments, then five boxes balanced as 3 and 2
+    let (pages, fills) = container_pages(container(25, 2, ColumnFill::Balance), 100.0);
+    assert_eq!(used(&fills), [100.0, 100.0, 60.0]);
+    // the container is one item, and a fragment starts inside it, in front of its eleventh and
+    // twenty-first box (the breaks are items, too: the box number n is the item 2 * n)
+    assert_eq!(pages, [START, in_container(0, 20), in_container(0, 40)]);
+    let (_, fills) = container_pages(container(25, 2, ColumnFill::Auto), 100.0);
+    assert_eq!(used(&fills), [100.0, 100.0, 100.0]);
+}
+
+#[test]
+fn only_the_last_fragment_is_balanced_unless_all_of_them_are() {
+    // a forced break of the page level after the sixth box: the first fragment has six boxes
+    let content = |fill| {
+        let mut inner = items(6);
+        inner.break_at(BreakKind::Forced, BreakLevel::Page);
+        inner.content(20.0);
+        let mut flow = GalleyFlow::new();
+        flow.container(inner, 2, fill, (0.0, 0.0));
+        flow
+    };
+    // (the sixth box is in the first column of five and the second: not balanced)
+    let (_, fills) = container_pages(content(ColumnFill::Balance), 100.0);
+    assert_eq!(used(&fills), [100.0, 20.0]);
+    assert_eq!(fills[0].end_kind, BreakKind::Forced);
+    let (_, fills) = container_pages(content(ColumnFill::BalanceAll), 100.0);
+    assert_eq!(used(&fills), [60.0, 20.0]);
+    assert_eq!(fills[0].end_kind, BreakKind::Forced);
+}
+
+#[test]
+fn a_forced_page_break_in_a_container_continues_it_on_the_next_page() {
+    // three boxes, a break, three boxes
+    let mut inner = items(3);
+    inner.break_at(BreakKind::Forced, BreakLevel::Page);
+    inner.content(20.0).break_at(ALLOWED, BreakLevel::Column).content(20.0);
+    inner.break_at(ALLOWED, BreakLevel::Column).content(20.0);
+    let mut flow = GalleyFlow::new();
+    flow.container(inner, 2, ColumnFill::Auto, (0.0, 0.0));
+    let (pages, fills) = container_pages(flow, 100.0);
+    // (items: box, break, box, break, box, forced break, box, ...)
+    assert_eq!(pages, [START, in_container(0, 6)]);
+    assert_eq!(used(&fills), [60.0, 60.0]);
+}
+
+#[test]
+fn a_container_in_the_middle_of_a_page_has_what_is_left_of_it() {
+    // 40 of content in front of the container leave 60: three boxes per column
+    let mut flow = GalleyFlow::new();
+    flow.content(40.0).break_(ALLOWED);
+    let mut inner = items(8);
+    inner.break_at(ALLOWED, BreakLevel::Column);
+    flow.container(inner, 2, ColumnFill::Auto, (0.0, 0.0));
+    let (pages, fills) = container_pages(flow, 100.0);
+    // the first page has the 40 and a full fragment of six boxes, the second the other three
+    assert_eq!(used(&fills), [100.0, 40.0]);
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[1], in_container(2, 12));
+}
+
+#[test]
+fn the_content_after_a_container_starts_where_its_last_fragment_ends() {
+    let mut flow = GalleyFlow::new();
+    flow.container(items(12), 2, ColumnFill::Balance, (0.0, 0.0));
+    flow.break_(ALLOWED).content(30.0);
+    let (pages, fills) = container_pages(flow, 100.0);
+    // two columns of five and a fragment of two boxes, balanced (one and one), and the
+    // box after it
+    assert_eq!(used(&fills), [100.0, 20.0 + 30.0]);
+    assert_eq!(pages.len(), 2);
+}
+
+#[test]
+fn a_container_that_cannot_hold_a_box_gets_a_page_of_its_own_for_it() {
+    // a box of 150 in a container on a page of 100
+    let mut inner = GalleyFlow::new();
+    inner.content(150.0);
+    let mut flow = GalleyFlow::new();
+    flow.content(10.0).break_(ALLOWED);
+    flow.container(inner, 2, ColumnFill::Balance, (0.0, 0.0));
+    let (pages, fills) = container_pages(flow, 100.0);
+    // the container does not start on the first page: nothing of it fits
+    assert_eq!(pages.len(), 2);
+    assert_eq!(used(&fills), [10.0, 150.0]);
+    assert!(fills[1].overflow);
+}
+
+#[test]
+fn the_padding_of_a_container_is_part_of_its_first_and_last_fragment() {
+    // an edge of 10 on top and 5 at the bottom
+    let mut flow = GalleyFlow::new();
+    flow.container(items(15), 2, ColumnFill::Balance, (10.0, 5.0));
+    let (_, fills) = container_pages(flow, 100.0);
+    // 15 boxes: the first fragment has 90 for its columns (the edge is on top): four boxes in
+    // each, 80 and 10 for the edge. The seven boxes that are left are balanced as four and three,
+    // 80 and the edge at the bottom: 85.
+    assert_eq!(used(&fills), [90.0, 85.0]);
+}
+
+#[test]
+fn the_fragments_that_a_page_has_are_listed_for_its_layout() {
+    let mut flow = GalleyFlow::new();
+    flow.content(40.0).break_(ALLOWED);
+    flow.container(items(8), 2, ColumnFill::Auto, (0.0, 0.0));
+    let (problem, mut service) = flow.finish(page(100.0));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let pages = kernel.realize(&solution).unwrap();
+    let first = kernel.fragments(&solution.pages[0], pages[0].end);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].from, None);
+    assert_eq!(first[0].available, 60.0);
+    assert_eq!(first[0].end, Some(ContainerCut::at_item(12)));
+    let second = kernel.fragments(&solution.pages[1], pages[1].end);
+    assert_eq!(second[0].from, Some(ContainerCut::at_item(12)));
+    assert_eq!(second[0].available, 100.0);
+    assert_eq!(second[0].end, None);
+}

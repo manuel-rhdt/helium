@@ -144,6 +144,7 @@ impl TaffyBlockLayout {
             flow: None,
             icb_height: 0.0,
             plain_root: None,
+            page_fragments: HashMap::new(),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
         tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
@@ -172,7 +173,14 @@ impl TaffyBlockLayout {
         #[cfg(test)]
         probe::call(&probe::BEFORE, &mut service);
         // (start of the page, its end, the page)
-        let mut planned: Vec<(helium_paginate::PageStart, helium_paginate::Position, helium_paginate::Position, helium_paginate::PageFill)> = vec![];
+        // (and the fragments of the containers that are on the page)
+        let mut planned: Vec<(
+            helium_paginate::PageStart,
+            helium_paginate::Position,
+            helium_paginate::Position,
+            helium_paginate::PageFill,
+            Vec<helium_paginate::PageFragment>,
+        )> = vec![];
         {
             use helium_paginate::Solver;
             let mut kernel = helium_paginate::Kernel::new(&problem, &mut service);
@@ -182,7 +190,8 @@ impl TaffyBlockLayout {
             for (page, fill) in fills.iter().enumerate() {
                 let start = solution.pages[page];
                 let finish = kernel.position(fill.end);
-                planned.push((start, kernel.position(start.at), finish, *fill));
+                let fragments = kernel.fragments(&start, fill.end);
+                planned.push((start, kernel.position(start.at), finish, *fill, fragments));
             }
             if fills.is_empty() {
                 planned.push((
@@ -199,6 +208,7 @@ impl TaffyBlockLayout {
                         widow_violation: false,
                         overflow: false,
                     },
+                    vec![],
                 ));
             }
         }
@@ -215,7 +225,7 @@ impl TaffyBlockLayout {
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
-        for (start, from, to, fill) in &planned {
+        for (start, from, to, fill, on_page) in &planned {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
                 let index = page_contexts.len();
@@ -251,6 +261,13 @@ impl TaffyBlockLayout {
                 },
             );
             let tree = &mut *service.tree;
+            tree.page_fragments = on_page
+                .iter()
+                .map(|fragment| {
+                    let key = (fragment.from, fragment.page_inline.to_bits(), fragment.available.to_bits());
+                    (NodeId::from(fragment.container.0 as usize), key)
+                })
+                .collect();
             tree.set_window(window, root);
             taffy::compute_root_layout(
                 tree,
@@ -517,8 +534,8 @@ impl<'a> Writer<'a, '_> {
         let layout = self.layout_of(id);
         let content = node.content;
         let in_flow_box = node.span.as_ref().filter(|span| !span.anchored && self.group_stack.is_empty());
-        let open_start = in_flow_box.is_some_and(|span| self.window.open_at_start(span));
-        let open_end = in_flow_box.is_some_and(|span| self.window.open_at_end(span));
+        let open_start = in_flow_box.is_some_and(|span| self.window.cut_at_start(id, span));
+        let open_end = in_flow_box.is_some_and(|span| self.window.cut_at_end(id, span));
         // A table or a row group is laid out as a whole: the part on the page is cut from it.
         let table_part = node
             .span

@@ -10,6 +10,14 @@
 //!   or as the container is, if it has a height. The extents and the lines are those of the
 //!   content laid out for the width of a column ([`super::subtree`]). The plan is made once for a
 //!   width and a height.
+//! - **Fragments.** A container whose height is the one of its content is split over pages (it is an
+//!   `Item::Container` of the flow of the document). The kernel asks the layout service for the
+//!   fragment of it that fits in what is left of a page ([`fragment_plan`]): the columns of the
+//!   fragment are chosen from the flow of the content like the columns of a container that is not
+//!   split, but from the place where the fragment starts, and with the height that is available.
+//!   The plan of the fragment is kept by the arguments of the question, so that the layout of the
+//!   page finds it again ([`FragmentKey`]). Where the container is laid out without a page (the
+//!   galleys of the layout service), its height is not used, and it is not laid out.
 //! - **The layout of the columns.** Once the pages are chosen, every column is laid out through
 //!   a window ([`super::window`]) on the content of the container, with the container as a box
 //!   without padding, border and margin that is as wide as a column. The layouts of the boxes in
@@ -23,9 +31,10 @@ use super::tree::{Content, HeliumTree, calc};
 use super::window::Window;
 use crate::style::properties::computed::{ColumnWidth, GenericSize, PixelLength};
 use crate::style::properties::specified::{ColumnCount, Display};
+use crate::style::properties::specified::ColumnFill;
 use helium_paginate::{
-    BalanceObjective, BoxRef, BreakLevel, Cut, Item, Kernel, LayoutService, NodeRef, PageSpec, PageTable, ParId,
-    ParLine, Position, Problem, balance,
+    BalanceObjective, BoxRef, BreakLevel, ContainerCut, Cut, Item, Kernel, LayoutService, NodeRef, PageSpec, PageTable,
+    ParId, ParLine, Position, Problem, balance, plan_fragment,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -38,13 +47,22 @@ use taffy::{MaybeResolve, RequestedAxis, compute_block_layout, compute_leaf_layo
 #[derive(Debug, Default)]
 pub(super) struct ColumnsNode {
     /// The flow of the content. It is made after the tree.
-    pub inner: Option<Inner>,
+    pub inner: Option<Rc<Inner>>,
+    /// Whether the container is split over pages: it is an item of the flow of the document.
+    pub splittable: bool,
     /// The plans, by the width of the content box and the height of it, if it is definite.
     plans: HashMap<(u32, Option<u32>), Rc<ColumnPlan>>,
+    /// The plans of the fragments of the container that the kernel asked about.
+    pub fragments: HashMap<FragmentKey, Rc<ColumnPlan>>,
     /// The layouts of the columns of the last layout of the container. The last layout is the one
     /// that the layouts of the boxes around it are of, which a box that has a cached layout keeps.
     pub layouts: Option<Rc<ColumnLayouts>>,
 }
+
+/// What the kernel asked the layout service about a fragment of a container with: where it starts
+/// in the container, the inline size of the page (the bits of the number) and the height that was
+/// available on the page (the bits of the number).
+pub(super) type FragmentKey = (Option<ContainerCut>, u32, u64);
 
 /// The columns of a container for a width and a height.
 #[derive(Debug)]
@@ -237,6 +255,25 @@ impl HeliumTree<'_, '_> {
     /// columns.
     pub(super) fn compute_columns_layout(&mut self, id: NodeId, inputs: LayoutInput) -> taffy::LayoutOutput {
         let style = self.active_style(id).clone();
+        let splittable = self.node(id).columns.as_ref().is_some_and(|columns| columns.splittable);
+        if splittable {
+            // A container that is split over pages has the height of its fragment on the page. In
+            // a layout that is not of a page (the galley, which only gives extents) its height is
+            // not used, and nothing in it is laid out.
+            let plan = self.page_fragments.get(&id).and_then(|key| {
+                self.node(id).columns.as_ref().and_then(|columns| columns.fragments.get(key).cloned())
+            });
+            let output = compute_leaf_layout(inputs, &style, calc, |_, available| Size {
+                width: available.width.into_option().unwrap_or(self.fallback_line_width).max(0.0),
+                height: plan.as_ref().map_or(0.0, |plan| plan.height),
+            });
+            if inputs.run_mode == RunMode::PerformLayout {
+                if let Some(plan) = plan {
+                    self.layout_columns(id, plan);
+                }
+            }
+            return output;
+        }
         // the height of the content box, if the container has a height of its own
         let definite = inputs.known_dimensions.height.is_some()
             || style.size.height.maybe_resolve(inputs.parent_size.height, calc).is_some();
@@ -369,6 +406,8 @@ fn choose(
         leading: super::window::Leading::Natural,
         at_end: false,
         scope: Some(id),
+        start_container: None,
+        end_container: None,
     };
     if inner.items.is_empty() {
         return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![] };
@@ -418,4 +457,61 @@ fn choose(
     }
     let tallest = used.iter().copied().fold(0.0, f32::max);
     ColumnPlan { width, gap, height: height.unwrap_or(tallest), columns }
+}
+
+/// The fragment of a container that starts at `from` and has `available` height on a page that is
+/// `page_inline` wide, as the layout service answers the kernel about it: the columns, and what
+/// the fragment is as a whole. The plan is kept in the container by the arguments, for the layout
+/// of the page.
+///
+/// `content_width` is the width of the content box of the container on that page, `top` the
+/// padding and the border that the fragment has at its top, and `bottom` the ones that it has at
+/// its bottom if it ends the container.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fragment_plan(
+    service: &mut TreeService<'_, '_, '_>,
+    id: NodeId,
+    content_width: f32,
+    from: Option<ContainerCut>,
+    page_inline: f32,
+    available: f64,
+    top: f32,
+    bottom: f32,
+) -> (Rc<ColumnPlan>, helium_paginate::FragmentPlan) {
+    let tree = &*service.tree;
+    let (count, width, gap) = tree.column_geometry(id, content_width);
+    let inner = tree
+        .node(id)
+        .columns
+        .as_ref()
+        .and_then(|columns| columns.inner.clone())
+        .expect("the content of a container with columns is a flow");
+    let fill = tree
+        .computed_values
+        .get(tree.node(id).entity)
+        .map_or(ColumnFill::Balance, |style| style.box_.column_fill);
+    let fill = match fill {
+        ColumnFill::Balance => helium_paginate::ColumnFill::Balance,
+        ColumnFill::BalanceAll => helium_paginate::ColumnFill::BalanceAll,
+        ColumnFill::Auto => helium_paginate::ColumnFill::Auto,
+    };
+    let root = BoxRef(usize::from(id) as u32);
+    let mut inside = InColumns { service, root };
+    let room = available as f32 - top;
+    let found = plan_fragment(&mut inside, &inner.items, count, width, from, room, bottom, fill);
+    let service = inside.service;
+    let mut columns = vec![];
+    for &(start, end) in &found.columns {
+        let gap_extent = |item: usize| match inner.items[item] {
+            Item::Gap { node } => service.extent_in(root, node, width) as f32,
+            _ => 0.0,
+        };
+        columns.push(paginate::window(&inner.items, &inner.leaves, BreakLevel::Column, Some(id), start, end, gap_extent));
+    }
+    let plan = Rc::new(ColumnPlan { width, gap, height: found.height, columns });
+    let key = (from, page_inline.to_bits(), available.to_bits());
+    if let Some(columns) = service.tree.node_mut(id).columns.as_mut() {
+        columns.fragments.insert(key, plan.clone());
+    }
+    (plan, found)
 }

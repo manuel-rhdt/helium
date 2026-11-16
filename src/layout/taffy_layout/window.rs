@@ -57,6 +57,11 @@ pub(super) struct Window {
     /// The multi-column container that the window is a column of. The items are the ones of its
     /// content, and the container is not cut: it is the box of the column.
     pub scope: Option<NodeId>,
+    /// The container with columns that the page starts in (a fragment of it that is not the
+    /// first) and the one that it ends in (a fragment that is not the last). The container is one
+    /// item of the flow, so its span says nothing about them.
+    pub start_container: Option<NodeId>,
+    pub end_container: Option<NodeId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -89,6 +94,16 @@ impl Window {
     /// Whether a box has items behind the window.
     pub fn open_at_end(&self, span: &Span) -> bool {
         span.start < self.end && span.end > self.end
+    }
+
+    /// Whether the box `id` that spans the items `span` is cut at the start of the window: it has
+    /// items in front of it, or it is a container that a fragment of which starts the window.
+    pub fn cut_at_start(&self, id: NodeId, span: &Span) -> bool {
+        self.open_at_start(span) || self.start_container == Some(id)
+    }
+
+    pub fn cut_at_end(&self, id: NodeId, span: &Span) -> bool {
+        self.open_at_end(span) || self.end_container == Some(id)
     }
 
     /// The paragraph that the page starts in or ends in, and the cuts.
@@ -215,7 +230,7 @@ impl HeliumTree<'_, '_> {
                 current = self.edge_kid(id, &window, true);
                 continue;
             }
-            let open = self.node(id).span.as_ref().is_some_and(|span| window.open_at_start(span));
+            let open = self.node(id).span.as_ref().is_some_and(|span| window.cut_at_start(id, span));
             let change = changes.entry(id).or_default();
             let table = self.node(id).content == Content::Table;
             if open {
@@ -245,7 +260,7 @@ impl HeliumTree<'_, '_> {
                 current = self.edge_kid(id, &window, false);
                 continue;
             }
-            let open = self.node(id).span.as_ref().is_some_and(|span| window.open_at_end(span));
+            let open = self.node(id).span.as_ref().is_some_and(|span| window.cut_at_end(id, span));
             let change = changes.entry(id).or_default();
             let table = self.node(id).content == Content::Table;
             if open {
@@ -343,7 +358,17 @@ mod tests {
     }
 
     fn window(start: u32, end: u32) -> Window {
-        Window { start, end, start_cut: None, end_cut: None, leading: Leading::Discard, at_end: false, scope: None }
+        Window {
+            start,
+            end,
+            start_cut: None,
+            end_cut: None,
+            leading: Leading::Discard,
+            at_end: false,
+            scope: None,
+            start_container: None,
+            end_container: None,
+        }
     }
 
     #[test]

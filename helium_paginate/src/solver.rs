@@ -127,7 +127,7 @@ impl<O: Objective> Solver for ExactSolver<O> {
         // the ways to the end of the document
         let mut ends: Vec<State> = vec![];
         while let Some((_, state)) = queue.pop_first() {
-            if kernel.is_end(state.0) {
+            if kernel.is_final(&nodes[&state].start) {
                 ends.push(state);
                 continue;
             }
@@ -177,21 +177,27 @@ impl<O: Objective> Solver for ExactSolver<O> {
             .iter()
             .map(|state| nodes[state].cost)
             .fold(f64::INFINITY, f64::min);
-        let key = |kernel: &Kernel<'_>, state: State| -> Vec<(usize, u32)> {
+        let key = |kernel: &Kernel<'_>, state: State| -> Vec<(usize, u64)> {
             path(state)
                 .iter()
                 .map(|start| kernel.position(start.at).order())
                 .collect()
         };
+        // (the place where the last page ends is the same for all of them unless the problem is
+        // the fragment of a container, where it is one more thing to decide by)
         let best = ends
             .iter()
             .copied()
             .filter(|state| nodes[state].cost == cheapest)
-            .min_by_key(|&state| (key(kernel, state), state.1 as u8, state.2));
+            .min_by_key(|&state| (key(kernel, state), kernel.position(state.0).order(), state.1 as u8, state.2));
         let mut pages = best.map_or_else(Vec::new, path);
         pages.reverse();
         if pages.is_empty() {
             pages.push(first);
+        }
+        // the solution of a fragment ends with the place where its last page ends
+        if let Some(state) = best.filter(|_| kernel.is_fragment()) {
+            pages.push(nodes[&state].start);
         }
         Solution { pages }
     }

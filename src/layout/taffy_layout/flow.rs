@@ -23,7 +23,8 @@ use super::tree::{Content, HeliumTree, node_is_out_of_flow};
 use super::window::Span;
 use crate::style::properties::computed::Break;
 use crate::style::properties::specified::Display;
-use helium_paginate::{BreakKind, BreakLevel, Item, NodeRef, ParId};
+use helium_paginate::{BoxRef, BreakKind, BreakLevel, Item, NodeRef, ParId};
+use std::rc::Rc;
 use taffy::tree::NodeId;
 
 /// A place in a box that the layout of a galley knows the position of.
@@ -75,6 +76,9 @@ pub(super) struct Flow {
 enum Kind {
     /// A box that is not split.
     Whole,
+    /// A multi-column container, which is split between its columns and over pages: one item of
+    /// the flow, the fragments of which the layout service finds.
+    Container,
     Paragraph,
     Block,
     Table,
@@ -275,10 +279,16 @@ impl Extractor<'_, '_, '_> {
         if node.orthogonal || node.flow.is_vertical() || self.has_block_size(id) {
             return Kind::Whole;
         }
-        // (a container with columns is one box in the flow that it is in: its content is a flow of
-        // its own, which `emit_columns` makes)
+        // A container with columns is one item in the flow that it is in: its content is a flow of
+        // its own, which `emit_columns` makes. It is split over pages if it is in the flow of a
+        // page and its height is the one of its content. Inside of another container it is one box.
         if node.columns.is_some() {
-            return Kind::Whole;
+            let min_height = self.tree.node(id).style.min_size.height;
+            let no_min_height = min_height.is_auto() || {
+                let raw = min_height.into_raw();
+                raw.tag() == taffy::CompactLength::LENGTH_TAG && raw.value() == 0.0
+            };
+            return if self.level == BreakLevel::Page && no_min_height { Kind::Container } else { Kind::Whole };
         }
         match node.content {
             Content::Replaced => Kind::Whole,
@@ -415,6 +425,16 @@ impl Extractor<'_, '_, '_> {
                 let item = self.box_item(Anchor::Top(id), Anchor::Bottom(id));
                 self.flow.leaves[item as usize] = Some(id);
             }
+            Kind::Container => {
+                let item = self.push(Item::Container {
+                    node: BoxRef(usize::from(id) as u32),
+                    avoid_inside: avoid.page,
+                });
+                self.flow.leaves[item as usize] = Some(id);
+                if let Some(columns) = self.tree.node_mut(id).columns.as_mut() {
+                    columns.splittable = true;
+                }
+            }
             Kind::Paragraph => {
                 let page = self.tree.computed_values.get(self.tree.node(id).entity).map(|style| &style.page);
                 let (orphans, widows) = page.map_or((2, 2), |page| (page.orphans, page.widows));
@@ -525,7 +545,7 @@ impl Extractor<'_, '_, '_> {
         let leaves = std::mem::replace(&mut self.flow.leaves, leaves);
         let span = Span { start: 0, end: items.len() as u32, kids, split, anchored: false };
         if let Some(columns) = self.tree.node_mut(id).columns.as_mut() {
-            columns.inner = Some(Inner { items, leaves, span });
+            columns.inner = Some(Rc::new(Inner { items, leaves, span }));
         }
     }
 
