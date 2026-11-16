@@ -100,3 +100,18 @@ fn cover_scales_the_image_to_fill_the_box() {
     );
     assert_eq!(painted, 1);
 }
+
+#[test]
+fn the_background_of_the_page_and_of_the_canvas_are_painted() {
+    let at_page = format!(
+        r#"<!DOCTYPE html><style>@page {{ margin: 20px; background: url(data:image/png;base64,{PNG}) no-repeat }} body {{ margin: 0 }}</style><p>text</p>"#
+    );
+    let (_, painted) = render(&dir("page"), "page", &at_page);
+    assert_eq!(painted, 1);
+    // the background of the root element covers the whole canvas
+    let canvas = format!(
+        r#"<!DOCTYPE html><style>html {{ background: url(data:image/png;base64,{PNG}) no-repeat }} body {{ margin: 0 }}</style><p>text</p>"#
+    );
+    let (_, painted) = render(&dir("canvas"), "canvas", &canvas);
+    assert_eq!(painted, 1);
+}

@@ -85,7 +85,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `grid-column`, `grid-row`, also for absolutely positioned children, which are placed in their grid area) layout, tables (`border-collapse`, `border-spacing`).
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
-  `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space`, `hyphens`,
+  `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space` (`normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`), `hyphens`,
   `direction`, `unicode-bidi`, `list-style-type`.
 - **OpenType features:** `font-feature-settings`, `font-kerning`, and `font-variant` with
   `font-variant-ligatures`, `-caps`, `-numeric`, `-east-asian` and `-position`; the `font`
@@ -110,7 +110,11 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   does not change the layout, does not apply to non-replaced inline boxes, and a box that is
   split over pages is transformed on its first page only.
 - **Backgrounds:** `background` and `background-color`, `-image` (linear, radial and conic
-  gradients, also repeating), `-size`, `-position`, `-repeat`, `-blend-mode`.
+  gradients, also repeating, and `url()` images: PNG, JPEG and SVG files and `data:` URIs), `-size`
+  (including `cover` and `contain`), `-position`, `-repeat`, `-blend-mode`. A relative URL in a
+  style sheet is relative to the style sheet, and the file has to be inside of the directory of
+  the document (or `--resource-root`) like the images of `<img>`. In a background with a blend
+  mode, the images are painted over the blended layers, without being blended.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color()`. The alpha channel is parsed but not painted.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `%`.
@@ -156,7 +160,7 @@ rounded boxes; axial, radial and mesh shadings for gradients; blended background
 
 ## Not supported
 
-Other image formats (GIF, WebP, ...), `url()` backgrounds, `@font-face`,
+Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`, `@font-face`,
 `@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
 fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
 `outline`, `word-break`/`overflow-wrap`,
