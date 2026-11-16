@@ -104,6 +104,8 @@ fn query<'i>(input: &mut Parser<'i>, env: &MediaEnv) -> Result<Tri> {
         "all" | "print" => true,
         "screen" | "speech" | "tty" | "tv" | "projection" | "handheld" | "braille" | "embossed"
         | "aural" => false,
+        // keywords of the syntax are no media types: the query is not valid
+        "and" | "or" | "not" | "only" | "layer" => return Err(ParseError::<()>::custom(())),
         _ => false,
     };
     let mut value = Some(of_type);
