@@ -1,0 +1,26 @@
+name: Render multicol
+
+# Temporary: builds helium at this commit and renders gallery/multicol to a PDF artifact.
+on:
+  push:
+    branches: ["ci/multicol-render"]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install poppler
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - name: Build
+        run: cargo build --release --locked
+      - name: Render
+        run: python3 gallery/build.py --helium target/release/helium --out _site multicol
+      - name: Version
+        run: ./target/release/helium --version || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: multicol
+          path: _site

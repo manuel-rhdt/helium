@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Columns</title>
+<meta name="description" content="A three-column article: balanced columns, a centred rule in the gap, justified text with hyphenation and a floated drop cap.">
+<meta name="keywords" content="multicolumn, column-count, column-rule, hyphenation, float">
+<style>
+  @page { size: A4; margin: 18mm 15mm 16mm 15mm; }
+  body {
+    font-family: "TeX Gyre Termes", serif;
+    font-size: 9.5pt;
+    line-height: 1.36;
+    color: #14181d;
+    hyphens: auto;
+    text-align: justify;
+  }
+  header { border-bottom: 1.5pt solid #14181d; padding-bottom: 3mm; margin-bottom: 5mm; }
+  .kicker {
+    font-family: "TeX Gyre Heros", sans-serif;
+    font-size: 7.5pt; letter-spacing: 1.6pt; text-transform: uppercase;
+    color: #8a1c1c; margin: 0 0 2mm 0;
+  }
+  h1 {
+    font-family: "TeX Gyre Heros", sans-serif;
+    font-size: 23pt; line-height: 1.08; font-weight: bold;
+    margin: 0 0 2.5mm 0; letter-spacing: -0.4pt;
+  }
+  .dek { font-size: 11pt; font-style: italic; color: #3b444d; margin: 0 0 2mm 0; }
+  .byline {
+    font-family: "TeX Gyre Heros", sans-serif; font-size: 7.5pt;
+    letter-spacing: 0.6pt; text-transform: uppercase; color: #5d666f; margin: 0;
+  }
+  .cols {
+    column-count: 3;
+    column-gap: 6mm;
+    column-rule: 0.5pt solid #c9ced4;
+  }
+  .cols h2 {
+    font-family: "TeX Gyre Heros", sans-serif;
+    font-size: 9pt; letter-spacing: 0.4pt; text-transform: uppercase;
+    margin: 3.5mm 0 1.2mm 0;
+  }
+  .cols h2:first-child { margin-top: 0; }
+  .cols p { margin: 0 0 2.2mm 0; orphans: 2; widows: 2; }
+  .lead { font-size: 10pt; }
+  .dropcap {
+    font-family: "TeX Gyre Heros", sans-serif; font-size: 27pt; font-weight: bold;
+    float: left; line-height: 0.85; padding: 0.6mm 1.6mm 0 0; color: #8a1c1c;
+  }
+  blockquote {
+    margin: 2mm 0 2.5mm 0; padding-left: 3mm; border-left: 1.5pt solid #8a1c1c;
+    font-style: italic; font-size: 9pt; color: #2b333b;
+  }
+  .note {
+    margin: 3mm 0 0 0; padding: 2.5mm; background: #f2efe9;
+    border-top: 0.5pt solid #cfc8ba; border-bottom: 0.5pt solid #cfc8ba;
+    font-size: 8.2pt; line-height: 1.3;
+  }
+  .note b { font-family: "TeX Gyre Heros", sans-serif; font-size: 7.6pt; letter-spacing: 0.5pt; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Typesetting · Engine notes</p>
+  <h1>The Shape of a Page</h1>
+  <p class="dek">Why three columns are harder than one, and what the engine had to learn about balancing them.</p>
+  <p class="byline">Helium release notes · v0.2.3</p>
+</header>
+
+<div class="cols">
+
+  <p class="lead"><span class="dropcap">A</span> single column of text is a solved problem. You measure a line, you break a word when it no longer fits, you stack the lines until the page is full, and you start again on the next page. Every one of those decisions can be made while looking at a single line and the width of the page, and nothing later can change what you decided earlier.</p>
+
+  <p>Columns break that comfortable arrangement. The height of a column is not known in advance: it depends on how much content the other columns take, and the other columns depend on it in turn. Balancing three columns means finding the one height at which the content divides into three parts of nearly equal length — and if the container is split over a page boundary, that search has to be repeated for every fragment.</p>
+
+  <h2>Balancing</h2>
+
+  <p>The engine now lays out a multi-column container by laying its content out at a candidate column height, watching where the breaks fall, and adjusting that height until the columns come out even. The search is cheap because a candidate layout only has to reach the height being tested, not the whole document; and because the breaks are decided by the same paginator that splits content over pages, a column and a page fragment obey identical rules.</p>
+
+  <p>This reuse is the part that matters most. Column breaks and page breaks are not two mechanisms that happen to look similar; they are one mechanism at two levels. A forced break before a heading ends a column exactly as it would end a page. A block that avoids being split keeps itself whole in a column just as it does at the foot of a page. When a container is tall enough to fill the page and then continue on the next one, the paginator simply descends one level.</p>
+
+  <blockquote>Every break in a document is the same decision, taken at a different level of the box tree.</blockquote>
+
+  <h2>Rules between</h2>
+
+  <p>The rule between two columns is a stroke, not a border: it belongs to the gap, it is centred in it, and it is drawn only as tall as the content of the taller neighbour. Widths and styles come from the border vocabulary, so a dashed rule is a dashed border with a different address. When no visible style is given, the rule's width is forced to zero rather than left to paint nothing, which keeps the box tree honest about what is drawn.</p>
+
+  <p>Gaps follow the same convention as grid gaps, where the keyword <i>normal</i> means one em inside columns and nothing between grid tracks. That small asymmetry is in the specification and it is easy to get wrong: a grid that suddenly acquired an em of space between its cells would look broken to anyone who wrote the markup.</p>
+
+  <h2>What is not there yet</h2>
+
+  <p>An element cannot span the columns. The property is parsed so that documents that use it do not fail, but a box that asks to span the columns is laid out as an ordinary box inside one of them. This is the most visible gap: a headline that runs across the full measure is the usual way a magazine opens a spread, and until spanning exists, a designer has to keep the headline outside the container.</p>
+
+  <p>Fragmenting a multi-column container over a page break works, but the columns of the second fragment are balanced independently of the first, which can leave the last page's columns short. Neither limitation is hard to lift, and both are recorded in the pagination design document rather than in a bug tracker, so the next person to work on the paginator sees them next to the algorithm they belong to.</p>
+
+  <div class="note">
+    <b>Measured here</b><br>
+    Three balanced columns, a centred rule in a six millimetre gap, justified text with hyphenation, and a floated drop cap in the first column — all rendered by the release this page was made with.
+  </div>
+
+  <h2>A test that reads</h2>
+
+  <p>The tests for columns are written against the layout dump rather than against the rendered page. A container of six items with a count of three must produce two items per column, each twenty pixels tall, at x positions that differ by the column width plus the gap. The dump gives the border box of every element and the page it landed on, so the assertion is arithmetic on numbers the engine reports about itself.</p>
+
+  <p>Rendered output is checked separately, by eye and by measuring the paint list: the rule between two columns is a stroked segment whose x coordinate sits in the middle of the gap, and whose extent matches the taller of the two columns. If the numbers and the page agree, the feature is real; if only the numbers agree, the page is still wrong.</p>
+
+  <h2>Where this goes</h2>
+
+  <p>Columns are the first feature that needed the paginator to be reusable at more than one level, and that is the interesting consequence. Page fragments, column fragments and, eventually, fragments of a table cell all ask the same question: given this subtree and this height, where does it break? Answering it once, in one place, is what makes the next feature cheaper than the last.</p>
+
+</div>
+
+</body>
+</html>
