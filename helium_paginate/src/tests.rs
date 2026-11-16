@@ -208,12 +208,13 @@ fn the_cost_of_a_page_follows_the_css_objective() {
     let css = CssObjective;
     // 10 px are left on the page
     let slack = CssCost {
+        pages: 1,
         slack: CssCost::slack_of(10.0),
         ..CssCost::default()
     };
     assert_eq!(slack.slack, 640 * 640 * 640);
     assert_eq!(css.page_cost(&fill, false), Some(slack));
-    assert_eq!(css.page_cost(&fill, true), Some(CssCost::default()));
+    assert_eq!(css.page_cost(&fill, true), Some(CssCost { pages: 1, ..CssCost::default() }));
     let avoid = PageFill {
         end_kind: BreakKind::Avoid,
         ..fill
@@ -242,8 +243,8 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         end_kind: BreakKind::Forced,
         ..fill
     };
-    assert_eq!(css.page_cost(&forced, true), Some(CssCost::default()));
-    assert_eq!(css.page_cost(&forced, false), Some(CssCost::default()));
+    assert_eq!(css.page_cost(&forced, true), Some(CssCost { pages: 1, ..CssCost::default() }));
+    assert_eq!(css.page_cost(&forced, false), Some(CssCost { pages: 1, ..CssCost::default() }));
     let overflow = PageFill {
         overflow: true,
         used: 150.0,
@@ -254,6 +255,7 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         css.page_cost(&overflow, false),
         Some(CssCost {
             overflows: 1,
+            pages: 1,
             ..CssCost::default()
         })
     );
@@ -267,12 +269,17 @@ fn a_cost_is_compared_by_its_fields_in_the_order_of_their_priority() {
         overflows,
         avoided_breaks,
         orphans_and_widows,
+        pages: 0,
         slack,
     };
     assert!(cost(1, 0, 0, 0) > cost(0, 1000, 1000, u128::MAX / 2));
     assert!(cost(0, 1, 0, 0) > cost(0, 0, 1000, u128::MAX / 2));
     assert!(cost(0, 0, 1, 0) > cost(0, 0, 0, u128::MAX / 2));
     assert!(cost(0, 0, 0, 2) > cost(0, 0, 0, 1));
+    // a page more is worse than any amount of room on the pages, and better than a widow
+    let pages = |pages, slack| CssCost { pages, ..cost(0, 0, 0, slack) };
+    assert!(pages(2, 0) > pages(1, u128::MAX / 2));
+    assert!(cost(0, 0, 1, 0) > pages(1000, u128::MAX / 2));
     // rounding errors of single precision positions do not make costs differ
     assert_eq!(CssCost::slack_of(20.8), CssCost::slack_of(20.800_04));
     // the sum adds the fields
@@ -476,7 +483,9 @@ fn reference_solution(reference: &Reference) -> Vec<usize> {
             if reference_violation(reference, from, to) {
                 cost += 1e11;
             }
-            cost
+            // (a page costs more than all the room that the pages can have left, and less than
+            // a violation)
+            cost + 1e8
         }
     });
     assert_eq!(sequence.pop(), Some(last));

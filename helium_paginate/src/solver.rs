@@ -35,7 +35,7 @@ pub trait Solver {
 }
 
 /// The cost of a pagination under CSS: what does not fit, a break that is avoided, orphans and
-/// widows, and how empty the pages are, in this order of priority. Where one of them differs, the
+/// widows, the number of pages, and how empty the pages are, in this order of priority. Where one of them differs, the
 /// ones below it do not matter.
 #[derive(Debug, Copy, Clone, Default, PartialEq, PartialOrd)]
 pub struct CssCost {
@@ -48,6 +48,10 @@ pub struct CssCost {
     /// Pages that have fewer lines of a paragraph at their end than `orphans` or at their start
     /// than `widows`. Violating these is preferred to violating an `avoid` value.
     pub orphans_and_widows: u32,
+    /// The number of pages. The last page of a part of the document that a forced break ends is
+    /// not counted as empty, so without this a part could be given an almost empty page more
+    /// whenever that is cheaper in the room that the pages before it have left.
+    pub pages: u32,
     /// The sum over the pages of the cube of the room that is left on a page that does not end
     /// the document or at a forced break, in units of 1/[`SLACK_UNIT`](Self::SLACK_UNIT) of a
     /// pixel (see [`CssCost::slack_of`]).
@@ -74,6 +78,7 @@ impl CssCost {
             overflows: self.overflows + other.overflows,
             avoided_breaks: self.avoided_breaks + other.avoided_breaks,
             orphans_and_widows: self.orphans_and_widows + other.orphans_and_widows,
+            pages: self.pages + other.pages,
             slack: self.slack + other.slack,
         }
     }
@@ -118,6 +123,7 @@ impl Objective for CssObjective {
         if fill.overflow {
             return Some(CssCost {
                 overflows: 1,
+                pages: 1,
                 ..CssCost::default()
             });
         }
@@ -134,6 +140,7 @@ impl Objective for CssObjective {
             overflows: 0,
             avoided_breaks: u32::from(fill.end_kind == crate::BreakKind::Avoid),
             orphans_and_widows: u32::from(fill.orphan_violation || fill.widow_violation),
+            pages: 1,
             slack,
         })
     }

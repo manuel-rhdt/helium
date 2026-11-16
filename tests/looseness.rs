@@ -89,3 +89,41 @@ fn looseness_is_inherited() {
     let on_the_body = lines(&serde_json::from_slice(&output.stdout).unwrap());
     assert_eq!(on_the_body, on_the_paragraph);
 }
+
+/// The repro of a bug report: the first paragraph took a way to break it with a line more, but
+/// the box that it is in was taken from Taffy's cache with the height of the best breaking, so
+/// the second paragraph started on the last line of the first, and without its indent.
+#[test]
+fn a_paragraph_that_takes_a_looser_breaking_pushes_down_what_follows_it() {
+    let html = "<!DOCTYPE html><meta charset=utf-8><style>
+  @page { size: 453.5px 520px; margin: 56.7px }
+  body { margin: 0; font: 14px/19.33px serif; orphans: 2; widows: 2 }
+  .gap { height: 197px }
+  p { margin: 0; text-align: justify; hyphens: auto; text-indent: 1.3em; looseness: 1 }
+</style>
+<div class=gap></div>
+<p>My dear Mr Bennet, said his lady to him one day, have you heard that Netherfield Park is let at last? Mr Bennet replied that he had not. But it is, returned she, for Mrs Long has just been here, and she told me all about it.</p>
+<p>It is a truth universally acknowledged, that a single man in possession of a good fortune must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered as the rightful property of some one or other of their daughters.</p>";
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("looseness__pushes.html");
+    std::fs::write(&input, html).unwrap();
+    let output = common::helium()
+        .unwrap()
+        .args(["--no-system-fonts", "--dump-layout", "-"])
+        .arg(&input)
+        .arg(dir.join("looseness__pushes.pdf"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let dump: Value = serde_json::from_slice(&output.stdout).unwrap();
+    // (the paragraphs of the first page, in the order of the document: the text, and its lines)
+    let texts: Vec<&Value> = dump["paint"]["text"].as_array().unwrap().iter().filter(|text| text["page"] == 0).collect();
+    let (first, second) = (texts[0], texts[1]);
+    let newlines = first["ops"].as_array().unwrap().iter().filter(|op| op["op"] == "newline").count();
+    let end_of_first = first["y"].as_f64().unwrap() + (newlines + 1) as f64 * 19.33;
+    assert!(
+        second["y"].as_f64().unwrap() >= end_of_first - 0.01,
+        "the second paragraph starts at {}, and the first ends at {end_of_first}",
+        second["y"]
+    );
+}
