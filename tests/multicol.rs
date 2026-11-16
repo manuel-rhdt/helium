@@ -674,3 +674,218 @@ fn a_link_in_a_column_is_where_the_text_is() {
     // in points, from the left edge of the page: the second column starts at 200px = 150pt
     assert!(rect[0] >= 150.0 - 0.5 && rect[2] <= 300.0 + 0.5, "{rect:?}");
 }
+
+// Cases that go beyond the list above.
+
+#[test]
+fn a_container_with_one_paragraph_of_text_is_split_into_columns() {
+    let style = "#m { line-height: 20px; font-size: 16px; orphans: 1; widows: 1; background: rgb(0, 128, 0) }
+                 #r { line-height: 20px; font-size: 16px; width: 190px }";
+    let text = words();
+    let columns = layout(
+        "inline",
+        &doc(style, &format!("<div id=m style=\"column-count: 2; column-gap: 20px\">{text}</div>")),
+    );
+    let narrow = layout("inline_190", &doc(style, &format!("<div id=r>{text}</div>")));
+    let lines = narrow.get("r").rect[3] / 20.0;
+    // the container is as high as the first column, which has the half of the lines, rounded up
+    assert_height(&columns, "m", (lines / 2.0).ceil() * 20.0);
+    // and it is one box: one background
+    assert_eq!(columns.filled([0, 128, 0]).len(), 1);
+}
+
+#[test]
+fn a_container_with_padding_and_border_that_has_text_is_as_high_as_its_columns_and_edges() {
+    let style = "#m { line-height: 20px; font-size: 16px; orphans: 1; widows: 1; padding: 5px; border: 3px solid black }
+                 #r { line-height: 20px; font-size: 16px; width: 186px }";
+    let text = words();
+    // 400 - 16 = 384 for the columns, (384 - 12) / 2 = 186 for a column
+    let columns = layout(
+        "inline_edges",
+        &doc(style, &format!("<div id=m style=\"column-count: 2; column-gap: 12px\">{text}</div>")),
+    );
+    let narrow = layout("inline_edges_186", &doc(style, &format!("<div id=r>{text}</div>")));
+    let lines = narrow.get("r").rect[3] / 20.0;
+    assert_height(&columns, "m", (lines / 2.0).ceil() * 20.0 + 16.0);
+}
+
+#[test]
+fn a_container_in_a_flex_item_and_in_a_wrapper_has_its_columns_with_others_around_it() {
+    // Several containers: the boxes around them are laid out again, so the columns are, too
+    let first = "<div id=m0 style=\"column-count: 2; column-gap: 0\"><div class=i></div></div>";
+    let flex = "<div style=\"display: flex\" id=fl><div id=flexitem style=\"column-count: 2; column-gap: 0; width: 200px\">
+                <div class=i id=f1></div><div class=i id=f2></div><div class=i id=f3></div></div>
+                <div class=i id=other style=\"width: 100px\"></div></div>";
+    let last = "<div id=wrap><p id=h style=\"height: 20px; margin: 0\"></p>
+                <div id=m3 style=\"column-count: 2; column-gap: 10px\"><div class=i id=r1></div><div class=i id=r2></div></div></div>
+                <p style=\"height: 20px; margin: 0\"></p>";
+    let layout = layout("around_flex", &doc(".i { height: 20px }", &format!("{first}{flex}{last}")));
+    assert_at(&layout, "f1", 0.0, 20.0, 100.0);
+    assert_at(&layout, "f2", 0.0, 40.0, 100.0);
+    assert_at(&layout, "f3", 100.0, 20.0, 100.0);
+    assert_height(&layout, "flexitem", 40.0);
+    assert_at(&layout, "other", 200.0, 20.0, 100.0);
+    assert_at(&layout, "r1", 0.0, 80.0, 195.0);
+    assert_at(&layout, "r2", 205.0, 80.0, 195.0);
+}
+
+#[test]
+fn a_container_in_a_column_has_columns_of_its_own() {
+    // [x (20), inner (40)] and [y (20)]: the columns are 60 and 20 high. [x] and [inner, y] would
+    // be 20 and 60: the first column is the fuller one.
+    let layout = layout(
+        "nested_positions",
+        &doc(
+            "",
+            "<div id=m style=\"column-count: 2; column-gap: 0\">
+             <div id=x style=\"height: 20px\"></div>
+             <div id=inner style=\"column-count: 2; column-gap: 0\">
+             <div id=n1 style=\"height: 20px\"></div><div id=n2 style=\"height: 20px\"></div>
+             <div id=n3 style=\"height: 20px\"></div><div id=n4 style=\"height: 20px\"></div></div>
+             <div id=y style=\"height: 20px\"></div></div>",
+        ),
+    );
+    assert_height(&layout, "m", 60.0);
+    assert_at(&layout, "x", 0.0, 0.0, 200.0);
+    assert_at(&layout, "inner", 0.0, 20.0, 200.0);
+    assert_height(&layout, "inner", 40.0);
+    assert_at(&layout, "n1", 0.0, 20.0, 100.0);
+    assert_at(&layout, "n2", 0.0, 40.0, 100.0);
+    assert_at(&layout, "n3", 100.0, 20.0, 100.0);
+    assert_at(&layout, "n4", 100.0, 40.0, 100.0);
+    assert_at(&layout, "y", 200.0, 0.0, 200.0);
+}
+
+#[test]
+fn a_table_in_a_column_is_one_box() {
+    let layout = layout(
+        "table",
+        &doc(
+            "table { border-spacing: 0 } td { padding: 0; height: 20px }",
+            "<div id=m style=\"column-count: 2; column-gap: 0\"><div id=a style=\"height: 20px\"></div>
+             <table id=t style=\"width: 100%\"><tr><td id=c1></td></tr><tr><td id=c2></td></tr></table>
+             <div id=b style=\"height: 20px\"></div></div>",
+        ),
+    );
+    // [a, table] and [b]: the table is not cut between its rows
+    assert_at(&layout, "a", 0.0, 0.0, 200.0);
+    assert_at(&layout, "t", 0.0, 20.0, 200.0);
+    assert_at(&layout, "c2", 0.0, 40.0, 200.0);
+    assert_at(&layout, "b", 200.0, 0.0, 200.0);
+}
+
+#[test]
+fn the_first_column_of_a_container_from_right_to_left_is_at_the_right() {
+    let layout = layout(
+        "rtl",
+        &doc(
+            "",
+            &container("column-count: 2; column-gap: 20px; direction: rtl; column-rule: 2px solid rgb(255, 0, 0)", 4),
+        ),
+    );
+    assert_at(&layout, "i1", 210.0, 0.0, 190.0);
+    assert_at(&layout, "i2", 210.0, 20.0, 190.0);
+    assert_at(&layout, "i3", 0.0, 0.0, 190.0);
+    assert_at(&layout, "i4", 0.0, 20.0, 190.0);
+    assert_close(layout.filled([255, 0, 0])[0].rect[0], 199.0, "x of the rule");
+}
+
+#[test]
+fn a_vertical_flow_has_no_columns_and_does_not_panic() {
+    let layout = layout(
+        "vertical",
+        &doc("", "<div id=m style=\"column-count: 2; writing-mode: vertical-rl; height: 100px\"><div class=i id=v1 style=\"width: 20px\"></div></div>"),
+    );
+    layout.get("m");
+    layout.get("v1");
+}
+
+#[test]
+fn the_colour_and_the_gap_can_be_relative() {
+    // `currentcolor` is the text colour, and a percentage is of the width: 10% of 400 = 40
+    let layout = layout(
+        "relative",
+        &doc(
+            "",
+            &container(
+                "column-count: 2; column-gap: 10%; color: rgb(0, 0, 255); column-rule: 4px solid currentcolor",
+                4,
+            ),
+        ),
+    );
+    assert_at(&layout, "i1", 0.0, 0.0, 180.0);
+    assert_at(&layout, "i3", 220.0, 0.0, 180.0);
+    let rules = layout.filled([0, 0, 255]);
+    assert_eq!(rules.len(), 1);
+    assert_close(rules[0].rect[0], 198.0, "x of the rule");
+    assert_close(rules[0].rect[2], 4.0, "width of the rule");
+}
+
+#[test]
+fn margins_at_the_top_of_a_column_go_and_the_ones_in_the_middle_stay() {
+    // Four items of 20px with a margin of 10px above and below. The first column keeps the margin at
+    // the start of the container: 10 + 20 + 10 + 20 = 60 (the margin at its end goes). The second
+    // starts with its box: 20 + 10 + 20 = 50.
+    let layout = layout(
+        "margins",
+        &doc(
+            ".i { margin: 10px 0 }",
+            "<div id=m style=\"column-count: 2; column-gap: 0\">
+             <div class=i id=i1 style=\"height: 20px\"></div><div class=i id=i2 style=\"height: 20px\"></div>
+             <div class=i id=i3 style=\"height: 20px\"></div><div class=i id=i4 style=\"height: 20px\"></div></div>",
+        ),
+    );
+    assert_height(&layout, "m", 60.0);
+    assert_at(&layout, "i1", 0.0, 10.0, 200.0);
+    assert_at(&layout, "i2", 0.0, 40.0, 200.0);
+    assert_at(&layout, "i3", 200.0, 0.0, 200.0);
+    assert_at(&layout, "i4", 200.0, 30.0, 200.0);
+}
+
+#[test]
+fn orphans_and_widows_keep_the_lines_of_a_paragraph_together_in_columns() {
+    let style = "p { margin: 0; line-height: 20px; font-size: 16px; background: rgb(0, 128, 0) }";
+    let lines = |count: usize| vec!["line"; count].join("<br>");
+    // five lines are three and two
+    let five = layout(
+        "widows_five",
+        &doc(style, &format!("<div id=m style=\"column-count: 2; column-gap: 0\"><p>{}</p></div>", lines(5))),
+    );
+    let green = five.filled([0, 128, 0]);
+    assert_eq!(green.len(), 2);
+    assert_close(green[0].rect[3], 60.0, "height of the first part");
+    assert_close(green[1].rect[3], 40.0, "height of the second part");
+    // three lines cannot be cut: two lines would be left on one of the columns, and the last
+    // has to be one
+    let three = layout(
+        "widows_three",
+        &doc(style, &format!("<div id=m style=\"column-count: 2; column-gap: 0\"><p>{}</p></div>", lines(3))),
+    );
+    assert_eq!(three.filled([0, 128, 0]).len(), 1);
+    assert_height(&three, "m", 60.0);
+}
+
+#[test]
+fn a_box_that_is_cut_between_columns_has_the_border_of_its_parts() {
+    // a box of three items with a border and a padding of 5px is cut after its second item
+    let layout = layout(
+        "cut_box",
+        &doc(
+            "",
+            "<div id=m style=\"column-count: 2; column-gap: 0\"><div id=b style=\"border: 5px solid rgb(0, 0, 255); padding: 5px; background: rgb(0, 128, 0)\">
+             <div class=i style=\"height: 20px\"></div><div class=i style=\"height: 20px\"></div><div class=i style=\"height: 20px\"></div>
+             <div class=i style=\"height: 20px\"></div></div></div>",
+        ),
+    );
+    // 80px of content and 20px of edges are 100 in all, 50 in each column: the first part has the
+    // top border and padding (10) and two items (40), the second two items and the bottom edges
+    let green = layout.filled([0, 128, 0]);
+    assert_eq!(green.len(), 2, "{green:?}");
+    assert_close(green[0].rect[0], 0.0, "x of the first part");
+    assert_close(green[1].rect[0], 200.0, "x of the second part");
+    assert_close(green[1].rect[1], 0.0, "top of the second part");
+    // no border at the cut: the first part has no bottom border and the second no top border
+    let blue = layout.filled([0, 0, 255]);
+    let horizontal: Vec<&&Rect> = blue.iter().filter(|rect| rect.rect[2] > 100.0).collect();
+    assert_eq!(horizontal.len(), 2, "one top and one bottom border: {blue:?}");
+}
