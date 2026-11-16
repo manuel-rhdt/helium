@@ -1459,6 +1459,37 @@ paragraphs, and for every paragraph on it the lines it has with their badness an
 had (the number of lines, the demerits and the worst badness of each).
 `python3 tools/pagination_report.py FILE [--ways]` shows it as a table.
 
+## How even the pages are
+
+`tools/page_uniformity.py` sets generated documents on a grid of 20px lines (pages and columns of 24
+lines: a book of chapters with headings, sub-headings and quotations, 5 to 9 chapters of 25 to 60
+paragraphs, and a container with two columns that goes over pages) and counts the lines of the
+pages, or of the columns, that do not end the document or a chapter. 15 documents of each kind,
+about 1200 pages or columns for every setting:
+
+| setting (book) | pages with all 24 lines | lines missing, mean | on the other pages, at most | lines worse than 100 per document |
+| --- | --- | --- | --- | --- |
+| `looseness` 0 | 63.2% | 0.39 | 3 | 112 |
+| `looseness` 1 | 77.9% | 0.23 | 3 | 117 |
+| `looseness` 2, tolerance of the other ways 1000 | 79.2% | 0.22 | 3 | 117 |
+| `looseness` 2, both tolerances open | 100% | 0 | 0 | 176 (mean badness 31 to 46) |
+| `looseness` 0, orphans and widows 1 | 96.1% | 0.04 | 2 | 112 |
+| `looseness` 0, orphans and widows 3 | 32.2% | 1.03 | 5 | 112 |
+
+So the pages are as even as the rules and the lines allow: a page is a line short mostly because a
+paragraph cannot be cut where it has to be (orphans and widows of 2), and the rest is a heading or a quotation
+that cannot end a page. `looseness` takes a third of those away at the default tolerances, and all of them with
+the tolerances open, at the price of about a third more lines that are worse than 100 and
+a mean badness that goes from 31 to 46: that is the exchange that the two knobs set.
+
+In the columns of a container that goes over pages it does not work as well: 66.8% of the columns are full,
+and `looseness` gets that to 76.8% (78.5% with the tolerances open), and the first
+fragment of a container is always full. The fragments that start in the middle of a paragraph are the ones that are
+short (and `HELIUM_EARLIER_FRAGMENTS` takes about four points of this away, on purpose: it leaves room
+to the pages where that is cheaper, see above). In a container with one column the tolerances open give 89%, with three
+columns `looseness` changes nothing, and a way of a paragraph is hardly ever taken there. This has not
+been explained: the same machinery gives 100% for the pages of the book.
+
 ## Open questions
 
 - **Taffy's cache.** Resolved by reading `taffy-0.15.1/src/tree/cache.rs` and the layout
