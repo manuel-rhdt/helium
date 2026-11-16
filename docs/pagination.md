@@ -21,8 +21,8 @@ differs.
 
 - Floats and footnotes. `float` is not supported by helium today. The design
   leaves room for them (see "Open questions") but does not cover them.
-- Multi-column layout. A column is a fragmentainer like a page, and the kernel
-  could serve it, but nothing here plans for it.
+- Multi-column layout is not part of steps 1 to 7. It has a section of its own, "Multi-column
+  layout", and its own order of work.
 - Forking Taffy to make it fragmentation-aware.
 
 ## Where the code stands
@@ -577,6 +577,117 @@ the first page.
 
 Steps 1 to 3 are the base for iterating on solvers. Steps 5 to 7 are
 independent of each other.
+
+## Multi-column layout
+
+Status: proposal. helium has no `column-count`, `column-width`, `column-fill`, `column-span` or
+`column-rule`, and `break-before: column` does not parse. (`column-gap` exists, but only for grid.)
+
+A column is a fragmentainer like a page: a box with an inline size and a block size that content
+is cut into. The kernel, the solvers, the break tokens and the re-breaking of paragraphs carry
+over. What does not carry over is that a multi-column container sits in the middle of the flow of
+a page. It is a fragmentation context inside another one, and that is what this section is about.
+
+### What carries over
+
+- A column is a `PageSpec`. Its inline size is `(width of the container - gaps) / N`, which does
+  not depend on heights, so extents keyed by inline size work as they are.
+- Orphans, widows, `avoid` breaks, and the re-breaking of a paragraph at the width of the column
+  it continues in, work per column as they do per page.
+- A box that is split over columns gets its parts as decoration fragments, as over pages. A
+  fragment has an x position, so only its page index needs a column as well.
+
+### What does not carry over
+
+**Nested kernels.** A multi-column container is an `Item::Container`. Its extent on a page
+is found by an inner kernel run: a `Problem` whose page table has N columns of the width of a
+column. This is the `fragment` call of the layout service that steps 6 and 7 add for tables, grid
+and flex. Multi-column layout is a second user of it, not an independent feature.
+
+**Balancing is a min-max problem.** With `column-fill: balance` (the default) a container with an
+`auto` height is as short as it can be while its content still fits in N columns. The exact
+solver adds up the costs of the pages; balancing needs the maximum of the heights of the columns,
+and then a tie-break (the variance of the heights). `Objective` therefore gets a combine
+operator, sum or maximum, and the exact solver uses it for its path costs. Balancing applies to
+the last fragment of a container that is split over pages only. The earlier fragments fill all
+their columns to the height that is available, as `column-fill: auto` does.
+
+**The service must answer for a subtree at a width.** `LayoutService::extent` reads from a
+galley: the whole document laid out at one page width. The content of a multi-column container
+needs its extent at the width of a column, which is not the width of any of its ancestors. The
+service has to lay out a subtree with a given available width. The windowed tree can do that;
+the service does not use it for this yet. The same limit applies today to a table that continues
+on a page of another width.
+
+**Break levels.** `BreakKind` tells forced from avoid, not the level. A forced column break ends
+a column. A forced page break in a multi-column container ends the fragment of the container on
+that page and goes on to the outer flow. A break is therefore (kind, level), with the levels
+`Column` and `Page`, and `break-before`, `break-after` and `break-inside` take the values
+`column` and `avoid-column`.
+
+**A layout mode in `HeliumTree`.** Taffy has no multi-column layout. The container is laid out by
+helium, as a table is turned into a grid: for every column, the window is set to the part of the
+children that is in the column, they are laid out at the width of the column through the windowed
+path, and the result is moved by the x offset of the column. The same box is then laid out in
+several columns in one pass. That relies on nodes that a window changes not using Taffy's cache,
+which is true today (`Node::windowed`), and on positions that are stored per entity: the lines
+are entities of their own, the boxes that are split get decoration fragments.
+
+**`column-span: all`.** A spanning box splits the container into sections. Each section is
+balanced for itself, and the spanning box is a `Box` in the flow around them.
+
+### The inner problem
+
+```rust
+pub struct Columns {
+    pub count: usize,
+    pub width: f32,      // the width of a column
+    pub gap: f32,
+}
+```
+
+For the fragment of a container that starts at `from` with `available` block size:
+
+- the columns are filled in order, each up to `available`; the fragment ends at the end of the
+  last column, or where the content ends;
+- if the content ends in this fragment and `column-fill` is `balance`, the container gets the
+  least height `h <= available` such that the content fits in N columns of height `h`. The inner
+  solver finds it as a path of N columns with the maximum of their heights as the cost. With
+  neither `avoid` nor orphans and widows to respect, a greedy fill gives the answer, and it can
+  be searched for by bisection on `h`. With them it cannot, which is why the exact solver is
+  used;
+- the candidates that the inner kernel returns are the ends of complete sets of columns, plus the
+  end of the content. The outer kernel treats them like the ends of any other `fragment`.
+
+For a container that is not split (its content fits on the page) this reduces to `extent`: the
+balanced height of the container, computed once for a width.
+
+### Order of work
+
+1. The service answers the extent and the lines of a subtree at a given available width, instead
+   of reading them from a galley. This is also what splitting tables on pages of another width
+   needs.
+2. `column-count`, `column-width`, `column-gap` and `column-rule` for a container that is not
+   split over pages and whose content is block flow. Balanced. The combine operator of
+   `Objective`. Break levels, and `break-before: column`.
+3. A container that is split over pages: `fragment` for it, `column-fill: auto`, and balancing of
+   the last fragment only.
+4. `column-span: all`.
+
+Step 1 does not need anything of the later ones, and the steps of "Order of work" above (3, 5, 6
+and 7) are independent of it, except that step 3 here shares `fragment` with step 6 there.
+
+### Open questions
+
+- Whether a greedy fill is good enough for balancing with `avoid` breaks, or whether the exact
+  solver is needed on every container. Unmeasured.
+- Whether the lines that are in a window of several columns of one pass keep correct positions:
+  `Writer::write_lines` sets positions per entity, and a paragraph that is cut between two
+  columns has lines of one entity in both. This is how it works over pages, one pass per page.
+- Whether the column rules (`column-rule`) belong to the container or to its fragments, which
+  matters where the container is split over pages.
+- Orthogonal writing modes. A column is a block-axis fragmentainer, and the inline axis of a
+  vertical document is the vertical one. Nothing here has been checked for them.
 
 ## Open questions
 
