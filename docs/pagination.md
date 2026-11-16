@@ -64,6 +64,15 @@ Limits of this, in order of importance:
 - **Monolithic containers.** Flex and grid containers and table rows are never
   split. Tables are laid out as grids (`taffy_layout/table.rs`) and split
   between rows only.
+- **Margins at the end of a page count.** A page ends where the next element
+  starts, so the margin in front of an unforced break is counted against the
+  height of the page before it. The margin is only discarded at the start of
+  the next page. The kernel discards it on both sides; the flow that is
+  extracted from the galley has no `Gap` items yet and keeps the old behaviour.
+- **A page can span a forced break.** A forced break has a large negative
+  cost, not an infinite one. Where the pages on both sides of it would
+  overflow, the paginator may ignore it. `Problem::stop_at_forced` is off to
+  keep this, and goes away with the galley.
 - **`break-before: left`/`right`** force a break but never insert the empty
   page that may be needed.
 
