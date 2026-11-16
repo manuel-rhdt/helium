@@ -667,6 +667,9 @@ pub enum Background {
     /// https://www.w3.org/TR/compositing-1/#background-blend-mode
     #[property]
     BackgroundBlendMode(CommaSeparated<BlendMode>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-clip
+    #[property]
+    BackgroundClip(CommaSeparated<BackgroundBox>),
     /// https://www.w3.org/TR/css-backgrounds-3/#background-size
     #[property]
     BackgroundSize(CommaSeparated<super::background::SpecifiedSize>),
@@ -682,6 +685,7 @@ pub enum Background {
     #[shorthand("background-color", method = "color")]
     #[shorthand("background-image", method = "images")]
     #[shorthand("background-blend-mode", method = "blend_modes")]
+    #[shorthand("background-clip", method = "clips")]
     #[shorthand("background-size", method = "sizes")]
     #[shorthand("background-position", method = "positions")]
     #[shorthand("background-repeat", method = "repeats")]
@@ -737,6 +741,16 @@ pub enum Math {
     MathDepth(MathDepth),
     #[property]
     MathShift(MathShift),
+}
+
+/// The box that the background is painted into (`background-clip`).
+/// https://www.w3.org/TR/css-backgrounds-3/#typedef-bg-clip
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum BackgroundBox {
+    #[default]
+    BorderBox,
+    PaddingBox,
+    ContentBox,
 }
 
 /// https://www.w3.org/TR/compositing-1/#ltblendmodegt

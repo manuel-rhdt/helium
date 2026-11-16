@@ -110,10 +110,10 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   does not change the layout, does not apply to non-replaced inline boxes, and a box that is
   split over pages is transformed on its first page only.
 - **Backgrounds:** `background` and `background-color`, `-image` (linear, radial and conic
-  gradients, also repeating), `-size`, `-position`, `-repeat`, `-blend-mode`.
+  gradients, also repeating), `-size`, `-position`, `-repeat`, `-blend-mode`, `-clip` (`border-box`, `padding-box` and `content-box`; boxes with rounded corners are always clipped to the border box).
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color()`. The alpha channel is parsed but not painted.
-- **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `%`.
+- **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `%`.
 - **Cascade:** selectors (`selectors` crate), `inherit`, `initial`, `unset`.
 - **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors, named
   pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`

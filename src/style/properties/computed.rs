@@ -1083,6 +1083,8 @@ pub struct Background {
     pub background_size: Vec<super::background::ComputedSize>,
     pub background_position: Vec<super::gradient::Position<LengthPercentage>>,
     pub background_repeat: Vec<super::background::Repeat>,
+    /// The box that the colour and each image are clipped to.
+    pub background_clip: Vec<super::specified::BackgroundBox>,
 }
 
 impl Default for Background {
@@ -1097,6 +1099,7 @@ impl Default for Background {
                 y: LengthPercentage::Percentage(Percentage(0.0)),
             }],
             background_repeat: vec![Default::default()],
+            background_clip: vec![Default::default()],
         }
     }
 }

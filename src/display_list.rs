@@ -6,6 +6,7 @@ use crate::layout::components::{
 use crate::layout::normal_formatting::Pages;
 use crate::style::properties::computed::{ComputedValues, PixelLength, RGBA};
 use crate::style::properties::background::resolve_layer;
+use crate::style::properties::specified::BackgroundBox;
 use crate::style::properties::gradient::{BoxSize, Image, Position as BackgroundPosition, Resolved};
 use crate::style::properties::specified::{BlendMode, BorderStyle};
 
@@ -311,7 +312,8 @@ fn rect_path(rect: Rect) -> Vec<PathSegment> {
 /// The gradients in the `background-image` of a style, in the order they are painted (the
 /// first image is on top, so it is painted last). `area` is the padding box, which positions and
 /// sizes the gradients, and `paint` the border box that they are painted into.
-fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<Layer> {
+fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect, content: Rect) -> Vec<Layer> {
+    use crate::style::properties::specified::BackgroundBox;
     use crate::style::properties::color::color_to_rgba;
     let current = color_to_rgba(style.font.color);
     let size = |rect: Rect| BoxSize {
@@ -320,6 +322,8 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
         width: rect.width.0,
         height: rect.height.0,
     };
+    let clips = &style.background.background_clip;
+    let (area_rect, paint_rect) = (area, paint);
     let (area, paint) = (size(area), size(paint));
     let modes = &style.background.background_blend_mode;
     style
@@ -334,6 +338,11 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
                     if values.is_empty() { default } else { values[index % values.len()].clone() }
                 }
                 let background = &style.background;
+                let clip = match cycle(clips, index, BackgroundBox::BorderBox) {
+                    BackgroundBox::BorderBox => paint_rect,
+                    BackgroundBox::PaddingBox => area_rect,
+                    BackgroundBox::ContentBox => content,
+                };
                 let gradient = resolve_layer(
                     &gradient.with_current_color(current),
                     &cycle(&background.background_size, index, Default::default()),
@@ -343,10 +352,10 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
                     }),
                     cycle(&background.background_repeat, index, Default::default()),
                     area,
-                    paint,
+                    size(clip),
                 )?;
                 let blend = if modes.is_empty() { BlendMode::Normal } else { modes[index % modes.len()] };
-                Some(Layer { gradient, blend })
+                Some(Layer { gradient, blend, clip })
             }
             Image::None => None,
         })
@@ -358,6 +367,8 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect) -> Vec<
 pub struct Layer {
     pub gradient: Resolved,
     pub blend: BlendMode,
+    /// The box that the layer is clipped to (`background-clip`).
+    pub clip: Rect,
 }
 
 /// A background whose layers are blended. The layers only blend with each other, so they are
@@ -748,7 +759,7 @@ impl DisplayList {
     fn page_background(&mut self, style: &ComputedValues, rect: Rect, entity: Entity) {
         let z = ZIndex(i64::MIN);
         let color = crate::style::properties::color::color_to_rgba(style.background.background_color);
-        let gradients = background_gradients(style, rect, rect);
+        let gradients = background_gradients(style, rect, rect, rect);
         if gradients.iter().any(|layer| layer.blend != BlendMode::Normal) {
             self.blended_background(rect, color, &gradients, &rect_path(rect), entity, z);
             return;
@@ -759,16 +770,16 @@ impl DisplayList {
             self.append(DisplayItem::FilledRect(rect), entity, z);
             self.append(DisplayItem::Pop, entity, z);
         }
-        self.gradients(&gradients, &rect_path(rect), entity, z);
+        self.gradients(&gradients, None, entity, z);
     }
 
     /// Paints gradients, clipped to the (rounded) border box `clip`.
-    fn gradients(&mut self, gradients: &[Layer], clip: &[PathSegment], entity: Entity, z: ZIndex) {
-        for Layer { gradient, .. } in gradients {
+    fn gradients(&mut self, gradients: &[Layer], clip: Option<&[PathSegment]>, entity: Entity, z: ZIndex) {
+        for Layer { gradient, clip: layer_clip, .. } in gradients {
             self.append(DisplayItem::Push, entity, z);
             self.append(
                 DisplayItem::ClipPath {
-                    path: clip.to_vec(),
+                    path: clip.map_or_else(|| rect_path(*layer_clip), |clip| clip.to_vec()),
                     even_odd: false,
                 },
                 entity,
@@ -813,7 +824,7 @@ impl DisplayList {
             self.append(DisplayItem::Pop, entity, z);
         }
         if !blended {
-            self.gradients(gradients, &outer_path, entity, z);
+            self.gradients(gradients, Some(&outer_path), entity, z);
         }
 
         if border.top <= zero && border.bottom <= zero && border.left <= zero && border.right <= zero
@@ -1040,7 +1051,8 @@ impl<'a> System<'a> for DisplayDecoration {
                         width: width + padding.left + padding.right,
                         height: height + padding.top + padding.bottom,
                     };
-                    background_gradients(style, padding_box, border_box)
+                    let content_box = Rect { x, y, width, height };
+                    background_gradients(style, padding_box, border_box, content_box)
                 })
                 .filter(|_| !propagated)
                 .unwrap_or_default();
@@ -1077,13 +1089,31 @@ impl<'a> System<'a> for DisplayDecoration {
                 self.display_list.append(DisplayItem::Push, entity, z);
                 self.display_list
                     .append(DisplayItem::Color(background_color), entity, z);
-                // (the background extends under the border: `background-clip: border-box`)
-                self.display_list.append(DisplayItem::FilledRect(border_box), entity, z);
+                // the colour is clipped to the box of the last layer's `background-clip`
+                let clip = styles
+                    .get(style_entity)
+                    .and_then(|style| {
+                        // the clip of the bottom-most layer
+                        let layers = style.background.background_image.len().max(1);
+                        let clips = &style.background.background_clip;
+                        clips.get((layers - 1) % clips.len().max(1)).copied()
+                    })
+                    .unwrap_or_default();
+                let clip_rect = match clip {
+                    BackgroundBox::BorderBox => border_box,
+                    BackgroundBox::PaddingBox => Rect {
+                        x: x - padding.left,
+                        y: y - padding.top,
+                        width: width + padding.left + padding.right,
+                        height: height + padding.top + padding.bottom,
+                    },
+                    BackgroundBox::ContentBox => Rect { x, y, width, height },
+                };
+                self.display_list.append(DisplayItem::FilledRect(clip_rect), entity, z);
                 self.display_list.append(DisplayItem::Pop, entity, z);
             }
             if !blended {
-                self.display_list
-                    .gradients(&gradients, &rect_path(border_box), entity, z);
+                self.display_list.gradients(&gradients, None, entity, z);
             }
 
             let xmin = x - padding.left - border.left;
