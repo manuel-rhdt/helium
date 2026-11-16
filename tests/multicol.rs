@@ -960,7 +960,6 @@ fn no_content_of_a_tall_container_is_below_its_page() {
 }
 
 #[test]
-#[ignore = "x of the second column is 208 and not 200: the default column-gap is 1em = 16px (see the same test with column-gap: 0 below)"]
 fn the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto() {
     // a page holds 30 items per column and 60 per page
     let layout = layout(
@@ -969,7 +968,7 @@ fn the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto() {
             "",
             &format!(
                 "{}<p id=after style=\"margin:0;height:20px\"></p>",
-                container("column-count: 2; column-fill: auto", 100)
+                container("column-count: 2; column-gap: 0; column-fill: auto", 100)
             ),
         ),
     );
@@ -987,7 +986,6 @@ fn the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto() {
 }
 
 #[test]
-#[ignore = "x of the second column is 208 and not 200: the default column-gap is 1em = 16px (see the same test with column-gap: 0 below)"]
 fn only_the_last_page_of_a_container_is_balanced() {
     // the columns are balanced by default: the pages before the last are full all the same
     let layout = layout(
@@ -996,7 +994,7 @@ fn only_the_last_page_of_a_container_is_balanced() {
             "",
             &format!(
                 "{}<p id=after style=\"margin:0;height:20px\"></p>",
-                container("column-count: 2", 100)
+                container("column-count: 2; column-gap: 0", 100)
             ),
         ),
     );
@@ -1013,7 +1011,6 @@ fn only_the_last_page_of_a_container_is_balanced() {
 }
 
 #[test]
-#[ignore = "x of the second column is 208 and not 200: the default column-gap is 1em = 16px (see the same test with column-gap: 0 below)"]
 fn the_first_page_of_a_container_is_as_high_as_the_rest_of_the_page() {
     // 100px of content in front of the container leave 500px: 25 items per column
     let layout = layout(
@@ -1022,7 +1019,7 @@ fn the_first_page_of_a_container_is_as_high_as_the_rest_of_the_page() {
             "",
             &format!(
                 "<div style=\"height:100px\"></div>{}",
-                container("column-count: 2; column-fill: auto", 100)
+                container("column-count: 2; column-gap: 0; column-fill: auto", 100)
             ),
         ),
     );
@@ -1048,75 +1045,6 @@ fn a_forced_page_break_in_a_container_ends_the_page() {
     assert_on(&layout, "i10", 0, 0.0, 180.0);
     assert_on(&layout, "i11", 1, 0.0, 0.0);
     assert_on(&layout, "i20", 1, 0.0, 180.0);
-}
-
-// The three tests above that are ignored with the default `column-gap: normal` (1em = 16px, so a
-// column is 192px wide and the second one starts at 208px, not at 200px as they assert), with a gap
-// of 0, which is the arithmetic that they describe. Nothing else is different.
-
-#[test]
-fn the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto_and_no_gap() {
-    let layout = layout(
-        "fill_auto_pages_no_gap",
-        &doc(
-            "",
-            &format!(
-                "{}<p id=after style=\"margin:0;height:20px\"></p>",
-                container("column-count: 2; column-gap: 0; column-fill: auto", 100)
-            ),
-        ),
-    );
-    assert_on(&layout, "i1", 0, 0.0, 0.0);
-    assert_on(&layout, "i30", 0, 0.0, 580.0);
-    assert_on(&layout, "i31", 0, 200.0, 0.0);
-    assert_on(&layout, "i60", 0, 200.0, 580.0);
-    assert_on(&layout, "i61", 1, 0.0, 0.0);
-    assert_on(&layout, "i90", 1, 0.0, 580.0);
-    assert_on(&layout, "i91", 1, 200.0, 0.0);
-    assert_on(&layout, "i100", 1, 200.0, 180.0);
-    assert_on(&layout, "after", 2, 0.0, 0.0);
-}
-
-#[test]
-fn only_the_last_page_of_a_container_is_balanced_with_no_gap() {
-    let layout = layout(
-        "balance_last_page_no_gap",
-        &doc(
-            "",
-            &format!(
-                "{}<p id=after style=\"margin:0;height:20px\"></p>",
-                container("column-count: 2; column-gap: 0", 100)
-            ),
-        ),
-    );
-    assert_on(&layout, "i30", 0, 0.0, 580.0);
-    assert_on(&layout, "i31", 0, 200.0, 0.0);
-    assert_on(&layout, "i60", 0, 200.0, 580.0);
-    assert_on(&layout, "i61", 1, 0.0, 0.0);
-    assert_on(&layout, "i80", 1, 0.0, 380.0);
-    assert_on(&layout, "i81", 1, 200.0, 0.0);
-    assert_on(&layout, "i100", 1, 200.0, 380.0);
-    assert_on(&layout, "after", 1, 0.0, 400.0);
-}
-
-#[test]
-fn the_first_page_of_a_container_is_as_high_as_the_rest_of_the_page_with_no_gap() {
-    let layout = layout(
-        "first_fragment_no_gap",
-        &doc(
-            "",
-            &format!(
-                "<div style=\"height:100px\"></div>{}",
-                container("column-count: 2; column-gap: 0; column-fill: auto", 100)
-            ),
-        ),
-    );
-    assert_on(&layout, "i1", 0, 0.0, 100.0);
-    assert_on(&layout, "i25", 0, 0.0, 580.0);
-    assert_on(&layout, "i26", 0, 200.0, 100.0);
-    assert_on(&layout, "i50", 0, 200.0, 580.0);
-    assert_on(&layout, "i51", 1, 0.0, 0.0);
-    assert_on(&layout, "i80", 1, 0.0, 580.0);
 }
 
 // More about a container that is split over pages.

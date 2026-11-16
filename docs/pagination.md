@@ -1101,11 +1101,9 @@ discarded and at a forced one kept, as for pages.
       containers need parts that are side by side, which the multi-column container has as columns.
 4. `column-span: all`.
 
-The tests of step 3 are in `tests/multicol.rs`, below the others. Three of the five that were written
-first are ignored: they have the columns of a container with the default `column-gap: normal` (1em =
-16px) at x = 200 where the second column is at x = 208 (the columns are 192px wide); the same tests
-with `column-gap: 0`, which is the arithmetic they describe, are the ones with the names that end in
-`_and_no_gap` and `_with_no_gap`.
+The tests of step 3 are in `tests/multicol.rs`, below the others. The first versions of three of
+them forgot that `column-gap: normal` is 1em in a multi-column container (16px at the default font
+size), which puts the second column at x = 208 and not 200. They set `column-gap: 0` now.
 
 Step 1 does not need anything of the later ones, and the steps of "Order of work" above (3, 5, 6
 and 7) are independent of it, except that step 3 here shares `fragment` with step 6 there.
