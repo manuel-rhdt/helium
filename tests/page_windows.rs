@@ -126,3 +126,55 @@ fn a_paragraph_on_the_first_page_is_broken_for_the_margins_of_the_first_page() {
     let width = number(found[0], "width") * 0.75;
     assert!((width - 180.0).abs() < 0.1, "{width}");
 }
+
+/// A table of full width whose rows continue on a page that is wider than the one it starts on:
+/// the first page is 160px wide, the others 360px.
+fn table_over_pages_of_different_widths(name: &str) -> (Value, String) {
+    let cell = "<td>aaa bbb ccc ddd eee fff ggg hhh</td><td>b</td>";
+    let rows = format!("<tr>{cell}</tr>").repeat(6);
+    run(
+        name,
+        &format!(
+            "<style>@page {{ size: 400px 300px; margin: 20px }} @page :first {{ margin: 20px 120px }}
+             body {{ margin: 0; font: 20px/20px sans-serif }}
+             table {{ width: 100%; border-collapse: separate }} td {{ padding: 0 }}</style>
+             <table>{rows}</table>"
+        ),
+    )
+}
+
+#[test]
+fn the_rows_of_a_table_on_a_page_of_another_width_are_laid_out_for_that_page() {
+    let (dump, log) = table_over_pages_of_different_widths("table_widths");
+    // the height that the paginator counted for the rows of the second page is the one that they
+    // have there
+    assert!(!log.contains("the paginator counted"), "{log}");
+    let mut rows = vec![];
+    elements(&dump["document"], "tr", &mut rows);
+    assert_eq!(rows.len(), 6);
+    let first: Vec<_> = rows.iter().filter(|row| row["page"] == 0).collect();
+    let later: Vec<_> = rows.iter().filter(|row| row["page"] == 1).collect();
+    assert!(!first.is_empty() && !later.is_empty());
+    // the table is as wide as its page, so the rows are 200px wider on the page that is wider
+    assert!((number(later[0], "width") - number(first[0], "width") - 200.0).abs() < 0.01);
+    // and the text of a cell breaks for the width of the cell on its page
+    assert!(number(first[0], "height") > number(later[0], "height"));
+}
+
+#[test]
+#[ignore = "the columns of a split table are laid out again for every page (the table is laid out whole at \
+            the width of each page, and the window shows Taffy all its cells); keeping the columns of the \
+            page where the table starts needs the tracks to be pinned in the style of the window and the \
+            extents of the rows to be asked at those tracks (step 6 of the order of work in \
+            docs/pagination.md)"]
+fn the_columns_of_a_table_stay_the_ones_of_the_page_where_it_starts() {
+    let (dump, _) = table_over_pages_of_different_widths("table_columns");
+    let mut cells = vec![];
+    elements(&dump["document"], "td", &mut cells);
+    let widths = |page: u64| -> Vec<f64> {
+        cells.iter().filter(|cell| cell["page"] == page).map(|cell| number(cell, "width")).collect()
+    };
+    let (first, later) = (widths(0), widths(1));
+    assert!(!first.is_empty() && !later.is_empty());
+    assert!((first[0] - later[0]).abs() < 0.01 && (first[1] - later[1]).abs() < 0.01, "{first:?} {later:?}");
+}
