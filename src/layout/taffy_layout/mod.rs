@@ -100,6 +100,7 @@ impl TaffyBlockLayout {
         world.register::<TableColumns>();
         world.register::<crate::layout::components::Fragmented>();
         world.register::<crate::layout::components::DecorationFragment>();
+        world.register::<crate::layout::components::ColumnRule>();
         world.entry::<TextList>().or_insert_with(Default::default);
         world
             .entry::<crate::layout::pages::PageMargins>()
@@ -210,6 +211,7 @@ impl TaffyBlockLayout {
 
         let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
         let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
+        let mut rules: Vec<Rule> = vec![];
         let mut positions = world.write_storage::<Position>();
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
@@ -291,6 +293,7 @@ impl TaffyBlockLayout {
                 page_bottom: edges.top.0 + spec.block_size,
                 fragments: &mut fragments,
                 overlay: None,
+                rules: &mut rules,
             };
             // The root is placed at the top left corner of the content area of the page.
             writer.write_box(
@@ -308,6 +311,22 @@ impl TaffyBlockLayout {
         log::info!("TIMED: layout of the pages {:?}", before.elapsed());
         drop(service);
         drop(tree);
+
+        // The rules between the columns are boxes with a background of their own.
+        {
+            let mut rule_storage = world.write_storage::<crate::layout::components::ColumnRule>();
+            for rule in rules {
+                entities
+                    .build_entity()
+                    .with(rule.position, &mut positions)
+                    .with(
+                        Decoration { background_color: rule.color, ..Decoration::default() },
+                        &mut decorations,
+                    )
+                    .with(crate::layout::components::ColumnRule, &mut rule_storage)
+                    .build();
+            }
+        }
 
         // Boxes that are on more than one page are split: every page gets the part of the
         // decoration that is on that page.
@@ -386,6 +405,14 @@ struct Writer<'a, 'w> {
     /// The layouts of the boxes in the column that is being written, which are not the ones the
     /// nodes have (they are the ones of the last column).
     overlay: Option<&'a HashMap<NodeId, columns::Snap>>,
+    /// The rules between the columns.
+    rules: &'a mut Vec<Rule>,
+}
+
+/// A rule between two columns: a filled rectangle.
+struct Rule {
+    position: Position,
+    color: crate::style::properties::computed::RGBA,
 }
 
 impl<'a> Writer<'a, '_> {
@@ -709,7 +736,7 @@ impl<'a> Writer<'a, '_> {
         layouts: &'a columns::ColumnLayouts,
         flow: Flow,
         (content_x, content_y): (f32, f32),
-        (content_width, _content_height): (f32, f32),
+        (content_width, content_height): (f32, f32),
         z: i64,
         z_base: i64,
     ) -> Result<(), String> {
@@ -765,6 +792,35 @@ impl<'a> Writer<'a, '_> {
             written?;
         }
 
+        // the rules are in the middle of the gaps between two columns that have content
+        let Some(style) = self.computed_values.get(node.entity) else {
+            return Ok(());
+        };
+        let width = style.box_.column_rule_width.0;
+        if !style.box_.column_rule_style.is_visible() || width <= 0.0 {
+            return Ok(());
+        }
+        use crate::style::properties::computed::{Color, color_to_rgba};
+        let color = match style.box_.column_rule_color {
+            Color::CurrentColor => color_to_rgba(style.font.color),
+            color => color_to_rgba(color),
+        };
+        for index in 1..plan.columns.len() {
+            let (before, after) = (column_x(index - 1), column_x(index));
+            // the gap is between the end of the one that is on the left and the start of the other
+            let (left, right) = if rtl { (after + plan.width, before) } else { (before + plan.width, after) };
+            self.rules.push(Rule {
+                position: Position {
+                    x: PixelLength((left + right) / 2.0 - width / 2.0),
+                    y: PixelLength(content_y),
+                    width: PixelLength(width),
+                    height: PixelLength(content_height.max(0.0)),
+                    z: ZIndex(z + 1),
+                    page: self.page,
+                },
+                color,
+            });
+        }
         Ok(())
     }
 

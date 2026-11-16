@@ -154,6 +154,11 @@ fn collect_fragment_rects(world: &World, rects: &mut Vec<String>) {
     for (entity, _) in (&entities, &fragments).join() {
         push_rects(entity, world, rects);
     }
+    // the rules between the columns
+    let column_rules = world.read_storage::<crate::layout::components::ColumnRule>();
+    for (entity, _) in (&entities, &column_rules).join() {
+        push_rects(entity, world, rects);
+    }
 }
 
 fn push_rects(entity: specs::Entity, world: &World, rects: &mut Vec<String>) {
