@@ -474,6 +474,8 @@ pub struct ComputedValues {
     pub background: Arc<Background>,
     pub page: Arc<Page>,
     pub math: Arc<Math>,
+    /// The custom properties (`--name`), which are inherited.
+    pub custom: Arc<super::custom::CustomProperties>,
 }
 
 /// The default values share one set of style structs: an element allocates a style struct only
@@ -490,6 +492,7 @@ impl Default for ComputedValues {
                 background: Arc::new(Background::default()),
                 page: Arc::new(Page::default()),
                 math: Arc::new(Math::default()),
+                custom: Arc::new(Default::default()),
             })
             .clone()
     }
@@ -690,6 +693,7 @@ impl StyleBuilder {
                 border_right_width: PixelLength(3.0),
                 ..Default::default()
             }),
+            custom: inherited_values.custom.clone(),
             ..Default::default()
         };
         StyleBuilder {
@@ -746,6 +750,45 @@ impl StyleBuilder {
     /// are relative to the font size that the cascade ends up with, wherever the declaration of
     /// the font size is: only the font size itself is relative to the one of the parent.
     pub fn apply_cascade<'a>(
+        &mut self,
+        declarations: impl Iterator<Item = &'a specified::PropertyDeclaration<'a>> + Clone,
+    ) {
+        use specified::PropertyDeclaration as Declaration;
+        let is_custom = |decl: &&Declaration| matches!(decl, Declaration::Custom(_));
+        let is_unparsed = |decl: &&Declaration| matches!(decl, Declaration::Unparsed(_));
+        if !declarations.clone().any(|decl| is_custom(&decl) || is_unparsed(&decl)) {
+            return self.apply_plain_cascade(declarations);
+        }
+        // The custom properties of the element come first: the declarations that use `var()` are
+        // parsed with them, and then they are like all the other declarations.
+        if declarations.clone().any(|decl| is_custom(&decl)) {
+            let declared = declarations.clone().filter_map(|decl| match decl {
+                Declaration::Custom(custom) => Some((custom.name.as_str(), custom.value.as_str())),
+                _ => None,
+            });
+            self.new_values.custom = Arc::new(super::custom::compute(&self.parent.custom, declared));
+        }
+        let resolved: Vec<Option<Declaration<'static>>> = declarations
+            .clone()
+            .filter_map(|decl| match decl {
+                Declaration::Unparsed(unparsed) => {
+                    Some(crate::style::parse::resolve_unparsed(unparsed, &self.new_values.custom))
+                }
+                _ => None,
+            })
+            .collect();
+        let mut resolved = resolved.iter();
+        let cascade: Vec<&Declaration> = declarations
+            .filter_map(|decl| match decl {
+                Declaration::Custom(_) => None,
+                Declaration::Unparsed(_) => resolved.next().and_then(Option::as_ref),
+                decl => Some(decl),
+            })
+            .collect();
+        self.apply_plain_cascade(cascade.iter().copied());
+    }
+
+    fn apply_plain_cascade<'a>(
         &mut self,
         declarations: impl Iterator<Item = &'a specified::PropertyDeclaration<'a>> + Clone,
     ) {
