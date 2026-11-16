@@ -603,6 +603,8 @@ pub enum Box {
     AlignSelf(SelfAlignment),
     #[property]
     RowGap(Gap),
+    /// Also the gap between the columns of a multi-column container.
+    /// https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
     #[property]
     ColumnGap(Gap),
     /// `place-content: <align-content> <justify-content>?`
@@ -636,6 +638,34 @@ pub enum Box {
     #[property]
     #[shorthand("column-gap", method = "clone")]
     GridColumnGap(Gap),
+
+    // Multi-column layout: https://www.w3.org/TR/css-multicol-1/
+    #[property]
+    ColumnCount(ColumnCount),
+    #[property]
+    ColumnWidth(ColumnWidth),
+    /// `columns: <column-width> || <column-count>`
+    #[property]
+    #[shorthand("column-width", method = "width")]
+    #[shorthand("column-count", method = "count")]
+    Columns(ColumnsShorthand),
+    /// Parsed. `auto` balances the columns like `balance`.
+    #[property]
+    ColumnFill(ColumnFill),
+    /// Parsed and not used: a box does not span the columns.
+    #[property]
+    ColumnSpan(ColumnSpan),
+    #[property]
+    ColumnRuleWidth(BorderWidth),
+    #[property]
+    ColumnRuleStyle(BorderStyle),
+    #[property]
+    ColumnRuleColor(Color),
+    #[property]
+    #[shorthand("column-rule-width", method = "width")]
+    #[shorthand("column-rule-style", method = "style")]
+    #[shorthand("column-rule-color", method = "color")]
+    ColumnRule(ColumnRuleShorthand),
 
     // Grid: https://www.w3.org/TR/css-grid-1/
     #[property]
@@ -1219,8 +1249,14 @@ impl<'i> PropertyValue<'i> for BorderSpacing {
     }
 }
 
-/// The value of `gap`. Only the form with one value (for both directions) is supported.
-pub type Gap = QuantityOrPercentage;
+/// The value of `row-gap` and `column-gap`. `normal` is no gap in a grid or flex container and
+/// `1em` between columns.
+#[derive(Debug, Copy, Clone, PartialEq, PropertyValue)]
+pub enum Gap {
+    Normal,
+    Quantity(Quantity),
+    Percentage(Percentage),
+}
 
 /// The value of `gap`: the gap between the rows, and the one between the columns if it is not the
 /// same.
@@ -1246,6 +1282,172 @@ impl<'i> PropertyValue<'i> for GapShorthand {
         let row = Gap::from_css_property_value(input)?;
         let column = input.try_parse(Gap::from_css_property_value).unwrap_or(row);
         Ok(GapShorthand { row, column })
+    }
+}
+
+/// The value of `column-count`: `auto` or a positive integer.
+/// https://www.w3.org/TR/css-multicol-1/#cc
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum ColumnCount {
+    #[default]
+    Auto,
+    Count(usize),
+}
+
+impl<'i> PropertyValue<'i> for ColumnCount {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+            return Ok(ColumnCount::Auto);
+        }
+        let token = input.next()?.clone();
+        match token {
+            Token::Number { int_value: Some(count), .. } if count >= 1 => {
+                Ok(ColumnCount::Count(count as usize))
+            }
+            _ => Err(ParseError::unexpected_token()),
+        }
+    }
+}
+
+/// The value of `column-width`: `auto` or a positive length.
+/// https://www.w3.org/TR/css-multicol-1/#cw
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
+pub enum ColumnWidth {
+    #[default]
+    Auto,
+    Quantity(Quantity),
+}
+
+impl<'i> PropertyValue<'i> for ColumnWidth {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+            return Ok(ColumnWidth::Auto);
+        }
+        let quantity = Quantity::from_css_property_value(input).map_err(|_| input.new_error_for_next_token())?;
+        if quantity.value < 0.0 {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(ColumnWidth::Quantity(quantity))
+    }
+}
+
+/// The value of `columns`: `<column-width> || <column-count>`. The one that is not given is
+/// `auto`.
+#[derive(Debug, Copy, Clone)]
+pub struct ColumnsShorthand {
+    count: ColumnCount,
+    width: ColumnWidth,
+}
+
+impl ColumnsShorthand {
+    pub fn count(&self) -> ColumnCount {
+        self.count
+    }
+    pub fn width(&self) -> ColumnWidth {
+        self.width
+    }
+}
+
+impl<'i> PropertyValue<'i> for ColumnsShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let mut count = None;
+        let mut width = None;
+        let mut autos = 0;
+        // at most two values, each of them once
+        for _ in 0..2 {
+            if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+                autos += 1;
+            } else if count.is_none() && let Ok(value) = input.try_parse(ColumnCount::from_css_property_value) {
+                count = Some(value);
+            } else if width.is_none() && let Ok(value) = input.try_parse(ColumnWidth::from_css_property_value) {
+                width = Some(value);
+            } else {
+                break;
+            }
+        }
+        if count.is_none() && width.is_none() && autos == 0 {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(ColumnsShorthand {
+            count: count.unwrap_or_default(),
+            width: width.unwrap_or_default(),
+        })
+    }
+}
+
+/// The value of `column-fill`. `auto` is parsed and balances like `balance` (see
+/// `docs/pagination.md`).
+/// https://www.w3.org/TR/css-multicol-1/#cf
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum ColumnFill {
+    #[default]
+    Balance,
+    Auto,
+}
+
+/// The value of `column-span`. Not used: a box never spans the columns.
+/// https://www.w3.org/TR/css-multicol-1/#column-span
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum ColumnSpan {
+    #[default]
+    None,
+    All,
+}
+
+/// The value of `column-rule`: a width, a style and a colour in any order.
+#[derive(Debug, Clone)]
+pub struct ColumnRuleShorthand(Vec<Border>);
+
+impl ColumnRuleShorthand {
+    pub fn width(&self) -> BorderWidth {
+        self.0
+            .iter()
+            .rev()
+            .find_map(|border| match border {
+                Border::Width(width) => Some(*width),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn style(&self) -> BorderStyle {
+        self.0
+            .iter()
+            .rev()
+            .find_map(|border| match border {
+                Border::Style(style) => Some(*style),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn color(&self) -> Color {
+        self.0
+            .iter()
+            .rev()
+            .find_map(|border| match border {
+                Border::Color(color) => Some(*color),
+                _ => None,
+            })
+            .unwrap_or(Color::CurrentColor)
+    }
+}
+
+impl<'i> PropertyValue<'i> for ColumnRuleShorthand {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let borders = Vec::<Border>::from_css_property_value(input)?;
+        if borders.is_empty() {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(ColumnRuleShorthand(borders))
     }
 }
 
@@ -2609,9 +2811,12 @@ pub enum Break {
     /// Avoid a break of any kind.
     Avoid,
     AvoidPage,
+    AvoidColumn,
     /// A forced page break (the CSS 2 name; the same as `page`).
     Always,
     Page,
+    /// A forced break between columns.
+    Column,
     /// Forced breaks to a left or right page. An empty page is left where the next page would be
     /// of the other side.
     Left,
@@ -2621,17 +2826,27 @@ pub enum Break {
 }
 
 impl Break {
-    /// Whether this value forces a break.
-    pub fn is_forced(self) -> bool {
+    /// Whether this value forces a break between pages.
+    pub fn forces_page(self) -> bool {
         matches!(
             self,
             Break::Always | Break::Page | Break::Left | Break::Right | Break::Recto | Break::Verso
         )
     }
 
-    /// Whether this value asks to avoid a break.
-    pub fn is_avoid(self) -> bool {
+    /// Whether this value forces a break between columns.
+    pub fn forces_column(self) -> bool {
+        self == Break::Column
+    }
+
+    /// Whether this value asks to avoid a break between pages.
+    pub fn avoids_page(self) -> bool {
         matches!(self, Break::Avoid | Break::AvoidPage)
+    }
+
+    /// Whether this value asks to avoid a break between columns.
+    pub fn avoids_column(self) -> bool {
+        matches!(self, Break::Avoid | Break::AvoidColumn)
     }
 }
 
@@ -2642,11 +2857,18 @@ pub enum BreakInside {
     Auto,
     Avoid,
     AvoidPage,
+    AvoidColumn,
 }
 
 impl BreakInside {
-    pub fn is_avoid(self) -> bool {
-        self != BreakInside::Auto
+    /// Whether breaks between pages inside the box are to be avoided.
+    pub fn avoids_page(self) -> bool {
+        matches!(self, BreakInside::Avoid | BreakInside::AvoidPage)
+    }
+
+    /// Whether breaks between columns inside the box are to be avoided.
+    pub fn avoids_column(self) -> bool {
+        matches!(self, BreakInside::Avoid | BreakInside::AvoidColumn)
     }
 }
 

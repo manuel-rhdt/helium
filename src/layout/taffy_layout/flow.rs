@@ -76,8 +76,8 @@ enum Side {
 
 impl Breaks {
     fn add(&mut self, value: Break, rtl: bool) {
-        self.forced |= value.is_forced();
-        self.avoid |= value.is_avoid();
+        self.forced |= value.forces_page();
+        self.avoid |= value.avoids_page();
         let side = match value {
             Break::Left => Some(Side::Left),
             Break::Right => Some(Side::Right),
@@ -302,7 +302,7 @@ impl Extractor<'_, '_, '_> {
                 .tree
                 .computed_values
                 .get(self.tree.node(id).entity)
-                .is_some_and(|style| style.page.break_inside.is_avoid());
+                .is_some_and(|style| style.page.break_inside.avoids_page());
         let mut kids = vec![];
         match kind {
             Kind::Whole => {
