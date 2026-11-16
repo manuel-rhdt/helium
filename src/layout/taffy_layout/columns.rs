@@ -115,6 +115,14 @@ impl LayoutService for InColumns<'_, '_, '_, '_> {
         self.service.lines_in(self.root, par, from, inline)
     }
 
+    fn variants(&mut self, par: ParId, from: Option<Cut>, inline: f32, extra: u32) -> Vec<Rc<[ParLine]>> {
+        self.service.variants_in(self.root, par, from, inline, extra)
+    }
+
+    fn variants_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, inline: f32, extra: u32) -> Vec<Rc<[ParLine]>> {
+        self.service.variants_in(root, par, from, inline, extra)
+    }
+
     fn lines_to(&mut self, par: ParId, from: Option<Cut>, to: Cut, inline: f32) -> Rc<[ParLine]> {
         self.service.lines_to_in(self.root, par, from, to, inline)
     }

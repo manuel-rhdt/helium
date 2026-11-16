@@ -474,3 +474,99 @@ fn a_solution_with_pages_that_end_at_any_break_of_a_paragraph_is_laid_out() {
     assert!(per_page.iter().all(|&count| count > 0), "{per_page:?}");
     let _ = dom;
 }
+
+// The ways to break a paragraph.
+
+fn variants_of(extra: u32, justified: bool) -> (Vec<Rc<[helium_paginate::ParLine]>>, Rc<[helium_paginate::ParLine]>, Vec<Rc<[helium_paginate::ParLine]>>, Rc<[helium_paginate::ParLine]>) {
+    let style = if justified { "text-align: justify" } else { "" };
+    let html = document(style, &format!("<p id=a>{TEXT}{TEXT}{TEXT}{TEXT}</p>"));
+    let found = Rc::new(RefCell::new(None));
+    let sink = found.clone();
+    lay_out(
+        &html,
+        Some(Box::new(move |service, dom| {
+            let (root, pars) = root_of(service, dom, "x");
+            let par = pars[0];
+            let variants = service.variants_in(root, par, None, 250.0, extra);
+            let whole = service.lines_in(root, par, None, 250.0);
+            // the rest of the paragraph after the end of its third line
+            let cut = Some(whole[2].end);
+            let tail_variants = service.variants_in(root, par, cut, 250.0, extra);
+            let tail = service.lines_in(root, par, cut, 250.0);
+            *sink.borrow_mut() = Some((variants, whole, tail_variants, tail));
+        })),
+        None,
+    );
+    found.take().expect("the probe was called")
+}
+
+fn total(lines: &[helium_paginate::ParLine]) -> f64 {
+    lines.iter().map(|line| line.demerits).sum()
+}
+
+#[test]
+fn a_paragraph_without_extra_lines_has_one_way_to_be_broken() {
+    let (variants, whole, tail_variants, tail) = variants_of(0, false);
+    assert_eq!(variants.len(), 1);
+    assert_eq!(variants[0], whole);
+    assert_eq!(tail_variants.len(), 1);
+    assert_eq!(tail_variants[0], tail);
+}
+
+#[test]
+fn a_paragraph_can_be_broken_into_a_line_more_or_fewer() {
+    for justified in [false, true] {
+        let (variants, whole, _, _) = variants_of(1, justified);
+        // the first is what the paragraph has, and the others have other numbers of lines, in order
+        assert_eq!(variants[0], whole);
+        assert!(variants.len() >= 2, "justified {justified}: {} ways to break the paragraph", variants.len());
+        let counts: Vec<usize> = variants[1..].iter().map(|lines| lines.len()).collect();
+        assert!(counts.windows(2).all(|pair| pair[0] < pair[1]), "{counts:?}");
+        for lines in &variants[1..] {
+            assert_ne!(lines.len(), whole.len());
+            assert!(lines.len().abs_diff(whole.len()) <= 1);
+            // the optimum has the least demerits, and every line has the height of a line of text
+            assert!(total(lines) >= total(&whole) - 1e-6, "{} and {}", total(lines), total(&whole));
+            assert!(lines.iter().all(|line| (line.extent - 20.0).abs() < 0.01));
+        }
+        // every line has demerits that count: they are not zero
+        assert!(variants[1..].iter().all(|lines| lines.iter().all(|line| line.demerits > 0.0)));
+    }
+}
+
+#[test]
+fn the_rest_of_a_paragraph_after_a_cut_has_ways_to_be_broken_of_its_own() {
+    use super::tree::LineCut;
+    let (_, whole, variants, tail) = variants_of(1, false);
+    // the first is the rest of the paragraph, as the lines after the cut are
+    assert_eq!(variants[0], tail);
+    assert!(variants.len() >= 2);
+    // the others are broken from the cut, with the state that the cut carries: the rest of the
+    // paragraph with another number of lines ends where the paragraph ends
+    for lines in &variants[1..] {
+        assert_ne!(lines.len(), tail.len());
+        assert_eq!(lines.last().map(|line| LineCut::of(line.end).at), tail.last().map(|line| LineCut::of(line.end).at));
+    }
+    assert!(whole.len() > 3);
+}
+
+#[test]
+fn the_ways_to_break_a_paragraph_are_kept_by_the_service() {
+    let html = document("", &format!("<p id=a>{TEXT}{TEXT}{TEXT}</p>"));
+    let same = Rc::new(RefCell::new(false));
+    let sink = same.clone();
+    lay_out(
+        &html,
+        Some(Box::new(move |service, dom| {
+            let (root, pars) = root_of(service, dom, "x");
+            let first = service.variants_in(root, pars[0], None, 250.0, 1);
+            let second = service.variants_in(root, pars[0], None, 250.0, 1);
+            let other = service.variants_in(root, pars[0], None, 250.0, 2);
+            *sink.borrow_mut() = first.len() == second.len()
+                && first.iter().zip(&second).all(|(a, b)| Rc::ptr_eq(a, b))
+                && other.len() >= first.len();
+        })),
+        None,
+    );
+    assert!(same.take());
+}

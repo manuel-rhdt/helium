@@ -15,7 +15,7 @@
 //! is laid out for its own width and height ([`super::window`]).
 
 use super::flow::{Anchor, Flow};
-use super::tree::{HeliumTree, LineCut, lines_from, lines_until};
+use super::tree::{HeliumTree, LineCut, lines_from, lines_until, variants_from};
 use crate::layout::inline::InlineFormattingContext;
 use crate::style::properties::computed::PixelLength;
 use helium_paginate::{BoxRef, ContainerCut, Cut, Fragment, Item, LayoutService, NodeRef, ParId, ParLine};
@@ -64,9 +64,13 @@ pub(super) struct TreeService<'t, 'a, 'w> {
     pub icb_height: f32,
     galleys: HashMap<u32, Rc<Galley>>,
     lines: HashMap<(u32, Option<u32>, u32), Rc<[ParLine]>>,
+    /// The ways to break a paragraph, by the paragraph, the cut, the width and how many lines
+    /// more or fewer are asked for.
+    variants: HashMap<(u32, Option<u32>, u32, u32), Vec<Rc<[ParLine]>>>,
     /// By the root and the content width that were asked for.
     subtrees: HashMap<(u32, u32), Rc<Subtree>>,
     subtree_lines: HashMap<(u32, u32, Option<u32>, u32), Rc<[ParLine]>>,
+    subtree_variants: HashMap<(u32, u32, Option<u32>, u32, u32), Vec<Rc<[ParLine]>>>,
     /// By the container, where the fragment starts, the width of the page and the height that is
     /// left on it.
     fragments: HashMap<(u32, Option<ContainerCut>, u32, u64), Rc<[Fragment]>>,
@@ -80,8 +84,10 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             icb_height,
             galleys: HashMap::new(),
             lines: HashMap::new(),
+            variants: HashMap::new(),
             subtrees: HashMap::new(),
             subtree_lines: HashMap::new(),
+            subtree_variants: HashMap::new(),
             fragments: HashMap::new(),
         }
     }
@@ -210,8 +216,52 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             .map(|line| ParLine {
                 extent: f64::from(line.height.0),
                 end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
+                demerits: line.demerits,
             })
             .collect()
+    }
+
+    /// The ways to break a paragraph for a line width and an indent ([`variants_from`]).
+    fn paragraph_variants(
+        &mut self,
+        node: NodeId,
+        from: Option<Cut>,
+        (line_width, indent): (f32, f32),
+        extra: u32,
+        inline_context: Option<&InlineFormattingContext>,
+    ) -> Vec<Rc<[ParLine]>> {
+        let tree = &mut *self.tree;
+        let entity = tree.node(node).entity;
+        let ifc = inline_context.or_else(|| tree.inline_ctxs.get(entity));
+        let Some(ifc) = ifc else {
+            return vec![Rc::from(vec![])];
+        };
+        let mut own_cache = HashMap::new();
+        let cache = if inline_context.is_some() { &mut own_cache } else { &mut tree.lines };
+        variants_from(
+            cache,
+            ifc,
+            entity.id(),
+            from.map(LineCut::of),
+            PixelLength(line_width),
+            PixelLength(indent),
+            extra,
+            tree.text_runs,
+            tree.intrinsic_sizes,
+            tree.aligns,
+        )
+        .iter()
+        .map(|lines| {
+            lines
+                .iter()
+                .map(|line| ParLine {
+                    extent: f64::from(line.height.0),
+                    end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
+                    demerits: line.demerits,
+                })
+                .collect()
+        })
+        .collect()
     }
 
     fn galley(&mut self, inline: f32) -> Rc<Galley> {
@@ -337,6 +387,32 @@ impl LayoutService for TreeService<'_, '_, '_> {
         let lines = self.paragraph_lines(node, from, None, width, None);
         self.lines.insert(key, lines.clone());
         lines
+    }
+
+    fn variants(&mut self, par: ParId, from: Option<Cut>, page_inline: f32, extra: u32) -> Vec<Rc<[ParLine]>> {
+        let key = (par.0, from.map(|cut| cut.0), page_inline.to_bits(), extra);
+        if let Some(variants) = self.variants.get(&key) {
+            return variants.clone();
+        }
+        let galley = self.galley(page_inline);
+        let node = self.flow.paragraphs[par.0 as usize];
+        let width = galley.lines.get(&node).copied().unwrap_or_else(|| paragraph_width(self.tree, node));
+        let variants = self.paragraph_variants(node, from, width, extra, None);
+        self.variants.insert(key, variants.clone());
+        variants
+    }
+
+    fn variants_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, inline: f32, extra: u32) -> Vec<Rc<[ParLine]>> {
+        let key = (root.0, par.0, from.map(|cut| cut.0), inline.to_bits(), extra);
+        if let Some(variants) = self.subtree_variants.get(&key) {
+            return variants.clone();
+        }
+        let subtree = self.subtree(root, inline);
+        let node = self.flow.paragraphs[par.0 as usize];
+        let width = *subtree.lines.get(&node).expect("the paragraph is inside the subtree");
+        let variants = self.paragraph_variants(node, from, width, extra, subtree.inline_contexts.get(&node));
+        self.subtree_variants.insert(key, variants.clone());
+        variants
     }
 
     fn lines_to(&mut self, par: ParId, from: Option<Cut>, to: Cut, page_inline: f32) -> Rc<[ParLine]> {

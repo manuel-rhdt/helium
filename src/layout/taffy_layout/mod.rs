@@ -365,6 +365,10 @@ impl TaffyBlockLayout {
         // decoration that is on that page.
         let mut fragmented_storage = world.write_storage::<crate::layout::components::Fragmented>();
         let mut fragment_storage = world.write_storage::<crate::layout::components::DecorationFragment>();
+        // (in the order of the entities: a hash map has no order, and the order in which the parts of
+        // boxes are painted would change from one run to the next)
+        let mut fragments: Vec<_> = fragments.into_iter().collect();
+        fragments.sort_by_key(|(entity, _)| entity.id());
         for (entity, parts) in fragments {
             if parts.len() < 2 {
                 continue;

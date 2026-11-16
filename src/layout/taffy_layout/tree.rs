@@ -1070,6 +1070,51 @@ impl LineCut {
 /// The lines of paragraphs, by the paragraph, the place where they start, and the width.
 pub(super) type LineCache = HashMap<(u32, Option<LineCut>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>;
 
+/// The ways to break a paragraph from the break `from` (the start of the paragraph if there is none)
+/// to its end, for a line width: the lines of [`lines_from`], and, if `extra` is not 0, the
+/// breakings with the least demerits for the numbers of lines that are up to `extra` fewer and
+/// more than the paragraph has when it is broken from the break, in the order of their number
+/// of lines. They are broken from the start state of the cut, so the rest of a paragraph after a cut
+/// has variants of its own, and not those of the whole paragraph.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn variants_from(
+    cache: &mut LineCache,
+    ifc: &InlineFormattingContext,
+    node: u32,
+    from: Option<LineCut>,
+    line_width: PixelLength,
+    indent: PixelLength,
+    extra: u32,
+    text_runs: &ReadStorage<TextRun>,
+    intrinsic_sizes: &WriteStorage<IntrinsicSize>,
+    aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
+) -> Vec<Rc<Vec<crate::layout::inline::MeasuredLine>>> {
+    let first = lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns);
+    if extra == 0 {
+        return vec![first];
+    }
+    let (start, fitness, indent) = match from {
+        Some(from) => (from.at, from.fitness, PixelLength(0.0)),
+        None => (0, helium_paginate::paragraph::LineStart::DECENT, indent),
+    };
+    let found = ifc
+        .compute_variants_from(start, fitness, None, extra, line_width, indent, text_runs, intrinsic_sizes, aligns)
+        .unwrap_or_else(|error| {
+            log::error!("cannot break lines of {:?}: {}", node, error);
+            vec![]
+        });
+    // (a breaking of the number of lines of the first is the first, or one of equal demerits)
+    let mut others: Vec<_> = found
+        .into_iter()
+        .filter(|lines| !lines.is_empty() && lines.len() != first.len())
+        .map(Rc::new)
+        .collect();
+    others.sort_by_key(|lines| lines.len());
+    let mut variants = vec![first];
+    variants.extend(others);
+    variants
+}
+
 /// The lines of a paragraph that are on a page: all of them if the page has the whole paragraph,
 /// and else the lines from the cut where the page starts in the paragraph to the cut where it
 /// ends (`cut`: where the paragraph is cut by the page).

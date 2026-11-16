@@ -1441,3 +1441,20 @@ fn a_container_in_a_document_that_is_cropped_is_one_box() {
     assert_eq!(get("i3")["border_box"]["x"].as_f64().unwrap(), 200.0);
     assert_eq!(get("i4")["page"].as_u64().unwrap(), 0);
 }
+
+#[test]
+fn the_parts_of_split_boxes_are_painted_in_the_same_order_every_time() {
+    // several boxes with a background that are cut between columns and pages: the parts of them
+    // were made in the order of a hash map, which is not the same in every run of the program
+    let boxes: String = (0..6)
+        .map(|number| {
+            format!("<div style=\"background: rgb(10, {}, 30)\">{}</div>", 20 + number, items(number * 25 + 1, 25))
+        })
+        .collect();
+    let body = format!("<div id=m style=\"column-count: 2; column-gap: 0\">{boxes}</div>");
+    let html = doc("", &body);
+    let first = format!("{:?}", layout("order_0", &html).rects);
+    for run in 1..8 {
+        assert_eq!(format!("{:?}", layout(&format!("order_{run}"), &html).rects), first, "run {run}");
+    }
+}

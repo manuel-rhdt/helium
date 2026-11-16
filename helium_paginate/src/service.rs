@@ -12,6 +12,10 @@ pub struct ParLine {
     /// for the last line of the paragraph, except in [`LayoutService::lines_to`], where the last
     /// line ends at the cut that was asked for.
     pub end: Cut,
+    /// The demerits of the line when the paragraph is broken as the breaker counts them (the
+    /// optimum has the least of them), or 0 for a service that does not count them. A page that
+    /// has some of the lines of a breaking has their demerits.
+    pub demerits: f64,
 }
 
 /// A way for a fragment of a container to end: what a page has of the container.
@@ -45,6 +49,20 @@ pub trait LayoutService {
     /// the paragraph) to its end. The paragraphs are rigid: the lines are what the paragraph
     /// has when it is broken for the page. The same arguments give the same lines.
     fn lines(&mut self, par: ParId, from: Option<Cut>, page_inline: f32) -> Rc<[ParLine]>;
+
+    /// The ways to break a paragraph of the flow on a page, from `from` (`None`: from the start of
+    /// the paragraph) to its end: the breaking that [`lines`](Self::lines) gives, and then, if
+    /// `extra` is not 0, breakings with `extra` lines fewer and more than it has at the least
+    /// (the number of lines that the paragraph has when it is broken for the page, and the next
+    /// ones; a number of lines that no breaking has is left out). Each has the least demerits that
+    /// a breaking with its number of lines can have, and they are in the order of their number of
+    /// lines, after the first. The same arguments give the same breakings.
+    ///
+    /// A service that has only one way to break a paragraph, as the default has, gives only that.
+    fn variants(&mut self, par: ParId, from: Option<Cut>, page_inline: f32, extra: u32) -> Vec<Rc<[ParLine]>> {
+        let _ = extra;
+        vec![self.lines(par, from, page_inline)]
+    }
 
     /// The lines of the part of a paragraph from `from` to the cut `to`, which can be any place
     /// where the paragraph can be broken, not only a place where a line of [`lines`](Self::lines)
@@ -85,6 +103,13 @@ pub trait LayoutService {
     /// `inline` wide: the lines for the width and the indent that the paragraph is given there.
     /// `lines` answers for the same paragraphs on a page.
     fn lines_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> Rc<[ParLine]>;
+
+    /// [`variants`](Self::variants) for a paragraph that is inside `root`: the breakings for the
+    /// width and the indent that the paragraph is given there.
+    fn variants_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, inline: f32, extra: u32) -> Vec<Rc<[ParLine]>> {
+        let _ = extra;
+        vec![self.lines_in(root, par, from, inline)]
+    }
 
     /// [`lines_to`](Self::lines_to) for a paragraph that is inside `root`: the lines for the width
     /// and the indent that the paragraph is given there.
@@ -177,6 +202,7 @@ impl LayoutService for GalleyService {
             .enumerate()
             .skip(first)
             .map(|(line, &extent)| ParLine {
+                demerits: 0.0,
                 extent,
                 end: Cut(line as u32 + 1),
             })

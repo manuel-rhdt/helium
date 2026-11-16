@@ -333,6 +333,16 @@ and parts that end at a cut). In release builds it takes about 1 ms for a paragr
 (28 lines). It is meant for documents that ask for it, and the results are kept by the layout
 service.
 
+**The layout service gives them.** `LayoutService::variants(par, from, width, extra)` (and
+`variants_in` for a subtree) returns the breaking that `lines` gives, and then, if `extra` is not 0,
+the breakings with the other numbers of lines, in the order of their number of lines
+(`Vec<Rc<[ParLine]>>`). A `ParLine` has its demerits (0 for a service that does not count them, as
+the default `variants`, which gives only `lines`, is). The rest of a paragraph after a cut has
+variants of its own, broken from the state that the cut carries, and not those of the whole
+paragraph, so the state of the search is as it is without them. The service keeps the answers by
+paragraph, cut, width and `extra`; the engine's service computes them with
+`InlineFormattingContext::compute_variants_from` (`variants_from` in `taffy_layout/tree.rs`).
+
 The kernel, which this is not connected to yet, would see a paragraph as a choice of variants:
 a page that has the whole paragraph has an edge for every variant (with a height and the demerits
 of its lines), and a page that ends in it continues with variants of the rest of the paragraph
@@ -819,8 +829,9 @@ the first page.
 3. Greedy solver, recorded problems, the harness and the metrics.
 4. Done. Page size per page; empty pages for `left` and `right`.
 5. Cuts with state in the line breaker (done); a page that ends at any break of a paragraph (done);
-   variants of a paragraph by number of lines in the breaker (done); variants in the service, the
-   kernel and the layout, the exchange rate, and the joint solver; profiles after that.
+   variants of a paragraph by number of lines in the breaker (done) and in the layout service
+   (done); variants in the kernel and the layout, the exchange rate, and the joint solver;
+   profiles after that.
 6. `fragment` for tables between rows, with pinned columns.
 7. `fragment` for grid and flex, with parallel parts.
 

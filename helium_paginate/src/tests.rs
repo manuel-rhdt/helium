@@ -721,6 +721,7 @@ impl LayoutService for Characters {
         while at < 80 {
             at = (at + per_line).min(80);
             lines.push(ParLine {
+                demerits: 0.0,
                 extent: 10.0,
                 end: Cut(at),
             });
@@ -1300,6 +1301,7 @@ impl Units {
         while at < to {
             let end = (at + 3).min(to);
             lines.push(ParLine {
+                demerits: 0.0,
                 extent: 10.0 * f64::from(end - at),
                 end: Cut(end),
             });
@@ -1426,4 +1428,16 @@ fn a_page_that_cannot_end_in_a_paragraph_is_not_listed() {
     // item 0 is not a paragraph, and there is no item 5
     assert!(kernel.fill_at(&start, 0, Cut(4)).is_none());
     assert!(kernel.fill_at(&start, 5, Cut(4)).is_none());
+}
+
+#[test]
+fn a_service_that_does_not_count_demerits_has_one_way_to_break_a_paragraph() {
+    let mut service = Units { units: vec![10] };
+    for extra in [0, 1, 3] {
+        let variants = service.variants(ParId(0), None, 300.0, extra);
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0], service.lines(ParId(0), None, 300.0));
+    }
+    // (and it has no demerits to count)
+    assert!(service.lines(ParId(0), None, 300.0).iter().all(|line| line.demerits == 0.0));
 }

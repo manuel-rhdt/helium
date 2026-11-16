@@ -39,6 +39,8 @@ pub struct MeasuredLine {
     /// How the line fits (`helium_paginate::paragraph::LineStart::fitness`): the breaking of the
     /// rest of the paragraph after it counts lines that are far apart in it.
     pub fitness: u8,
+    /// The demerits of the line as the breaker counts them (`ParagraphLines::demerits`).
+    pub demerits: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -368,14 +370,38 @@ impl InlineFormattingContext {
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
         aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> Result<Vec<MeasuredLine>, String> {
+        let mut variants =
+            self.compute_variants_from(from, fitness, until, 0, line_width, indent, text_runs, intrinsic_sizes, aligns)?;
+        Ok(if variants.is_empty() { vec![] } else { variants.swap_remove(0) })
+    }
+
+    /// The ways to break the part of the paragraph that [`compute_lines_from`] breaks: the optimum
+    /// first, and then, if `extra` is not 0, the breakings with the least demerits for the
+    /// numbers of lines that are up to `extra` fewer and more than the optimum has (see
+    /// `helium_paginate::paragraph::compute_paragraph_variants`).
+    ///
+    /// [`compute_lines_from`]: Self::compute_lines_from
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_variants_from(
+        &self,
+        from: usize,
+        fitness: u8,
+        until: Option<usize>,
+        extra: u32,
+        line_width: Px,
+        indent: Px,
+        text_runs: &ReadStorage<components::TextRun>,
+        intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
+        aligns: &ReadStorage<components::VerticalAlignment>,
+    ) -> Result<Vec<Vec<MeasuredLine>>, String> {
         let breakpoints = &self.break_points;
         if breakpoints.is_empty() || from >= breakpoints.len() {
-            return Ok(vec![]);
+            return Ok(vec![vec![]]);
         }
         // (a cut that is not inside the paragraph is the end of it)
         let until = until.filter(|&to| to + 1 < breakpoints.len());
         if until.is_some_and(|to| to <= from) {
-            return Ok(vec![]);
+            return Ok(vec![vec![]]);
         }
         if breakpoints.len() < 2 {
             return Err(format!(
@@ -438,33 +464,39 @@ impl InlineFormattingContext {
             LineStart { fitness, hyphen: breakpoints[from].hyphen }
         };
         let end = until.map_or(opportunities.len(), |to| to + 1);
-        let broken = helium_paginate::paragraph::compute_paragraph_lines(
+        let variants = helium_paginate::paragraph::compute_paragraph_variants(
             &opportunities[from..end],
             |start, end| metrics(from + start, from + end),
             width_of,
             start,
             until.is_none(),
+            extra,
         );
 
-        let lines = broken
-            .breaks
-            .windows(2)
-            .zip(broken.fitness.iter().copied())
-            .map(|(window, fitness)| {
-                let (window_from, window_to) = (from + window[0], from + window[1]);
-                let (baseline, height) =
-                    self.line_height(window_from, window_to, text_runs, intrinsic_sizes, aligns);
-                // a line can have no height (see `line_height`)
-                Ok(MeasuredLine {
-                    from_break: window_from,
-                    to_break: window_to,
-                    height,
-                    baseline,
-                    fitness,
-                })
+        variants
+            .iter()
+            .map(|broken| {
+                broken
+                    .breaks
+                    .windows(2)
+                    .zip(broken.fitness.iter().copied().zip(broken.demerits.iter().copied()))
+                    .map(|(window, (fitness, demerits))| {
+                        let (window_from, window_to) = (from + window[0], from + window[1]);
+                        let (baseline, height) =
+                            self.line_height(window_from, window_to, text_runs, intrinsic_sizes, aligns);
+                        // a line can have no height (see `line_height`)
+                        Ok(MeasuredLine {
+                            from_break: window_from,
+                            to_break: window_to,
+                            height,
+                            baseline,
+                            fitness,
+                            demerits,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()
             })
-            .collect::<Result<Vec<_>, String>>()?;
-        Ok(lines)
+            .collect()
     }
 
     /// The min-content and max-content width of the paragraph: the widest piece that cannot be
