@@ -1457,3 +1457,59 @@ fn an_article_that_fills_every_page_has_as_many_pages_as_its_content_needs() {
     // nothing is on an eleventh page
     assert!(layout.items.iter().all(|item| item.page <= 9));
 }
+
+#[test]
+fn a_forced_break_to_a_side_in_a_container_leaves_a_page_empty_if_it_has_to() {
+    // The first page is a right page and the second a left one: a break to the right page
+    // continues the container on the third page, and a break to the left page on the second.
+    let right = layout(
+        "break_right",
+        &doc("#i3 { break-before: right }", &container("column-count: 2; column-gap: 0", 4)),
+    );
+    assert_eq!(right.get("i2").page, 0);
+    assert_on(&right, "i3", 2, 0.0, 0.0);
+    let left = layout(
+        "break_left",
+        &doc("#i3 { break-before: left }", &container("column-count: 2; column-gap: 0", 4)),
+    );
+    assert_on(&left, "i3", 1, 0.0, 0.0);
+    assert_on(&left, "i4", 1, 200.0, 0.0);
+}
+
+#[test]
+fn a_container_in_a_document_that_is_cropped_is_one_box() {
+    // there are no pages that have a size: every box has a page of its own, and the columns of
+    // a container are balanced as always
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("multicol__crop.html");
+    let output = dir.join("multicol__crop.pdf");
+    let dump = dir.join("multicol__crop.json");
+    std::fs::write(
+        &input,
+        "<!DOCTYPE html><style>body { margin: 0; width: 400px } .i { height: 20px }</style>\
+         <div id=m style=\"column-count: 2; column-gap: 0\"><div class=i id=i1></div><div class=i id=i2></div>\
+         <div class=i id=i3></div><div class=i id=i4></div></div>",
+    )
+    .unwrap();
+    let out = common::helium()
+        .unwrap()
+        .args(["--no-system-fonts", "--crop", "--dump-layout"])
+        .arg(&dump)
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(dump).unwrap()).unwrap();
+    fn find<'a>(node: &'a Value, id: &str) -> Option<&'a Value> {
+        if node["id"] == id {
+            return Some(node);
+        }
+        node["children"].as_array()?.iter().find_map(|child| find(child, id))
+    }
+    let get = |id: &str| find(&value["document"], id).unwrap_or_else(|| panic!("no box {id}"));
+    assert_eq!(get("m")["border_box"]["height"].as_f64().unwrap(), 40.0);
+    assert_eq!(get("i2")["border_box"]["x"].as_f64().unwrap(), 0.0);
+    assert_eq!(get("i3")["border_box"]["x"].as_f64().unwrap(), 200.0);
+    assert_eq!(get("i4")["page"].as_u64().unwrap(), 0);
+}

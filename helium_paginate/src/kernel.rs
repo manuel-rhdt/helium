@@ -107,6 +107,9 @@ impl Legal {
     }
 }
 
+/// The pages that can start at a place, and with the fragments of containers that are on each.
+type Fills = (Vec<PageFill>, Vec<Vec<PageFragment>>);
+
 /// A place where the page that is walked can end.
 #[derive(Debug, Copy, Clone)]
 struct Found {
@@ -281,28 +284,29 @@ impl<'a> Kernel<'a> {
     /// - a container is asked for the fragment that fits in what is left of the page, and the
     ///   page can end inside it where that fragment does.
     pub fn candidates(&mut self, start: &PageStart) -> Vec<PageFill> {
-        self.walk(start, false).into_iter().map(|(fill, _)| fill).collect()
+        self.walk(start, false).0
     }
 
     /// The fragments of containers that are on the page that starts at `start` and ends at `end`,
     /// in order. They were asked of the layout service when the page was listed, and the same
     /// arguments give the same fragments.
     pub fn fragments(&mut self, start: &PageStart, end: BreakToken) -> Vec<PageFragment> {
-        self.walk(start, true)
-            .into_iter()
-            .find(|(fill, _)| fill.end == end)
-            .map_or_else(Vec::new, |(_, fragments)| fragments)
+        let (fills, mut lists) = self.walk(start, true);
+        match fills.iter().position(|fill| fill.end == end) {
+            Some(index) => lists.swap_remove(index),
+            None => vec![],
+        }
     }
 
     /// The pages that can start at `start`, and with `record` the fragments of the containers
     /// that are on each.
-    fn walk(&mut self, start: &PageStart, record: bool) -> Vec<(PageFill, Vec<PageFragment>)> {
+    fn walk(&mut self, start: &PageStart, record: bool) -> Fills {
         let problem = self.problem;
         let items = &problem.items;
         let position = self.tokens.position(start.at);
         let page_kind = problem.pages.kind(start.index);
         let spec = problem.pages.spec(position, page_kind);
-        let mut fills: Vec<(PageFill, Vec<PageFragment>)> = vec![];
+        let mut fills: Fills = (vec![], vec![]);
         // The last page that there can be takes the rest of the content, whatever breaks it has,
         // unless it is the last page of a fragment of a container.
         let last_page = problem.max_pages.is_some_and(|max| start.index + 1 >= max);
@@ -365,7 +369,7 @@ impl<'a> Kernel<'a> {
                         let legal = Legal { orphans: broken_orphans, widows: broken_widows, ..Legal::new(kind, None) };
                         let widows = widow_violation(start_paragraph, None);
                         let found = Found { token, legal, widows, spec, kind: page_kind };
-                        if !self.emit(found, used, &mut first, &on_page, &mut fills) {
+                        if !self.emit(record, found, used, &mut first, &on_page, &mut fills) {
                             return fills;
                         }
                     }
@@ -409,7 +413,7 @@ impl<'a> Kernel<'a> {
                                 widows = true;
                             }
                             let found = Found { token, legal, widows, spec, kind: page_kind };
-                            if !self.emit(found, used, &mut first, &on_page, &mut fills) {
+                            if !self.emit(record, found, used, &mut first, &on_page, &mut fills) {
                                 return fills;
                             }
                         }
@@ -454,7 +458,7 @@ impl<'a> Kernel<'a> {
                         if record {
                             here.push(page_fragment);
                         }
-                        if !self.emit(found, used + pending + fragment.used, &mut first, &here, &mut fills) {
+                        if !self.emit(record, found, used + pending + fragment.used, &mut first, &here, &mut fills) {
                             return fills;
                         }
                     }
@@ -479,7 +483,7 @@ impl<'a> Kernel<'a> {
             let legal = Legal { orphans: broken_orphans, widows: broken_widows, ..Legal::new(BreakKind::Allowed, None) };
             let widows = widow_violation(start_paragraph, None);
             let found = Found { token: end, legal, widows, spec, kind: page_kind };
-            self.emit(found, used, &mut first, &on_page, &mut fills);
+            self.emit(record, found, used, &mut first, &on_page, &mut fills);
         }
         fills
     }
@@ -487,11 +491,12 @@ impl<'a> Kernel<'a> {
     /// Adds the fill of the page that ends at the token. Returns whether to go on.
     fn emit(
         &self,
+        record: bool,
         found: Found,
         used: f64,
         first: &mut bool,
         fragments: &[PageFragment],
-        fills: &mut Vec<(PageFill, Vec<PageFragment>)>,
+        fills: &mut Fills,
     ) -> bool {
         let Found { token: end, legal, widows, spec, kind } = found;
         let used = used as f32;
@@ -506,19 +511,20 @@ impl<'a> Kernel<'a> {
             || legal
                 .cut
                 .is_some_and(|(on_page, orphans)| on_page < orphans);
-        fills.push((
-            PageFill {
-                end,
-                spec,
-                kind,
-                used,
-                end_kind: legal.kind,
-                orphan_violation,
-                widow_violation: widows || legal.widows,
-                overflow,
-            },
-            fragments.to_vec(),
-        ));
+        fills.0.push(PageFill {
+            end,
+            spec,
+            kind,
+            used,
+            end_kind: legal.kind,
+            orphan_violation,
+            widow_violation: widows || legal.widows,
+            overflow,
+        });
+        // (the fragments are only recorded if there are some to ask for)
+        if record {
+            fills.1.push(fragments.to_vec());
+        }
         !legal.kind.is_forced()
     }
 

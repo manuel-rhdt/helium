@@ -30,8 +30,7 @@ use super::service::TreeService;
 use super::tree::{Content, HeliumTree, calc};
 use super::window::Window;
 use crate::style::properties::computed::{ColumnWidth, GenericSize, PixelLength};
-use crate::style::properties::specified::{ColumnCount, Display};
-use crate::style::properties::specified::ColumnFill;
+use crate::style::properties::specified::{ColumnCount, ColumnFill, Display};
 use helium_paginate::{
     BalanceObjective, BoxRef, BreakLevel, ContainerCut, Cut, Item, Kernel, LayoutService, NodeRef, PageSpec, PageTable,
     ParId, ParLine, Position, Problem, balance, plan_fragment,

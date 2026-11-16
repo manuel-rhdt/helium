@@ -14,10 +14,13 @@
 //! Every box that is part of the flow knows its items ([`Span`]), which are what the window of a
 //! page is made from.
 //!
-//! A multi-column container is one box of the flow of its page. Its content is a flow of its own
-//! ([`Inner`]), which the columns are chosen from. The items of both are numbered from 0 (the
-//! spans of the boxes in the content of the container are in the numbers of its flow), the
-//! extents and the paragraphs have one numbering for all of them.
+//! A multi-column container is one item of the flow of its page, `Item::Container`: the kernel asks
+//! the layout service for the fragment of it that fits on a page, and the page can end inside it.
+//! (In a document without page sizes (`--crop`), and where it has a height of its own or is inside
+//! another container, it is one box.) Its content is a flow of its own ([`Inner`]), which the
+//! columns are chosen from. The items of both are numbered from 0 (the spans of the boxes in the
+//! content of the container are in the numbers of its flow), the extents and the paragraphs have
+//! one numbering for all of them.
 
 use super::tree::{Content, HeliumTree, node_is_out_of_flow};
 use super::window::Span;

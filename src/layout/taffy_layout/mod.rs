@@ -656,7 +656,15 @@ impl<'a> Writer<'a, '_> {
             // a container with columns: the columns are written, one after the other
             _ if columns.is_some() => {
                 let layouts = columns.expect("the columns are laid out");
-                self.write_columns(id, layouts, flow, (content_x, content_y), (content_width, content_height), z, z_base)?;
+                self.write_columns(
+                    id,
+                    layouts,
+                    flow,
+                    (content_x, content_y),
+                    (content_width, content_height),
+                    (z, z_base),
+                    !open_start,
+                )?;
             }
             Content::Blocks if table_part.is_some() => {
                 for &child in &table_part.unwrap().kids {
@@ -761,12 +769,13 @@ impl<'a> Writer<'a, '_> {
         flow: Flow,
         (content_x, content_y): (f32, f32),
         (content_width, content_height): (f32, f32),
-        z: i64,
-        z_base: i64,
+        (z, z_base): (i64, i64),
+        first_fragment: bool,
     ) -> Result<(), String> {
         let node = self.node(id);
         let plan = &layouts.plan;
-        if node.content == Content::Inline {
+        // (the `inline-block` boxes are written once, with the first fragment of the container)
+        if node.content == Content::Inline && first_fragment {
             self.write_atoms(id, flow, z, z_base)?;
         }
         // the first column of a container with a direction from right to left is at the right
