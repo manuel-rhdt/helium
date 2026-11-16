@@ -22,6 +22,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 ## HTML
 
 - **Parsing:** HTML5 (`html5ever`), `lang` and `dir`, `<title>`.
+- **Presentational attributes:** `width` and `height` of `img` and `iframe` (pixels and percentages), `cellspacing` and `cellpadding` of tables.
 - **Default styles** for the usual elements: sectioning and headings, `p`, `div`, `pre`,
   `blockquote`, `hr`, `ul`/`ol`/`li`/`dl`, `table` with `caption`/`thead`/`tbody`/`tfoot`/`tr`/`td`/`th`/`col`/`colgroup`,
   `a`, inline phrasing elements (`em`, `strong`, `code`, `sub`, `sup`, `q`, `mark`, ...), `figure`,
