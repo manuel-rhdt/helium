@@ -156,3 +156,21 @@ fn list_item_value_restarts_the_numbering() {
         vec![plain[0].clone(), plain[8].clone(), plain[9].clone()]
     );
 }
+
+/// The `list-style` shorthand sets the marker type like `list-style-type`; the position is
+/// accepted and does not matter (markers are always outside).
+#[test]
+fn the_list_style_shorthand_sets_the_marker_type() {
+    let items = r#"<li>a</li><li>b</li><li>c</li>"#;
+    let none = dump("shorthand_none", &format!(r#"<ul style="list-style: none">{items}</ul>"#));
+    let without = dump("shorthand_longhand_none", &format!(r#"<ul style="list-style-type: none">{items}</ul>"#));
+    assert_eq!(runs(&none), runs(&without));
+    // markers are there when it is not `none`
+    let with = dump("shorthand_disc", &format!(r#"<ul style="list-style: disc">{items}</ul>"#));
+    assert_eq!(runs(&with), runs(&none) + 3);
+    // in any order, with a position
+    let decimal = dump("shorthand_decimal", &format!(r#"<ol id="l" style="list-style: inside decimal">{items}</ol>"#));
+    let longhand = dump("shorthand_decimal_longhand", &format!(r#"<ol id="l" style="list-style-type: decimal">{items}</ol>"#));
+    assert_eq!(markers(&decimal), markers(&longhand));
+    assert_eq!(markers(&decimal).len(), 3);
+}
