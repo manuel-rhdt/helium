@@ -666,7 +666,8 @@ impl DisplayList {
         z: ZIndex,
     ) {
         let w = width.0;
-        if w <= 0.0 || !style.is_visible() {
+        // (a fully transparent border is not painted; the box has the space for it)
+        if w <= 0.0 || !style.is_visible() || color.alpha == 0 {
             return;
         }
         let (nx, ny) = side.outward();
@@ -1076,16 +1077,8 @@ impl<'a> System<'a> for DisplayDecoration {
                 self.display_list.append(DisplayItem::Push, entity, z);
                 self.display_list
                     .append(DisplayItem::Color(background_color), entity, z);
-                self.display_list.append(
-                    DisplayItem::FilledRect(Rect {
-                        x: x - padding.left,
-                        y: y - padding.top,
-                        width: width + padding.left + padding.right,
-                        height: height + padding.top + padding.bottom,
-                    }),
-                    entity,
-                    z,
-                );
+                // (the background extends under the border: `background-clip: border-box`)
+                self.display_list.append(DisplayItem::FilledRect(border_box), entity, z);
                 self.display_list.append(DisplayItem::Pop, entity, z);
             }
             if !blended {
