@@ -244,6 +244,7 @@ impl TaffyBlockLayout {
                 last_flow_entity: None,
                 window: window.as_ref().expect("the window is set"),
                 page: start.index,
+                page_bottom: edges.top.0 + spec.block_size,
                 fragments: &mut fragments,
             };
             // The root is placed at the top left corner of the content area of the page.
@@ -333,6 +334,8 @@ struct Writer<'a, 'w> {
     /// The part of the document that is on the page, and the number of the page.
     window: &'a Window,
     page: usize,
+    /// The bottom of the content area of the page.
+    page_bottom: f32,
     /// The parts of the boxes that are on more than one page.
     fragments: &'a mut HashMap<Entity, Vec<Fragment>>,
 }
@@ -490,12 +493,19 @@ impl<'a> Writer<'a, '_> {
             let _ = self.decorations.insert(entity, decoration);
         }
         if open_start || open_end {
+            // The part of a box that goes on on the next page reaches the bottom of the content
+            // area of its page, also where the content on the page ends above it.
+            let fragment_height = if open_end {
+                content_height.max(self.page_bottom - content_y)
+            } else {
+                content_height
+            };
             self.fragments.entry(entity).or_default().push(Fragment {
                 position: Position {
                     x: PixelLength(content_x),
                     y: PixelLength(content_y),
                     width: PixelLength(content_width.max(0.0)),
-                    height: PixelLength(content_height.max(0.0)),
+                    height: PixelLength(fragment_height.max(0.0)),
                     z: ZIndex(z),
                     page: self.page,
                 },

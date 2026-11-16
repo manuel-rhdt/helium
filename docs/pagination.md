@@ -71,8 +71,10 @@ Limits of this, in order of importance:
   that are percentages or viewport units in boxes that are not split follow that page, and the
   viewport units follow the plain page.
 - **`--crop`** has page size 0 and puts every box on a page of its own, as before.
-- **Fragments end with their content.** The part of a box on a page ends at its last line or
-  box; it is not stretched to the bottom of the page.
+- **Fragments reach the bottom of the page.** The part of a box that goes on on the next
+  page is painted down to the bottom of the content area of its page, also where the content
+  on the page ends above it. The layout of the page ends with its content; only the
+  decoration is stretched.
 
 Two properties of the code that the design builds on:
 

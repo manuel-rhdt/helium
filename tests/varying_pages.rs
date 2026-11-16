@@ -224,7 +224,8 @@ fn a_box_that_spans_pages_has_the_width_of_each_page() {
     assert_eq!(fragments[0].page, 0);
     assert_close(fragments[0].rect[0], 10.0, "x of the first fragment");
     assert_close(fragments[0].rect[2], 280.0, "width of the first fragment");
-    assert_close(fragments[0].rect[3], 240.0, "height of the first fragment");
+    // the part on the first page reaches the bottom of its content area
+    assert_close(fragments[0].rect[3], 280.0, "height of the first fragment");
     assert_eq!(fragments[1].page, 1);
     assert_close(fragments[1].rect[0], 50.0, "x of the second fragment");
     assert_close(fragments[1].rect[2], 200.0, "width of the second fragment");
