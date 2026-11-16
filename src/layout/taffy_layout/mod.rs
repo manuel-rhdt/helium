@@ -60,9 +60,13 @@ pub(super) mod probe {
 
     pub type Hook = Box<dyn FnOnce(&mut TreeService<'_, '_, '_>)>;
 
+    /// A solver that the tests give to the layout instead of the exact one.
+    pub type Solve = Box<dyn for<'k, 'a> FnOnce(&'k mut helium_paginate::Kernel<'a>) -> helium_paginate::Solution>;
+
     thread_local! {
         pub static BEFORE: RefCell<Option<Hook>> = const { RefCell::new(None) };
         pub static AFTER: RefCell<Option<Hook>> = const { RefCell::new(None) };
+        pub static SOLVE: RefCell<Option<Solve>> = const { RefCell::new(None) };
     }
 
     pub fn call(which: &'static std::thread::LocalKey<RefCell<Option<Hook>>>, service: &mut TreeService<'_, '_, '_>) {
@@ -184,7 +188,12 @@ impl TaffyBlockLayout {
         {
             use helium_paginate::Solver;
             let mut kernel = helium_paginate::Kernel::new(&problem, &mut service);
-            let solution = helium_paginate::ExactSolver::new(helium_paginate::CssObjective).solve(&mut kernel);
+            #[cfg(test)]
+            let custom = probe::SOLVE.with(|slot| slot.borrow_mut().take()).map(|solve| solve(&mut kernel));
+            #[cfg(not(test))]
+            let custom: Option<helium_paginate::Solution> = None;
+            let solution = custom
+                .unwrap_or_else(|| helium_paginate::ExactSolver::new(helium_paginate::CssObjective).solve(&mut kernel));
             let fills = kernel.realize(&solution).map_err(|error| format!("invalid pagination: {error:?}"))?;
             let end = helium_paginate::Position::Item(flow.items.len());
             for (page, fill) in fills.iter().enumerate() {

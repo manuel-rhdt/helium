@@ -1094,14 +1094,39 @@ pub(super) fn lines_between(
     let lines = lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns);
     match to {
         None => lines.as_ref().clone(),
-        Some(to) => {
-            let end = lines
-                .iter()
-                .position(|line| line.to_break == LineCut::of(to).at)
-                .map_or(lines.len(), |index| index + 1);
-            lines[..end].to_vec()
-        }
+        Some(to) => lines_until(&lines, ifc, from, LineCut::of(to), line_width, indent, text_runs, intrinsic_sizes, aligns),
     }
+}
+
+/// The lines of a part of a paragraph that ends at the break `to`, which is any place where
+/// the paragraph can be broken, from the break `from` (the start of the paragraph if there is
+/// none). `lines` are the lines from `from` to the end of the paragraph. A line of them that ends at
+/// `to` ends the part, and the lines before it are the part. If there is none, the part is broken
+/// for itself: its last line ends at `to` and is a line like the others.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lines_until(
+    lines: &[crate::layout::inline::MeasuredLine],
+    ifc: &InlineFormattingContext,
+    from: Option<LineCut>,
+    to: LineCut,
+    line_width: PixelLength,
+    indent: PixelLength,
+    text_runs: &ReadStorage<TextRun>,
+    intrinsic_sizes: &WriteStorage<IntrinsicSize>,
+    aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
+) -> Vec<crate::layout::inline::MeasuredLine> {
+    if let Some(index) = lines.iter().position(|line| line.to_break == to.at) {
+        return lines[..=index].to_vec();
+    }
+    let (start, fitness, indent) = match from {
+        Some(from) => (from.at, from.fitness, PixelLength(0.0)),
+        None => (0, helium_paginate::paragraph::LineStart::DECENT, indent),
+    };
+    ifc.compute_lines_from(start, fitness, Some(to.at), line_width, indent, text_runs, intrinsic_sizes, aligns)
+        .unwrap_or_else(|error| {
+            log::error!("cannot break lines of a part of a paragraph: {}", error);
+            vec![]
+        })
 }
 
 /// The lines of a paragraph from the break `from` (the start of the paragraph if there is none)
@@ -1140,7 +1165,7 @@ pub(super) fn lines_from(
             match whole.iter().position(|line| line.to_break == from.at && line.fitness == from.fitness) {
                 Some(index) => whole[index + 1..].to_vec(),
                 None => ifc
-                    .compute_lines_from(from.at, from.fitness, line_width, PixelLength(0.0), text_runs, intrinsic_sizes, aligns)
+                    .compute_lines_from(from.at, from.fitness, None, line_width, PixelLength(0.0), text_runs, intrinsic_sizes, aligns)
                     .unwrap_or_else(|error| {
                         log::error!("cannot break lines of {:?}: {}", node, error);
                         vec![]

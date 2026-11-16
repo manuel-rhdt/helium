@@ -368,3 +368,109 @@ fn the_boxes_around_a_subtree_are_laid_out_again_behind_a_question_about_it() {
     ));
     assert_not_changed_by_asking(&html, "x", &[75.0, 998.0, 1500.0]);
 }
+
+// A part of a paragraph that ends at any break of the paragraph.
+
+#[test]
+fn a_part_of_a_paragraph_can_end_at_any_break() {
+    use super::tree::LineCut;
+    use helium_paginate::ParLine;
+    let html = document("", &format!("<p id=a>{TEXT}{TEXT}{TEXT}{TEXT}</p>"));
+    type Found = (Vec<ParLine>, Vec<ParLine>, Vec<ParLine>, Vec<ParLine>, Vec<ParLine>, usize);
+    let found: Rc<RefCell<Option<Found>>> = Rc::new(RefCell::new(None));
+    let sink = found.clone();
+    lay_out(
+        &html,
+        Some(Box::new(move |service, dom| {
+            let (root, pars) = root_of(service, dom, "x");
+            let par = pars[0];
+            let whole = service.lines_in(root, par, None, 250.0);
+            // a break inside of the third line, which is not where a line of the paragraph ends
+            let at = LineCut::of(whole[2].end).at - 2;
+            let to = LineCut { at, fitness: 0 }.cut();
+            let part = service.lines_to_in(root, par, None, to, 250.0);
+            let again = service.lines_to_in(root, par, None, to, 250.0);
+            // where a line of the paragraph ends, the part is the lines up to it
+            let at_a_line = service.lines_to_in(root, par, None, whole[2].end, 250.0);
+            // the next page goes on at the cut as the service made it
+            let tail = service.lines_in(root, par, Some(part.last().unwrap().end), 250.0);
+            *sink.borrow_mut() = Some((whole.to_vec(), part.to_vec(), again.to_vec(), at_a_line.to_vec(), tail.to_vec(), at));
+        })),
+        None,
+    );
+    let (whole, part, again, at_a_line, tail, at) = found.take().expect("the probe was called");
+    assert!(whole.len() >= 6, "{} lines", whole.len());
+    // the part ends at the break that was asked for, with a fitness class that the next page uses
+    assert_eq!(LineCut::of(part.last().unwrap().end).at, at);
+    assert!(LineCut::of(part.last().unwrap().end).fitness < 4);
+    // it has about as many lines as the part of the paragraph in front of that break
+    assert!((2..=4).contains(&part.len()), "{} lines", part.len());
+    assert_eq!(part, again);
+    assert_eq!(at_a_line.as_slice(), &whole[..=2]);
+    // the rest of the paragraph is what is left of it
+    assert!(!tail.is_empty());
+    let (before, after) = (part.len(), tail.len());
+    assert!((before + after).abs_diff(whole.len()) <= 1, "{before} + {after} lines of {}", whole.len());
+}
+
+/// Pages of 100px with lines of 20px: five lines to a page.
+fn narrow_pages(paragraph: &str) -> String {
+    format!(
+        "<style>@page {{ size: 300px 100px; margin: 0 }} body {{ margin: 0; font: 16px/20px serif }}
+         p {{ margin: 0; orphans: 1; widows: 1 }}</style><p id=a>{paragraph}</p>"
+    )
+}
+
+#[test]
+fn a_solution_with_pages_that_end_at_any_break_of_a_paragraph_is_laid_out() {
+    use super::tree::LineCut;
+    use helium_paginate::{Position as FlowPosition, Solution};
+    use specs::Join;
+    // a solver that fills every page as the paragraph is broken for it, and then ends it one break
+    // earlier, wherever that is
+    let arbitrary = Rc::new(std::cell::Cell::new(0usize));
+    let count = arbitrary.clone();
+    let solve: probe::Solve = Box::new(move |kernel| {
+        let first = kernel.first_page();
+        let mut pages = vec![first];
+        let mut start = first;
+        loop {
+            let fills = kernel.candidates(&start);
+            let Some(last) = fills.last() else { break };
+            if kernel.is_end(last.end) {
+                break;
+            }
+            let Some(full) = fills.iter().rev().find(|fill| matches!(kernel.position(fill.end), FlowPosition::InParagraph { .. }))
+            else {
+                break;
+            };
+            let FlowPosition::InParagraph { item, cut } = kernel.position(full.end) else { unreachable!() };
+            let earlier = LineCut { at: LineCut::of(cut).at - 1, fitness: 0 }.cut();
+            let fill = kernel.fill_at(&start, item, earlier).expect("a page can end one break earlier");
+            // (the page does not end where the paragraph is broken for the page)
+            if !fills.iter().any(|other| other.end == fill.end) {
+                count.set(count.get() + 1);
+            }
+            start = kernel.next_page(&start, &fill).expect("the paragraph goes on");
+            pages.push(start);
+        }
+        Solution { pages }
+    });
+    probe::SOLVE.with(|slot| *slot.borrow_mut() = Some(solve));
+    let text = TEXT.repeat(12);
+    let (world, dom) = lay_out(&narrow_pages(&text), None, None);
+    let pages = world.read_resource::<crate::layout::pages::Pages>().0.len();
+    assert!(pages >= 3, "{pages} pages");
+    // all of the pages but the last end at a break that the paragraph is not broken at
+    assert_eq!(arbitrary.get(), pages - 1);
+    // every page has lines that fit it: the paragraph is cut into the same lines as the pages hold
+    let positions = world.read_storage::<Position>();
+    let lines = world.read_storage::<crate::layout::components::Paragraph>();
+    let mut per_page = vec![0usize; pages];
+    for (position, _) in (&positions, &lines).join() {
+        assert!(position.y.0 + position.height.0 <= 100.5, "a line ends at {}, below the page", position.y.0 + position.height.0);
+        per_page[position.page] += 1;
+    }
+    assert!(per_page.iter().all(|&count| count > 0), "{per_page:?}");
+    let _ = dom;
+}

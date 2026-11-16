@@ -115,6 +115,14 @@ impl LayoutService for InColumns<'_, '_, '_, '_> {
         self.service.lines_in(self.root, par, from, inline)
     }
 
+    fn lines_to(&mut self, par: ParId, from: Option<Cut>, to: Cut, inline: f32) -> Rc<[ParLine]> {
+        self.service.lines_to_in(self.root, par, from, to, inline)
+    }
+
+    fn lines_to_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, to: Cut, inline: f32) -> Rc<[ParLine]> {
+        self.service.lines_to_in(root, par, from, to, inline)
+    }
+
     fn content_extent(&mut self, root: BoxRef, inline: f32) -> f64 {
         self.service.content_extent(root, inline)
     }

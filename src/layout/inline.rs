@@ -346,19 +346,22 @@ impl InlineFormattingContext {
         intrinsic_sizes: &impl GenericReadStorage<Component = components::IntrinsicSize>,
         aligns: &ReadStorage<components::VerticalAlignment>,
     ) -> Result<Vec<MeasuredLine>, String> {
-        self.compute_lines_from(0, LineStart::DECENT, line_width, indent, text_runs, intrinsic_sizes, aligns)
+        self.compute_lines_from(0, LineStart::DECENT, None, line_width, indent, text_runs, intrinsic_sizes, aligns)
     }
 
     /// Breaks the part of the paragraph that follows the break point `from` into lines. The first
     /// line is indented by `indent` only if `from` is the start of the paragraph. `fitness` is that
     /// of the line that ends at `from`, which the breaker counts like a line in front of the first
     /// one in a paragraph (see [`MeasuredLine::fitness`]); it is not used at the start of the
-    /// paragraph.
+    /// paragraph. If `until` is a break point, the part of the paragraph from `from` to it is
+    /// broken: its last line ends there, and is a line like the others and not the last line
+    /// of the paragraph.
     #[allow(clippy::too_many_arguments)]
     pub fn compute_lines_from(
         &self,
         from: usize,
         fitness: u8,
+        until: Option<usize>,
         line_width: Px,
         indent: Px,
         text_runs: &ReadStorage<components::TextRun>,
@@ -367,6 +370,11 @@ impl InlineFormattingContext {
     ) -> Result<Vec<MeasuredLine>, String> {
         let breakpoints = &self.break_points;
         if breakpoints.is_empty() || from >= breakpoints.len() {
+            return Ok(vec![]);
+        }
+        // (a cut that is not inside the paragraph is the end of it)
+        let until = until.filter(|&to| to + 1 < breakpoints.len());
+        if until.is_some_and(|to| to <= from) {
             return Ok(vec![]);
         }
         if breakpoints.len() < 2 {
@@ -429,11 +437,13 @@ impl InlineFormattingContext {
         } else {
             LineStart { fitness, hyphen: breakpoints[from].hyphen }
         };
+        let end = until.map_or(opportunities.len(), |to| to + 1);
         let broken = helium_paginate::paragraph::compute_paragraph_lines(
-            &opportunities[from..],
+            &opportunities[from..end],
             |start, end| metrics(from + start, from + end),
             width_of,
             start,
+            until.is_none(),
         );
 
         let lines = broken

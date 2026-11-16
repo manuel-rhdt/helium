@@ -43,7 +43,7 @@ pub fn compute_paragraph_breakpoints(
     line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
     line_width: impl FnMut(usize) -> f64,
 ) -> Vec<usize> {
-    compute_paragraph_lines(opportunities, line_metrics, line_width, LineStart::PARAGRAPH).breaks
+    compute_paragraph_lines(opportunities, line_metrics, line_width, LineStart::PARAGRAPH, true).breaks
 }
 
 /// What the line in front of the first line is, for a paragraph that does not start where the
@@ -80,11 +80,17 @@ pub struct ParagraphLines {
 /// Like [`compute_paragraph_breakpoints`], for a paragraph that follows a line `start`, and with
 /// the fitness class of every line, so that the lines in front of a cut can be given to the next
 /// call as its `start`.
+///
+/// `ends_paragraph` is whether the last opportunity is the end of the paragraph. If it is not,
+/// the part of a paragraph that ends at a cut is broken: its last line is a line like the
+/// others (it is not a short last line that is allowed to be ragged, and it has no demerits for
+/// following a hyphen as the last line of a paragraph has), and it ends at the last opportunity.
 pub fn compute_paragraph_lines(
     opportunities: &[BreakOpportunity],
     mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
     mut line_width: impl FnMut(usize) -> f64,
     start: LineStart,
+    ends_paragraph: bool,
 ) -> ParagraphLines {
     if opportunities.len() < 2 {
         return ParagraphLines {
@@ -121,7 +127,7 @@ pub fn compute_paragraph_lines(
             if overfull && to != from + 1 {
                 continue;
             }
-            let ragged_final_line = to + 1 == opportunities.len() && delta >= 0.0;
+            let ragged_final_line = ends_paragraph && to + 1 == opportunities.len() && delta >= 0.0;
             let ratio = if ragged_final_line {
                 0.0
             } else {
@@ -160,7 +166,7 @@ pub fn compute_paragraph_lines(
                 if previous_hyphen && opportunity.hyphen {
                     demerits += DOUBLE_HYPHEN_DEMERITS;
                 }
-                if to + 1 == opportunities.len() && previous_hyphen {
+                if ends_paragraph && to + 1 == opportunities.len() && previous_hyphen {
                     demerits += FINAL_HYPHEN_DEMERITS;
                 }
 
@@ -394,12 +400,20 @@ mod test {
         }
 
         fn lines(&self, start: LineStart) -> ParagraphLines {
-            compute_paragraph_lines(&self.opportunities, |from, to| self.metrics(from, to), |_| self.width, start)
+            self.lines_of(start, true)
+        }
+
+        fn lines_of(&self, start: LineStart, ends_paragraph: bool) -> ParagraphLines {
+            compute_paragraph_lines(&self.opportunities, |from, to| self.metrics(from, to), |_| self.width, start, ends_paragraph)
         }
 
         /// The demerits of a sequence of breaks, as the breaker counts them, or `None` if the
         /// breaker does not allow it.
         fn demerits(&self, breaks: &[usize], start: LineStart) -> Option<(f64, Vec<u8>)> {
+            self.demerits_of(breaks, start, true)
+        }
+
+        fn demerits_of(&self, breaks: &[usize], start: LineStart, ends_paragraph: bool) -> Option<(f64, Vec<u8>)> {
             let last = self.opportunities.len() - 1;
             let (mut fitness, mut hyphen) = (usize::from(start.fitness), start.hyphen);
             let mut total = 0.0;
@@ -415,7 +429,7 @@ mod test {
                 if overfull && to != from + 1 {
                     return None;
                 }
-                let ragged_final_line = to == last && delta >= 0.0;
+                let ragged_final_line = ends_paragraph && to == last && delta >= 0.0;
                 let ratio = if ragged_final_line { 0.0 } else { adjustment_ratio(delta, glue) };
                 let badness = if ragged_final_line { 0.0 } else { line_badness(ratio) };
                 let class = fitness_class(ratio);
@@ -437,7 +451,7 @@ mod test {
                 if hyphen && opportunity.hyphen {
                     total += DOUBLE_HYPHEN_DEMERITS;
                 }
-                if to == last && hyphen {
+                if ends_paragraph && to == last && hyphen {
                     total += FINAL_HYPHEN_DEMERITS;
                 }
                 fitness = class;
@@ -449,6 +463,10 @@ mod test {
 
         /// The least demerits of all the ways to break the paragraph.
         fn least_demerits(&self, start: LineStart) -> Option<f64> {
+            self.least_demerits_of(start, true)
+        }
+
+        fn least_demerits_of(&self, start: LineStart, ends_paragraph: bool) -> Option<f64> {
             let last = self.opportunities.len() - 1;
             let inner = last - 1;
             (0u32..1 << inner)
@@ -456,7 +474,7 @@ mod test {
                     let mut breaks = vec![0];
                     breaks.extend((1..=inner).filter(|&bit| mask & (1 << (bit - 1)) != 0));
                     breaks.push(last);
-                    self.demerits(&breaks, start).map(|(total, _)| total)
+                    self.demerits_of(&breaks, start, ends_paragraph).map(|(total, _)| total)
                 })
                 .min_by(f64::total_cmp)
         }
@@ -531,6 +549,40 @@ mod test {
         assert!(checked > 1000, "{checked} paragraphs checked");
         // the line in front can change the breaks: the test is only worth something if it does
         assert!(differing > 20, "{differing} paragraphs break differently after another line");
+    }
+
+    #[test]
+    fn the_part_of_a_paragraph_that_ends_at_a_cut_has_the_least_demerits_of_all_breaks() {
+        // the last line of a part that ends at a cut is a line like the others: it is not ragged
+        // and it is not counted as the last line of a paragraph
+        let mut random = Random(0x0DDB_1A5E_5BAD_5EED);
+        let (mut checked, mut differing) = (0, 0);
+        for _ in 0..400 {
+            let paragraph = random_paragraph(&mut random);
+            for start in STARTS {
+                let Some(least) = paragraph.least_demerits_of(start, false) else {
+                    continue;
+                };
+                let part = paragraph.lines_of(start, false);
+                let (demerits, classes) = paragraph
+                    .demerits_of(&part.breaks, start, false)
+                    .expect("the breaker finds breaks that it allows");
+                assert!(
+                    (demerits - least).abs() < 1e-6,
+                    "{start:?}: the breaks {:?} have {demerits} demerits, the least is {least}",
+                    part.breaks
+                );
+                assert_eq!(part.fitness, classes);
+                // the part ends where the paragraph is cut
+                assert_eq!(part.breaks.last(), Some(&(paragraph.opportunities.len() - 1)));
+                if part.breaks != paragraph.lines_of(start, true).breaks {
+                    differing += 1;
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 1000, "{checked} parts checked");
+        assert!(differing > 20, "{differing} parts break differently from a whole paragraph");
     }
 
     #[test]

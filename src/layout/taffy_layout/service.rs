@@ -15,7 +15,7 @@
 //! is laid out for its own width and height ([`super::window`]).
 
 use super::flow::{Anchor, Flow};
-use super::tree::{HeliumTree, LineCut, lines_from};
+use super::tree::{HeliumTree, LineCut, lines_from, lines_until};
 use crate::layout::inline::InlineFormattingContext;
 use crate::style::properties::computed::PixelLength;
 use helium_paginate::{BoxRef, ContainerCut, Cut, Fragment, Item, LayoutService, NodeRef, ParId, ParLine};
@@ -163,6 +163,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         &mut self,
         node: NodeId,
         from: Option<Cut>,
+        to: Option<Cut>,
         (line_width, indent): (f32, f32),
         inline_context: Option<&InlineFormattingContext>,
     ) -> Rc<[ParLine]> {
@@ -175,23 +176,42 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         // (the cache of the box tree does not know which boxes the context was sized for)
         let mut own_cache = HashMap::new();
         let cache = if inline_context.is_some() { &mut own_cache } else { &mut tree.lines };
-        lines_from(
+        let from = from.map(LineCut::of);
+        let (line_width, indent) = (PixelLength(line_width), PixelLength(indent));
+        let lines = lines_from(
             cache,
             ifc,
             entity.id(),
-            from.map(LineCut::of),
-            PixelLength(line_width),
-            PixelLength(indent),
+            from,
+            line_width,
+            indent,
             tree.text_runs,
             tree.intrinsic_sizes,
             tree.aligns,
-        )
-        .iter()
-        .map(|line| ParLine {
-            extent: f64::from(line.height.0),
-            end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
-        })
-        .collect()
+        );
+        // (the lines of the part of the paragraph that ends at a cut that the paragraph is not
+        // broken at are not kept: they are the lines of one page)
+        let lines = match to {
+            None => lines.to_vec(),
+            Some(to) => lines_until(
+                &lines,
+                ifc,
+                from,
+                LineCut::of(to),
+                line_width,
+                indent,
+                tree.text_runs,
+                tree.intrinsic_sizes,
+                tree.aligns,
+            ),
+        };
+        lines
+            .iter()
+            .map(|line| ParLine {
+                extent: f64::from(line.height.0),
+                end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
+            })
+            .collect()
     }
 
     fn galley(&mut self, inline: f32) -> Rc<Galley> {
@@ -314,9 +334,23 @@ impl LayoutService for TreeService<'_, '_, '_> {
         let galley = self.galley(page_inline);
         let node = self.flow.paragraphs[par.0 as usize];
         let width = galley.lines.get(&node).copied().unwrap_or_else(|| paragraph_width(self.tree, node));
-        let lines = self.paragraph_lines(node, from, width, None);
+        let lines = self.paragraph_lines(node, from, None, width, None);
         self.lines.insert(key, lines.clone());
         lines
+    }
+
+    fn lines_to(&mut self, par: ParId, from: Option<Cut>, to: Cut, page_inline: f32) -> Rc<[ParLine]> {
+        let galley = self.galley(page_inline);
+        let node = self.flow.paragraphs[par.0 as usize];
+        let width = galley.lines.get(&node).copied().unwrap_or_else(|| paragraph_width(self.tree, node));
+        self.paragraph_lines(node, from, Some(to), width, None)
+    }
+
+    fn lines_to_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, to: Cut, inline: f32) -> Rc<[ParLine]> {
+        let subtree = self.subtree(root, inline);
+        let node = self.flow.paragraphs[par.0 as usize];
+        let width = *subtree.lines.get(&node).expect("the paragraph is inside the subtree");
+        self.paragraph_lines(node, from, Some(to), width, subtree.inline_contexts.get(&node))
     }
 
     fn fragment(
@@ -365,7 +399,7 @@ impl LayoutService for TreeService<'_, '_, '_> {
         let subtree = self.subtree(root, inline);
         let node = self.flow.paragraphs[par.0 as usize];
         let width = *subtree.lines.get(&node).expect("the paragraph is inside the subtree");
-        let lines = self.paragraph_lines(node, from, width, subtree.inline_contexts.get(&node));
+        let lines = self.paragraph_lines(node, from, None, width, subtree.inline_contexts.get(&node));
         self.subtree_lines.insert(key, lines.clone());
         lines
     }

@@ -1,6 +1,6 @@
 use crate::flow::{BoxRef, BreakKind, Item, PageKind, PageSpec, Problem};
 use crate::service::LayoutService;
-use crate::token::{BreakToken, ContainerCut, Interner, Position};
+use crate::token::{BreakToken, ContainerCut, Cut, Interner, Position};
 
 /// A page that starts at a place of the flow.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -98,6 +98,9 @@ pub struct Kernel<'a> {
     left_right_matter: bool,
     /// The start of the first page.
     first: BreakToken,
+    /// While a page that ends at any cut of a paragraph is listed ([`Kernel::fill_at`]): the
+    /// paragraph and the cut.
+    force_end: Option<(usize, Cut)>,
 }
 
 /// How an end of a page is treated.
@@ -168,6 +171,7 @@ impl<'a> Kernel<'a> {
             tokens,
             left_right_matter,
             first,
+            force_end: None,
         }
     }
 
@@ -298,6 +302,28 @@ impl<'a> Kernel<'a> {
         self.walk(start, false).0
     }
 
+    /// The page that starts at `start` and ends in the paragraph `item` at the cut `to`, which can
+    /// be any place where the paragraph can be broken. [`candidates`](Self::candidates) lists
+    /// the pages that end where a line of the paragraph ends as the layout service breaks it for
+    /// the page; this is the page that a solver gets that wants to break the paragraph somewhere
+    /// else. The service breaks the part of the paragraph that is on the page to end at the cut
+    /// ([`LayoutService::lines_to`]), and the end of the page is the cut as the service makes it
+    /// (`fill.end`), which is not necessarily `to`.
+    ///
+    /// `None` if the page is not possible: its content does not fit on it, or `item` is not a
+    /// paragraph at or after the start, or it is on a page of its own further on.
+    pub fn fill_at(&mut self, start: &PageStart, item: usize, to: Cut) -> Option<PageFill> {
+        if !matches!(self.problem.items.get(item), Some(Item::Paragraph { .. })) {
+            return None;
+        }
+        self.force_end = Some((item, to));
+        let fills = self.walk(start, false).0;
+        self.force_end = None;
+        fills.into_iter().last().filter(|fill| {
+            matches!(self.tokens.position(fill.end), Position::InParagraph { item: found, .. } if found == item)
+        })
+    }
+
     /// The fragments of containers that are on the page that starts at `start` and ends at `end`,
     /// in order. They were asked of the layout service when the page was listed, and the same
     /// arguments give the same fragments.
@@ -391,7 +417,13 @@ impl<'a> Kernel<'a> {
                     widows: widows_wanted,
                     avoid_inside,
                 } => {
-                    let lines = self.service.lines(id, cut.take(), spec.inline_size);
+                    // (the paragraph that the page is to end in, at a cut that the service may not
+                    // have among the ends of its lines)
+                    let forced_end = self.force_end.filter(|&(forced, _)| forced == item).map(|(_, to)| to);
+                    let lines = match forced_end {
+                        Some(to) => self.service.lines_to(id, cut.take(), to, spec.inline_size),
+                        None => self.service.lines(id, cut.take(), spec.inline_size),
+                    };
                     let in_start = start_paragraph.is_some_and(|start| start.item == item);
                     let end_kind = if avoid_inside {
                         BreakKind::Avoid
@@ -428,6 +460,26 @@ impl<'a> Kernel<'a> {
                                 return fills;
                             }
                         }
+                    }
+                    if forced_end.is_some() {
+                        // the page ends at the cut: the end of the last of the lines
+                        if let Some(last) = lines.last() {
+                            let lines_on_page = lines.len() as u32;
+                            let token = self.tokens.intern(Position::InParagraph { item, cut: last.end });
+                            let legal = Legal {
+                                orphans: broken_orphans,
+                                widows: broken_widows,
+                                ..Legal::new(end_kind, Some((lines_on_page, orphans)))
+                            };
+                            let widows = if in_start {
+                                widow_violation(start_paragraph, Some(lines_on_page))
+                            } else {
+                                widow_violation(start_paragraph, None)
+                            };
+                            let found = Found { token, legal, widows, spec, kind: page_kind };
+                            self.emit(record, found, used, &mut first, &on_page, &mut fills);
+                        }
+                        return fills;
                     }
                     if let Some(start) = start_paragraph.as_mut().filter(|_| in_start) {
                         start.tail = Some(lines.len() as u32);
@@ -560,10 +612,18 @@ impl<'a> Kernel<'a> {
             let fills = self.candidates(&start);
             let next = starts.get(page + 1).or(last_end.as_ref());
             let expected = next.map_or(end, |next| next.at);
-            let fill = fills
-                .into_iter()
-                .find(|fill| fill.end == expected)
-                .ok_or(Invalid::NotACandidate { page })?;
+            let fill = match fills.into_iter().find(|fill| fill.end == expected) {
+                Some(fill) => fill,
+                // A page can end at any cut of a paragraph, not only where a line ends when the
+                // paragraph is broken for the page.
+                None => match self.tokens.position(expected) {
+                    Position::InParagraph { item, cut } => self
+                        .fill_at(&start, item, cut)
+                        .filter(|fill| fill.end == expected)
+                        .ok_or(Invalid::NotACandidate { page })?,
+                    _ => return Err(Invalid::NotACandidate { page }),
+                },
+            };
             let valid = match next {
                 // (the end of a fragment is not the end of the document)
                 Some(next) if page + 1 == starts.len() => {

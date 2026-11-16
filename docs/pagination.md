@@ -252,20 +252,56 @@ turns the breaks inside the box into `Avoid`.
 
 ### Paragraphs and cuts
 
+A cut is an opaque number to the kernel (`Cut`), which only stores it, compares the cuts of one
+paragraph and makes tokens of them. The layout service makes them and gives them meaning. In the
+engine (`LineCut` in `taffy_layout/tree.rs`) a cut is
+
 ```rust
-pub struct Cut {
-    pub pos: TextPos,     // index of a break opportunity of the paragraph
-    pub fitness: u8,      // fitness class of the line in front of the cut
-    pub hyphen: bool,     // whether that line ends in a hyphen
+pub(super) struct LineCut {
+    at: usize,      // index of a break opportunity of the paragraph
+    fitness: u8,    // fitness class of the line that ends at the cut (0 tight .. 3 very loose)
 }
 ```
 
-A page break inside a paragraph is a text position, not a line number: a line
-number means nothing once the width changes. The cut also carries the state of
-the line breaker, so that the demerits for adjacent lines of very different
-tightness and for consecutive hyphens are counted across the page break. The
-breaker in `paragraph.rs` has 8 such states (4 fitness classes, times whether
-the line ends in a hyphen).
+packed into the number so that cuts are in the order of the paragraph (the break first). Two cuts
+at the same break that follow lines that fit differently are two places: the breaking of the rest
+of the paragraph depends on both.
+
+A page break inside a paragraph is a break of the paragraph, not a line number: a line number
+means nothing once the width changes. The cut carries the state of the line breaker, so that
+the demerits for lines of very different tightness in a row and for two hyphens in a row are counted
+across a page break. The breaker in `paragraph.rs` has 8 states (4 fitness classes, times whether
+the line ends in a hyphen); the hyphen of the line in front is that of the break itself, and
+the fitness class is what the cut carries (`LineStart`, `compute_paragraph_lines`). The lines
+after a cut that were found with the same state are the lines of the whole paragraph, as before;
+the rest of the paragraph after a cut at another state (or at another width) is broken again from
+the cut with that state.
+
+**A page can end at any break of a paragraph.** The pages that `candidates` lists end where a
+line ends when the layout service breaks the paragraph for the page. That is what the exact
+solver and the greedy one choose among, but it is not what the kernel can express. A solution
+may have a page that ends at any break of any paragraph, and the layout will lay it out:
+
+- `LayoutService::lines_to(par, from, to, width)` gives the lines of the part of a paragraph
+  from `from` to the break `to`. Its last line ends at `to` and is a line like the others (not the
+  ragged last line of a paragraph), and the lines before it are broken to fit it
+  (`compute_lines_from` with `until`, and `compute_paragraph_lines` with `ends_paragraph:
+  false`). Where `to` is the end of a line of the paragraph, it is the lines up to it. Only the
+  break of `to` is used; the cut that the last line has, with its fitness class, is the one that the
+  next page starts with.
+- `Kernel::fill_at(start, item, to)` is the page that starts at `start` and ends in the paragraph
+  `item` at `to`, with its extent, the lines it has of the paragraph (for orphans and the
+  widows of the page that has the rest) and the rule that it breaks. `Kernel::realize` uses it for
+  a page whose end is not among the candidates, so a `Solution` with such pages is valid.
+- The page layout (`lines_between`, `lines_until`) breaks the part of the paragraph that is on a
+  page that ends at such a cut for that cut.
+
+What is missing is a solver that uses it: nothing proposes such a break yet, and the paragraphs
+are still rigid in the sense below, because the number of lines of a part that ends at a cut is
+whatever the breaker finds, and the kernel does not choose among the ways to break a part. The
+tests of the kernel use a layout service whose paragraphs can be broken anywhere
+(`Units`), and the tests of the engine give the layout a solver that ends every page one break
+before the page is full (`a_solution_with_pages_that_end_at_any_break_of_a_paragraph_is_laid_out`).
 
 Paragraphs come in two kinds:
 

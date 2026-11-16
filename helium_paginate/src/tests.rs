@@ -1282,3 +1282,148 @@ fn an_edge_that_cannot_be_taken_is_left_out() {
     );
     assert!(path.is_none(), "every way to the end has an edge of cost 1: {path:?}");
 }
+
+// A page that ends at any cut of a paragraph, not only where a line of the paragraph ends.
+
+/// A layout service with paragraphs that can be broken after any of their units, which are 10
+/// high. It breaks a paragraph into lines of three units, and a part of it that ends at a cut
+/// into lines of three units, too, and a shorter last line. A cut is the number of units in front
+/// of it.
+struct Units {
+    units: Vec<u32>,
+}
+
+impl Units {
+    fn chunk(from: u32, to: u32) -> Vec<ParLine> {
+        let mut lines = vec![];
+        let mut at = from;
+        while at < to {
+            let end = (at + 3).min(to);
+            lines.push(ParLine {
+                extent: 10.0 * f64::from(end - at),
+                end: Cut(end),
+            });
+            at = end;
+        }
+        lines
+    }
+}
+
+impl LayoutService for Units {
+    fn extent(&mut self, _node: NodeRef, _page_inline: f32) -> f64 {
+        unimplemented!("the flows of these tests have only paragraphs")
+    }
+
+    fn lines(&mut self, par: ParId, from: Option<Cut>, _page_inline: f32) -> std::rc::Rc<[ParLine]> {
+        Self::chunk(from.map_or(0, |cut| cut.0), self.units[par.0 as usize]).into()
+    }
+
+    fn lines_to(&mut self, par: ParId, from: Option<Cut>, to: Cut, _page_inline: f32) -> std::rc::Rc<[ParLine]> {
+        assert!(to.0 <= self.units[par.0 as usize]);
+        Self::chunk(from.map_or(0, |cut| cut.0), to.0).into()
+    }
+
+    fn content_extent(&mut self, _root: BoxRef, _inline: f32) -> f64 {
+        unimplemented!()
+    }
+
+    fn extent_in(&mut self, _root: BoxRef, _node: NodeRef, _inline: f32) -> f64 {
+        unimplemented!()
+    }
+
+    fn lines_in(&mut self, _root: BoxRef, par: ParId, from: Option<Cut>, inline: f32) -> std::rc::Rc<[ParLine]> {
+        self.lines(par, from, inline)
+    }
+}
+
+/// A page of 100 and one paragraph.
+fn one_paragraph(orphans: u32, widows: u32) -> Problem {
+    Problem::new(
+        page(100.0),
+        vec![Item::Paragraph {
+            id: ParId(0),
+            orphans,
+            widows,
+            avoid_inside: false,
+        }],
+    )
+}
+
+fn end_cut(kernel: &Kernel<'_>, fill: &PageFill) -> Cut {
+    match kernel.position(fill.end) {
+        Position::InParagraph { cut, .. } => cut,
+        other => panic!("the page ends in a paragraph, not at {other:?}"),
+    }
+}
+
+#[test]
+fn a_page_can_end_at_a_cut_that_no_line_of_the_paragraph_ends_at() {
+    // ten units: the lines of the paragraph are 3, 3, 3 and 1 units, and end at 3, 6 and 9
+    let problem = one_paragraph(1, 1);
+    let mut service = Units { units: vec![10] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let ends: Vec<Cut> = kernel
+        .candidates(&start)
+        .iter()
+        .filter(|fill| matches!(kernel.position(fill.end), Position::InParagraph { .. }))
+        .map(|fill| end_cut(&kernel, fill))
+        .collect();
+    assert_eq!(ends, [Cut(3), Cut(6), Cut(9)]);
+    // a page that ends after four units: two lines, of 3 and of 1 unit
+    let fill = kernel.fill_at(&start, 0, Cut(4)).expect("a page can end after four units");
+    assert_eq!(end_cut(&kernel, &fill), Cut(4));
+    assert_eq!(fill.used, 40.0);
+    assert!(!fill.orphan_violation && !fill.widow_violation && !fill.overflow);
+    // the next page continues there: lines of three units from the fourth on
+    let next = kernel.next_page(&start, &fill).expect("the paragraph goes on");
+    let rest = kernel.candidates(&next);
+    assert_eq!(rest.last().map(|fill| (fill.used, kernel.is_end(fill.end))), Some((60.0, true)));
+    // a solution with such a page is valid
+    let pages = kernel
+        .realize(&Solution { pages: vec![start, next] })
+        .expect("a page can end at any cut");
+    assert_eq!(pages.iter().map(|fill| fill.used).collect::<Vec<_>>(), [40.0, 60.0]);
+}
+
+#[test]
+fn the_lines_of_a_page_that_ends_at_any_cut_count_for_orphans_and_widows() {
+    // two lines are on the page that ends after four units, and one line of the paragraph is
+    // left for the page after it
+    let problem = one_paragraph(3, 1);
+    let mut service = Units { units: vec![10] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let fill = kernel.fill_at(&start, 0, Cut(4)).unwrap();
+    assert!(fill.orphan_violation, "two lines are fewer than the three that orphans asks for");
+    // the page after the cut has the lines of units 4 to 10, which are two lines: widows of three
+    // are broken there
+    let next = kernel.next_page(&start, &fill).unwrap();
+    let rest = kernel.candidates(&next);
+    assert!(rest.iter().all(|fill| !fill.widow_violation || kernel.is_end(fill.end)));
+    let problem = one_paragraph(1, 3);
+    let mut service = Units { units: vec![10] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let fill = kernel.fill_at(&start, 0, Cut(4)).unwrap();
+    let next = kernel.next_page(&start, &fill).unwrap();
+    let last = kernel.candidates(&next).pop().unwrap();
+    assert!(last.widow_violation, "two lines are left for the page after the cut: fewer than 3");
+}
+
+#[test]
+fn a_page_that_cannot_end_in_a_paragraph_is_not_listed() {
+    let problem = Problem::new(
+        page(100.0),
+        vec![
+            Item::Gap { node: NodeRef(0) },
+            Item::Paragraph { id: ParId(0), orphans: 1, widows: 1, avoid_inside: false },
+        ],
+    );
+    let mut service = Units { units: vec![10] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    // item 0 is not a paragraph, and there is no item 5
+    assert!(kernel.fill_at(&start, 0, Cut(4)).is_none());
+    assert!(kernel.fill_at(&start, 5, Cut(4)).is_none());
+}
