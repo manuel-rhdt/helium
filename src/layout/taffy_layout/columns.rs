@@ -60,8 +60,8 @@ pub(super) struct ColumnsNode {
 
 /// What the kernel asked the layout service about a fragment of a container with: where it starts
 /// in the container, the inline size of the page (the bits of the number) and the height that was
-/// available on the page (the bits of the number).
-pub(super) type FragmentKey = (Option<ContainerCut>, u32, u64);
+/// available on the page (the bits of the number), and where the fragment ends.
+pub(super) type FragmentKey = (Option<ContainerCut>, u32, u64, Option<ContainerCut>);
 
 /// The columns of a container for a width and a height.
 #[derive(Debug)]
@@ -76,6 +76,8 @@ pub(super) struct ColumnPlan {
     pub columns: Vec<Window>,
     /// For every column, the ways to break its paragraphs that are not the first, by paragraph.
     pub variants: Vec<HashMap<NodeId, usize>>,
+    /// The extent that the content of every column has (for the report of the pages).
+    pub used: Vec<f32>,
 }
 
 /// What the layout of one box in a column found out, which the layout of the next column
@@ -177,7 +179,7 @@ impl HeliumTree<'_, '_> {
     /// The number of columns, their width and the gap between them, for a container whose
     /// content box is `content_width` wide.
     /// https://www.w3.org/TR/css-multicol-1/#pseudo-algorithm
-    fn column_geometry(&self, id: NodeId, content_width: f32) -> (usize, f32, f32) {
+    pub(super) fn column_geometry(&self, id: NodeId, content_width: f32) -> (usize, f32, f32) {
         let style = self.computed_values.get(self.node(id).entity);
         let (count, width, gap) = style.map_or((None, None, 0.0), |style| {
             let gap = match style.box_.column_gap {
@@ -269,6 +271,10 @@ impl HeliumTree<'_, '_> {
         plan
     }
 
+    /// The height of a container with columns that is split over pages in a layout that is not of
+    /// a page (see `compute_columns_layout`).
+    const UNPLACED_HEIGHT: f32 = 0.01;
+
     /// Lays out a container with columns as a leaf: it is as wide as a block is, and as high as its
     /// columns.
     pub(super) fn compute_columns_layout(&mut self, id: NodeId, inputs: LayoutInput) -> taffy::LayoutOutput {
@@ -283,7 +289,10 @@ impl HeliumTree<'_, '_> {
             });
             let output = compute_leaf_layout(inputs, &style, calc, |_, available| Size {
                 width: available.width.into_option().unwrap_or(self.fallback_line_width).max(0.0),
-                height: plan.as_ref().map_or(0.0, |plan| plan.height),
+                // (the container has a height in a layout that is not of a page, too, though not its
+                // own: with none, its margins would collapse through it, and the gap between it
+                // and the box that follows it, which the paginator counts, would be lost)
+                height: plan.as_ref().map_or(Self::UNPLACED_HEIGHT, |plan| plan.height),
             });
             if inputs.run_mode == RunMode::PerformLayout {
                 if let Some(plan) = plan {
@@ -445,7 +454,7 @@ fn choose(
         end_container: None,
     };
     if inner.items.is_empty() {
-        return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![], variants: vec![] };
+        return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![], variants: vec![], used: vec![] };
     }
     // what the container is as high as: a column of the content on its own is as high as the
     // content, the columns of a container with a height are as high as it is
@@ -467,7 +476,7 @@ fn choose(
         let solution = balance(&mut kernel);
         let Ok(fills) = kernel.realize(&solution) else {
             log::warn!("the columns of a container cannot be chosen: its content is not split");
-            return ColumnPlan { width, gap, height: height.unwrap_or(content), columns: vec![whole()], variants: vec![] };
+            return ColumnPlan { width, gap, height: height.unwrap_or(content), columns: vec![whole()], variants: vec![], used: vec![] };
         };
         // Within the bound, nothing was found that keeps all the rules, and there is room for a
         // taller column: look again with a higher bound.
@@ -497,13 +506,17 @@ fn choose(
         columns.push(paginate::window(&inner.items, &inner.leaves, BreakLevel::Column, Some(id), start, end, gap_extent));
     }
     let tallest = used.iter().copied().fold(0.0, f32::max);
-    ColumnPlan { width, gap, height: height.unwrap_or(tallest), columns, variants }
+    ColumnPlan { width, gap, height: height.unwrap_or(tallest), columns, variants, used: used.clone() }
 }
 
 /// The fragment of a container that starts at `from` and has `available` height on a page that is
 /// `page_inline` wide, as the layout service answers the kernel about it: the columns, and what
 /// the fragment is as a whole. The plan is kept in the container by the arguments, for the layout
 /// of the page.
+///
+/// `available` is what the kernel asked about, and what the plan is kept for; `planned` is what the
+/// columns are chosen for, which is less than it for a fragment that ends earlier than the one that
+/// fills the page.
 ///
 /// `content_width` is the width of the content box of the container on that page, `top` the
 /// padding and the border that the fragment has at its top, and `bottom` the ones that it has at
@@ -518,6 +531,7 @@ pub(super) fn fragment_plan(
     available: f64,
     top: f32,
     bottom: f32,
+    planned: f64,
 ) -> (Rc<ColumnPlan>, helium_paginate::FragmentPlan) {
     let tree = &*service.tree;
     let (count, width, gap) = tree.column_geometry(id, content_width);
@@ -538,7 +552,7 @@ pub(super) fn fragment_plan(
     };
     let root = BoxRef(usize::from(id) as u32);
     let mut inside = InColumns { service, root };
-    let room = available as f32 - top;
+    let room = planned as f32 - top;
     let config = inside.service.tree.variants_config;
     let found = plan_fragment(&mut inside, &inner.items, count, width, from, room, bottom, fill, config);
     let service = inside.service;
@@ -551,8 +565,8 @@ pub(super) fn fragment_plan(
         columns.push(paginate::window(&inner.items, &inner.leaves, BreakLevel::Column, Some(id), start, end, gap_extent));
     }
     let variants = found.choices.iter().map(|choices| ways_of(&inner, choices)).collect();
-    let plan = Rc::new(ColumnPlan { width, gap, height: found.height, columns, variants });
-    let key = (from, page_inline.to_bits(), available.to_bits());
+    let plan = Rc::new(ColumnPlan { width, gap, height: found.height, columns, variants, used: found.used.clone() });
+    let key = (from, page_inline.to_bits(), available.to_bits(), found.end);
     if let Some(columns) = service.tree.node_mut(id).columns.as_mut() {
         columns.fragments.insert(key, plan.clone());
     }

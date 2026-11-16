@@ -151,6 +151,7 @@ impl TaffyBlockLayout {
             page_fragments: HashMap::new(),
             paragraph_variants: 0,
             variants_config: helium_paginate::Variants::default(),
+            earlier_fragments: 3,
             page_variants: HashMap::new(),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
@@ -183,6 +184,7 @@ impl TaffyBlockLayout {
         let problem = problem.with_variants(looseness, tuning.variant_tolerance);
         let objective = helium_paginate::CssObjective { line_tolerance: tuning.line_tolerance };
         tree.paragraph_variants = looseness;
+        tree.earlier_fragments = tuning.earlier_fragments;
         tree.variants_config = helium_paginate::Variants {
             extra: looseness,
             tolerance: tuning.variant_tolerance,
@@ -302,7 +304,7 @@ impl TaffyBlockLayout {
             tree.page_fragments = on_page
                 .iter()
                 .map(|fragment| {
-                    let key = (fragment.from, fragment.page_inline.to_bits(), fragment.available.to_bits());
+                    let key = (fragment.from, fragment.page_inline.to_bits(), fragment.available.to_bits(), fragment.end);
                     (NodeId::from(fragment.container.0 as usize), key)
                 })
                 .collect();
@@ -385,7 +387,23 @@ impl TaffyBlockLayout {
                 0,
             )?;
             if reporting {
-                pages_report.push(page_report(start, from, to, fill, on_page, choices, &objective, &flow, std::mem::take(&mut paragraphs_log), number + 1 == planned.len()));
+                let containers: Vec<serde_json::Value> = on_page
+                    .iter()
+                    .filter_map(|fragment| {
+                        let id = NodeId::from(fragment.container.0 as usize);
+                        let key = (fragment.from, fragment.page_inline.to_bits(), fragment.available.to_bits(), fragment.end);
+                        let plan = service.tree.node(id).columns.as_ref()?.fragments.get(&key)?.clone();
+                        Some(serde_json::json!({
+                            "container": usize::from(id),
+                            "starts_in_container": fragment.from.is_some(),
+                            "ends_in_container": fragment.end.is_some(),
+                            "available": fragment.available,
+                            "height": plan.height,
+                            "columns": plan.used,
+                        }))
+                    })
+                    .collect();
+                pages_report.push(page_report(start, from, to, fill, on_page, choices, &objective, &flow, std::mem::take(&mut paragraphs_log), containers, number + 1 == planned.len()));
             }
             page_contexts.push(context);
         }
@@ -1115,6 +1133,7 @@ fn page_report(
     objective: &helium_paginate::CssObjective,
     flow: &flow::Flow,
     paragraphs: Vec<serde_json::Value>,
+    containers: Vec<serde_json::Value>,
     last: bool,
 ) -> serde_json::Value {
     use helium_paginate::Objective;
@@ -1147,7 +1166,7 @@ fn page_report(
             .iter()
             .map(|choice| serde_json::json!({ "item": choice.item, "way": choice.variant }))
             .collect::<Vec<_>>(),
-        "containers": fragments.len(),
+        "containers": containers,
         "paragraphs": paragraphs,
         "items": flow.items.len(),
     })
@@ -1179,6 +1198,9 @@ pub fn take_pagination_report() -> Option<String> {
 struct Tuning {
     line_tolerance: f64,
     variant_tolerance: f64,
+    /// The fragments of a container that end earlier than the one that fills the page, which it
+    /// offers the pages besides it (`HELIUM_EARLIER_FRAGMENTS`, 3 by default; 0 gives only the one that fills it).
+    earlier_fragments: u32,
 }
 
 impl Tuning {
@@ -1199,6 +1221,10 @@ impl Tuning {
         Tuning {
             line_tolerance: number("HELIUM_LINE_TOLERANCE", helium_paginate::CssObjective::LINE_TOLERANCE),
             variant_tolerance: number("HELIUM_VARIANT_TOLERANCE", helium_paginate::Variants::TOLERANCE),
+            earlier_fragments: match std::env::var("HELIUM_EARLIER_FRAGMENTS").ok().and_then(|value| value.parse().ok()) {
+                Some(count) => count,
+                None => 3,
+            },
         }
     }
 }

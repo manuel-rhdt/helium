@@ -59,6 +59,8 @@ pub struct FragmentPlan {
     /// For every column, the ways to break its paragraphs that are not the first
     /// ([`Variants`]).
     pub choices: Vec<Vec<Choice>>,
+    /// The extent that the content of every column has.
+    pub used: Vec<f32>,
 }
 
 /// The columns that the content of a container has in the fragment that starts at `from`
@@ -92,6 +94,7 @@ pub fn plan_fragment(
             orphan_violation: false,
             widow_violation: false,
             choices: vec![],
+            used: vec![],
         };
     }
     let columns = columns.max(1);
@@ -217,6 +220,7 @@ pub fn plan_fragment(
         orphan_violation,
         widow_violation,
         choices,
+        used: fills.iter().map(|fill| fill.used).collect(),
     }
 }
 
@@ -232,5 +236,6 @@ fn whole(items: &[Item], start: Position, available: f32) -> FragmentPlan {
         orphan_violation: false,
         widow_violation: false,
         choices: vec![],
+        used: vec![],
     }
 }

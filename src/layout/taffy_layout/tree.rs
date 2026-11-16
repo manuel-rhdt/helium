@@ -154,6 +154,9 @@ pub(super) struct HeliumTree<'a, 'w> {
     pub paragraph_variants: u32,
     /// The ways to break paragraphs that the pages and the columns choose among.
     pub variants_config: helium_paginate::Variants,
+    /// How many fragments of a container that end earlier than the one that fills the page the
+    /// kernel is given (see `LayoutService::fragment`).
+    pub earlier_fragments: u32,
     pub page_variants: HashMap<NodeId, usize>,
 }
 

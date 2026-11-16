@@ -13,6 +13,7 @@ For each kind of document (and each seed) the document is rendered with `loosene
 set on the body, and the report gives, per kind and level, the mean of:
 
   pages      the number of pages
+  broken     the pages that break orphans or widows, or end where a break should be avoided
   cols       the height of the containers with columns, in lines (kind `columns`)
   room       the room left at the foot of the pages that are not the last, in lines
   loose      the lines that are broken worse than a badness of 100 (TeX's measure)
@@ -77,11 +78,22 @@ def columns(rng, size="800px 700px"):
         out.append("</div>")
     return "".join(out)
 
+def headings(rng):
+    # columns that go over pages, with headings that must not end a column
+    out = [head("@page { size: 800px 700px } .cols { margin: 0 0 20px; column-gap: 24px } h3 { margin: 0; font: bold 14px/20px serif; break-after: avoid }")]
+    for block in range(rng.randint(8, 14)):
+        out.append(f'<div class=cols style="column-count: {rng.choice([2, 2, 3])}">')
+        for _ in range(rng.randint(3, 7)):
+            out.append("<h3>" + " ".join(rng.choice(WORDS) for _ in range(rng.randint(1, 4))).capitalize() + "</h3>")
+            out += [paragraph(rng) for _ in range(rng.randint(1, 3))]
+        out.append("</div>")
+    return "".join(out)
+
 def balanced(rng):
     # one tall page: the containers are not split, and every one is balanced
     return columns(rng, "800px 30000px")
 
-KINDS = {"flow": flow, "chapters": chapters, "figures": figures, "columns": columns, "balanced": balanced}
+KINDS = {"flow": flow, "chapters": chapters, "figures": figures, "columns": columns, "balanced": balanced, "headings": headings}
 
 KNOBS = {}
 
@@ -90,7 +102,8 @@ def render(html, level, directory, name):
     path = os.path.join(directory, f"{name}_l{level}.html")
     with open(path, "w") as file:
         file.write(html)
-    process = subprocess.run([BIN, "--no-system-fonts", "--dump-layout", "-", path, path[:-5] + ".pdf"],
+    process = subprocess.run([BIN, "--no-system-fonts", "--dump-layout", "-", "--dump-pagination", path[:-5] + ".json",
+                              path, path[:-5] + ".pdf"],
                              capture_output=True, text=True, env={**os.environ, "RUST_LOG": "info", **KNOBS})
     if process.returncode:
         sys.exit(process.stderr)
@@ -116,11 +129,14 @@ def render(html, level, directory, name):
         for child in node.get("children", []):
             walk(child)
     walk(dump["document"])
+    # the pages that break a rule of orphans and widows or end where a break should be avoided
+    report = json.load(open(path[:-5] + ".json"))
+    broken = sum(1 for page in report["pages"] if page["orphan_violation"] or page["widow_violation"] or page["ends_with"] == "Avoid")
     pages = max(bottom) + 1 if bottom else 1
     room = sum(max(0.0, TOP + HEIGHT - bottom.get(page, TOP)) for page in range(pages - 1)) / LINE
     match = re.search(r"LINES: (\d+) lines, mean badness ([\d.]+), worst ([\d.]+), (\d+) over 100", process.stderr)
     lines, badness, _, loose = (float(x) for x in match.groups()) if match else (0, 0, 0, 0)
-    return {"pages": pages, "cols": cols, "room": room, "loose": loose, "badness": badness, "lines": lines}
+    return {"pages": pages, "broken": broken, "cols": cols, "room": room, "loose": loose, "badness": badness, "lines": lines}
 
 def report(title, results, levels, per_document=False):
     if per_document:
@@ -129,13 +145,13 @@ def report(title, results, levels, per_document=False):
                 f"L{level}: {result[level]['pages']}p cols {result[level]['cols']:.1f} room {result[level]['room']:.1f} lines {result[level]['lines']:.0f}"
                 for level in levels))
     print(f"\n{title} ({len(results)} documents)")
-    print(f"{'looseness':>9} {'pages':>8} {'cols':>8} {'room':>8} {'lines':>8} {'loose':>8} {'badness':>8} {'fewer pages':>12} {'more pages':>11}")
+    print(f"{'looseness':>9} {'pages':>8} {'broken':>7} {'cols':>8} {'room':>8} {'lines':>8} {'loose':>8} {'badness':>8} {'fewer pages':>12} {'more pages':>11}")
     for level in levels:
         rows = [result[level] for result in results]
         mean = lambda key: sum(row[key] for row in rows) / len(rows)
         fewer = sum(1 for result in results if result[level]["pages"] < result[levels[0]]["pages"])
         more = sum(1 for result in results if result[level]["pages"] > result[levels[0]]["pages"])
-        print(f"{level:>9} {mean('pages'):8.2f} {mean('cols'):8.2f} {mean('room'):8.2f} {mean('lines'):8.1f} {mean('loose'):8.1f} {mean('badness'):8.2f} {fewer:12} {more:11}")
+        print(f"{level:>9} {mean('pages'):8.2f} {mean('broken'):7.2f} {mean('cols'):8.2f} {mean('room'):8.2f} {mean('lines'):8.1f} {mean('loose'):8.1f} {mean('badness'):8.2f} {fewer:12} {more:11}")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -168,4 +184,5 @@ def main():
             results.append({level: render(html, level, directory, f"{kind}{seed}") for level in levels})
         report(kind, results, levels, args.per_document)
 
-main()
+if __name__ == "__main__":
+    main()

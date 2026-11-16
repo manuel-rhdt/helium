@@ -1391,6 +1391,44 @@ holds less text, so the container ends later; the pages are the same in number. 
 container is good depends on the page (a page that is left with room, an orphan), which the inner
 choice cannot know: the page has to choose among fragments (see "Multi-column layout").
 
+### Fragments of a container that end earlier
+
+`LayoutService::fragment` has always returned a list, and the kernel makes a page of every
+fragment in it (the `end` of a fragment is part of what the page records, `PageFragment`), but the
+tree service gave only the fragment that fills the page. It gives now that one and up to three
+that end earlier: the columns are chosen again for the room less one, two and three lines of the
+first paragraph (`HELIUM_EARLIER_FRAGMENTS`, 3 by default, 0 for the old behaviour), and the ones
+that end at a place that another has are left out. The plans are kept by where the fragment starts,
+the page, the room, and where it ends. The page takes a fragment that ends earlier where that
+costs less in total, which is where the room left on the pages is spread better.
+
+Measured over 30 documents of two kinds that go over pages (the kinds `headings`, with headings
+that must not end a column, and `columns`; the room is of the pages that do not end at a forced
+break nor are the last):
+
+| kind | pages | room in lines | sum of the cubes of the room | the most room on a page |
+| --- | --- | --- | --- | --- |
+| headings, only the fragment that fills the page | 386 | 74 | 212 | 4 |
+| headings, with the earlier ones | 386 | 63 | 81 | 2 |
+| columns, only the fragment that fills the page | 357 | 42 | 132 | 4 |
+| columns, with the earlier ones | 357 | 36 | 42 | 2 |
+
+No page broke a rule of orphans and widows or ended at an avoided break in either case, so the
+gain is in the room, and not in the rules: the inner choice already keeps the rules, and what it
+cannot do is leave room on the page for the next fragment to start better. The time that the
+fragments take has not been looked at yet: it is more than without them, and it grows with the
+size of a container.
+
+`tools/check_quality.py` renders the generated documents with and without them and checks the
+pages: the words are the same ones (none lost, none twice), every word is inside the content area of
+its page, the layout and the paginator agree on the height of the pages, and no page breaks
+orphans or widows or ends at an avoided break. All hold with and without the fragments, over 60
+documents. The check found a defect that was not caused by them: a container that is split over
+pages was laid out with no height where the extents of the document are taken, so its bottom margin
+collapsed through it, and the gap between two containers was not counted: a page with several
+of them had up to 20px of content below its bottom for each. Such a container has a height that is
+not zero there now.
+
 ### What the first measurements got wrong
 
 Two results of the first runs looked like bugs, and one was.
