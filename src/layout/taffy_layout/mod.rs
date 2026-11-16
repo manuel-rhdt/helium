@@ -1099,6 +1099,7 @@ impl<'a> Writer<'a, '_> {
             .collect();
 
         let mut y = content_offset.1;
+        let mut line_boxes: Vec<[f32; 4]> = vec![];
         for (index, (line_entity, height, advance)) in lines.into_iter().enumerate() {
             let (x0, w0) = if index == 0 {
                 (content_offset.0 + indent_offset, width - indent)
@@ -1112,9 +1113,15 @@ impl<'a> Writer<'a, '_> {
                 TextAlign::Justify => (x0, w0),
             };
             let (px, py, pw, ph) = frame.to_physical((x, y, w, height));
+            line_boxes.push([px, py, pw, ph]);
             self.set_position(line_entity, px, py, pw, ph, z);
             self.emit(BlockLevelElement::Leaf(line_entity));
             y += height;
+        }
+        // (where the lines are, for the report of the choices of the pages)
+        if let Some(entry) = self.paragraphs_log.as_mut().and_then(|log| log.last_mut()) {
+            entry["boxes"] = serde_json::json!(line_boxes);
+            entry["justified"] = serde_json::json!(matches!(align, TextAlign::Justify));
         }
         Ok(())
     }

@@ -1531,7 +1531,8 @@ fn ways_problem(block: f32, extra: u32) -> Problem {
             avoid_inside: false,
         }],
     )
-    .with_variants(extra, Variants::TOLERANCE)
+    // (the ways of the test service are made for a tolerance of 200: one has lines of badness 300)
+    .with_variants(extra, 200.0)
 }
 
 #[test]

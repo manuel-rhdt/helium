@@ -210,7 +210,7 @@ pub struct Variants {
 
 impl Variants {
     /// TeX's `\tolerance`.
-    pub const TOLERANCE: f64 = 200.0;
+    pub const TOLERANCE: f64 = 1000.0;
 }
 
 impl Default for Variants {

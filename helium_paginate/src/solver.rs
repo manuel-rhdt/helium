@@ -113,7 +113,7 @@ impl CssObjective {
     /// of a page have are taken as the room that a page would have to be short of, in lines of the
     /// page, where the square root of the demerits (which are squares, as the badness that
     /// they are made of is) is the badness, and a badness of the tolerance is a whole line.
-    pub const LINE_TOLERANCE: f64 = 200.0;
+    pub const LINE_TOLERANCE: f64 = 2000.0;
 
     /// The room on a page that costs as much as the lines of the page that are broken in other ways
     /// than the first (see [`Variants`](crate::Variants)): zero for a page that is not.
