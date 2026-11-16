@@ -1350,6 +1350,25 @@ above 1 give the same result as 1 in every run, which has not been explained: th
 (`Variants::TOLERANCE`) is the suspect. The exchange rate (`CssObjective::line_room`) is the
 value that decides how much of this is taken, and it is the one to tune with this harness.
 
+The two numbers can be changed without rebuilding (`HELIUM_LINE_TOLERANCE`, the exchange rate
+of lines and room, and `HELIUM_VARIANT_TOLERANCE`, the worst badness of a line of another
+breaking; both 200 by default), and the harness takes them as `--knob LINE_TOLERANCE=400`. A sweep
+with `looseness: 2` over 15 documents of each kind (room is in lines, as above):
+
+| knob | chapters: pages, room | figures: pages, room, lines worse than 100 |
+| --- | --- | --- |
+| none (`looseness` 0) | 59.00, 109.7 | 25.47, 21.4, 21.3 |
+| line 50 | 58.80, 86.9 | 25.33, 22.0, 21.5 |
+| line 200 | 58.80, 104.7 | 25.33, 16.7, 23.8 |
+| line 800 | 58.80, 107.2 | 25.33, 15.9, 24.8 |
+| variant 400 | 58.80, 105.2 | 25.33, 15.1, 26.6 |
+| variant 1000 | 58.73, 103.9 | 25.33, 14.5, 27.4 |
+
+In the figures a greater tolerance of either kind trades worse lines for less room, as it should.
+In the chapters the room moves the other way and not steadily (86.9 at line 50), which is not
+understood: the room that is counted there is mostly the last page of each chapter, and what
+decides it is not the price of lines.
+
 ## Open questions
 
 - **Taffy's cache.** Resolved by reading `taffy-0.15.1/src/tree/cache.rs` and the layout

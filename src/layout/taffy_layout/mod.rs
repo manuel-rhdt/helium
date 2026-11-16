@@ -178,7 +178,9 @@ impl TaffyBlockLayout {
             .map(|&paragraph| tree.computed_values.get(tree.node(paragraph).entity).map_or(0, |style| style.page.looseness as u32))
             .max()
             .unwrap_or(0);
-        let problem = problem.with_variants(looseness, helium_paginate::Variants::TOLERANCE);
+        let tuning = Tuning::from_environment();
+        let problem = problem.with_variants(looseness, tuning.variant_tolerance);
+        let objective = helium_paginate::CssObjective { line_tolerance: tuning.line_tolerance };
         tree.paragraph_variants = looseness;
         tree.icb_height = first_spec.block_size;
 
@@ -206,7 +208,7 @@ impl TaffyBlockLayout {
             #[cfg(not(test))]
             let custom: Option<helium_paginate::Solution> = None;
             let solution = custom
-                .unwrap_or_else(|| helium_paginate::ExactSolver::new(helium_paginate::CssObjective).solve(&mut kernel));
+                .unwrap_or_else(|| helium_paginate::ExactSolver::new(objective).solve(&mut kernel));
             let fills = kernel.realize(&solution).map_err(|error| format!("invalid pagination: {error:?}"))?;
             let end = helium_paginate::Position::Item(flow.items.len());
             for (page, fill) in fills.iter().enumerate() {
@@ -1006,6 +1008,39 @@ impl<'a> Writer<'a, '_> {
             y += height;
         }
         Ok(())
+    }
+}
+
+/// The numbers that decide how much a page gives up for better lines. They are the values of an
+/// experiment, and can be changed to try others (`tools/looseness_bench.py`): the environment
+/// variables `HELIUM_LINE_TOLERANCE` (the exchange rate of lines and room,
+/// [`helium_paginate::CssObjective::line_tolerance`]) and `HELIUM_VARIANT_TOLERANCE` (the worst
+/// badness of a line of another way to break a paragraph, [`helium_paginate::Variants`]).
+#[derive(Debug, Copy, Clone)]
+struct Tuning {
+    line_tolerance: f64,
+    variant_tolerance: f64,
+}
+
+impl Tuning {
+    fn from_environment() -> Self {
+        let number = |name: &str, default: f64| match std::env::var(name) {
+            Ok(value) => match value.parse::<f64>() {
+                Ok(number) if number > 0.0 && number.is_finite() => {
+                    log::info!("TUNING: {name} = {number}");
+                    number
+                }
+                _ => {
+                    log::warn!("{name} must be a positive number, not {value:?}");
+                    default
+                }
+            },
+            Err(_) => default,
+        };
+        Tuning {
+            line_tolerance: number("HELIUM_LINE_TOLERANCE", helium_paginate::CssObjective::LINE_TOLERANCE),
+            variant_tolerance: number("HELIUM_VARIANT_TOLERANCE", helium_paginate::Variants::TOLERANCE),
+        }
     }
 }
 

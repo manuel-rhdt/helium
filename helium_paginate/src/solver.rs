@@ -86,8 +86,21 @@ impl CssCost {
 
 /// The objective of CSS: pages are filled, and `avoid`, orphans and widows are respected as
 /// far as possible.
-#[derive(Debug, Copy, Clone, Default)]
-pub struct CssObjective;
+#[derive(Debug, Copy, Clone)]
+pub struct CssObjective {
+    /// The exchange rate between lines and room: the badness that is worth a whole line of room
+    /// (see [`CssObjective::LINE_TOLERANCE`]). A greater value makes the lines of a page cheaper
+    /// against its room, so that looser breakings are taken more readily.
+    pub line_tolerance: f64,
+}
+
+impl Default for CssObjective {
+    fn default() -> Self {
+        CssObjective {
+            line_tolerance: Self::LINE_TOLERANCE,
+        }
+    }
+}
 
 impl CssObjective {
     /// How bad a line has to be for a page that is one line short to cost as much as the page
@@ -104,11 +117,11 @@ impl CssObjective {
 
     /// The room on a page that costs as much as the lines of the page that are broken in other ways
     /// than the first (see [`Variants`](crate::Variants)): zero for a page that is not.
-    pub fn line_room(fill: &PageFill) -> f64 {
+    pub fn line_room(&self, fill: &PageFill) -> f64 {
         if fill.line_demerits <= 0.0 || fill.line_extent <= 0.0 {
             return 0.0;
         }
-        f64::from(fill.line_extent) * fill.line_demerits.sqrt() / Self::LINE_TOLERANCE
+        f64::from(fill.line_extent) * fill.line_demerits.sqrt() / self.line_tolerance
     }
 }
 
@@ -135,7 +148,7 @@ impl Objective for CssObjective {
         } else {
             CssCost::slack_of(fill.spec.block_size as f64 - fill.used as f64)
         };
-        let slack = empty_room + CssCost::slack_of(Self::line_room(fill));
+        let slack = empty_room + CssCost::slack_of(self.line_room(fill));
         Some(CssCost {
             overflows: 0,
             avoided_breaks: u32::from(fill.end_kind == crate::BreakKind::Avoid),

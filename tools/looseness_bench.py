@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Measures what `looseness` does to the pages of generated documents.
 
-    python3 tools/looseness_bench.py [--seeds N] [--levels 0,1,2] [--keep DIR] [FILE.html ...]
+    python3 tools/looseness_bench.py [--seeds N] [--levels 0,1,2] [--keep DIR]
+                                     [--knob NAME=VALUE ...] [--kinds a,b] [FILE.html ...]
+
+The knobs are the environment variables of the engine (`Tuning` in
+`src/layout/taffy_layout/mod.rs`): HELIUM_LINE_TOLERANCE (the exchange rate of lines and room;
+default 200, greater takes looser lines more readily) and HELIUM_VARIANT_TOLERANCE (the worst
+badness of a line of another breaking; default 200). `--knob LINE_TOLERANCE=400` sets the first.
 
 For each kind of document (and each seed) the document is rendered with `looseness` 0, 1, 2, ...
 set on the body, and the report gives, per kind and level, the mean of:
@@ -64,13 +70,15 @@ def figures(rng):
 
 KINDS = {"flow": flow, "chapters": chapters, "figures": figures}
 
+KNOBS = {}
+
 def render(html, level, directory, name):
     html = re.sub(r"</style>", f"body {{ looseness: {level} }}</style>", html, count=1)
     path = os.path.join(directory, f"{name}_l{level}.html")
     with open(path, "w") as file:
         file.write(html)
     process = subprocess.run([BIN, "--no-system-fonts", "--dump-layout", "-", path, path[:-5] + ".pdf"],
-                             capture_output=True, text=True, env={**os.environ, "RUST_LOG": "info"})
+                             capture_output=True, text=True, env={**os.environ, "RUST_LOG": "info", **KNOBS})
     if process.returncode:
         sys.exit(process.stderr)
     dump = json.loads(process.stdout)
@@ -104,9 +112,14 @@ def main():
     parser.add_argument("--seeds", type=int, default=10)
     parser.add_argument("--levels", default="0,1,2")
     parser.add_argument("--keep")
+    parser.add_argument("--knob", action="append", default=[], help="NAME=VALUE, as LINE_TOLERANCE=400")
+    parser.add_argument("--kinds", default=",".join(KINDS))
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
     levels = [int(level) for level in args.levels.split(",")]
+    for knob in args.knob:
+        name, _, value = knob.partition("=")
+        KNOBS["HELIUM_" + name.removeprefix("HELIUM_")] = value
     directory = args.keep or tempfile.mkdtemp(prefix="looseness_")
     os.makedirs(directory, exist_ok=True)
     if args.files:
@@ -116,7 +129,8 @@ def main():
             results.append({level: render(html, level, directory, os.path.basename(file)[:-5]) for level in levels})
         report("files", results, levels)
         return
-    for kind, make in KINDS.items():
+    for kind in args.kinds.split(","):
+        make = KINDS[kind]
         results = []
         for seed in range(args.seeds):
             html = make(random.Random(f"{kind}{seed}"))

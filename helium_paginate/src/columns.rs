@@ -102,7 +102,7 @@ pub fn plan_fragment(
             .starting_at(start)
             .as_fragment();
         let mut kernel = Kernel::new(&problem, service);
-        let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+        let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
         let fills = kernel.realize(&solution).ok()?;
         let places: Vec<(Position, Position)> = solution
             .pages

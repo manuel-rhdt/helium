@@ -205,7 +205,7 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         line_extent: 0.0,
         choices: ChoiceId::NONE,
     };
-    let css = CssObjective;
+    let css = CssObjective::default();
     // 10 px are left on the page
     let slack = CssCost {
         pages: 1,
@@ -289,7 +289,7 @@ fn a_cost_is_compared_by_its_fields_in_the_order_of_their_priority() {
 fn solve(flow: GalleyFlow, block_size: f32) -> (Vec<Position>, Vec<PageFill>) {
     let (problem, mut service) = flow.finish(page(block_size));
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let pages = kernel
         .realize(&solution)
         .expect("the solution of the exact solver is valid");
@@ -626,7 +626,7 @@ fn the_exact_solver_chooses_what_the_least_weight_subsequence_chose() {
         })
         .left_right_differ(false);
         let mut kernel = Kernel::new(&problem, &mut service);
-        let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+        let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
         let chosen: Vec<usize> = solution
             .pages
             .iter()
@@ -660,7 +660,7 @@ fn a_break_to_a_right_page_leaves_a_left_page_empty() {
         .content(10.0);
     let (problem, mut service) = flow.finish(page(100.0));
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let numbers: Vec<_> = solution.pages.iter().map(|start| start.index).collect();
     // the first page is a right page, the second is left and empty, the third is right and
     // has the content; the next page is left; the fifth is right, so the sixth is the one
@@ -688,7 +688,7 @@ fn the_pages_of_a_right_to_left_document_start_on_the_left() {
     let (mut problem, mut service) = flow.finish(page(100.0));
     problem.pages.rtl = true;
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     // the first page is a left page, so the second is a right page, and the third a left page
     let numbers: Vec<_> = solution.pages.iter().map(|start| start.index).collect();
     assert_eq!(numbers, [0, 2]);
@@ -708,7 +708,7 @@ fn the_geometry_of_a_page_follows_its_kind() {
     flow.content(40.0);
     let (problem, mut service) = flow.finish(table);
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let pages = kernel.realize(&solution).unwrap();
     let kinds: Vec<_> = pages.iter().map(|fill| fill.kind).collect();
     assert_eq!(
@@ -775,7 +775,7 @@ fn a_paragraph_is_cut_for_the_width_of_each_page() {
     let problem = Problem::new(table, items);
     let mut service = Characters;
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let cuts: Vec<_> = solution
         .pages
         .iter()
@@ -976,7 +976,7 @@ fn the_exact_solver_minimises_what_the_objective_combines() {
     let pages = kernel.realize(&solution).unwrap();
     assert_eq!(used(&pages), [60.0, 60.0]);
     // with the sum, which is what pages are made of, the fullest pages win
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let pages = kernel.realize(&solution).unwrap();
     assert_eq!(used(&pages), [90.0, 30.0]);
 }
@@ -1121,7 +1121,7 @@ fn the_fragments_that_a_page_has_are_listed_for_its_layout() {
     flow.container(items(8), 2, ColumnFill::Auto, (0.0, 0.0));
     let (problem, mut service) = flow.finish(page(100.0));
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let pages = kernel.realize(&solution).unwrap();
     let first = kernel.fragments(&solution.pages[0], pages[0].end);
     assert_eq!(first.len(), 1);
@@ -1160,7 +1160,7 @@ fn the_lines_that_the_next_fragment_starts_with_are_counted_against_the_widows()
     flow.container(inner, 2, ColumnFill::Balance, (0.0, 0.0));
     let (problem, mut service) = flow.finish(page(300.0));
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let fills = kernel.realize(&solution).unwrap();
     assert_eq!(used(&fills), [300.0, 20.0]);
     assert!(fills.iter().all(|fill| !fill.widow_violation && !fill.orphan_violation));
@@ -1179,7 +1179,7 @@ fn a_problem_can_start_in_the_middle_of_its_items() {
     let first = kernel.first_page();
     assert_eq!(kernel.position(first.at), Position::Item(2));
     assert_eq!(used(&kernel.candidates(&first)), [20.0, 50.0]);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     assert_eq!(solution.pages, [first]);
     assert_eq!(used(&kernel.realize(&solution).unwrap()), [50.0]);
 }
@@ -1197,7 +1197,7 @@ fn the_pages_of_a_fragment_end_where_the_last_of_them_does() {
     let (problem, mut service) = inner.finish(page(40.0));
     let problem = problem.with_level(BreakLevel::Column).with_page_limit(2).as_fragment();
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     // two pages, and the place where the fragment ends
     let (pages, end) = solution.fragment_end().unwrap();
     assert_eq!(pages.len(), 2);
@@ -1612,7 +1612,7 @@ fn the_exact_solver_takes_a_way_to_break_a_paragraph_that_fits_a_page() {
         let problem = ways_problem(70.0, extra);
         let mut service = Ways { units: vec![12] };
         let mut kernel = Kernel::new(&problem, &mut service);
-        let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+        let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
         assert_eq!(solution.pages.len(), pages, "extra {extra}");
         let fills = kernel.realize(&solution).expect("the solution is valid");
         assert_eq!(fills.len(), pages);
@@ -1630,7 +1630,7 @@ fn a_solution_names_the_ways_that_it_breaks_its_paragraphs() {
     let problem = ways_problem(70.0, 1);
     let mut service = Ways { units: vec![12] };
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     assert!(kernel.realize(&solution).is_ok());
     // another way for the page is a page too: the first way does not fit it, though
     let wrong = Solution {
