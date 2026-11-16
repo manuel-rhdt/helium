@@ -83,13 +83,14 @@ fn item_alignment(value: ItemAlignment) -> taffy::AlignItems {
 }
 
 /// `auto` is `None`: the item takes the `align-items`/`justify-items` of its container.
-fn self_alignment(value: SelfAlignment) -> Option<taffy::AlignSelf> {
+pub(super) fn self_alignment(value: SelfAlignment) -> Option<taffy::AlignSelf> {
     Some(match value {
         SelfAlignment::Auto => return None,
         SelfAlignment::Normal => taffy::AlignItems::NORMAL,
         SelfAlignment::Stretch => taffy::AlignItems::STRETCH,
-        SelfAlignment::Start => taffy::AlignItems::START,
-        SelfAlignment::End => taffy::AlignItems::END,
+        // `resolve_self_alignment` turns these into one of the others for the container
+        SelfAlignment::Start | SelfAlignment::SelfStart | SelfAlignment::Left => taffy::AlignItems::START,
+        SelfAlignment::End | SelfAlignment::SelfEnd | SelfAlignment::Right => taffy::AlignItems::END,
         SelfAlignment::FlexStart => taffy::AlignItems::FLEX_START,
         SelfAlignment::FlexEnd => taffy::AlignItems::FLEX_END,
         SelfAlignment::Center => taffy::AlignItems::CENTER,
@@ -203,13 +204,9 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
     }
     // Tables are always laid out as `box-sizing: border-box` (their `width` includes the border
     // and padding). Everything else follows the `box-sizing` property.
-    let box_sizing = if is_table {
-        TBoxSizing::BorderBox
-    } else {
-        match box_.box_sizing {
-            BoxSizing::ContentBox => TBoxSizing::ContentBox,
-            BoxSizing::BorderBox => TBoxSizing::BorderBox,
-        }
+    let box_sizing = match box_.box_sizing {
+        BoxSizing::ContentBox => TBoxSizing::ContentBox,
+        BoxSizing::BorderBox => TBoxSizing::BorderBox,
     };
     taffy::Style {
         display,
@@ -232,7 +229,11 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
         justify_items: item_alignment(box_.justify_items),
         align_items: item_alignment(box_.align_items),
         justify_self: self_alignment(box_.justify_self),
-        align_self: self_alignment(box_.align_self),
+        // `left` and `right` are not valid for `align-self`: it is as if it was not set
+        align_self: self_alignment(match box_.align_self {
+            SelfAlignment::Left | SelfAlignment::Right => SelfAlignment::Auto,
+            value => value,
+        }),
         gap,
         // a table is as wide as its contents in block layout instead of filling its container
         item_is_table: is_table,

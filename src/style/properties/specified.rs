@@ -667,6 +667,9 @@ pub enum Background {
     /// https://www.w3.org/TR/compositing-1/#background-blend-mode
     #[property]
     BackgroundBlendMode(CommaSeparated<BlendMode>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-clip
+    #[property]
+    BackgroundClip(CommaSeparated<BackgroundBox>),
     /// https://www.w3.org/TR/css-backgrounds-3/#background-size
     #[property]
     BackgroundSize(CommaSeparated<super::background::SpecifiedSize>),
@@ -682,6 +685,7 @@ pub enum Background {
     #[shorthand("background-color", method = "color")]
     #[shorthand("background-image", method = "images")]
     #[shorthand("background-blend-mode", method = "blend_modes")]
+    #[shorthand("background-clip", method = "clips")]
     #[shorthand("background-size", method = "sizes")]
     #[shorthand("background-position", method = "positions")]
     #[shorthand("background-repeat", method = "repeats")]
@@ -737,6 +741,16 @@ pub enum Math {
     MathDepth(MathDepth),
     #[property]
     MathShift(MathShift),
+}
+
+/// The box that the background is painted into (`background-clip`).
+/// https://www.w3.org/TR/css-backgrounds-3/#typedef-bg-clip
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum BackgroundBox {
+    #[default]
+    BorderBox,
+    PaddingBox,
+    ContentBox,
 }
 
 /// https://www.w3.org/TR/compositing-1/#ltblendmodegt
@@ -913,6 +927,12 @@ pub enum SelfAlignment {
     Stretch,
     Start,
     End,
+    /// The start and end of the box itself, which can be another side than the container's.
+    SelfStart,
+    SelfEnd,
+    /// Physical sides (`justify-self` only).
+    Left,
+    Right,
     FlexStart,
     FlexEnd,
     Center,
@@ -1302,6 +1322,19 @@ pub enum Unit {
     Em,
     /// The font size of the root element.
     Rem,
+    /// The x-height of the font.
+    Ex,
+    /// The advance of the glyph `0` of the font.
+    Ch,
+    /// 1% of the width and of the height of the page area, and of the smaller and the larger of
+    /// the two.
+    Vw,
+    Vh,
+    /// The page area in the inline and in the block axis.
+    Vi,
+    Vb,
+    Vmin,
+    Vmax,
     In,
 }
 
@@ -1322,6 +1355,14 @@ impl FromStr for Unit {
             "pc" => Ok(Unit::Pc),
             "em" => Ok(Unit::Em),
             "rem" => Ok(Unit::Rem),
+            "ex" => Ok(Unit::Ex),
+            "ch" => Ok(Unit::Ch),
+            "vw" | "svw" | "lvw" | "dvw" => Ok(Unit::Vw),
+            "vh" | "svh" | "lvh" | "dvh" => Ok(Unit::Vh),
+            "vi" | "svi" | "lvi" | "dvi" => Ok(Unit::Vi),
+            "vb" | "svb" | "lvb" | "dvb" => Ok(Unit::Vb),
+            "vmin" | "svmin" | "lvmin" | "dvmin" => Ok(Unit::Vmin),
+            "vmax" | "svmax" | "lvmax" | "dvmax" => Ok(Unit::Vmax),
             "mm" => Ok(Unit::Mm),
             "in" => Ok(Unit::In),
             _ => Err(()),
@@ -1574,7 +1615,7 @@ impl ComputedValue<BorderWidth> for super::computed::PixelLength {
             BorderWidth::Medium => PixelLength(3.0),
             BorderWidth::Thick => PixelLength(5.0),
             &BorderWidth::Quantity(Quantity { value, unit }) => {
-                PixelLength::from_val_unit(value, unit, (&*style.font).into())
+                PixelLength::from_val_unit(value, unit, super::computed::FontSizes::of(style))
             }
         }
     }
@@ -1596,7 +1637,7 @@ impl ComputedValue<FontSize> for super::computed::PixelLength {
     fn from_specified(font_size: &FontSize, style: &super::computed::ComputedValues) -> Self {
         match *font_size {
             FontSize::Quantity(Quantity { value, unit }) => {
-                PixelLength::from_val_unit(value, unit, (&*style.font).into())
+                PixelLength::from_val_unit(value, unit, super::computed::FontSizes::of(style))
             }
             FontSize::Percentage(percentage) => percentage.0 * style.font.font_size,
             FontSize::Smaller => 0.8 * style.font.font_size,

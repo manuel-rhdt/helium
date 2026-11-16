@@ -227,6 +227,9 @@ impl RelativeOffset {
 pub struct CanvasSize {
     pub width: f32,
     pub height: f32,
+    /// Whether the box has no ratio of its own (an `<iframe>`): a side that is `auto` is the
+    /// natural size, not what the ratio gives.
+    pub ratioless: bool,
 }
 
 impl Component for CanvasSize {

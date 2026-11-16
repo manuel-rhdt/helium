@@ -1005,3 +1005,30 @@ mod tests {
 pub(super) fn bundled_font_data() -> Vec<Vec<u8>> {
     BUNDLED_FONTS.iter().map(|font| font.data().to_vec()).collect()
 }
+
+/// The x-height and the advance of `0` (`ex` and `ch`) of the font that `font` selects, at its
+/// font size. A font without them has half of the font size for both.
+pub(crate) fn unit_metrics(font: &crate::style::properties::computed::Font) -> (PixelLength, PixelLength) {
+    use std::cell::RefCell;
+    thread_local! {
+        static CACHE: RefCell<HashMap<String, (f32, f32)>> = RefCell::new(HashMap::new());
+    }
+    let key = format!("{:?}|{:?}|{:?}", font.font_family, font.font_style, font.font_weight);
+    let (ex, ch) = CACHE.with(|cache| {
+        *cache.borrow_mut().entry(key).or_insert_with(|| {
+            let mut style = ComputedValues::default();
+            let face = Arc::make_mut(&mut style.font);
+            face.font_family = font.font_family.clone();
+            face.font_style = font.font_style.clone();
+            face.font_weight = font.font_weight.clone();
+            let matched = match_font(&style);
+            let one = PixelLength(1.0);
+            let ch = matched
+                .hb_font
+                .get_nominal_glyph('0')
+                .map_or(0.5, |glyph| matched.scale_to_px(matched.advance(GlyphIndex(glyph)), one).0);
+            (matched.x_height_px(one).0, ch)
+        })
+    });
+    (PixelLength(ex * font.font_size.0), PixelLength(ch * font.font_size.0))
+}

@@ -22,6 +22,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 ## HTML
 
 - **Parsing:** HTML5 (`html5ever`), `lang` and `dir`, `<title>`.
+- **Presentational attributes:** `width` and `height` of `img` and `iframe` (pixels and percentages), `cellspacing` and `cellpadding` of tables.
 - **Default styles** for the usual elements: sectioning and headings, `p`, `div`, `pre`,
   `blockquote`, `hr`, `ul`/`ol`/`li`/`dl`, `table` with `caption`/`thead`/`tbody`/`tfoot`/`tr`/`td`/`th`/`col`/`colgroup`,
   `a`, inline phrasing elements (`em`, `strong`, `code`, `sub`, `sup`, `q`, `mark`, ...), `figure`,
@@ -110,10 +111,10 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   does not change the layout, does not apply to non-replaced inline boxes, and a box that is
   split over pages is transformed on its first page only.
 - **Backgrounds:** `background` and `background-color`, `-image` (linear, radial and conic
-  gradients, also repeating), `-size`, `-position`, `-repeat`, `-blend-mode`.
+  gradients, also repeating), `-size`, `-position`, `-repeat`, `-blend-mode`, `-clip` (`border-box`, `padding-box` and `content-box`; boxes with rounded corners are always clipped to the border box).
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color()`. The alpha channel is parsed but not painted.
-- **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `%`.
+- **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
 - **Cascade:** selectors (`selectors` crate), `inherit`, `initial`, `unset`.
 - **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors, named
   pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
@@ -173,5 +174,5 @@ Other image formats (GIF, WebP, ...), `url()` backgrounds,
 `@supports`, `@import`, `var()`, `calc()`, `overflow`, `float`, `position:
 fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
 `outline`, `word-break`/`overflow-wrap`,
-`counter-*` and `::before`/`::after`, `vw`/`vh`, `ex`/`ch` and other units, scripting, and form
+`counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form
 interaction.

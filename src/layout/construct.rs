@@ -227,6 +227,12 @@ impl FlowConstructor {
                         cascade.extend(rule.properties.normal_declarations());
                     }
                 }
+                // the `width` and `height` attributes of an image are presentational hints: they
+                // rank below all the rules of the author
+                let size_hint = image_size_hint(element_ref).or_else(|| table_hint(node, element_ref));
+                if let Some(block) = &size_hint {
+                    cascade.extend(block.normal_declarations());
+                }
                 for (user_agent, _, rule) in &matched_rules {
                     if !*user_agent {
                         cascade.extend(rule.properties.normal_declarations());
@@ -1010,10 +1016,10 @@ impl EntityConstructor {
                     .then(|| table_cell_span(element_data))
                     .flatten();
                 let svg = self.pending_svg.take();
-                // a `<canvas>` is a replaced box of 300 by 150 pixels, or the size of its
+                // a `<canvas>` (and an `<iframe>`, whose document is not loaded) is a replaced box of 300 by 150 pixels, or the size of its
                 // attributes, with nothing drawn in it (scripts do not run)
-                let canvas = (element_data.name
-                    == QualName::new(None, ns!(html), local_name!("canvas")))
+                let canvas = (element_data.name == QualName::new(None, ns!(html), local_name!("canvas"))
+                    || element_data.name == QualName::new(None, ns!(html), local_name!("iframe")))
                 .then(|| {
                     let dimension = |name, default: f32| {
                         element_data
@@ -1065,9 +1071,10 @@ impl EntityConstructor {
                         .unwrap();
                 }
                 if let Some((width, height)) = canvas {
+                    let ratioless = element_data.name == QualName::new(None, ns!(html), local_name!("iframe"));
                     self.world
                         .write_storage::<components::CanvasSize>()
-                        .insert(entity.0, components::CanvasSize { width, height })
+                        .insert(entity.0, components::CanvasSize { width, height, ratioless })
                         .unwrap();
                 }
                 if let Some(span) = span {
@@ -1946,4 +1953,66 @@ impl<'a> InlineShifts<'a> {
             }
         }
     }
+}
+
+/// The presentational hint of the `width` and `height` attributes of an `<img>` or `<iframe>`: a number of
+/// pixels or a percentage (HTML 2.4.4.4 "rules for parsing dimension values": what follows the
+/// number, apart from a `%`, is ignored).
+fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
+    if element.name.local != local_name!("img") && element.name.local != local_name!("iframe") {
+        return None;
+    }
+    let attributes = element.attributes.borrow();
+    let mut css = String::new();
+    let mut has_percentage = false;
+    for name in [local_name!("width"), local_name!("height")] {
+        let Some(attribute) = attributes.get(&QualName::new(None, ns!(), name.clone())) else {
+            continue;
+        };
+        let value = attribute.value.trim_start();
+        let end = value
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(value.len());
+        let Ok(number) = value[..end].parse::<f32>() else {
+            continue;
+        };
+        if !number.is_finite() {
+            continue;
+        }
+        let unit = if value[end..].starts_with('%') { "%" } else { "px" };
+        has_percentage |= unit == "%";
+        css.push_str(&format!("{}: {}{};", &*name, number, unit));
+    }
+    // pixels are the size of the image box itself (see `image_of`)
+    has_percentage.then(|| PropertyDeclarationBlock::parse_inline(&css))
+}
+
+/// The presentational hints of the `cellspacing` attribute of a `<table>` (`border-spacing`) and
+/// of its `cellpadding` attribute, which is the `padding` of the cells of the table.
+fn table_hint(node: &DomRef, element: &ElementData) -> Option<PropertyDeclarationBlock> {
+    let number = |element: &ElementData, name| -> Option<u32> {
+        let attributes = element.attributes.borrow();
+        let value = attributes.get(&QualName::new(None, ns!(), name))?.value.to_string();
+        let value = value.trim_start();
+        let end = value.find(|c: char| !c.is_ascii_digit()).unwrap_or(value.len());
+        value[..end].parse().ok()
+    };
+    let local = &element.name.local;
+    if *local == local_name!("table") {
+        let spacing = number(element, local_name!("cellspacing"))?;
+        return Some(PropertyDeclarationBlock::parse_inline(&format!("border-spacing: {}px", spacing)));
+    }
+    if *local == local_name!("td") || *local == local_name!("th") {
+        let mut ancestor = node.parent();
+        while let Some(parent) = ancestor {
+            if let Some(parent_element) = parent.clone().into_element_ref() {
+                if parent_element.name.local == local_name!("table") {
+                    let padding = number(&parent_element, local_name!("cellpadding"))?;
+                    return Some(PropertyDeclarationBlock::parse_inline(&format!("padding: {}px", padding)));
+                }
+            }
+            ancestor = parent.parent();
+        }
+    }
+    None
 }

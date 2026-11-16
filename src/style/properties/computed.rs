@@ -52,11 +52,39 @@ pub type CssFloat = f32;
 pub struct FontSizes {
     pub font: PixelLength,
     pub root: PixelLength,
+    /// The x-height and the advance of `0` of the font (`ex` and `ch`).
+    pub ex: PixelLength,
+    pub ch: PixelLength,
+    /// The page area, for `vw`, `vh`, `vmin` and `vmax`.
+    pub viewport: (PixelLength, PixelLength),
+    /// Whether the lines of the element run vertically (`vi` is the height, `vb` the width).
+    pub vertical: bool,
+}
+
+impl FontSizes {
+    /// The sizes that lengths in the style of an element are relative to.
+    pub fn of(style: &ComputedValues) -> Self {
+        FontSizes {
+            vertical: style.text.writing_mode != specified::WritingMode::HorizontalTb,
+            ..FontSizes::from(&*style.font)
+        }
+    }
+}
+
+thread_local! {
+    static VIEWPORT: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((793.7, 1123.0)) };
+}
+
+/// Sets the size of the page area that `vw`, `vh`, `vmin` and `vmax` are relative to.
+pub fn set_viewport(width: f32, height: f32) {
+    VIEWPORT.with(|viewport| viewport.set((width.max(0.0), height.max(0.0))));
 }
 
 impl From<&Font> for FontSizes {
     fn from(font: &Font) -> Self {
-        FontSizes { font: font.font_size, root: font.root_font_size }
+        let (ex, ch) = crate::layout::text::font::unit_metrics(font);
+        let (vw, vh) = VIEWPORT.with(|viewport| viewport.get());
+        FontSizes { font: font.font_size, root: font.root_font_size, ex, ch, viewport: (PixelLength(vw), PixelLength(vh)), vertical: false }
     }
 }
 
@@ -93,6 +121,16 @@ impl PixelLength {
             Unit::Pc => Self::from_val_unit(val * 12.0, Unit::Pt, sizes),
             Unit::Em => val * sizes.font,
             Unit::Rem => val * sizes.root,
+            Unit::Ex => val * sizes.ex,
+            Unit::Ch => val * sizes.ch,
+            Unit::Vw => val * sizes.viewport.0 * 0.01,
+            Unit::Vh => val * sizes.viewport.1 * 0.01,
+            Unit::Vi if sizes.vertical => Self::from_val_unit(val, Unit::Vh, sizes),
+            Unit::Vi => Self::from_val_unit(val, Unit::Vw, sizes),
+            Unit::Vb if sizes.vertical => Self::from_val_unit(val, Unit::Vw, sizes),
+            Unit::Vb => Self::from_val_unit(val, Unit::Vh, sizes),
+            Unit::Vmin => val * sizes.viewport.0.min(sizes.viewport.1) * 0.01,
+            Unit::Vmax => val * sizes.viewport.0.max(sizes.viewport.1) * 0.01,
             Unit::Mm => Self::from_val_unit(0.1 * val, Unit::Cm, sizes),
             Unit::In => Self::from_val_unit(val * 72.0, Unit::Pt, sizes),
         }
@@ -234,7 +272,7 @@ impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage 
                 LengthPercentage::PixelLength(PixelLength::from_val_unit(
                     *value,
                     *unit,
-                    (&*style.font).into(),
+                    FontSizes::of(style),
                 ))
             }
             QuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
@@ -285,7 +323,7 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
                 value,
                 unit,
             }) => GenericSize::LengthPercentage(LengthPercentage::PixelLength(
-                PixelLength::from_val_unit(*value, *unit, (&*style.font).into()),
+                PixelLength::from_val_unit(*value, *unit, FontSizes::of(style)),
             )),
         }
     }
@@ -305,7 +343,7 @@ impl super::ComputedValue<specified::NoneOrQuantityOrPercentage> for GenericSize
                 value,
                 unit,
             }) => GenericSize::LengthPercentage(LengthPercentage::PixelLength(
-                PixelLength::from_val_unit(*value, *unit, (&*style.font).into()),
+                PixelLength::from_val_unit(*value, *unit, FontSizes::of(style)),
             )),
         }
     }
@@ -643,6 +681,15 @@ impl StyleBuilder {
                 math_depth: MathDepth::Absolute(inherited_values.math.depth()),
                 ..Default::default()
             }),
+            // the initial border width is `medium`, which only counts where there is a border
+            // style (see `Position::fixup`); boxes that are not made from elements have none
+            position: Arc::new(Position {
+                border_top_width: PixelLength(3.0),
+                border_bottom_width: PixelLength(3.0),
+                border_left_width: PixelLength(3.0),
+                border_right_width: PixelLength(3.0),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         StyleBuilder {
@@ -721,6 +768,10 @@ impl StyleBuilder {
         // the font size that the declarations set, as if there were no other
         let mut probe = StyleBuilder::new(self.parent.clone());
         probe.is_root = self.is_root;
+        // (`vi` and `vb` in it depend on the writing mode of the element)
+        for decl in declarations.clone().filter(|decl| sets_flow(decl)) {
+            probe.add_declaration(decl);
+        }
         for decl in declarations.clone().filter(|decl| sets_font_size(decl)) {
             probe.add_declaration(decl);
         }
@@ -1031,7 +1082,7 @@ impl ComputedValue<specified::NormalOrQuantity> for PixelLength {
         match spec {
             specified::NormalOrQuantity::Normal => PixelLength(0.0),
             specified::NormalOrQuantity::Quantity(q) => {
-                PixelLength::from_val_unit(q.value, q.unit, (&*style.font).into())
+                PixelLength::from_val_unit(q.value, q.unit, FontSizes::of(style))
             }
         }
     }
@@ -1047,7 +1098,7 @@ pub struct BorderSpacing {
 impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
     fn from_specified(spec: &specified::BorderSpacing, style: &ComputedValues) -> Self {
         let length = |q: specified::Quantity| {
-            PixelLength::from_val_unit(q.value, q.unit, (&*style.font).into())
+            PixelLength::from_val_unit(q.value, q.unit, FontSizes::of(style))
         };
         BorderSpacing {
             horizontal: length(spec.horizontal),
@@ -1068,6 +1119,8 @@ pub struct Background {
     pub background_size: Vec<super::background::ComputedSize>,
     pub background_position: Vec<super::gradient::Position<LengthPercentage>>,
     pub background_repeat: Vec<super::background::Repeat>,
+    /// The box that the colour and each image are clipped to.
+    pub background_clip: Vec<super::specified::BackgroundBox>,
 }
 
 impl Default for Background {
@@ -1082,6 +1135,7 @@ impl Default for Background {
                 y: LengthPercentage::Percentage(Percentage(0.0)),
             }],
             background_repeat: vec![Default::default()],
+            background_clip: vec![Default::default()],
         }
     }
 }
@@ -1102,7 +1156,7 @@ pub enum PageSize {
 impl ComputedValue<specified::PageSize> for PageSize {
     fn from_specified(spec: &specified::PageSize, style: &ComputedValues) -> Self {
         let px = |q: specified::Quantity| {
-            PixelLength::from_val_unit(q.value, q.unit, (&*style.font).into())
+            PixelLength::from_val_unit(q.value, q.unit, FontSizes::of(style))
         };
         match *spec {
             specified::PageSize::Auto => PageSize::Auto,
@@ -1116,8 +1170,8 @@ impl ComputedValue<specified::PageSize> for PageSize {
             specified::PageSize::Keywords { name: Some(name), landscape } => {
                 let (width, height, unit) = name.dimensions();
                 let (width, height) = (
-                    PixelLength::from_val_unit(width, unit, (&*style.font).into()),
-                    PixelLength::from_val_unit(height, unit, (&*style.font).into()),
+                    PixelLength::from_val_unit(width, unit, FontSizes::of(style)),
+                    PixelLength::from_val_unit(height, unit, FontSizes::of(style)),
                 );
                 if landscape == Some(true) {
                     PageSize::Dimensions { width: height, height: width }

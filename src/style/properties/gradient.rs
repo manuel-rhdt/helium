@@ -497,6 +497,11 @@ impl BackgroundShorthand {
         CommaSeparated::new(self.layers.iter().map(|layer| layer.repeat).collect())
     }
 
+    /// The shorthand resets `background-clip` to its initial value.
+    pub fn clips(&self) -> CommaSeparated<super::specified::BackgroundBox> {
+        CommaSeparated::new(vec![super::specified::BackgroundBox::BorderBox])
+    }
+
     /// The shorthand resets `background-blend-mode` to its initial value.
     pub fn blend_modes(&self) -> CommaSeparated<super::specified::BlendMode> {
         CommaSeparated::new(vec![super::specified::BlendMode::Normal])

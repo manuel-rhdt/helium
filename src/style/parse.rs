@@ -1039,7 +1039,34 @@ fn parse_property<'i>(
     if let Some(declaration) = CssWideDeclaration::parse(&name, input) {
         return Ok(PropertyDeclaration::CssWide(declaration));
     }
+    if is_non_negative_property(&name) {
+        // a negative length is not valid there: the whole declaration is dropped
+        let state = input.state();
+        let mut negative = false;
+        while let Ok(token) = input.next() {
+            use cssparser::Token;
+            negative |= matches!(token,
+                Token::Dimension { value, .. } | Token::Percentage { unit_value: value, .. } | Token::Number { value, .. } if *value < 0.0);
+        }
+        input.reset(&state);
+        if negative {
+            return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) });
+        }
+    }
     PropertyDeclaration::parse_declaration(name, input)
+}
+
+/// The properties whose lengths must not be negative.
+fn is_non_negative_property(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name == "padding"
+        || name == "border-width"
+        || name.starts_with("padding-")
+        || (name.starts_with("border-") && name.ends_with("-width"))
+        || matches!(
+            name.trim_start_matches("min-").trim_start_matches("max-"),
+            "width" | "height" | "inline-size" | "block-size"
+        )
 }
 
 impl<'i> AtRuleParser<'i> for StyleDeclarationParser {
