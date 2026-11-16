@@ -69,12 +69,30 @@ impl LineStart {
 }
 
 /// The breaks of a paragraph, and how every line fits.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParagraphLines {
     /// The indices of the break opportunities where lines start and end: the first is 0.
     pub breaks: Vec<usize>,
     /// The fitness class of every line: the line that ends at `breaks[i + 1]` has `fitness[i]`.
     pub fitness: Vec<u8>,
+    /// The demerits of every line, counted as the breaker counts them: the demerits of a
+    /// line include those that it has for following a line of another fitness class and for
+    /// following a hyphen, so that the demerits of the lines of a page are the demerits of that
+    /// part of the paragraph. A line that no breaking can have has no demerits that mean
+    /// anything (`f64::INFINITY`).
+    pub demerits: Vec<f64>,
+}
+
+impl ParagraphLines {
+    /// The number of lines.
+    pub fn lines(&self) -> usize {
+        self.breaks.len().saturating_sub(1)
+    }
+
+    /// The demerits of all the lines.
+    pub fn total_demerits(&self) -> f64 {
+        self.demerits.iter().sum()
+    }
 }
 
 /// Like [`compute_paragraph_breakpoints`], for a paragraph that follows a line `start`, and with
@@ -96,6 +114,7 @@ pub fn compute_paragraph_lines(
         return ParagraphLines {
             breaks: opportunities.first().map_or_else(Vec::new, |_| vec![0]),
             fitness: vec![],
+            demerits: vec![],
         };
     }
 
@@ -193,12 +212,14 @@ pub fn compute_paragraph_lines(
         return ParagraphLines {
             breaks: vec![0, last],
             fitness: vec![LineStart::DECENT],
+            demerits: vec![f64::INFINITY],
         };
     };
 
     let mut index = last;
     let mut sequence = vec![last];
     let mut fitness = vec![decode_state(state).0 as u8];
+    let mut cumulative = vec![paths[last][state].map_or(0.0, |node| node.demerits)];
     while let Some((previous_index, previous_state)) =
         paths[index][state].and_then(|node| node.previous)
     {
@@ -206,15 +227,167 @@ pub fn compute_paragraph_lines(
         state = previous_state;
         sequence.push(index);
         fitness.push(decode_state(state).0 as u8);
+        cumulative.push(paths[index][state].map_or(0.0, |node| node.demerits));
     }
     // (the last of them is the state in front of the first line)
     fitness.pop();
     sequence.reverse();
     fitness.reverse();
+    cumulative.reverse();
+    let demerits = cumulative.windows(2).map(|window| window[1] - window[0]).collect();
     ParagraphLines {
         breaks: sequence,
         fitness,
+        demerits,
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+struct CountedNode {
+    demerits: f64,
+    /// The break, the state and the number of lines of the node in front.
+    previous: Option<(usize, usize, usize)>,
+}
+
+/// The breakings of a paragraph that have the least demerits for their number of lines, for the
+/// number of lines of the optimum and `extra` lines fewer and more, like what TeX's `\looseness`
+/// asks for.
+///
+/// The first of them is the optimum, as [`compute_paragraph_lines`] finds it. The others follow
+/// by their number of lines. A number of lines that no breaking has (the lines cannot be made
+/// longer or shorter than they are, or a forced break needs more) has no breaking in the result.
+///
+/// The search is the one of [`compute_paragraph_lines`] with the number of lines as a part of the
+/// state. It takes `extra` + the number of lines of the optimum times as long.
+pub fn compute_paragraph_variants(
+    opportunities: &[BreakOpportunity],
+    mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
+    mut line_width: impl FnMut(usize) -> f64,
+    start: LineStart,
+    ends_paragraph: bool,
+    extra: u32,
+) -> Vec<ParagraphLines> {
+    let optimum = compute_paragraph_lines(opportunities, &mut line_metrics, &mut line_width, start, ends_paragraph);
+    let optimum_lines = optimum.lines();
+    if extra == 0 || opportunities.len() < 2 || optimum_lines == 0 || optimum.demerits.iter().any(|d| d.is_infinite()) {
+        return vec![optimum];
+    }
+    let max_lines = optimum_lines + extra as usize;
+    let min_lines = optimum_lines.saturating_sub(extra as usize).max(1);
+    let count = opportunities.len();
+    let width = max_lines + 1;
+    let slot = |state: usize, lines: usize| state * width + lines;
+
+    let mut paths: Vec<Vec<Option<CountedNode>>> = vec![vec![None; STATE_COUNT * width]; count];
+    let mut forced_prefix = vec![0usize; count + 1];
+    for (index, opportunity) in opportunities.iter().enumerate() {
+        forced_prefix[index + 1] = forced_prefix[index] + usize::from(opportunity.forced);
+    }
+    let line_widths: Vec<_> = (0..count - 1).map(&mut line_width).collect();
+    let initial_state = state_index(usize::from(start.fitness).min(FITNESS_CLASSES - 1), start.hyphen);
+    paths[0][slot(initial_state, 0)] = Some(CountedNode {
+        demerits: 0.0,
+        previous: None,
+    });
+
+    for to in 1..count {
+        for from in 0..to {
+            if forced_prefix[to] != forced_prefix[from + 1] {
+                continue;
+            }
+            let Some((natural_width, glue)) = line_metrics(from, to) else {
+                continue;
+            };
+            let delta = line_widths[from] - natural_width;
+            let overfull = delta < 0.0 && (glue.shrink <= 0.0 || -delta > glue.shrink);
+            if overfull && to != from + 1 {
+                continue;
+            }
+            let ragged_final_line = ends_paragraph && to + 1 == count && delta >= 0.0;
+            let ratio = if ragged_final_line { 0.0 } else { adjustment_ratio(delta, glue) };
+            let badness = if ragged_final_line { 0.0 } else { line_badness(ratio) };
+            let fitness = fitness_class(ratio);
+            let opportunity = opportunities[to];
+
+            for previous_state in 0..STATE_COUNT {
+                let (previous_fitness, previous_hyphen) = decode_state(previous_state);
+                for lines_before in 0..max_lines {
+                    let Some(previous) = paths[from][slot(previous_state, lines_before)] else {
+                        continue;
+                    };
+                    // (the same demerits as in compute_paragraph_lines)
+                    let penalty = if opportunity.penalty > 0 && opportunity.penalty < 10_000 {
+                        f64::from(opportunity.penalty)
+                    } else {
+                        0.0
+                    };
+                    let mut demerits = previous.demerits + (LINE_PENALTY + badness + penalty).powi(2);
+                    if opportunity.penalty >= 10_000 {
+                        demerits += f64::from(opportunity.penalty).powi(2);
+                    } else if opportunity.penalty < 0 && opportunity.penalty > -10_000 {
+                        demerits -= f64::from(opportunity.penalty).powi(2);
+                    }
+                    if fitness.abs_diff(previous_fitness) > 1 {
+                        demerits += ADJACENT_FITNESS_DEMERITS;
+                    }
+                    if previous_hyphen && opportunity.hyphen {
+                        demerits += DOUBLE_HYPHEN_DEMERITS;
+                    }
+                    if ends_paragraph && to + 1 == count && previous_hyphen {
+                        demerits += FINAL_HYPHEN_DEMERITS;
+                    }
+
+                    let next = slot(state_index(fitness, opportunity.hyphen), lines_before + 1);
+                    let replace = paths[to][next].map_or(true, |current| demerits < current.demerits);
+                    if replace {
+                        paths[to][next] = Some(CountedNode {
+                            demerits,
+                            previous: Some((from, previous_state, lines_before)),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let last = count - 1;
+    let mut variants = vec![optimum];
+    for lines in min_lines..=max_lines {
+        if lines == optimum_lines {
+            continue;
+        }
+        let Some((mut state, _)) = (0..STATE_COUNT)
+            .filter_map(|state| paths[last][slot(state, lines)].map(|node| (state, node.demerits)))
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+        else {
+            continue;
+        };
+        let (mut index, mut lines_left) = (last, lines);
+        let mut breaks = vec![last];
+        let mut fitness = vec![decode_state(state).0 as u8];
+        let mut cumulative = vec![paths[last][slot(state, lines)].map_or(0.0, |node| node.demerits)];
+        while let Some((previous_index, previous_state, previous_lines)) =
+            paths[index][slot(state, lines_left)].and_then(|node| node.previous)
+        {
+            index = previous_index;
+            state = previous_state;
+            lines_left = previous_lines;
+            breaks.push(index);
+            fitness.push(decode_state(state).0 as u8);
+            cumulative.push(paths[index][slot(state, lines_left)].map_or(0.0, |node| node.demerits));
+        }
+        fitness.pop();
+        breaks.reverse();
+        fitness.reverse();
+        cumulative.reverse();
+        let demerits = cumulative.windows(2).map(|window| window[1] - window[0]).collect();
+        variants.push(ParagraphLines {
+            breaks,
+            fitness,
+            demerits,
+        });
+    }
+    variants
 }
 
 fn state_index(fitness: usize, hyphen: bool) -> usize {
@@ -583,6 +756,111 @@ mod test {
         }
         assert!(checked > 1000, "{checked} parts checked");
         assert!(differing > 20, "{differing} parts break differently from a whole paragraph");
+    }
+
+    #[test]
+    fn the_variants_have_the_least_demerits_for_every_number_of_lines_around_the_optimum() {
+        use std::collections::BTreeMap;
+        let mut random = Random(0xFEED_FACE_CAFE_BEEF);
+        let (mut checked, mut others) = (0, 0);
+        for round in 0..200 {
+            let mut paragraph = random_paragraph(&mut random);
+            // some of the paragraphs have a forced break, which needs lines of its own
+            if round % 3 == 0 {
+                let middle = paragraph.opportunities.len() / 2;
+                paragraph.opportunities[middle].forced = true;
+            }
+            let last = paragraph.opportunities.len() - 1;
+            for start in STARTS {
+                for ends_paragraph in [true, false] {
+                    // the least demerits of all breakings, by their number of lines
+                    let mut least: BTreeMap<usize, f64> = BTreeMap::new();
+                    for mask in 0u32..1 << (last - 1) {
+                        let mut breaks = vec![0];
+                        breaks.extend((1..last).filter(|&bit| mask & (1 << (bit - 1)) != 0));
+                        breaks.push(last);
+                        if let Some((demerits, _)) = paragraph.demerits_of(&breaks, start, ends_paragraph) {
+                            let entry = least.entry(breaks.len() - 1).or_insert(f64::INFINITY);
+                            *entry = entry.min(demerits);
+                        }
+                    }
+                    if least.is_empty() {
+                        continue;
+                    }
+                    for extra in [0, 1, 2] {
+                        let variants = compute_paragraph_variants(
+                            &paragraph.opportunities,
+                            |from, to| paragraph.metrics(from, to),
+                            |_| paragraph.width,
+                            start,
+                            ends_paragraph,
+                            extra,
+                        );
+                        let optimum = compute_paragraph_lines(
+                            &paragraph.opportunities,
+                            |from, to| paragraph.metrics(from, to),
+                            |_| paragraph.width,
+                            start,
+                            ends_paragraph,
+                        );
+                        // the first is the optimum
+                        assert_eq!(variants[0], optimum);
+                        let around = variants[0].lines();
+                        // there is one for every number of lines in the band that a breaking has
+                        let expected: Vec<usize> = least
+                            .keys()
+                            .copied()
+                            .filter(|&lines| lines != around && lines.abs_diff(around) <= extra as usize)
+                            .collect();
+                        let found: Vec<usize> = variants[1..].iter().map(ParagraphLines::lines).collect();
+                        assert_eq!(found, expected, "{start:?} {ends_paragraph} extra {extra} around {around}");
+                        for variant in &variants {
+                            let lines = variant.lines();
+                            let (total, classes) = paragraph
+                                .demerits_of(&variant.breaks, start, ends_paragraph)
+                                .expect("the breaker finds breaks that it allows");
+                            assert!(
+                                (total - least[&lines]).abs() < 1e-6,
+                                "{lines} lines: {total} demerits, the least is {}",
+                                least[&lines]
+                            );
+                            assert_eq!(variant.fitness, classes);
+                            assert!((variant.total_demerits() - total).abs() < 1e-6);
+                            // the demerits of every line are what it adds to the lines in front
+                            let mut before = 0.0;
+                            for (line, demerits) in variant.demerits.iter().enumerate() {
+                                let (so_far, _) = paragraph
+                                    .demerits_of(&variant.breaks[..line + 2], start, ends_paragraph)
+                                    .unwrap();
+                                assert!((so_far - before - demerits).abs() < 1e-6, "line {line} of {lines}");
+                                before = so_far;
+                            }
+                            checked += 1;
+                        }
+                        others += variants.len() - 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 2000, "{checked} breakings checked");
+        assert!(others > 500, "{others} breakings with another number of lines");
+    }
+
+    #[test]
+    fn the_demerits_of_the_lines_of_a_breaking_are_those_of_the_lines() {
+        let mut random = Random(0x1357_9BDF_2468_ACE0);
+        for _ in 0..100 {
+            let paragraph = random_paragraph(&mut random);
+            for start in STARTS {
+                let found = paragraph.lines(start);
+                if found.demerits.iter().any(|d| d.is_infinite()) {
+                    continue;
+                }
+                let (total, _) = paragraph.demerits(&found.breaks, start).unwrap();
+                assert!((found.total_demerits() - total).abs() < 1e-6);
+                assert_eq!(found.demerits.len(), found.lines());
+            }
+        }
     }
 
     #[test]

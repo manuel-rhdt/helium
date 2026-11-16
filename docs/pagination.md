@@ -316,6 +316,31 @@ The restriction keeps `InlineFormattingContext::line_height`, with its
 vertical alignment and atoms, out of the kernel. It can be lifted later by
 making profiles Pareto fronts over real extents.
 
+**Variants first.** The first version of joint optimisation is simpler than the profiles below:
+the breaker gives a few complete breakings of a paragraph, each a rigid list of lines, and the
+choice among them is part of the search. For a paragraph at a width, from a start state, the
+breakings with the least demerits for the number of lines of the optimum and `extra` lines fewer
+and more (`compute_paragraph_variants`, which is what TeX's `\looseness` asks for, with a
+band). The first is the optimum, so `extra` = 0 is the breaking that there is now. Every line has
+its demerits (`ParagraphLines::demerits`, including those for following a line of another fitness
+class and a hyphen), so the demerits of the lines of one page are the share of that page. A
+number of lines that no breaking has is not among the results.
+
+The search is that of the optimum with the number of lines as a part of the state, and it is
+tested against all breakings of random small paragraphs (with forced breaks, hyphens, a start state
+and parts that end at a cut). In release builds it takes about 1 ms for a paragraph of 150 words
+(11 lines) with `extra` of 1, against 0.08 ms for the optimum alone, and 6 ms for 400 words
+(28 lines). It is meant for documents that ask for it, and the results are kept by the layout
+service.
+
+The kernel, which this is not connected to yet, would see a paragraph as a choice of variants:
+a page that has the whole paragraph has an edge for every variant (with a height and the demerits
+of its lines), and a page that ends in it continues with variants of the rest of the paragraph
+from the cut, so the state of a node is as it is now. The edges of one pair of places that differ
+in height and demerits are kept if neither dominates the other. What is still open is the rate
+between the demerits of the lines and the cost of a page, and a cap on the demerits that a variant
+may add (TeX's tolerance), so that a page is not bought with very loose lines.
+
 For a flexible paragraph the breaker computes *profiles*: for each line count
 within a tolerance of the optimum, the least demerits.
 
@@ -793,7 +818,9 @@ the first page.
    Tables are split between rows, with the columns of the table as a whole.
 3. Greedy solver, recorded problems, the harness and the metrics.
 4. Done. Page size per page; empty pages for `left` and `right`.
-5. Profiles and cuts with state in the line breaker; the joint solver.
+5. Cuts with state in the line breaker (done); a page that ends at any break of a paragraph (done);
+   variants of a paragraph by number of lines in the breaker (done); variants in the service, the
+   kernel and the layout, the exchange rate, and the joint solver; profiles after that.
 6. `fragment` for tables between rows, with pinned columns.
 7. `fragment` for grid and flex, with parallel parts.
 
