@@ -897,9 +897,42 @@ build that case first, if it is built so that the general nested case (a contain
 of a page, with content after it that depends on its last fragment) can replace it without
 changes to the solvers.
 
-Not checked: what `column-fill: auto` means for a container with an `auto` height in a context
-that has no page (the specification and browsers may differ); the height of the last fragment
-with `auto` fill when its first column is not full.
+What the specifications say (CSS Multi-column Level 1, CSS Fragmentation Level 3, read on
+2026-11-16). This replaces what was written from memory above where they differ.
+
+- `column-fill: balance`, the initial value: "In fragmented contexts, only the last fragment is
+  balanced." `balance-all` balances all fragments, and `auto` fills the columns in turn
+  (multicol 7.1). `balance-all` is not parsed yet.
+- Content that comes right in front of a spanner is balanced whatever `column-fill` says; the
+  content after a spanner is balanced or not as `column-fill` says (multicol 7.1, from the
+  description of the property and the names of its tests; the normative text was not read in
+  full).
+- A page break inside a container is always both a page break and a column break: the container
+  gets a new row of columns on the next page (fragmentation 2.2). A forced break "forces
+  ensuing content into the next fragmentainer of the type associated with the break, breaking
+  through as many fragmentation contexts as necessary"; one that is not inside a context of its
+  type has no effect (fragmentation 4.3). So a forced page break inside a container ends the
+  fragment, and a forced column break outside one is ignored, which is what the break levels
+  do. The first half is not done yet: step 2 ignores a forced page break inside a container.
+- Spanners are honored in every fragment. The margins of two adjacent spanners collapse; the
+  bottom margin of a spanner does not collapse with the top margin of what follows, because a
+  column box is a new block formatting context (multicol 6.1).
+- A container that has more columns than it has room for (a `height` that is too small, or
+  forced column breaks) puts the extra columns on the next page in paged media (multicol 8.2).
+  Step 2 lets such content overflow below the last column, which is the rule for continuous
+  media only.
+- The column count and the column width may be found per fragment in paged media (multicol 3.4).
+  They can differ between pages of different widths.
+- A fragmentainer of another size is laid out as if the whole element were fragmented across
+  fragmentainers of that size; intrinsic sizes are kept across the whole element, and the
+  initial containing block is that of the first fragmentainer (fragmentation 5.1). This is what
+  the windows do.
+
+Not checked against the text: whether column rules are painted in every fragment, and the
+rules for `box-decoration-break` and margins at breaks (fragmentation 5.2 to 5.4). What
+`column-fill: auto` means for a container with an `auto` height that is not fragmented is
+also open: the specification's example has the content in the first column only when the height
+is definite.
 
 ### Order of work
 
