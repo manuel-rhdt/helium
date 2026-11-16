@@ -191,6 +191,10 @@ struct Label {
     used: f64,
     /// The demerits of the lines that are on the page.
     demerits: f64,
+    /// The demerits that the same lines have in the first way to break their paragraphs (line by
+    /// line, and none for the lines that it does not have): what the page has anyway. Only what
+    /// the lines have above it is charged, or a page would cost more the more lines it has.
+    baseline: f64,
     /// The extent and the number of the lines whose demerits are counted.
     line_extent: f64,
     lines: u32,
@@ -199,6 +203,13 @@ struct Label {
     /// The number of the lines from the start of the page to the end of the paragraph that the
     /// page starts in, known when the walk is behind the paragraph.
     tail: Option<u32>,
+}
+
+impl Label {
+    /// The demerits of the lines above those of the first ways to break their paragraphs.
+    fn excess(&self) -> f64 {
+        (self.demerits - self.baseline).max(0.0)
+    }
 }
 
 /// What listing a page that ends at a place did.
@@ -221,7 +232,7 @@ fn prune(labels: Vec<Label>) -> Vec<Label> {
     for label in labels {
         match kept.iter_mut().find(|other| key(other) == key(&label)) {
             Some(other) => {
-                if label.demerits < other.demerits {
+                if label.excess() < other.excess() {
                     *other = label;
                 }
             }
@@ -561,6 +572,7 @@ impl<'a> Kernel<'a> {
                                 ahead = 0.0;
                                 if count_demerits {
                                     here.demerits += line.demerits;
+                                    here.baseline += ways[0].1.get(number).map_or(0.0, |first| first.demerits);
                                     here.line_extent += line.extent;
                                     here.lines += 1;
                                 }
@@ -651,7 +663,7 @@ impl<'a> Kernel<'a> {
                     // least demerits.
                     let best = labels
                         .iter()
-                        .min_by(|left, right| left.demerits.total_cmp(&right.demerits))
+                        .min_by(|left, right| left.excess().total_cmp(&right.excess()))
                         .cloned()
                         .expect("a page has a way to break its paragraphs");
                     labels = vec![best];
@@ -772,7 +784,7 @@ impl<'a> Kernel<'a> {
             orphan_violation,
             widow_violation: widows || legal.widows,
             overflow,
-            line_demerits: label.demerits,
+            line_demerits: label.excess(),
             line_extent: if label.lines > 0 { (label.line_extent / f64::from(label.lines)) as f32 } else { 0.0 },
             choices,
         });

@@ -127,3 +127,46 @@ fn a_paragraph_that_takes_a_looser_breaking_pushes_down_what_follows_it() {
         second["y"]
     );
 }
+
+#[test]
+fn the_choices_of_the_pages_can_be_dumped() {
+    let html = "<!DOCTYPE html><html lang=en><title>t</title><style>@page { size: 300px 100px; margin: 0 }
+         body { margin: 0; font: 16px/20px serif; looseness: 1 } p { margin: 0 }</style><p>"
+        .to_string()
+        + &"the quick brown fox jumps over the lazy dog and then it rests in the shade of an old tree ".repeat(3)
+        + "</p>";
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("looseness__dump.html");
+    std::fs::write(&input, html).unwrap();
+    let report = dir.join("looseness__dump.json");
+    let output = common::helium()
+        .unwrap()
+        .args(["--no-system-fonts", "--dump-pagination"])
+        .arg(&report)
+        .arg(&input)
+        .arg(dir.join("looseness__dump.pdf"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+    let pages = report["pages"].as_array().unwrap();
+    assert!(pages.len() >= 2);
+    assert_eq!(report["tuning"]["looseness"], 1);
+    for page in pages {
+        assert!(page["room"].as_f64().unwrap() >= 0.0);
+        assert_eq!(page["cost"]["pages"], 1);
+        let paragraphs = page["paragraphs"].as_array().unwrap();
+        assert!(!paragraphs.is_empty());
+        // the lines of the paragraph that the page holds, each with its badness
+        for paragraph in paragraphs {
+            assert_eq!(paragraph["badness"].as_array().unwrap().len() as u64, paragraph["lines"].as_u64().unwrap());
+        }
+    }
+    // the lines of the pages are the lines of the document
+    let reported: u64 = pages
+        .iter()
+        .flat_map(|page| page["paragraphs"].as_array().unwrap())
+        .map(|paragraph| paragraph["lines"].as_u64().unwrap())
+        .sum();
+    assert_eq!(report["lines"]["count"].as_u64().unwrap(), reported);
+}

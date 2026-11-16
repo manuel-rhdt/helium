@@ -1560,13 +1560,16 @@ fn with_variants_a_page_is_listed_for_every_way_that_fits() {
     assert_eq!(whole[0].used, 60.0);
     assert_ne!(whole[0].choices, ChoiceId::NONE);
     assert_eq!(&*kernel.choices(whole[0].choices), &[Choice { item: 0, variant: 1 }]);
-    // its lines have the demerits of the way: three lines of 600
-    assert_eq!(whole[0].line_demerits, 1800.0);
+    // its lines have the demerits of the way, three lines of 600, above those of the first three
+    // lines of the first way, which are 100 each
+    assert_eq!(whole[0].line_demerits, 1500.0);
     assert_eq!(whole[0].line_extent, 20.0);
-    // a page that ends in the paragraph has the demerits of the lines that it has
+    // a page that ends in the paragraph has the demerits that its lines have above the first way:
+    // none for the pages of the first way
     let cut: Vec<_> = fills.iter().filter(|fill| !kernel.is_end(fill.end)).collect();
     assert!(!cut.is_empty());
-    assert!(cut.iter().all(|fill| fill.line_demerits > 0.0));
+    assert!(cut.iter().any(|fill| fill.line_demerits > 0.0));
+    assert!(cut.iter().any(|fill| fill.line_demerits == 0.0));
     // the ways are listed with a page of the same room only once: of two ways that use the same
     // room, the one with the least demerits
     let mut seen = vec![];
@@ -1654,5 +1657,20 @@ fn the_rest_of_a_paragraph_after_a_cut_chooses_among_ways_of_its_own() {
     let rest = kernel.candidates(&next);
     // from the cut after six units, the rest is six units: two lines of three, or of four and two
     assert!(rest.iter().any(|fill| kernel.is_end(fill.end)));
-    assert!(rest.iter().all(|fill| fill.line_demerits > 0.0));
+    assert!(rest.iter().any(|fill| fill.line_demerits > 0.0));
+    assert!(rest.iter().any(|fill| fill.line_demerits == 0.0));
+}
+
+#[test]
+fn a_page_pays_only_for_the_lines_that_are_worse_than_those_of_the_first_way() {
+    // a document in which a paragraph has other ways to break it is not paginated differently if
+    // the pages take the first way: the lines of a page that has more of them do not cost more
+    let problem = ways_problem(1000.0, 1);
+    let mut service = Ways { units: vec![12, 12, 12] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let fills = kernel.candidates(&start);
+    let first_way = fills.iter().filter(|fill| fill.choices == ChoiceId::NONE).collect::<Vec<_>>();
+    assert!(!first_way.is_empty());
+    assert!(first_way.iter().all(|fill| fill.line_demerits == 0.0), "{first_way:?}");
 }

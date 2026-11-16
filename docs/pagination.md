@@ -1333,41 +1333,68 @@ and 7) are independent of it, except that step 3 here shares `fragment` with ste
 ## How much `looseness` does
 
 `tools/looseness_bench.py` renders generated documents (plain prose, chapters that each start on a
-new page, prose with unbreakable figures; 30 seeds each) with `looseness` 0 and 1 and measures the
-pages, the room left at the foot of the pages that are not the last, and the badness of the lines
-(the log line `LINES:`). Measured at the commit that added it:
+new page, prose with unbreakable figures; 20 seeds each) with `looseness` 0, 1 and 2 and measures the
+pages, the room left at the foot of the pages that are not the last (from the words of the PDF, in
+lines), and the badness of the lines (the log line `LINES:`).
 
-| kind | pages | room (lines) | lines | lines worse than 100 | mean badness | documents with fewer pages |
+| kind | pages | room | lines | lines worse than 100 | mean badness | documents with fewer pages |
 | --- | --- | --- | --- | --- | --- | --- |
-| prose | 20.40 to 20.30 | 0.31 to 0.40 | 471.1 to 471.4 | 24.8 to 24.9 | 27.5 to 27.6 | 3 of 30 |
-| chapters | 54.77 to 54.60 | 107.9 to 103.4 | 1175.8 to 1177.7 | 62.6 to 63.2 | 28.6 to 28.8 | 5 of 30 |
-| figures | 25.43 to 25.37 | 24.5 to 20.4 | 363.2 to 367.3 | 20.9 to 23.7 | 29.5 to 30.6 | 2 of 30 |
+| prose | 19.70 to 19.60 | 7.06 to 4.31 | 454.6 to 455.7 | 23.8 to 24.4 | 26.5 to 26.8 | 2 of 20 |
+| chapters | 56.40 to 56.20 | 130.7 to 122.6 | 1213.8 to 1216.5 | 64.0 to 65.9 | 28.0 to 28.3 | 4 of 20 |
+| figures | 24.40 to 24.30 | 45.2 to 38.9 | 348.0 to 352.1 | 19.6 to 22.5 | 30.1 to 31.3 | 2 of 20 |
 
-No document got a page more. The effect is small: a third of a percent of the pages, and about a sixth of the room in
-documents with unbreakable boxes. Prose, where a page can be filled by cutting a paragraph, has
-nothing to gain (its room rises slightly, because line quality is paid for with room). Levels
-above 1 give the same result as 1 in every run, which has not been explained: the tolerance
-(`Variants::TOLERANCE`) is the suspect. The exchange rate (`CssObjective::line_room`) is the
-value that decides how much of this is taken, and it is the one to tune with this harness.
+No document got a page more, and `looseness` 2 gives the same as 1. The effect is small: a third of a percent of the
+pages and between a seventh and a third of the room, for a few lines that are looser. The synthetic
+text has a short measure, and the lines that another way to break a paragraph has are bad
+(the median of the worst badness is 2900 for a line more, and the paragraphs that can have a line
+more within the tolerance of 200 are 5 of 78), so these numbers are a lower bound for text that is
+set to a longer measure.
 
-The two numbers can be changed without rebuilding (`HELIUM_LINE_TOLERANCE`, the exchange rate
-of lines and room, and `HELIUM_VARIANT_TOLERANCE`, the worst badness of a line of another
-breaking; both 200 by default), and the harness takes them as `--knob LINE_TOLERANCE=400`. A sweep
-with `looseness: 2` over 15 documents of each kind (room is in lines, as above):
+The two numbers that decide how much is taken can be changed without rebuilding
+(`HELIUM_LINE_TOLERANCE`, the exchange rate of lines and room, and `HELIUM_VARIANT_TOLERANCE`, the
+worst badness of a line of another breaking; both 200 by default), and the harness takes them as
+`--knob LINE_TOLERANCE=400`. With `looseness: 2`, 20 documents of each kind:
 
-| knob | chapters: pages, room | figures: pages, room, lines worse than 100 |
+| knob | chapters: pages, room | figures: pages, room, lines worse than 100, mean badness |
 | --- | --- | --- |
-| none (`looseness` 0) | 59.00, 109.7 | 25.47, 21.4, 21.3 |
-| line 50 | 58.80, 86.9 | 25.33, 22.0, 21.5 |
-| line 200 | 58.80, 104.7 | 25.33, 16.7, 23.8 |
-| line 800 | 58.80, 107.2 | 25.33, 15.9, 24.8 |
-| variant 400 | 58.80, 105.2 | 25.33, 15.1, 26.6 |
-| variant 1000 | 58.73, 103.9 | 25.33, 14.5, 27.4 |
+| `looseness` 0 | 56.40, 130.7 | 24.40, 45.2, 19.6, 30.1 |
+| line 50 | 56.20, 125.3 | 24.30, 41.3, 19.9, 30.2 |
+| line 200 (default) | 56.20, 122.6 | 24.30, 38.9, 22.5, 31.3 |
+| line 800 | 56.20, 121.4 | 24.30, 38.7, 22.9, 31.4 |
+| variant 1000 | 56.15, 121.3 | 24.30, 35.9, 27.4, 34.7 |
+| both open (variant 100000, line 20000) | | 24.30, 7.4, 153.7, 734 |
 
-In the figures a greater tolerance of either kind trades worse lines for less room, as it should.
-In the chapters the room moves the other way and not steadily (86.9 at line 50), which is not
-understood: the room that is counted there is mostly the last page of each chapter, and what
-decides it is not the price of lines.
+A greater tolerance of either kind trades worse lines for less room, in steps that get smaller
+for the exchange rate, and not at all for the default. Opened up completely it takes the room
+almost away, and the lines are bad (a mean badness of 734): the harness shows what the knobs buy,
+and the price.
+
+### What the first measurements got wrong
+
+Two results of the first runs looked like bugs, and one was.
+
+- *More looseness gave emptier pages.* The pages were charged for the demerits of all of their lines
+  as soon as one paragraph of the document asked for variants, so a page cost more the more lines
+  it had, and the search preferred pages with fewer of them. One paragraph with `looseness: 1`
+  changed the pages of the whole document (a document of 12 pages whose first paragraph had it had
+  pages of 20 to 22 lines instead of 23 and 24). A page is charged now for the demerits of its lines
+  above those that the first ways to break the paragraphs have (`Label::baseline`), which are
+  zero for a page that takes only those, and the document is paginated as without `looseness`.
+- *The room was measured wrong.* The text of the layout dump counts a line more on pages where a
+  paragraph goes on, so the harness took the room from the words of the PDF.
+- *`looseness: 2` gave the same as 1.* It does not need to be a defect: the breaker gives the ways of
+  two lines more, but none of 78 paragraphs has one that is within the tolerance, and their lines
+  would cost 57 lines of room at the default exchange rate (20 lines for one line more). With both
+  knobs opened up the results differ.
+
+### Looking at the choices
+
+`helium --dump-pagination FILE` (`-` for stdout) writes what the paginator chose and why, as JSON:
+for every page its room, how it ends, orphans, widows, avoided breaks and overflow, its cost in
+the parts of the typed cost, the price of its lines in room (`line_room`), the ways chosen for its
+paragraphs, and for every paragraph on it the lines it has with their badness and the ways it
+had (the number of lines, the demerits and the worst badness of each).
+`python3 tools/pagination_report.py FILE [--ways]` shows it as a table.
 
 ## Open questions
 

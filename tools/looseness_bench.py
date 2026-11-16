@@ -82,12 +82,15 @@ def render(html, level, directory, name):
     if process.returncode:
         sys.exit(process.stderr)
     dump = json.loads(process.stdout)
-    # the lowest edge of what is on a page
+    # the lowest edge of what is on a page: the words of the PDF (the text of the layout dump
+    # counts the lines of a continued paragraph differently), and the boxes of the figures
     bottom = {}
-    for text in dump["paint"]["text"]:
-        newlines = sum(1 for op in text["ops"] if op["op"] == "newline")
-        edge = text["y"] + newlines * LINE + LINE
-        bottom[text["page"]] = max(bottom.get(text["page"], 0.0), edge)
+    words = subprocess.run(["pdftotext", "-bbox", path[:-5] + ".pdf", "-"], capture_output=True, text=True).stdout
+    for number, page in enumerate(words.split("<page ")[1:]):
+        edges = [float(y) for y in re.findall(r'yMax="([\d.]+)"', page)]
+        if edges:
+            # (points to pixels)
+            bottom[number] = max(edges) / 0.75
     for rect in dump["paint"]["rects"]:
         if rect["color"][:3] == [204, 204, 221]:
             bottom[rect["page"]] = max(bottom.get(rect["page"], 0.0), rect["y"] + rect["height"] + 10)
@@ -97,7 +100,12 @@ def render(html, level, directory, name):
     lines, badness, _, loose = (float(x) for x in match.groups()) if match else (0, 0, 0, 0)
     return {"pages": pages, "room": room, "loose": loose, "badness": badness, "lines": lines}
 
-def report(title, results, levels):
+def report(title, results, levels, per_document=False):
+    if per_document:
+        for number, result in enumerate(results):
+            print(f"  {title}{number}: " + "  ".join(
+                f"L{level}: {result[level]['pages']}p room {result[level]['room']:.1f} lines {result[level]['lines']:.0f}"
+                for level in levels))
     print(f"\n{title} ({len(results)} documents)")
     print(f"{'looseness':>9} {'pages':>8} {'room':>8} {'lines':>8} {'loose':>8} {'badness':>8} {'fewer pages':>12} {'more pages':>11}")
     for level in levels:
@@ -112,6 +120,7 @@ def main():
     parser.add_argument("--seeds", type=int, default=10)
     parser.add_argument("--levels", default="0,1,2")
     parser.add_argument("--keep")
+    parser.add_argument("--per-document", action="store_true", help="list every document")
     parser.add_argument("--knob", action="append", default=[], help="NAME=VALUE, as LINE_TOLERANCE=400")
     parser.add_argument("--kinds", default=",".join(KINDS))
     parser.add_argument("files", nargs="*")
@@ -135,6 +144,6 @@ def main():
         for seed in range(args.seeds):
             html = make(random.Random(f"{kind}{seed}"))
             results.append({level: render(html, level, directory, f"{kind}{seed}") for level in levels})
-        report(kind, results, levels)
+        report(kind, results, levels, args.per_document)
 
 main()

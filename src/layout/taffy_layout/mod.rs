@@ -251,11 +251,13 @@ impl TaffyBlockLayout {
         let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
         let mut rules: Vec<Rule> = vec![];
         let mut line_stats = LineStats::default();
+        let reporting = PAGINATION_REPORT.load(std::sync::atomic::Ordering::Relaxed);
+        let mut pages_report: Vec<serde_json::Value> = vec![];
         let mut positions = world.write_storage::<Position>();
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
-        for (start, from, to, fill, on_page, choices) in &planned {
+        for (number, (start, from, to, fill, on_page, choices)) in planned.iter().enumerate() {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
                 let index = page_contexts.len();
@@ -335,6 +337,8 @@ impl TaffyBlockLayout {
             let HeliumTree {
                 nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, page_variants, paragraph_variants, ..
             } = tree;
+            let mut paragraphs_log: Vec<serde_json::Value> = vec![];
+            let report = reporting.then_some(());
             let mut writer = Writer {
                 nodes,
                 out_of_flow: &out_of_flow,
@@ -360,6 +364,7 @@ impl TaffyBlockLayout {
                 overlay: None,
                 rules: &mut rules,
                 line_stats: &mut line_stats,
+                paragraphs_log: report.as_ref().map(|_| &mut paragraphs_log),
             };
             // The root is placed at the top left corner of the content area of the page.
             writer.write_box(
@@ -372,7 +377,30 @@ impl TaffyBlockLayout {
                 1,
                 0,
             )?;
+            if reporting {
+                pages_report.push(page_report(start, from, to, fill, on_page, choices, &objective, &flow, std::mem::take(&mut paragraphs_log), number + 1 == planned.len()));
+            }
             page_contexts.push(context);
+        }
+        if reporting {
+            let report = serde_json::json!({
+                "tuning": {
+                    "line_tolerance": tuning.line_tolerance,
+                    "variant_tolerance": tuning.variant_tolerance,
+                    "looseness": looseness,
+                },
+                "items": flow.items.len(),
+                "lines": {
+                    "count": line_stats.lines,
+                    "mean_badness": line_stats.badness / line_stats.lines.max(1) as f64,
+                    "worst_badness": line_stats.worst,
+                    "over_100": line_stats.loose,
+                },
+                "pages": pages_report,
+            });
+            if let Ok(mut slot) = PAGINATION_JSON.lock() {
+                *slot = serde_json::to_string_pretty(&report).ok();
+            }
         }
         log::info!("TIMED: layout of the pages {:?}", before.elapsed());
         log::info!(
@@ -490,6 +518,8 @@ struct Writer<'a, 'w> {
     rules: &'a mut Vec<Rule>,
     /// How well the lines that are written are broken (for the log).
     line_stats: &'a mut LineStats,
+    /// What is written of the paragraphs of the page, if the choices of the pages are reported.
+    paragraphs_log: Option<&'a mut Vec<serde_json::Value>>,
 }
 
 /// A rule between two columns: a filled rectangle.
@@ -975,6 +1005,49 @@ impl<'a> Writer<'a, '_> {
         for line in &measured {
             self.line_stats.add(line.badness);
         }
+        if self.paragraphs_log.is_some() {
+            let ways = if variant.1 > 0 {
+                let from = cut.and_then(|(from, _)| from).map(tree::LineCut::of);
+                tree::variants_from(
+                    self.line_cache,
+                    ifc,
+                    entity.id(),
+                    from,
+                    PixelLength(line_width),
+                    PixelLength(indent),
+                    variant.1,
+                    self.text_runs,
+                    self.intrinsic_sizes,
+                    self.aligns,
+                )
+                .iter()
+                .map(|lines| {
+                    serde_json::json!({
+                        "lines": lines.len(),
+                        "demerits": lines.iter().map(|line| line.demerits).sum::<f64>(),
+                        "worst_badness": lines.iter().map(|line| line.badness).fold(0.0, f64::max),
+                    })
+                })
+                .collect::<Vec<_>>()
+            } else {
+                vec![]
+            };
+            let entry = serde_json::json!({
+                "entity": entity.id(),
+                "cut_at_start": cut.is_some_and(|(from, _)| from.is_some()),
+                "cut_at_end": cut.is_some_and(|(_, to)| to.is_some()),
+                "lines": measured.len(),
+                "way": variant.0,
+                "looseness": variant.1,
+                "demerits": measured.iter().map(|line| line.demerits).sum::<f64>(),
+                "badness": measured.iter().map(|line| (line.badness * 10.0).round() / 10.0).collect::<Vec<_>>(),
+                // the ways that the page chose among, if the paragraph has any
+                "ways": ways,
+            });
+            if let Some(log) = self.paragraphs_log.as_mut() {
+                log.push(entry);
+            }
+        }
         let first = ifc.push_lines(measured, self.entities);
         let align = ifc.resolved_text_align();
         let indent_offset = ifc.indent_offset(PixelLength(indent)).0;
@@ -1009,6 +1082,74 @@ impl<'a> Writer<'a, '_> {
         }
         Ok(())
     }
+}
+
+/// One page of the report of the choices of the pages: what the page is, what it costs and why,
+/// and the paragraphs that are on it.
+#[allow(clippy::too_many_arguments)]
+fn page_report(
+    start: &helium_paginate::PageStart,
+    from: &helium_paginate::Position,
+    to: &helium_paginate::Position,
+    fill: &helium_paginate::PageFill,
+    fragments: &[helium_paginate::PageFragment],
+    choices: &[helium_paginate::Choice],
+    objective: &helium_paginate::CssObjective,
+    flow: &flow::Flow,
+    paragraphs: Vec<serde_json::Value>,
+    last: bool,
+) -> serde_json::Value {
+    use helium_paginate::Objective;
+    let cost = objective.page_cost(fill, last).unwrap_or_default();
+    let line_room = objective.line_room(fill);
+    let unit = helium_paginate::CssCost::SLACK_UNIT;
+    serde_json::json!({
+        "page": start.index + 1,
+        "kind": format!("{:?}", fill.kind),
+        "from": format!("{from:?}"),
+        "to": format!("{to:?}"),
+        "block_size": fill.spec.block_size,
+        "used": fill.used,
+        "room": fill.spec.block_size - fill.used,
+        "ends_with": format!("{:?}", fill.end_kind),
+        "orphan_violation": fill.orphan_violation,
+        "widow_violation": fill.widow_violation,
+        "overflow": fill.overflow,
+        "line_demerits_above_first_way": fill.line_demerits,
+        "line_room": line_room,
+        "cost": {
+            "overflows": cost.overflows,
+            "avoided_breaks": cost.avoided_breaks,
+            "orphans_and_widows": cost.orphans_and_widows,
+            "pages": cost.pages,
+            // (the cube of the room in pixels)
+            "slack": cost.slack as f64 / (unit * unit * unit),
+        },
+        "variants": choices
+            .iter()
+            .map(|choice| serde_json::json!({ "item": choice.item, "way": choice.variant }))
+            .collect::<Vec<_>>(),
+        "containers": fragments.len(),
+        "paragraphs": paragraphs,
+        "items": flow.items.len(),
+    })
+}
+
+/// Whether the choices of the pages are written down (`--dump-pagination`).
+static PAGINATION_REPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Asks for a report of the choices of the pages: [`take_pagination_report`] has it as JSON
+/// after the layout.
+pub fn report_pagination(on: bool) {
+    PAGINATION_REPORT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+static PAGINATION_JSON: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The choices of the pages of the last layout as JSON, if they were asked for with
+/// [`report_pagination`].
+pub fn take_pagination_report() -> Option<String> {
+    PAGINATION_JSON.lock().ok()?.take()
 }
 
 /// The numbers that decide how much a page gives up for better lines. They are the values of an

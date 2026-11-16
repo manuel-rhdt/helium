@@ -12,6 +12,7 @@ pub mod normal_formatting;
 pub mod pages;
 mod relative_positioning;
 mod taffy_layout;
+pub use taffy_layout::{report_pagination, take_pagination_report};
 pub mod text;
 pub mod writing_mode;
 
