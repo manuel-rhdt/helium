@@ -74,6 +74,8 @@ pub(super) struct ColumnPlan {
     pub height: f32,
     /// The columns that have content, in order. There can be fewer than the container can have.
     pub columns: Vec<Window>,
+    /// For every column, the ways to break its paragraphs that are not the first, by paragraph.
+    pub variants: Vec<HashMap<NodeId, usize>>,
 }
 
 /// What the layout of one box in a column found out, which the layout of the next column
@@ -250,13 +252,14 @@ impl HeliumTree<'_, '_> {
             .expect("the content of a container with columns is a flow");
         let flow = self.flow.clone().expect("the flow is known when the columns are chosen");
         let icb_height = self.icb_height;
+        let config = self.variants_config;
         let root = BoxRef(usize::from(id) as u32);
         // (the question about the content lay it out, and that takes the window off the tree)
         let saved = self.save_window();
         let plan = {
             let mut service = TreeService::new(self, &*flow, icb_height);
             let mut service = InColumns { service: &mut service, root };
-            choose(&mut service, id, root, &inner, count, width, gap, height)
+            choose(&mut service, id, root, &inner, count, width, gap, height, config)
         };
         self.restore_window(saved);
         let plan = Rc::new(plan);
@@ -314,7 +317,14 @@ impl HeliumTree<'_, '_> {
     fn layout_columns(&mut self, id: NodeId, plan: Rc<ColumnPlan>) {
         let saved = self.save_window();
         let mut columns = vec![];
-        for window in &plan.columns {
+        let page_variants = self.page_variants.clone();
+        for (index, window) in plan.columns.iter().enumerate() {
+            // (the ways to break the paragraphs that the column has, for the lines and for the
+            // boxes above them, which Taffy must not take from its cache)
+            self.page_variants = page_variants.clone();
+            if let Some(ways) = plan.variants.get(index) {
+                self.page_variants.extend(ways.iter().map(|(&node, &way)| (node, way)));
+            }
             self.set_window(window.clone(), id);
             // the box of a column: as wide as a column, with nothing around it
             let mut style = self.node(id).style.clone();
@@ -357,6 +367,7 @@ impl HeliumTree<'_, '_> {
             }
             columns.push(self.snapshot(id));
         }
+        self.page_variants = page_variants;
         self.restore_window(saved);
         if let Some(node) = self.node_mut(id).columns.as_mut() {
             node.layouts = Some(Rc::new(ColumnLayouts { plan, columns }));
@@ -400,6 +411,14 @@ impl HeliumTree<'_, '_> {
     }
 }
 
+/// The ways to break the paragraphs of a column that are not the first, by paragraph.
+fn ways_of(inner: &Inner, choices: &[helium_paginate::Choice]) -> HashMap<NodeId, usize> {
+    choices
+        .iter()
+        .filter_map(|choice| inner.leaves.get(choice.item).copied().flatten().map(|node| (node, choice.variant)))
+        .collect()
+}
+
 /// Chooses the columns of a container from its content, which is laid out for the width of a
 /// column.
 #[allow(clippy::too_many_arguments)]
@@ -412,6 +431,7 @@ fn choose(
     width: f32,
     gap: f32,
     height: Option<f32>,
+    config: helium_paginate::Variants,
 ) -> ColumnPlan {
     let whole = || Window {
         start: 0,
@@ -425,7 +445,7 @@ fn choose(
         end_container: None,
     };
     if inner.items.is_empty() {
-        return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![] };
+        return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![], variants: vec![] };
     }
     // what the container is as high as: a column of the content on its own is as high as the
     // content, the columns of a container with a height are as high as it is
@@ -436,16 +456,18 @@ fn choose(
         // something has to be kept together. The bound grows if it is too small.
         None => (content / count as f32 * 1.15).min(content) + 1.0,
     };
-    let (starts, used) = loop {
+    let (starts, used, variants) = loop {
         let table = PageTable::uniform(PageSpec { inline_size: width, block_size: bound });
         let problem = Problem::new(table, inner.items.clone())
+            .with_variants(config.extra, config.tolerance)
+            .with_line_tolerance(config.line_tolerance)
             .with_level(BreakLevel::Column)
             .with_page_limit(count);
         let mut kernel = Kernel::new(&problem, service);
         let solution = balance(&mut kernel);
         let Ok(fills) = kernel.realize(&solution) else {
             log::warn!("the columns of a container cannot be chosen: its content is not split");
-            return ColumnPlan { width, gap, height: height.unwrap_or(content), columns: vec![whole()] };
+            return ColumnPlan { width, gap, height: height.unwrap_or(content), columns: vec![whole()], variants: vec![] };
         };
         // Within the bound, nothing was found that keeps all the rules, and there is room for a
         // taller column: look again with a higher bound.
@@ -460,7 +482,11 @@ fn choose(
             .zip(&fills)
             .map(|(start, fill)| (kernel.position(start.at), kernel.position(fill.end)))
             .collect();
-        break (positions, fills.iter().map(|fill| fill.used).collect::<Vec<f32>>());
+        let ways: Vec<HashMap<NodeId, usize>> = fills
+            .iter()
+            .map(|fill| ways_of(inner, &kernel.choices(fill.choices)))
+            .collect();
+        break (positions, fills.iter().map(|fill| fill.used).collect::<Vec<f32>>(), ways);
     };
     let mut columns = vec![];
     for (start, end) in starts {
@@ -471,7 +497,7 @@ fn choose(
         columns.push(paginate::window(&inner.items, &inner.leaves, BreakLevel::Column, Some(id), start, end, gap_extent));
     }
     let tallest = used.iter().copied().fold(0.0, f32::max);
-    ColumnPlan { width, gap, height: height.unwrap_or(tallest), columns }
+    ColumnPlan { width, gap, height: height.unwrap_or(tallest), columns, variants }
 }
 
 /// The fragment of a container that starts at `from` and has `available` height on a page that is
@@ -513,7 +539,8 @@ pub(super) fn fragment_plan(
     let root = BoxRef(usize::from(id) as u32);
     let mut inside = InColumns { service, root };
     let room = available as f32 - top;
-    let found = plan_fragment(&mut inside, &inner.items, count, width, from, room, bottom, fill);
+    let config = inside.service.tree.variants_config;
+    let found = plan_fragment(&mut inside, &inner.items, count, width, from, room, bottom, fill, config);
     let service = inside.service;
     let mut columns = vec![];
     for &(start, end) in &found.columns {
@@ -523,7 +550,8 @@ pub(super) fn fragment_plan(
         };
         columns.push(paginate::window(&inner.items, &inner.leaves, BreakLevel::Column, Some(id), start, end, gap_extent));
     }
-    let plan = Rc::new(ColumnPlan { width, gap, height: found.height, columns });
+    let variants = found.choices.iter().map(|choices| ways_of(&inner, choices)).collect();
+    let plan = Rc::new(ColumnPlan { width, gap, height: found.height, columns, variants });
     let key = (from, page_inline.to_bits(), available.to_bits());
     if let Some(columns) = service.tree.node_mut(id).columns.as_mut() {
         columns.fragments.insert(key, plan.clone());

@@ -152,6 +152,8 @@ pub(super) struct HeliumTree<'a, 'w> {
     /// choose, see `looseness`), and the way that the paragraphs of the page that is laid out are
     /// broken, if it is not the first: the number in the list of the ways of the paragraph.
     pub paragraph_variants: u32,
+    /// The ways to break paragraphs that the pages and the columns choose among.
+    pub variants_config: helium_paginate::Variants,
     pub page_variants: HashMap<NodeId, usize>,
 }
 

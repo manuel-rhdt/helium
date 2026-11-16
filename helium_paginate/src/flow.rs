@@ -203,6 +203,9 @@ pub struct Variants {
     /// The worst badness that a line of a way to break a paragraph can have, except that of the
     /// first way, which the paragraph has anyway. TeX's `\tolerance`: 200.
     pub tolerance: f64,
+    /// The badness that is worth a whole line of room, for the objectives that put the lines and
+    /// the room of a column in one number ([`CssObjective::line_tolerance`](crate::CssObjective)).
+    pub line_tolerance: f64,
 }
 
 impl Variants {
@@ -215,6 +218,7 @@ impl Default for Variants {
         Variants {
             extra: 0,
             tolerance: Self::TOLERANCE,
+            line_tolerance: crate::CssObjective::LINE_TOLERANCE,
         }
     }
 }
@@ -236,7 +240,13 @@ impl Problem {
     /// A page chooses among the ways to break a paragraph that have up to `extra` lines more or
     /// fewer than the optimum, and lines that are not worse than `tolerance`.
     pub fn with_variants(mut self, extra: u32, tolerance: f64) -> Self {
-        self.variants = Variants { extra, tolerance };
+        self.variants = Variants { extra, tolerance, ..self.variants };
+        self
+    }
+
+    /// The exchange rate of the lines and the room of a column ([`Variants::line_tolerance`]).
+    pub fn with_line_tolerance(mut self, line_tolerance: f64) -> Self {
+        self.variants.line_tolerance = line_tolerance;
         self
     }
 

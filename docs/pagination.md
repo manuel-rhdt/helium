@@ -1369,6 +1369,28 @@ for the exchange rate, and not at all for the default. Opened up completely it t
 almost away, and the lines are bad (a mean badness of 734): the harness shows what the knobs buy,
 and the price.
 
+### Columns
+
+The columns choose among the ways to break their paragraphs too (`plan_fragment` and `choose`
+give the inner problems the variants, `ColumnCost` has the price of the lines in its height, and
+the plan carries the ways of every column to the layout and to the writer). `looseness` in columns
+is measured by the kinds `balanced` (containers that are not split) and `columns` (containers that
+go over pages) of `tools/looseness_bench.py`:
+
+| 20 documents, 300 containers | height of the containers, lines | containers shorter | taller |
+| --- | --- | --- | --- |
+| `looseness` 0 | 342.2 | | |
+| `looseness` 1 and 2 | 341.1 | 22 (7%) by a line | 0 |
+| both tolerances open | 340.7 | | |
+
+A balanced container is shorter by a line only if a breaking with a line fewer is within the
+tolerance, and only when the number of lines is odd for two columns, which is why a tenth of the
+containers gain and the rest cannot: a breaking with a line more never makes a balanced container
+shorter. In containers that go over pages the first fragments are filled, and a looser breaking
+holds less text, so the container ends later; the pages are the same in number. Whether a taller
+container is good depends on the page (a page that is left with room, an orphan), which the inner
+choice cannot know: the page has to choose among fragments (see "Multi-column layout").
+
 ### What the first measurements got wrong
 
 Two results of the first runs looked like bugs, and one was.

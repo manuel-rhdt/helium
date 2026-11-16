@@ -118,10 +118,15 @@ impl CssObjective {
     /// The room on a page that costs as much as the lines of the page that are broken in other ways
     /// than the first (see [`Variants`](crate::Variants)): zero for a page that is not.
     pub fn line_room(&self, fill: &PageFill) -> f64 {
+        Self::line_room_at(fill, self.line_tolerance)
+    }
+
+    /// [`line_room`](Self::line_room) for an exchange rate.
+    pub fn line_room_at(fill: &PageFill, line_tolerance: f64) -> f64 {
         if fill.line_demerits <= 0.0 || fill.line_extent <= 0.0 {
             return 0.0;
         }
-        f64::from(fill.line_extent) * fill.line_demerits.sqrt() / self.line_tolerance
+        f64::from(fill.line_extent) * fill.line_demerits.sqrt() / line_tolerance
     }
 }
 
@@ -233,12 +238,15 @@ pub struct ColumnCost {
 }
 
 impl ColumnCost {
-    pub fn of(fill: &PageFill) -> ColumnCost {
+    /// The cost of a column. Its height includes the room that the lines of the column that are
+    /// worse than the first ways are worth ([`CssObjective::line_room_at`]): a column that has
+    /// looser lines is as costly as a taller one.
+    pub fn of(fill: &PageFill, line_tolerance: f64) -> ColumnCost {
         ColumnCost {
             overflow: f64::from(u8::from(fill.overflow)),
             avoided_break: f64::from(u8::from(fill.end_kind == crate::BreakKind::Avoid)),
             orphans_and_widows: f64::from(u8::from(fill.orphan_violation || fill.widow_violation)),
-            height: fill.used as f64,
+            height: fill.used as f64 + CssObjective::line_room_at(fill, line_tolerance),
         }
     }
 
@@ -264,8 +272,16 @@ impl ColumnCost {
 /// The first step of balancing columns: the least cost of the worst column. A pagination is not
 /// found by its prefix alone, so the result is one of the paginations with the least worst
 /// column, and [`FullestFirst`] chooses among them.
-#[derive(Debug, Copy, Clone, Default)]
-pub struct TallestColumn;
+#[derive(Debug, Copy, Clone)]
+pub struct TallestColumn {
+    pub line_tolerance: f64,
+}
+
+impl Default for TallestColumn {
+    fn default() -> Self {
+        TallestColumn { line_tolerance: CssObjective::LINE_TOLERANCE }
+    }
+}
 
 impl Objective for TallestColumn {
     type Cost = ColumnCost;
@@ -275,7 +291,7 @@ impl Objective for TallestColumn {
     }
 
     fn page_cost(&self, fill: &PageFill, _is_last: bool) -> Option<ColumnCost> {
-        Some(ColumnCost::of(fill))
+        Some(ColumnCost::of(fill, self.line_tolerance))
     }
 
     fn combine(&self, so_far: &ColumnCost, page: &ColumnCost, _index: usize) -> ColumnCost {
@@ -290,6 +306,7 @@ impl Objective for TallestColumn {
 #[derive(Debug, Copy, Clone)]
 pub struct FullestFirst {
     pub bound: ColumnCost,
+    pub line_tolerance: f64,
 }
 
 impl Objective for FullestFirst {
@@ -300,7 +317,7 @@ impl Objective for FullestFirst {
     }
 
     fn page_cost(&self, fill: &PageFill, _is_last: bool) -> Option<ColumnCost> {
-        let cost = ColumnCost::of(fill);
+        let cost = ColumnCost::of(fill, self.line_tolerance);
         (cost <= self.bound).then_some(cost)
     }
 
@@ -314,13 +331,14 @@ impl Objective for FullestFirst {
 /// on its number of pages: the number of columns. The choice among equal ones is the one of the
 /// exact solver, so the result is the same every time.
 pub fn balance(kernel: &mut Kernel<'_>) -> Solution {
-    let first = ExactSolver::new(TallestColumn).solve(kernel);
+    let line_tolerance = kernel.variants().line_tolerance;
+    let first = ExactSolver::new(TallestColumn { line_tolerance }).solve(kernel);
     let Ok(pages) = kernel.realize(&first) else {
         return first;
     };
     let bound = pages
         .iter()
-        .map(ColumnCost::of)
+        .map(|fill| ColumnCost::of(fill, line_tolerance))
         .fold(ColumnCost::default(), ColumnCost::max);
-    ExactSolver::new(FullestFirst { bound }).solve(kernel)
+    ExactSolver::new(FullestFirst { bound, line_tolerance }).solve(kernel)
 }

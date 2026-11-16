@@ -170,3 +170,52 @@ fn the_choices_of_the_pages_can_be_dumped() {
         .sum();
     assert_eq!(report["lines"]["count"].as_u64().unwrap(), reported);
 }
+
+
+/// A container with two columns whose content has a way to break it with a line fewer: the
+/// balanced columns are a line shorter when its paragraphs ask for `looseness`, and the text is
+/// the same (found with `tools/looseness_bench.py`, the kind `balanced`).
+#[test]
+fn balanced_columns_are_shorter_when_their_paragraphs_can_be_broken_in_another_way() {
+    const CONTAINER: &str = r#"<div class=cols style="column-count: 2"><p>From they many when was made understanding so with unfortunately some find has see first like. About each has its disappointment like so extraordinary so with what understanding extraordinary is by are what than as. About other and notwithstanding people has my your notwithstanding. Water what do know to long were out which do. This as his into we they or if to.</p><p>Were no not than if about than circumstances made of way may they has if time but so over can circumstances from. Two so in can she called people way are at out other did would his at it has how where.</p><p>It has extraordinary acquaintance then where. Down like where long has for his from there would water would long with only an very how acquaintance. Up disappointment more made it only of on it for this way. The from way an an how. Unfortunately there disappointment then one no extraordinary will said first over said made him on are.</p><p>She over notwithstanding only people words make out would way find. But she it neighbourhood my with my called with unfortunately what are was a had make neighbourhood. Could about if time more been a some these than like may like just will an extraordinary be so. Is as see her do up after very all some of its other some up been about an where. My more more than his each is there.</p><p>We have if but up will after. Where notwithstanding or can these into people unfortunately has or him we at more. Know these do unfortunately what as his your these how. Was is as has there disappointment we words over each could not we or unfortunately what have your called.</p><p>Each over their had a was then the about out no neighbourhood time out where. But most had were on did acquaintance this people one a would. When may which had by see just did if of on notwithstanding as we way see them just. After out up her had so know way may about was up was. We out make it they would was these like them each at from if in called called on when than. Many some not be has been who no how each have people circumstances no many.</p></div>"#;
+    let height_of = |name: &str, looseness: u32| -> (f64, usize) {
+        let html = format!(
+            "<!DOCTYPE html><html lang=en><meta charset=utf-8><title>t</title><style>
+             @page {{ size: 800px 4000px; margin: 40px }}
+             body {{ margin: 0; font: 14px/20px serif; orphans: 2; widows: 2; looseness: {looseness} }}
+             p {{ margin: 0; text-align: justify; hyphens: auto; text-indent: 1.3em }}
+             .cols {{ margin: 0 0 20px; column-gap: 24px }}</style>{CONTAINER}"
+        );
+        let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+        let input = dir.join(format!("looseness__{name}.html"));
+        std::fs::write(&input, html).unwrap();
+        let output = common::helium()
+            .unwrap()
+            .args(["--no-system-fonts", "--dump-layout", "-"])
+            .arg(&input)
+            .arg(dir.join(format!("looseness__{name}.pdf")))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let dump: Value = serde_json::from_slice(&output.stdout).unwrap();
+        fn find(node: &Value) -> Option<f64> {
+            if node["class"].as_str().is_some_and(|class| class.split(' ').any(|name| name == "cols")) {
+                return node["border_box"]["height"].as_f64();
+            }
+            node["children"].as_array()?.iter().find_map(find)
+        }
+        // the lines that are in the columns
+        let lines: usize = dump["paint"]["text"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|text| 1 + text["ops"].as_array().unwrap().iter().filter(|op| op["op"] == "newline").count())
+            .sum();
+        (find(&dump["document"]).expect("the container"), lines)
+    };
+    let (plain, plain_lines) = height_of("columns_plain", 0);
+    let (loose, loose_lines) = height_of("columns_loose", 1);
+    assert_eq!(plain - loose, 20.0, "{plain} and {loose}");
+    // (a line fewer in all)
+    assert!(loose_lines < plain_lines, "{plain_lines} and {loose_lines}");
+}

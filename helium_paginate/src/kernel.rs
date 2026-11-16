@@ -307,6 +307,11 @@ impl<'a> Kernel<'a> {
         }
     }
 
+    /// The ways to break paragraphs that the problem asks for.
+    pub fn variants(&self) -> crate::Variants {
+        self.problem.variants
+    }
+
     /// Whether the problem is a fragment of a container.
     pub fn is_fragment(&self) -> bool {
         self.problem.fragment

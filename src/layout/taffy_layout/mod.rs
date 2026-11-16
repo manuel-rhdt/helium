@@ -150,6 +150,7 @@ impl TaffyBlockLayout {
             plain_root: None,
             page_fragments: HashMap::new(),
             paragraph_variants: 0,
+            variants_config: helium_paginate::Variants::default(),
             page_variants: HashMap::new(),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
@@ -182,6 +183,11 @@ impl TaffyBlockLayout {
         let problem = problem.with_variants(looseness, tuning.variant_tolerance);
         let objective = helium_paginate::CssObjective { line_tolerance: tuning.line_tolerance };
         tree.paragraph_variants = looseness;
+        tree.variants_config = helium_paginate::Variants {
+            extra: looseness,
+            tolerance: tuning.variant_tolerance,
+            line_tolerance: tuning.line_tolerance,
+        };
         tree.icb_height = first_spec.block_size;
 
         // choose the pages
@@ -350,6 +356,7 @@ impl TaffyBlockLayout {
                 intrinsic_sizes,
                 line_cache: lines,
                 page_variants: &*page_variants,
+                column_variants: None,
                 paragraph_variants: *paragraph_variants,
                 positions: &mut positions,
                 decorations: &mut decorations,
@@ -493,6 +500,9 @@ struct Writer<'a, 'w> {
     /// The ways that the paragraphs of the page are broken that are not the first, and the most lines
     /// more or fewer than the best breaking that the paragraphs may have.
     page_variants: &'a HashMap<NodeId, usize>,
+    /// The ways to break the paragraphs of the column that is being written, which are the ones
+    /// of the column and not of the page.
+    column_variants: Option<&'a HashMap<NodeId, usize>>,
     paragraph_variants: u32,
     positions: &'a mut WriteStorage<'w, Position>,
     decorations: &'a mut WriteStorage<'w, Decoration>,
@@ -879,6 +889,7 @@ impl<'a> Writer<'a, '_> {
         for (index, (window, snapshot)) in plan.columns.iter().zip(&layouts.columns).enumerate() {
             let window_before = std::mem::replace(&mut self.window, window);
             let overlay_before = self.overlay.replace(snapshot);
+            let variants_before = std::mem::replace(&mut self.column_variants, plan.variants.get(index));
             // the part of a box that goes on in the next column is painted down to the bottom of
             // the column
             let bottom_before = std::mem::replace(&mut self.page_bottom, content_y + plan.height);
@@ -910,6 +921,7 @@ impl<'a> Writer<'a, '_> {
             };
             self.window = window_before;
             self.overlay = overlay_before;
+            self.column_variants = variants_before;
             self.page_bottom = bottom_before;
             written?;
         }
@@ -989,7 +1001,13 @@ impl<'a> Writer<'a, '_> {
             return Ok(());
         };
         let looseness = style.map_or(0, |style| style.page.looseness as u32);
-        let variant = (self.page_variants.get(&id).copied().unwrap_or(0), self.paragraph_variants.min(looseness));
+        let way = self
+            .column_variants
+            .and_then(|ways| ways.get(&id))
+            .or_else(|| self.page_variants.get(&id))
+            .copied()
+            .unwrap_or(0);
+        let variant = (way, self.paragraph_variants.min(looseness));
         let measured = lines_between(
             self.line_cache,
             ifc,

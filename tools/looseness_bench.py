@@ -13,6 +13,7 @@ For each kind of document (and each seed) the document is rendered with `loosene
 set on the body, and the report gives, per kind and level, the mean of:
 
   pages      the number of pages
+  cols       the height of the containers with columns, in lines (kind `columns`)
   room       the room left at the foot of the pages that are not the last, in lines
   loose      the lines that are broken worse than a badness of 100 (TeX's measure)
   badness    the mean badness of a line
@@ -68,7 +69,19 @@ def figures(rng):
         out.append(f'<div class=fig style="--h:{rng.randint(60, 240)}px"></div>')
     return "".join(out)
 
-KINDS = {"flow": flow, "chapters": chapters, "figures": figures}
+def columns(rng, size="800px 700px"):
+    out = [head("@page { size: %s } .cols { margin: 0 0 20px; column-gap: 24px }" % size)]
+    for block in range(rng.randint(10, 20)):
+        out.append(f'<div class=cols style="column-count: {rng.choice([2, 2, 3])}">')
+        out += [paragraph(rng) for _ in range(rng.randint(3, 12))]
+        out.append("</div>")
+    return "".join(out)
+
+def balanced(rng):
+    # one tall page: the containers are not split, and every one is balanced
+    return columns(rng, "800px 30000px")
+
+KINDS = {"flow": flow, "chapters": chapters, "figures": figures, "columns": columns, "balanced": balanced}
 
 KNOBS = {}
 
@@ -94,26 +107,35 @@ def render(html, level, directory, name):
     for rect in dump["paint"]["rects"]:
         if rect["color"][:3] == [204, 204, 221]:
             bottom[rect["page"]] = max(bottom.get(rect["page"], 0.0), rect["y"] + rect["height"] + 10)
+    # the height of the containers with columns, in lines
+    cols = 0.0
+    def walk(node):
+        nonlocal cols
+        if "cols" in str(node.get("class", "")).split():
+            cols += node["border_box"]["height"] / LINE
+        for child in node.get("children", []):
+            walk(child)
+    walk(dump["document"])
     pages = max(bottom) + 1 if bottom else 1
     room = sum(max(0.0, TOP + HEIGHT - bottom.get(page, TOP)) for page in range(pages - 1)) / LINE
     match = re.search(r"LINES: (\d+) lines, mean badness ([\d.]+), worst ([\d.]+), (\d+) over 100", process.stderr)
     lines, badness, _, loose = (float(x) for x in match.groups()) if match else (0, 0, 0, 0)
-    return {"pages": pages, "room": room, "loose": loose, "badness": badness, "lines": lines}
+    return {"pages": pages, "cols": cols, "room": room, "loose": loose, "badness": badness, "lines": lines}
 
 def report(title, results, levels, per_document=False):
     if per_document:
         for number, result in enumerate(results):
             print(f"  {title}{number}: " + "  ".join(
-                f"L{level}: {result[level]['pages']}p room {result[level]['room']:.1f} lines {result[level]['lines']:.0f}"
+                f"L{level}: {result[level]['pages']}p cols {result[level]['cols']:.1f} room {result[level]['room']:.1f} lines {result[level]['lines']:.0f}"
                 for level in levels))
     print(f"\n{title} ({len(results)} documents)")
-    print(f"{'looseness':>9} {'pages':>8} {'room':>8} {'lines':>8} {'loose':>8} {'badness':>8} {'fewer pages':>12} {'more pages':>11}")
+    print(f"{'looseness':>9} {'pages':>8} {'cols':>8} {'room':>8} {'lines':>8} {'loose':>8} {'badness':>8} {'fewer pages':>12} {'more pages':>11}")
     for level in levels:
         rows = [result[level] for result in results]
         mean = lambda key: sum(row[key] for row in rows) / len(rows)
         fewer = sum(1 for result in results if result[level]["pages"] < result[levels[0]]["pages"])
         more = sum(1 for result in results if result[level]["pages"] > result[levels[0]]["pages"])
-        print(f"{level:>9} {mean('pages'):8.2f} {mean('room'):8.2f} {mean('lines'):8.1f} {mean('loose'):8.1f} {mean('badness'):8.2f} {fewer:12} {more:11}")
+        print(f"{level:>9} {mean('pages'):8.2f} {mean('cols'):8.2f} {mean('room'):8.2f} {mean('lines'):8.1f} {mean('loose'):8.1f} {mean('badness'):8.2f} {fewer:12} {more:11}")
 
 def main():
     parser = argparse.ArgumentParser()
