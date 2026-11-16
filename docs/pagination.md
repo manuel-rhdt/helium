@@ -1,8 +1,8 @@
 # Pagination: design
 
-Status: proposal. Nothing described here is implemented yet. The section
-"Where the code stands" describes the code as of this writing; everything after
-it is the plan.
+Status: steps 1, 2 and 4 of "Order of work" are implemented. The section "Where the code stands"
+describes the code as it is; the sections after it are the design, with notes where the code
+differs.
 
 ## Goals
 
@@ -30,59 +30,57 @@ it is the plan.
 The pipeline in `src/layout/mod.rs` (`layout`) is:
 
 1. `FindPossibleLineBreaks` finds the break opportunities of every paragraph.
-2. `TaffyBlockLayout` lays out the whole document once, as an endless galley
-   at the content width of the plain `@page` rule. Paragraphs are measured
-   inside Taffy's measure function (`HeliumTree::compute_inline_layout`, which
-   calls `InlineFormattingContext::compute_lines`), and broken for real when
-   the positions are written (`Writer::write_lines`).
-3. `Paginator` (`src/layout/paginate.rs`) collects break opportunities from the
-   `TextList`, with the y position of each, and chooses breaks with the same
-   least-weight-subsequence routine that is used for lines
-   (`paragraph::compute_breakpoints`). The cost of a page is the cube of its
-   unused height, plus penalties for `avoid` and for orphans and widows.
-4. The paginator then moves every box to its page, and splits the decoration
-   of boxes that contain a break.
+2. `TaffyBlockLayout` (`src/layout/taffy_layout/mod.rs`) builds `HeliumTree` once and does the
+   rest of the work on it:
+   - `flow.rs` makes the *flow* from the tree: the items of the kernel. A block container is
+     the box of its top edge, its kids with a break and a gap between each two of them, and the
+     box of its bottom edge. A paragraph is its two edges and a paragraph item. Boxes that are
+     not split (replaced boxes, flex and grid containers, boxes with a `height`, orthogonal
+     flows) are one box. A table is split between its rows, row groups and captions, where no
+     cell spans over the break. Every box knows its items (`Span`).
+   - `service.rs` is the layout service. For every page width that the kernel asks about it
+     lays the whole tree out once with Taffy (a galley) and reads the extents of boxes and gaps
+     from it. The lines of a paragraph are what the line breaker makes of it for the width that
+     the galley gave it; from a cut on, they are the lines of the whole paragraph if the cut is
+     the end of a line of it, and else the rest of the paragraph broken for the width of the
+     page. Everything is cached by the width that was asked for.
+   - `paginate.rs` gives the kernel the geometry of the page that starts at every place: the
+     name of the first content on it, whether it starts a page group, and its kind decide the
+     margins and the size. The exact solver with `CssObjective` chooses the pages.
+   - For every chosen page `window.rs` shows Taffy a *window* on the tree and the page is laid
+     out for its own width and height. `Writer` writes the positions of the boxes that are
+     on the page, in the coordinates of the page. A box on more than one page has a position
+     for each of them (`DecorationFragment`).
+3. The passes after it (`PlaceInlineBlocks`, `LineBoxCreator`, ...) are unchanged. `PagesCreate`
+   and the margin boxes take the size of every page from its `PageContext`.
 
 Limits of this, in order of importance:
 
-- **One width.** The galley has one width. Two workarounds exist. Page groups
-  (`taffy_layout/page_groups.rs`) wrap content that is delimited by forced
-  breaks in a box of another width. Left and right pages are shifted sideways
-  (`PageMargins::shift`), which is only right if their margins have the same
-  sum; `PageMargins::left_right_conflicts` warns otherwise. `@page :first`
-  with other margins has no effect on the width unless a forced break follows
-  the first page.
-- **The page class is guessed.** The paginator needs the height of the page
-  that starts at a break before it knows the number of that page.
-  `PageMargins::edges_of_page_start` therefore uses the base margins when left
-  and right pages differ in their top or bottom margin, and the code treats
-  the index of a break point as if it were a page number (`number == 0`).
-- **One page size.** `PagesCreate` and the viewport units take a single width
-  and height.
-- **Lines are fixed before pages.** The paginator can only cut between the
-  lines that the paragraph breaker chose for the galley.
-- **Monolithic containers.** Flex and grid containers and table rows are never
-  split. Tables are laid out as grids (`taffy_layout/table.rs`) and split
-  between rows only.
-- **Margins at the end of a page count.** A page ends where the next element
-  starts, so the margin in front of an unforced break is counted against the
-  height of the page before it. The margin is only discarded at the start of
-  the next page. The kernel discards it on both sides; the flow that is
-  extracted from the galley has no `Gap` items yet and keeps the old behaviour.
-- **A page can span a forced break.** A forced break has a large negative
-  cost, not an infinite one. Where the pages on both sides of it would
-  overflow, the paginator may ignore it. `Problem::stop_at_forced` is off to
-  keep this, and goes away with the galley.
-- **`break-before: left`/`right`** force a break but never insert the empty
-  page that may be needed.
+- **Paragraphs are rigid.** There are no profiles and no joint optimisation (step 5). A paragraph
+  that continues on a page of another width is broken again from the cut on, without the state of
+  the line breaker.
+- **Monolithic containers.** Flex and grid containers and table rows are never split. A table is
+  split between rows, but it is laid out as a whole, for the width of the page where it starts:
+  the columns of a table do not follow the width of later pages. A box with a `height` is not
+  split either (a minimum height is dropped for a box that is cut).
+- **Out-of-flow boxes.** An absolutely positioned box is laid out on the page of the content in
+  front of it, in the content area of that page. If the box is positioned by `top` or `bottom`
+  in the initial containing block, it is on the first page. A containing block that is cut
+  counts as the box on the page of the box.
+- **The height of the galley.** The galley is laid out for the height of the first page. Heights
+  that are percentages or viewport units in boxes that are not split follow that page, and the
+  viewport units follow the plain page.
+- **`--crop`** has page size 0 and puts every box on a page of its own, as before.
+- **Fragments end with their content.** The part of a box on a page ends at its last line or
+  box; it is not stretched to the bottom of the page.
 
-Two properties of the current code that the design builds on:
+Two properties of the code that the design builds on:
 
-- helium implements Taffy's tree traits itself (`HeliumTree` in
-  `taffy_layout/tree.rs`) instead of using `TaffyTree`. It controls which
-  children and which styles Taffy sees.
-- `paragraph::compute_paragraph_breakpoints` already takes the line width as a
-  function of the line number.
+- helium implements Taffy's tree traits itself (`HeliumTree` in `taffy_layout/tree.rs`)
+  instead of using `TaffyTree`. It controls which children and which styles Taffy sees.
+- `paragraph::compute_paragraph_breakpoints` takes the line width as a function of the line
+  number, and `InlineFormattingContext::compute_lines_from` breaks a paragraph from a break
+  opportunity on.
 
 ## Overview
 
@@ -525,45 +523,52 @@ scores the metrics. The exact solver on small problems gives the reference.
 
 ## Changes to the engine
 
-The pipeline becomes:
+The pipeline is now:
 
 1. Construct, find line break opportunities (unchanged).
-2. Build `HeliumTree` once. Extract the `Problem` from it. This replaces the
-   first half of `Paginator::run`.
-3. Solve.
-4. Apply: `layout_page` for every page, then split the decorations of boxes
-   that span pages and place the absolutely positioned boxes. This replaces
-   `Writer::write_box` over the whole document and the second half of
-   `Paginator::run`. `Writer::write_lines` takes the lines to write instead
-   of calling `break_lines`.
+2. Build `HeliumTree` once. Make the flow from it.
+3. Solve, with the layout service answering the kernel.
+4. Apply: lay out every page through its window and write the positions. The decorations of
+   boxes on more than one page are made from the parts that were written for each page. There
+   is no `layout_page` function: setting the window, calling `compute_root_layout` and `Writer`
+   are the steps of the loop in `TaffyBlockLayout::run`.
 5. The passes after pagination are unchanged.
 
-Removed once the new path passes the equivalence test:
-
-- `taffy_layout/page_groups.rs` and `PageGroupBox`;
-- `PageMargins::shift`, `edges_of_page_start` and `left_right_conflicts`;
-- the single-galley call of `taffy::compute_root_layout`.
+Removed: `taffy_layout/page_groups.rs` and `PageGroupBox`; `PageMargins::shift`,
+`edges_of_page_start` and `left_right_conflicts` with its warning; `Problem::stop_at_forced`;
+`Paginator` and its galley; the single-galley call of `taffy::compute_root_layout` (the galleys
+that the service lays out only give extents).
 
 Changed for a page size per page:
 
-- `PagesCreate` and the PDF writer take the size of each page;
+- `PagesCreate` takes the size of each page (and creates the empty pages);
 - margin boxes and page backgrounds use the geometry of their page;
-- `set_viewport` is set per page before `layout_page`. Viewport units in
-  content that is measured before its page is known use the page that is
-  asked for.
+- `set_viewport` is still set once, for the plain page: viewport units are resolved when the
+  style is computed.
 
-Islands (`foreignObject`, `layout_islands`) keep one page and use the greedy
-solver.
+Where the code differs from the design above:
+
+- The kernel asks `LayoutService::lines(par, from, inline)` for the lines of a paragraph, and
+  a cut is an opaque `Cut`: the index of a break opportunity. A paragraph item has no line
+  count. `Position::InParagraph` holds the cut. The tokens of cuts are made when a page that
+  ends there is first asked for.
+- `PageTable` is a function from the position and the kind of a page to its geometry.
+- `PageStart` has the page number. A `Solution` is a list of `PageStart`s; a number that is
+  missing is an empty page that `next_page` made for a break to a left or right page.
+- `fragment` and `PageLayout` do not exist: tables are split between rows without them.
+
+Islands (`foreignObject`, `layout_islands`) keep one page; they use the exact solver and show
+the first page.
 
 ## Order of work
 
-1. `helium_paginate` with tokens, the flat flow, the kernel and `CssObjective`;
-   `paragraph.rs` moves there. The service is backed by the existing galley.
-   The exact solver passes the equivalence test. No change in output.
-2. The windowed view and `layout_page` for block flow. Pages of differing
-   width work. Page groups and the shift are removed.
+1. Done. `helium_paginate` with tokens, the flat flow, the kernel and `CssObjective`;
+   `paragraph.rs` moves there. The exact solver passes the equivalence test.
+2. Done. The windowed view and the layout of a page for block flow. Pages of differing
+   width work. Page groups, the shift, the guessed page class and `stop_at_forced` are removed.
+   Tables are split between rows, with the columns of the table as a whole.
 3. Greedy solver, recorded problems, the harness and the metrics.
-4. Page size per page; empty pages for `left` and `right`.
+4. Done. Page size per page; empty pages for `left` and `right`.
 5. Profiles and cuts with state in the line breaker; the joint solver.
 6. `fragment` for tables between rows, with pinned columns.
 7. `fragment` for grid and flex, with parallel parts.
@@ -573,20 +578,36 @@ independent of each other.
 
 ## Open questions
 
-- **Taffy's cache.** How many entries Taffy 0.15 keeps per node, and whether
-  that is enough for a tree that is asked for several widths and windows, has
-  not been checked. The service may need a cache of its own.
-- **Windows and margins.** Margins are collapsed by Taffy's block layout.
-  Whether a windowed list of children gives the margins that fragmentation
-  wants at the edges of a page has not been checked.
-- **Widths that depend on heights.** The design relies on the inline sizes of
-  the flow not depending on the heights of its content. That holds for plain
-  blocks. `aspect-ratio` on a container of the flow would break it.
-- **Collapsed borders.** A table that is split has borders at the cut that
-  `taffy_layout/collapse.rs` resolved for the whole table. The decoration
-  fragments handle this today; the window has to as well.
+- **Taffy's cache.** Resolved by reading `taffy-0.15.1/src/tree/cache.rs` and the layout
+  functions. A node has one entry for its final layout and nine for measurements. The key is
+  the known size, the available space and the size of the parent; the mode (sizing mode and
+  whether the margins are collapsible) is kept once for the node. Neither the style nor the
+  children are in the key. A node that is laid out in a window (other children, other style)
+  must therefore not use the cache: `HeliumTree` returns no entry and stores none for the
+  nodes that the window changes (`Node::windowed`). The nodes inside the window that are not
+  changed keep sharing their entries, and since a parent that is laid out for another width
+  replaces the final entry of its child, the layout of a node's descendants is always the one
+  that its last final entry was computed with. For a document with several page widths this
+  means that a node is laid out again whenever the width changes, which is what the galleys do.
+- **Windows and margins.** Resolved by testing. A margin that adjoins the edge of a page is
+  discarded by setting it to zero on the boxes along the first and last kid of the window, down
+  to the first box that has padding or border at that edge (a margin below it does not adjoin
+  the page). After a forced break the margin of the first box is the gap of the flow, which is
+  the collapsed margin of all the boxes at the break, and its descendants get none. Taffy
+  collapses the margins that are left as it does in a whole document. The test
+  `the_height_of_a_page_is_what_the_paginator_counted_in_every_document` checks that the height of
+  every page of the documents in `tests/documents` and `gallery` is what the kernel counted.
+- **Widths that depend on heights.** Unchanged. Boxes with an `aspect-ratio` or a `height` are
+  not split, so the widths of the boxes in the flow do not depend on heights.
+- **Collapsed borders.** A table is laid out as a whole, so the borders are the ones that
+  `collapse.rs` resolved for the whole table. The fragments at a cut get the edges they had
+  before (`paint` off at the cut and no extension of the side borders), as before.
 - **The exchange rate** between line demerits and page costs.
-- **Runtime of the joint solver** on a book. Unmeasured.
-- **Floats and footnotes** take space on a page out of the order of the flow.
-  They would be a new kind of item, and `candidates` would no longer be a walk
-  in one direction.
+- **Runtime of the joint solver** on a book. Unmeasured. The exact solver (no joint
+  optimisation) paginates `gallery/book` (368 pages) in about 230 ms including the galley
+  that gives its extents; the old paginator needed about 195 ms for the galley and the
+  paginator together (release build).
+- **Floats and footnotes** take space on a page out of the order of the flow. They would be a
+  new kind of item, and `candidates` would no longer be a walk in one direction.
+- **A table that spans pages of different widths** keeps the columns of the width of the page it
+  starts on.

@@ -298,3 +298,45 @@ pub(super) fn table_fragment(nodes: &[Node], window: &Window, node: &Node, full:
     };
     (top, bottom)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(start: u32, end: u32) -> Span {
+        Span { start, end, kids: vec![], split: false, anchored: false }
+    }
+
+    fn window(start: u32, end: u32) -> Window {
+        Window { start, end, start_cut: None, end_cut: None, leading: Leading::Discard, at_end: false }
+    }
+
+    #[test]
+    fn a_box_is_open_where_the_window_cuts_it() {
+        let window = window(10, 20);
+        // a box that has items on both sides of the start of the window
+        assert!(window.open_at_start(&span(5, 15)));
+        // a box that starts in the window is not cut at its start
+        assert!(!window.open_at_start(&span(10, 15)));
+        assert!(!window.open_at_start(&span(11, 15)));
+        // a box that ends in front of the window is not in it
+        assert!(!window.open_at_start(&span(2, 10)));
+        assert!(window.open_at_end(&span(15, 25)));
+        assert!(!window.open_at_end(&span(15, 20)));
+        assert!(!window.open_at_end(&span(20, 30)));
+    }
+
+    #[test]
+    fn the_cuts_of_a_paragraph_are_found_by_its_box() {
+        let paragraph = NodeId::from(3usize);
+        let other = NodeId::from(4usize);
+        let window = Window {
+            start_cut: Some((paragraph, Cut(7))),
+            end_cut: Some((other, Cut(9))),
+            ..window(0, 1)
+        };
+        assert_eq!(window.cut_of(paragraph), Some((Some(Cut(7)), None)));
+        assert_eq!(window.cut_of(other), Some((None, Some(Cut(9)))));
+        assert_eq!(window.cut_of(NodeId::from(5usize)), None);
+    }
+}

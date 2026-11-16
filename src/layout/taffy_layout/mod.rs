@@ -137,6 +137,7 @@ impl TaffyBlockLayout {
         let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone());
 
         // choose the pages
+        let before = std::time::Instant::now();
         let mut service = service::TreeService::new(&mut tree, &flow, first_spec.block_size);
         // (start of the page, its end, the page)
         let mut planned: Vec<(helium_paginate::PageStart, helium_paginate::Position, helium_paginate::Position, helium_paginate::PageFill)> = vec![];
@@ -169,7 +170,9 @@ impl TaffyBlockLayout {
                 ));
             }
         }
+        log::info!("TIMED: paginate {:?}", before.elapsed());
         log::debug!("{} pages, laid out for {} widths", planned.len(), service.galleys());
+        let before = std::time::Instant::now();
 
         let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
         let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
@@ -256,6 +259,7 @@ impl TaffyBlockLayout {
             )?;
             page_contexts.push(context);
         }
+        log::info!("TIMED: layout of the pages {:?}", before.elapsed());
         drop(service);
         drop(tree);
 
