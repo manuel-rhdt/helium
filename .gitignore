@@ -2,3 +2,4 @@
 **/*.rs.bk
 /helium_derive/target
 testbook_site/
+/helium_paginate/target

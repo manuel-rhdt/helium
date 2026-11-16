@@ -11,7 +11,6 @@ mod mathml;
 pub mod normal_formatting;
 mod paginate;
 pub mod pages;
-pub(crate) mod paragraph;
 mod relative_positioning;
 mod taffy_layout;
 pub mod text;

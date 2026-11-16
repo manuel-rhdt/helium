@@ -341,17 +341,17 @@ impl InlineFormattingContext {
 
         let opportunities: Vec<_> = breakpoints
             .iter()
-            .map(|breakpoint| super::paragraph::BreakOpportunity {
+            .map(|breakpoint| helium_paginate::paragraph::BreakOpportunity {
                 forced: breakpoint.forced,
                 hyphen: breakpoint.hyphen,
                 penalty: breakpoint.penalty,
             })
             .collect();
         let mut glue_prefix = Vec::with_capacity(breakpoints.len() + 1);
-        glue_prefix.push(super::paragraph::GlueTotals::default());
+        glue_prefix.push(helium_paginate::paragraph::GlueTotals::default());
         for breakpoint in breakpoints {
             let previous = *glue_prefix.last().unwrap();
-            glue_prefix.push(super::paragraph::GlueTotals {
+            glue_prefix.push(helium_paginate::paragraph::GlueTotals {
                 stretch: previous.stretch + f64::from(breakpoint.glue_stretch.0),
                 shrink: previous.shrink + f64::from(breakpoint.glue_shrink.0),
             });
@@ -367,7 +367,7 @@ impl InlineFormattingContext {
             // and, like TeX's \raggedright, a finite stretch of 2em at the end of every line, so
             // lines are balanced by the same algorithm without ever being squeezed.
             let glue = if justified {
-                super::paragraph::GlueTotals {
+                helium_paginate::paragraph::GlueTotals {
                     stretch: end_glue.stretch - start_glue.stretch,
                     shrink: end_glue.shrink - start_glue.shrink,
                 }
@@ -375,7 +375,7 @@ impl InlineFormattingContext {
                 let font_size = text_runs
                     .get(breakpoints[to].entity)
                     .map_or(16.0, |run| run.face.font_size.0);
-                super::paragraph::GlueTotals {
+                helium_paginate::paragraph::GlueTotals {
                     stretch: f64::from(2.0 * font_size),
                     shrink: 0.0,
                 }
@@ -385,7 +385,7 @@ impl InlineFormattingContext {
         let width_of =
             |from: usize| f64::from((line_width - if from == 0 { indent } else { Px(0.0) }).0);
         let sequence =
-            super::paragraph::compute_paragraph_breakpoints(&opportunities, metrics, width_of);
+            helium_paginate::paragraph::compute_paragraph_breakpoints(&opportunities, metrics, width_of);
 
         let lines = sequence
             .windows(2)
