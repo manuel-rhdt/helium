@@ -649,6 +649,15 @@ impl StyleBuilder {
                 math_depth: MathDepth::Absolute(inherited_values.math.depth()),
                 ..Default::default()
             }),
+            // the initial border width is `medium`, which only counts where there is a border
+            // style (see `Position::fixup`); boxes that are not made from elements have none
+            position: Arc::new(Position {
+                border_top_width: PixelLength(3.0),
+                border_bottom_width: PixelLength(3.0),
+                border_left_width: PixelLength(3.0),
+                border_right_width: PixelLength(3.0),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         StyleBuilder {
