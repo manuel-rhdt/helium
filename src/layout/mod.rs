@@ -9,7 +9,6 @@ pub mod inline_size;
 mod margin_boxes;
 mod mathml;
 pub mod normal_formatting;
-mod paginate;
 pub mod pages;
 mod relative_positioning;
 mod taffy_layout;
@@ -296,23 +295,22 @@ pub fn layout(
             page_styles
                 .pages
                 .insert(page.clone(), std::sync::Arc::new(style.clone()));
+            // the size of the page: `size` of a rule for a kind of page replaces the plain size
+            let (width, height) = page_box(&style, device);
+            let (plain_width, plain_height) = page_box(&page_style(&flow_constructor.styles), device);
+            if (width - plain_width).0.abs() > 0.01 || (height - plain_height).0.abs() > 0.01 {
+                page_margins.sizes.insert(page.clone(), (width, height));
+            }
             page_margins.pages.insert(
                 page,
                 EdgeValues {
-                    top: page_margin(style.position.margin_top, page_width),
-                    left: page_margin(style.position.margin_left, page_width),
-                    bottom: page_margin(style.position.margin_bottom, page_width),
-                    right: page_margin(style.position.margin_right, page_width),
+                    top: page_margin(style.position.margin_top, width),
+                    left: page_margin(style.position.margin_left, width),
+                    bottom: page_margin(style.position.margin_bottom, width),
+                    right: page_margin(style.position.margin_right, width),
                 },
             );
         }
-    }
-
-    if page_margins.left_right_conflicts() {
-        log::warn!(
-            "the top and bottom margins and the width of left and right pages differ: only the \
-             left and right margins with the same sum are supported for them"
-        );
     }
 
     let margin_boxes = if crop {
@@ -371,13 +369,6 @@ pub fn layout(
     }
     .run(&mut layout_context)?;
     info!("TIMED: block layout {:?}", time_before.elapsed());
-
-    let mut paginator = paginate::Paginator { page_height };
-    paginator.setup(&mut layout_context);
-
-    time_before = Instant::now();
-    paginator.run_now(&layout_context);
-    info!("TIMED: paginate {:?}", time_before.elapsed());
 
     let mut place_inline_blocks = inline::PlaceInlineBlocks;
     place_inline_blocks.setup(&mut layout_context);
@@ -519,10 +510,6 @@ fn run_island_passes(world: &mut World, width: PixelLength, height: PixelLength)
         margin,
     }
     .run(world)?;
-
-    let mut paginator = paginate::Paginator { page_height: height };
-    paginator.setup(world);
-    paginator.run_now(world);
 
     let mut place_inline_blocks = inline::PlaceInlineBlocks;
     place_inline_blocks.setup(world);

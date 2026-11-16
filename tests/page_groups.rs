@@ -1,5 +1,5 @@
-//! Page groups: the content of the pages that are delimited by forced breaks is laid out for
-//! the margins of its first page, and the pages have their own top and bottom margins.
+//! Page groups: the first page of a named group of pages and the first page of the document have
+//! their own margins.
 
 mod common;
 
@@ -94,9 +94,9 @@ fn a_named_page_can_have_no_margins() {
 }
 
 #[test]
-fn a_group_is_laid_out_for_the_width_of_its_first_page() {
+fn only_the_first_page_has_the_margins_of_the_first_page() {
     // three boxes of 120pt: two fit on the first page (280pt of content), the third is on the
-    // second page of the group, which keeps the margins of the group
+    // second page, which is not the first page of the document and has its margins
     let (items, _) = layout(
         "group",
         "<style>@page { size: 300pt 300pt; margin: 50pt; } @page :first { margin: 10pt; }
@@ -106,24 +106,24 @@ fn a_group_is_laid_out_for_the_width_of_its_first_page() {
     );
     let divs = boxes(&items, "div");
     assert_eq!(divs.iter().map(|d| d.page).collect::<Vec<_>>(), [0, 0, 1]);
-    for div in &divs {
-        assert!((div.rect[0] - 10.0).abs() < 0.1 && (div.rect[2] - 280.0).abs() < 0.1, "{div:?}");
-    }
+    assert_rect(divs[0], 10.0, 10.0, 280.0);
+    assert_rect(divs[1], 10.0, 130.0, 280.0);
+    assert_rect(divs[2], 50.0, 50.0, 200.0);
     let p = boxes(&items, "p")[0];
     assert_eq!(p.page, 2);
     assert_rect(p, 50.0, 62.0, 200.0);
 }
 
 #[test]
-fn the_first_page_needs_a_forced_break_to_have_another_width() {
+fn the_first_page_has_another_width_without_a_forced_break() {
     let (items, log) = layout(
         "unbroken",
         "<style>@page { size: 300pt 300pt; margin: 50pt; } @page :first { margin: 10pt; }
          .box { height: 40pt; }</style><div class=\"box\"></div><p>flows on</p>",
     );
-    // the width of the document is kept, the top margin is the one of the first page
-    assert_rect(boxes(&items, "div")[0], 10.0, 10.0, 200.0);
-    assert!(log.contains("forced page break"), "{}", log);
+    // the first page is laid out for its own margins
+    assert_rect(boxes(&items, "div")[0], 10.0, 10.0, 280.0);
+    assert!(!log.contains("forced page break"), "{}", log);
 }
 
 #[test]

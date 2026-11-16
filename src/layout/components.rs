@@ -968,18 +968,6 @@ impl Component for ImageBox {
     type Storage = DenseVecStorage<Self>;
 }
 
-/// A box that the layout puts around the boxes of a page group whose page needs another width
-/// than the layout of the document (see `taffy_layout::page_groups`). It has no style of its
-/// own: it only carries the page name of the group, which the paginator needs.
-#[derive(Debug, Clone)]
-pub struct PageGroupBox {
-    pub name: Option<std::sync::Arc<str>>,
-}
-
-impl Component for PageGroupBox {
-    type Storage = DenseVecStorage<Self>;
-}
-
 /// The root element and the body: the background of one of them is the background of the
 /// canvas, which is the background of every page.
 #[derive(Debug, Default, Copy, Clone)]

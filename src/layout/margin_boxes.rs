@@ -171,8 +171,10 @@ impl<'a> System<'a> for MarginBoxPaint {
             // first page of a document or of a page group can have other margins
             let edges = page_margins.edges(&context);
             let (margin_left, margin_right) = (edges.left, edges.right);
+            let (page_width, page_height) =
+                page_margins.size(&context, (geometry.width, geometry.height));
             let area_left = margin_left;
-            let area_width = geometry.width - margin_left - margin_right;
+            let area_width = page_width - margin_left - margin_right;
             for margin_box in margin_boxes.for_page(&context) {
                 let mut text = content_text(&margin_box.content, page + 1, num_pages);
                 if let Some(transformed) = crate::layout::text::transform::apply(
@@ -212,7 +214,7 @@ impl<'a> System<'a> for MarginBoxPaint {
                     MarginBoxKind::BottomLeft
                     | MarginBoxKind::BottomCenter
                     | MarginBoxKind::BottomRight => {
-                        (geometry.height - edges.bottom, edges.bottom)
+                        (page_height - edges.bottom, edges.bottom)
                     }
                 };
                 let y = margin_top + (margin_height - height) / 2.0;

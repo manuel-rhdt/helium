@@ -99,15 +99,16 @@ fn box_across_a_page_break_is_split() {
 }
 
 #[test]
-fn first_fragment_reaches_the_bottom_of_the_page_and_the_next_starts_at_the_top() {
+fn first_fragment_ends_with_its_last_line_and_the_next_starts_at_the_top() {
     let rects = rects("extent", &tall_box());
     let green = serde_json::json!([0, 255, 0, 255]);
     let backgrounds: Vec<&Value> = rects.iter().filter(|r| r["color"] == green).collect();
     assert_eq!(backgrounds.len(), 2);
-    // A4 with 2.5cm margins: the content area is 933.5px high
-    let page_bottom = 94.488 + 933.543;
+    // A4 with 2.5cm margins: the content area is 933.5px high. The border and the padding take
+    // 14px, and 45 lines of 20px fit. The fragment ends behind the last of them, as the page
+    // is laid out for the content that is on it.
     let (first, second) = (backgrounds[0], backgrounds[1]);
-    assert!((f(first, "y") + f(first, "height") - page_bottom).abs() < 0.01);
+    assert!((f(first, "y") + f(first, "height") - (94.488 + 14.0 + 45.0 * 20.0)).abs() < 0.01);
     assert!((f(second, "y") - 94.488).abs() < 0.01);
     assert_eq!(first["page"], 0);
     assert_eq!(second["page"], 1);
