@@ -268,6 +268,16 @@ impl TaffyBlockLayout {
                     fill.used
                 );
             }
+            // A box that does not fit on a page and has no break in it is not split: what is
+            // below the bottom of the page is laid out but is not on the page.
+            if fill.overflow && height > spec.block_size + 0.5 {
+                log::warn!(
+                    "page {} has {height} of content on a page of {} high: the content below the \
+                     page is not printed (a box taller than a page is not split)",
+                    start.index + 1,
+                    spec.block_size
+                );
+            }
             let HeliumTree { nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, .. } = tree;
             let mut writer = Writer {
                 nodes,

@@ -890,6 +890,18 @@ fn a_box_that_is_cut_between_columns_has_the_border_of_its_parts() {
     assert_eq!(horizontal.len(), 2, "one top and one bottom border: {blue:?}");
 }
 
+/// The log of a container that is taller than a page: the content below the page is not printed,
+/// and the program says so until a container can be split over pages (step 3).
+#[test]
+fn a_container_taller_than_a_page_says_that_its_content_is_cut_off() {
+    let layout = layout("tall_warning", &doc("", &container("column-count: 2", 100)));
+    assert!(
+        layout.log.contains("the content below the page is not printed"),
+        "no warning about the cut content in the log:\n{}",
+        layout.log
+    );
+}
+
 // A container that is split over pages. These tests describe what step 3 of the multi-column
 // order of work in `docs/pagination.md` has to do. Today a container taller than a page is one
 // box, balanced over its whole content: its columns are as tall as the content allows, and the
