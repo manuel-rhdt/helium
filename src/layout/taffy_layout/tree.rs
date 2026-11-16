@@ -233,6 +233,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
                             self.build_table(id);
                         }
                         self.apply_order(id);
+                        self.resolve_self_alignment(id);
                         self.prepare_right_to_left(id);
                     }
                 }
@@ -288,6 +289,80 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             children[slot] = item;
         }
         self.node_mut(id).children = children;
+    }
+
+    /// Resolves `left`, `right`, `self-start` and `self-end` of `justify-self` and `align-self`
+    /// of the children of a flex or grid container: they depend on the writing mode and the
+    /// direction of the container and the child, and become `start` or `end` of the container.
+    fn resolve_self_alignment(&mut self, id: NodeId) {
+        use crate::style::properties::specified::{Direction, SelfAlignment};
+        use crate::style::properties::computed::ComputedValues;
+        let Some(container) = self.computed_values.get(self.node(id).entity) else { return };
+        if !container.box_.display.is_flex_or_grid() {
+            return;
+        }
+        #[derive(PartialEq, Clone, Copy)]
+        enum Side { Left, Right, Top, Bottom }
+        let side = |style: &ComputedValues, inline: bool| -> Side {
+            let flow = Flow::from(style.text.writing_mode);
+            let rtl = style.text.direction == Direction::Rtl;
+            match (flow, inline) {
+                (Flow::HorizontalTb, true) => if rtl { Side::Right } else { Side::Left },
+                (Flow::HorizontalTb, false) => Side::Top,
+                (_, true) => if rtl { Side::Bottom } else { Side::Top },
+                (Flow::VerticalRl, false) => Side::Right,
+                (_, false) => Side::Left,
+            }
+        };
+        let container_flow = Flow::from(container.text.writing_mode);
+        let container_rtl = container.text.direction == Direction::Rtl;
+        let container_inline = side(container, true);
+        let container_block = side(container, false);
+        let mut updates = vec![];
+        for &child in &self.node(id).children {
+            let Some(style) = self.computed_values.get(self.node(child).entity) else { continue };
+            let same_orientation = Flow::from(style.text.writing_mode).is_vertical() == container_flow.is_vertical();
+            let resolve = |value: SelfAlignment, justify: bool| -> Option<SelfAlignment> {
+                let (container_start, own_start) = if justify {
+                    (container_inline, side(style, same_orientation))
+                } else {
+                    (container_block, side(style, !same_orientation))
+                };
+                Some(match value {
+                    SelfAlignment::SelfStart => if container_start == own_start { SelfAlignment::Start } else { SelfAlignment::End },
+                    SelfAlignment::SelfEnd => if container_start == own_start { SelfAlignment::End } else { SelfAlignment::Start },
+                    // only in a horizontal inline axis; elsewhere they behave as `start`
+                    SelfAlignment::Left | SelfAlignment::Right if !justify => return None,
+                    SelfAlignment::Left | SelfAlignment::Right => {
+                        let left = value == SelfAlignment::Left;
+                        if container_flow.is_vertical() {
+                            SelfAlignment::Start
+                        } else if left != container_rtl {
+                            SelfAlignment::Start
+                        } else {
+                            SelfAlignment::End
+                        }
+                    }
+                    _ => return None,
+                })
+            };
+            let justify = resolve(style.box_.justify_self, true);
+            let align = resolve(style.box_.align_self, false);
+            if justify.is_some() || align.is_some() {
+                updates.push((child, justify, align));
+            }
+        }
+        for (child, justify, align) in updates {
+            let node = self.node_mut(child);
+            for style in std::iter::once(&mut node.style).chain(node.item_style.iter_mut()) {
+                if let Some(value) = justify {
+                    style.justify_self = super::style::self_alignment(value);
+                }
+                if let Some(value) = align {
+                    style.align_self = super::style::self_alignment(value);
+                }
+            }
+        }
     }
 
     /// Prepares a right-to-left box with block-level children (a block, flex or grid container,

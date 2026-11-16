@@ -913,6 +913,12 @@ pub enum SelfAlignment {
     Stretch,
     Start,
     End,
+    /// The start and end of the box itself, which can be another side than the container's.
+    SelfStart,
+    SelfEnd,
+    /// Physical sides (`justify-self` only).
+    Left,
+    Right,
     FlexStart,
     FlexEnd,
     Center,
