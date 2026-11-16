@@ -24,8 +24,6 @@ css/CSS2/borders/border-bottom-color-applies-to-005.xht
 css/CSS2/borders/border-bottom-color-applies-to-006.xht
 css/CSS2/borders/border-bottom-width-001.xht
 css/CSS2/borders/border-bottom-width-025.xht
-css/CSS2/borders/border-bottom-width-058.xht
-css/CSS2/borders/border-bottom-width-069.xht
 css/CSS2/borders/border-bottom-width-080.xht
 css/CSS2/borders/border-bottom-width-083.xht
 css/CSS2/borders/border-bottom-width-084.xht
@@ -87,8 +85,6 @@ css/CSS2/borders/border-top-color-applies-to-005.xht
 css/CSS2/borders/border-top-color-applies-to-006.xht
 css/CSS2/borders/border-top-width-001.xht
 css/CSS2/borders/border-top-width-025.xht
-css/CSS2/borders/border-top-width-058.xht
-css/CSS2/borders/border-top-width-069.xht
 css/CSS2/borders/border-top-width-080.xht
 css/CSS2/borders/border-top-width-083.xht
 css/CSS2/borders/border-top-width-084.xht
@@ -232,7 +228,6 @@ css/CSS2/normal-flow/block-replaced-height-005.xht
 css/CSS2/normal-flow/block-replaced-height-006.xht
 css/CSS2/normal-flow/block-replaced-height-007.xht
 css/CSS2/normal-flow/block-replaced-width-002.xht
-css/CSS2/normal-flow/block-replaced-width-006.xht
 css/CSS2/normal-flow/blocks-018.xht
 css/CSS2/normal-flow/blocks-019.xht
 css/CSS2/normal-flow/cross-domain-iframe-paint-order.sub.html
@@ -244,7 +239,6 @@ css/CSS2/normal-flow/height-083.xht
 css/CSS2/normal-flow/height-084.xht
 css/CSS2/normal-flow/height-089.xht
 css/CSS2/normal-flow/height-inherit-001.xht
-css/CSS2/normal-flow/height-percentage-003.xht
 css/CSS2/normal-flow/inline-block-non-replaced-width-004.xht
 css/CSS2/normal-flow/inline-block-replaced-height-002.xht
 css/CSS2/normal-flow/inline-block-replaced-height-004.xht
@@ -254,7 +248,6 @@ css/CSS2/normal-flow/inline-block-replaced-height-007.xht
 css/CSS2/normal-flow/inline-block-replaced-height-009.xht
 css/CSS2/normal-flow/inline-block-replaced-width-002.xht
 css/CSS2/normal-flow/inline-block-replaced-width-003.xht
-css/CSS2/normal-flow/inline-block-replaced-width-006.xht
 css/CSS2/normal-flow/inline-block-replaced-width-007.xht
 css/CSS2/normal-flow/inline-block-replaced-width-008.xht
 css/CSS2/normal-flow/inline-block-valign-001.xht
@@ -269,7 +262,6 @@ css/CSS2/normal-flow/inline-replaced-height-006.xht
 css/CSS2/normal-flow/inline-replaced-height-009.xht
 css/CSS2/normal-flow/inline-replaced-width-002.xht
 css/CSS2/normal-flow/inline-replaced-width-003.xht
-css/CSS2/normal-flow/inline-replaced-width-006.xht
 css/CSS2/normal-flow/inline-replaced-width-008.xht
 css/CSS2/normal-flow/inline-replaced-width-009.xht
 css/CSS2/normal-flow/inline-replaced-width-014.xht

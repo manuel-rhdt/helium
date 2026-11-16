@@ -227,6 +227,12 @@ impl FlowConstructor {
                         cascade.extend(rule.properties.normal_declarations());
                     }
                 }
+                // the `width` and `height` attributes of an image are presentational hints: they
+                // rank below all the rules of the author
+                let size_hint = image_size_hint(element_ref);
+                if let Some(block) = &size_hint {
+                    cascade.extend(block.normal_declarations());
+                }
                 for (user_agent, _, rule) in &matched_rules {
                     if !*user_agent {
                         cascade.extend(rule.properties.normal_declarations());
@@ -1946,4 +1952,33 @@ impl<'a> InlineShifts<'a> {
             }
         }
     }
+}
+
+/// The presentational hint of the `width` and `height` attributes of an `<img>`: a number of
+/// pixels or a percentage (HTML 2.4.4.4 "rules for parsing dimension values": what follows the
+/// number, apart from a `%`, is ignored).
+fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
+    if element.name.local != local_name!("img") {
+        return None;
+    }
+    let attributes = element.attributes.borrow();
+    let mut css = String::new();
+    for name in [local_name!("width"), local_name!("height")] {
+        let Some(attribute) = attributes.get(&QualName::new(None, ns!(), name.clone())) else {
+            continue;
+        };
+        let value = attribute.value.trim_start();
+        let end = value
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(value.len());
+        let Ok(number) = value[..end].parse::<f32>() else {
+            continue;
+        };
+        if !number.is_finite() {
+            continue;
+        }
+        let unit = if value[end..].starts_with('%') { "%" } else { "px" };
+        css.push_str(&format!("{}: {}{};", &*name, number, unit));
+    }
+    (!css.is_empty()).then(|| PropertyDeclarationBlock::parse_inline(&css))
 }
