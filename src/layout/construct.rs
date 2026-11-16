@@ -1072,7 +1072,8 @@ impl EntityConstructor {
                 // TODO: implement proper whitespace algorithm
 
                 let mut text = string.borrow_mut();
-                if style.text.white_space == crate::style::properties::specified::WhiteSpace::Pre {
+                use crate::style::properties::specified::WhiteSpace;
+                if style.text.white_space.preserves_spaces() {
                     *text = text
                         .replace("\r\n", "\n")
                         .replace('\r', "\n")
@@ -1091,10 +1092,18 @@ impl EntityConstructor {
                         _ => self.trim_next_inline_whitespace = true,
                     };
 
-                    super::text::whitespace::transform_text(
-                        &mut text,
-                        self.trim_next_inline_whitespace,
-                    );
+                    if style.text.white_space == WhiteSpace::PreLine {
+                        *text = text.replace("\r\n", "\n");
+                        super::text::whitespace::collapse_keeping_newlines(
+                            &mut text,
+                            self.trim_next_inline_whitespace,
+                        );
+                    } else {
+                        super::text::whitespace::transform_text(
+                            &mut text,
+                            self.trim_next_inline_whitespace,
+                        );
+                    }
 
                     if &*text != text.trim_end() {
                         // this text node ends with whitespace

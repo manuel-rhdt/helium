@@ -1612,12 +1612,26 @@ pub enum WhiteSpace {
     /// White space is collapsed like for `normal`, but lines do not wrap.
     Nowrap,
     Pre,
+    /// Spaces and new lines are kept, and lines wrap.
+    PreWrap,
+    /// New lines are kept, other white space is collapsed, and lines wrap.
+    PreLine,
 }
 
 impl WhiteSpace {
     /// Whether text may be broken into lines at soft wrap opportunities.
     pub fn wraps(self) -> bool {
-        matches!(self, WhiteSpace::Normal)
+        matches!(self, WhiteSpace::Normal | WhiteSpace::PreWrap | WhiteSpace::PreLine)
+    }
+
+    /// Whether the new lines of the text are line breaks.
+    pub fn preserves_newlines(self) -> bool {
+        matches!(self, WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine)
+    }
+
+    /// Whether the spaces of the text are kept (and not collapsed).
+    pub fn preserves_spaces(self) -> bool {
+        matches!(self, WhiteSpace::Pre | WhiteSpace::PreWrap)
     }
 }
 

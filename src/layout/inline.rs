@@ -685,51 +685,86 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     // the glyphs of the run as `(cluster, width)`, for the advances of the bidi
                     // runs
                     let mut glyph_widths: Vec<(usize, Px)> = Vec::new();
-                    if computed_values.get(entity).is_some_and(|style| {
-                        style.text.white_space
-                            == crate::style::properties::specified::WhiteSpace::Pre
-                    }) {
+                    let white_space = computed_values.get(entity).map(|style| style.text.white_space).unwrap_or_default();
+                    if white_space.preserves_newlines() {
+                        // The text is set in segments between its new lines, which are line
+                        // breaks. Where the lines wrap (`pre-wrap` and `pre-line`) they break
+                        // after the spaces. Not here: hyphenation, and the breaks between the
+                        // letters of CJK text.
+                        let wraps = white_space.wraps();
+                        let mut segments = Vec::new();
                         let mut segment_start = 0;
                         for (newline_index, _) in text_run.text.match_indices('\n') {
+                            segments.push((segment_start, newline_index));
+                            segment_start = newline_index + 1;
+                        }
+                        segments.push((segment_start, text_run.text.len()));
+                        for (number, &(segment_start, segment_end)) in segments.iter().enumerate() {
+                            let last = number + 1 == segments.len();
+                            // the spaces that the glyphs are in: where they start, and how
+                            // much they stretch and shrink
+                            let mut spaces: Option<(Px, Px, Px)> = None;
+                            let mut push_spaces = |spaces: (Px, Px, Px), end: usize, advance: Pen| {
+                                break_points.push(BreakPoint {
+                                    entity,
+                                    char_index: end,
+                                    advance_before: spaces.0,
+                                    advance_after: advance.px(),
+                                    forced: false,
+                                    space: true,
+                                    inter_letter: false,
+                                    hyphen: false,
+                                    hyphen_width: Px(0.0),
+                                    glue_stretch: spaces.1,
+                                    glue_shrink: spaces.2,
+                                    penalty: 0,
+                                });
+                            };
                             for (position, info) in shape_with_levels(
-                                &text_run.text[segment_start..newline_index],
+                                &text_run.text[segment_start..segment_end],
                                 segment_start,
                                 levels,
                                 font,
                                 &text_run.face.fallback,
                             ) {
-                                let width =
-                                    font.scale_to_px(position.x_advance, text_run.face.font_size);
-                                glyph_widths.push((segment_start + info.cluster as usize, width));
+                                let cluster = segment_start + info.cluster as usize;
+                                let width = font.scale_to_px(position.x_advance, text_run.face.font_size);
+                                let is_space = wraps && text_run.text[cluster..].starts_with(char::is_whitespace);
+                                if !is_space && let Some(run) = spaces.take() {
+                                    push_spaces(run, cluster, advance);
+                                }
+                                if is_space {
+                                    let size = position.x_advance.0 as f32 * text_run.face.font_size.0;
+                                    let run = spaces.get_or_insert((advance.px(), Px(0.0), Px(0.0)));
+                                    run.1 += Px(size / 2000.0);
+                                    run.2 += Px(size / 3000.0);
+                                }
+                                glyph_widths.push((cluster, width));
                                 advance += width;
                             }
-                            let break_index = newline_index + 1;
-                            break_points.push(BreakPoint {
-                                entity,
-                                char_index: break_index,
-                                advance_before: advance.px(),
-                                advance_after: advance.px(),
-                                forced: true,
-                                space: false,
-                                inter_letter: false,
-                                hyphen: false,
-                                hyphen_width: Px(0.0),
-                                glue_stretch: Px(0.0),
-                                glue_shrink: Px(0.0),
-                                penalty: -10_000,
-                            });
-                            segment_start = break_index;
-                        }
-                        for (position, info) in shape_with_levels(
-                            &text_run.text[segment_start..],
-                            segment_start,
-                            levels,
-                            font,
-                            &text_run.face.fallback,
-                        ) {
-                            let width = font.scale_to_px(position.x_advance, text_run.face.font_size);
-                            glyph_widths.push((segment_start + info.cluster as usize, width));
-                            advance += width;
+                            // spaces at the end of a line that a new line ends hang there: no
+                            // break is needed, and one would make an empty line
+                            if let Some(run) = spaces.take()
+                                && last
+                            {
+                                push_spaces(run, segment_end, advance);
+                            }
+                            if !last {
+                                break_points.push(BreakPoint {
+                                    entity,
+                                    char_index: segment_end + 1,
+                                    advance_before: advance.px(),
+                                    advance_after: advance.px(),
+                                    forced: true,
+                                    space: false,
+                                    inter_letter: false,
+                                    hyphen: false,
+                                    hyphen_width: Px(0.0),
+                                    glue_stretch: Px(0.0),
+                                    glue_shrink: Px(0.0),
+                                    penalty: -10_000,
+                                });
+                            }
                         }
                         push_bidi_runs(bidi_runs, index, levels, &glyph_widths, element_start.px());
                         continue;
