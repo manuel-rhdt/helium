@@ -329,6 +329,42 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
     }
 }
 
+/// `row-gap` and `column-gap` reuse [`GenericSize`], where `Auto` stands for the keyword `normal`.
+impl super::ComputedValue<specified::Gap> for GenericSize {
+    fn from_specified(spec: &specified::Gap, style: &ComputedValues) -> Self {
+        match spec {
+            specified::Gap::Normal => GenericSize::Auto,
+            specified::Gap::Percentage(percentage) => (*percentage).into(),
+            specified::Gap::Quantity(specified::Quantity { value, unit }) => {
+                GenericSize::LengthPercentage(LengthPercentage::PixelLength(PixelLength::from_val_unit(
+                    *value,
+                    *unit,
+                    FontSizes::of(style),
+                )))
+            }
+        }
+    }
+}
+
+/// The computed value of `column-width`.
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
+pub enum ColumnWidth {
+    #[default]
+    Auto,
+    Length(PixelLength),
+}
+
+impl super::ComputedValue<specified::ColumnWidth> for ColumnWidth {
+    fn from_specified(spec: &specified::ColumnWidth, style: &ComputedValues) -> Self {
+        match spec {
+            specified::ColumnWidth::Auto => ColumnWidth::Auto,
+            specified::ColumnWidth::Quantity(specified::Quantity { value, unit }) => {
+                ColumnWidth::Length(PixelLength::from_val_unit(*value, *unit, FontSizes::of(style)))
+            }
+        }
+    }
+}
+
 /// `max-width` and `max-height` reuse [`GenericSize`], where `Auto` stands for the keyword `none`
 /// (no limit).
 impl super::ComputedValue<specified::NoneOrQuantityOrPercentage> for GenericSize {
@@ -608,6 +644,9 @@ impl ComputedValues {
 
     fn fixup(&mut self) {
         Arc::make_mut(&mut self.position).fixup();
+        if !self.box_.column_rule_style.is_visible() && self.box_.column_rule_width != PixelLength(0.0) {
+            Arc::make_mut(&mut self.box_).column_rule_width = PixelLength(0.0);
+        }
         // https://www.w3.org/TR/CSS22/visuren.html#dis-pos-flo
         // An absolutely positioned box is always blockified.
         if self.box_.position == PositionSpec::Absolute {
@@ -896,8 +935,17 @@ pub struct Box {
     pub align_items: ItemAlignment,
     pub justify_self: SelfAlignment,
     pub align_self: SelfAlignment,
-    pub row_gap: LengthPercentage,
-    pub column_gap: LengthPercentage,
+    /// `Auto` is the keyword `normal`.
+    pub row_gap: GenericSize,
+    pub column_gap: GenericSize,
+
+    pub column_count: specified::ColumnCount,
+    pub column_width: ColumnWidth,
+    pub column_fill: specified::ColumnFill,
+    pub column_span: specified::ColumnSpan,
+    pub column_rule_width: PixelLength,
+    pub column_rule_style: BorderStyle,
+    pub column_rule_color: Color,
 
     pub grid_template_columns: TrackList,
     pub grid_template_rows: TrackList,
@@ -933,8 +981,16 @@ impl Default for Box {
             align_items: Default::default(),
             justify_self: Default::default(),
             align_self: Default::default(),
-            row_gap: LengthPercentage::PixelLength(PixelLength(0.0)),
-            column_gap: LengthPercentage::PixelLength(PixelLength(0.0)),
+            row_gap: GenericSize::Auto,
+            column_gap: GenericSize::Auto,
+            column_count: Default::default(),
+            column_width: Default::default(),
+            column_fill: Default::default(),
+            column_span: Default::default(),
+            // the initial width is `medium`, which only counts where there is a style
+            column_rule_width: PixelLength(3.0),
+            column_rule_style: BorderStyle::None,
+            column_rule_color: Color::CurrentColor,
             grid_template_columns: Default::default(),
             grid_template_rows: Default::default(),
             grid_auto_columns: Default::default(),

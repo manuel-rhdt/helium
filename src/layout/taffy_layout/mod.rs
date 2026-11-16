@@ -10,11 +10,13 @@
 //! paginator and the [`AbsoluteGroups`].
 
 mod collapse;
+mod columns;
 mod flow;
 mod paginate;
 mod replaced;
 mod service;
 mod style;
+mod subtree;
 mod table;
 mod tree;
 mod window;
@@ -49,6 +51,27 @@ const ABS_Z_STEP: i64 = 100000;
 /// for the absolutely positioned boxes above.
 const REL_Z_STEP: i64 = 1000;
 
+/// Hooks for the tests of the layout service: a test can ask the service questions in front of
+/// the pagination and behind it (before the pages are laid out), in the middle of a real layout.
+#[cfg(test)]
+pub(super) mod probe {
+    use super::service::TreeService;
+    use std::cell::RefCell;
+
+    pub type Hook = Box<dyn FnOnce(&mut TreeService<'_, '_, '_>)>;
+
+    thread_local! {
+        pub static BEFORE: RefCell<Option<Hook>> = const { RefCell::new(None) };
+        pub static AFTER: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    pub fn call(which: &'static std::thread::LocalKey<RefCell<Option<Hook>>>, service: &mut TreeService<'_, '_, '_>) {
+        if let Some(hook) = which.with(|hook| hook.borrow_mut().take()) {
+            hook(service);
+        }
+    }
+}
+
 pub struct TaffyBlockLayout {
     pub root_entity: Entity,
     pub page_width: PixelLength,
@@ -77,6 +100,7 @@ impl TaffyBlockLayout {
         world.register::<TableColumns>();
         world.register::<crate::layout::components::Fragmented>();
         world.register::<crate::layout::components::DecorationFragment>();
+        world.register::<crate::layout::components::ColumnRule>();
         world.entry::<TextList>().or_insert_with(Default::default);
         world
             .entry::<crate::layout::pages::PageMargins>()
@@ -117,15 +141,20 @@ impl TaffyBlockLayout {
             window: None,
             windowed: vec![],
             lines: HashMap::new(),
+            flow: None,
+            icb_height: 0.0,
+            plain_root: None,
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
         tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
+        tree.mark_columns(root);
         let out_of_flow: Vec<bool> = (0..tree.nodes.len())
             .map(|index| tree::node_is_out_of_flow(&tree, NodeId::from(index)))
             .collect();
 
         // the flow of the document, and the geometry of the page at every place of it
-        let flow = flow::extract(&mut tree, root, page_margins.rtl);
+        let flow = std::rc::Rc::new(flow::extract(&mut tree, root, page_margins.rtl));
+        tree.flow = Some(flow.clone());
         let geometry = paginate::Geometry {
             margins: &page_margins,
             size: (self.page_width, self.page_height),
@@ -135,10 +164,13 @@ impl TaffyBlockLayout {
         let first_class = classes.of(helium_paginate::Position::Item(0)).clone();
         let first_spec = geometry.spec(&geometry.context(0, &first_class));
         let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone());
+        tree.icb_height = first_spec.block_size;
 
         // choose the pages
         let before = std::time::Instant::now();
         let mut service = service::TreeService::new(&mut tree, &flow, first_spec.block_size);
+        #[cfg(test)]
+        probe::call(&probe::BEFORE, &mut service);
         // (start of the page, its end, the page)
         let mut planned: Vec<(helium_paginate::PageStart, helium_paginate::Position, helium_paginate::Position, helium_paginate::PageFill)> = vec![];
         {
@@ -170,12 +202,15 @@ impl TaffyBlockLayout {
                 ));
             }
         }
+        #[cfg(test)]
+        probe::call(&probe::AFTER, &mut service);
         log::info!("TIMED: paginate {:?}", before.elapsed());
         log::debug!("{} pages, laid out for {} widths", planned.len(), service.galleys());
         let before = std::time::Instant::now();
 
         let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
         let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
+        let mut rules: Vec<Rule> = vec![];
         let mut positions = world.write_storage::<Position>();
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
@@ -201,12 +236,20 @@ impl TaffyBlockLayout {
             let context = geometry.context(start.index, &class);
             let (edges, _) = geometry.of_page(&context);
             let spec = geometry.spec(&context);
-            let window = paginate::window(&flow, *from, *to, |item| match flow.items[item] {
-                helium_paginate::Item::Gap { node } => {
-                    helium_paginate::LayoutService::extent(&mut service, node, spec.inline_size) as f32
-                }
-                _ => 0.0,
-            });
+            let window = paginate::window(
+                &flow.items,
+                &flow.leaves,
+                helium_paginate::BreakLevel::Page,
+                None,
+                *from,
+                *to,
+                |item| match flow.items[item] {
+                    helium_paginate::Item::Gap { node } => {
+                        helium_paginate::LayoutService::extent(&mut service, node, spec.inline_size) as f32
+                    }
+                    _ => 0.0,
+                },
+            );
             let tree = &mut *service.tree;
             tree.set_window(window, root);
             taffy::compute_root_layout(
@@ -246,6 +289,8 @@ impl TaffyBlockLayout {
                 page: start.index,
                 page_bottom: edges.top.0 + spec.block_size,
                 fragments: &mut fragments,
+                overlay: None,
+                rules: &mut rules,
             };
             // The root is placed at the top left corner of the content area of the page.
             writer.write_box(
@@ -263,6 +308,22 @@ impl TaffyBlockLayout {
         log::info!("TIMED: layout of the pages {:?}", before.elapsed());
         drop(service);
         drop(tree);
+
+        // The rules between the columns are boxes with a background of their own.
+        {
+            let mut rule_storage = world.write_storage::<crate::layout::components::ColumnRule>();
+            for rule in rules {
+                entities
+                    .build_entity()
+                    .with(rule.position, &mut positions)
+                    .with(
+                        Decoration { background_color: rule.color, ..Decoration::default() },
+                        &mut decorations,
+                    )
+                    .with(crate::layout::components::ColumnRule, &mut rule_storage)
+                    .build();
+            }
+        }
 
         // Boxes that are on more than one page are split: every page gets the part of the
         // decoration that is on that page.
@@ -338,12 +399,44 @@ struct Writer<'a, 'w> {
     page_bottom: f32,
     /// The parts of the boxes that are on more than one page.
     fragments: &'a mut HashMap<Entity, Vec<Fragment>>,
+    /// The layouts of the boxes in the column that is being written, which are not the ones the
+    /// nodes have (they are the ones of the last column).
+    overlay: Option<&'a HashMap<NodeId, columns::Snap>>,
+    /// The rules between the columns.
+    rules: &'a mut Vec<Rule>,
+}
+
+/// A rule between two columns: a filled rectangle.
+struct Rule {
+    position: Position,
+    color: crate::style::properties::computed::RGBA,
 }
 
 impl<'a> Writer<'a, '_> {
     /// The node `id`. The reference does not borrow `self`.
     fn node(&self, id: NodeId) -> &'a Node {
         &self.nodes[usize::from(id)]
+    }
+
+    /// The layout of a box: the one in the column that is being written, if there is one.
+    fn layout_of(&self, id: NodeId) -> taffy::Layout {
+        self.overlay
+            .and_then(|overlay| overlay.get(&id))
+            .map_or(self.node(id).layout, |snap| snap.layout)
+    }
+
+    /// The width and the indent that the lines of a paragraph were broken for.
+    fn measured_of(&self, id: NodeId) -> Option<(f32, f32)> {
+        match self.overlay.and_then(|overlay| overlay.get(&id)) {
+            Some(snap) => snap.measured,
+            None => self.node(id).measured,
+        }
+    }
+
+    fn shift_of(&self, id: NodeId) -> f32 {
+        self.overlay
+            .and_then(|overlay| overlay.get(&id))
+            .map_or(self.node(id).content_shift, |snap| snap.content_shift)
     }
 
     fn set_position(&mut self, entity: Entity, x: f32, y: f32, width: f32, height: f32, z: i64) {
@@ -411,7 +504,7 @@ impl<'a> Writer<'a, '_> {
     ) -> Result<(), String> {
         let node = self.node(id);
         let entity = node.entity;
-        let layout = node.layout;
+        let layout = self.layout_of(id);
         let content = node.content;
         let in_flow_box = node.span.as_ref().filter(|span| !span.anchored && self.group_stack.is_empty());
         let open_start = in_flow_box.is_some_and(|span| self.window.open_at_start(span));
@@ -529,28 +622,34 @@ impl<'a> Writer<'a, '_> {
         }
 
         // the content of a table cell that `vertical-align` moves down
-        let shift = node.content_shift;
+        let shift = self.shift_of(id);
         let kid_shift = shift - cut_top;
+        let columns = node.columns.as_ref().and_then(|columns| columns.layouts.as_ref());
         match content {
+            // a container with columns: the columns are written, one after the other
+            _ if columns.is_some() => {
+                let layouts = columns.expect("the columns are laid out");
+                self.write_columns(id, layouts, flow, (content_x, content_y), (content_width, content_height), z, z_base)?;
+            }
             Content::Blocks if table_part.is_some() => {
                 for &child in &table_part.unwrap().kids {
                     if !self.in_window(child) {
                         continue;
                     }
-                    let mut child_origin = frame.child_origin(&self.node(child).layout);
+                    let mut child_origin = frame.child_origin(&self.layout_of(child));
                     child_origin.y += kid_shift + self.part_top(child);
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
                 }
             }
             Content::Blocks => {
-                for &child in self.window.children(self.nodes, node) {
+                for &child in self.window.children(self.nodes, id) {
                     if self.out_of_flow[usize::from(child)]
                         || self.node(child).style.display == taffy::Display::None
                     {
                         continue;
                     }
-                    let mut child_origin = frame.child_origin(&self.node(child).layout);
+                    let mut child_origin = frame.child_origin(&self.layout_of(child));
                     child_origin.y += shift;
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
@@ -559,18 +658,7 @@ impl<'a> Writer<'a, '_> {
             Content::Inline => {
                 // the `inline-block` boxes are written once, with the first part of the paragraph
                 if !open_start {
-                    for &atom in &node.atoms {
-                        // The contents of an `inline-block` box are placed relative to the top
-                        // left corner of its margin box. They are moved to the line the box is
-                        // on later.
-                        self.open_group(Some(self.node(atom).entity));
-                        // the border box is inside of the margin box, which is placed on the line
-                        let margin = flow.edges_to_physical(self.node(atom).layout.margin);
-                        let location = Point { x: margin.left, y: margin.top };
-                        let (atom_z, atom_base) = self.child_z(atom, z, z_base);
-                        self.write_box(atom, location, flow, atom_z, atom_base)?;
-                        self.group_stack.pop();
-                    }
+                    self.write_atoms(id, flow, z, z_base)?;
                 }
                 let content_offset = (
                     logical_border.left + logical_padding.left,
@@ -594,7 +682,7 @@ impl<'a> Writer<'a, '_> {
                     None => node.table.iter().flat_map(|table| table.boxes.iter().copied()).collect(),
                 };
                 for child in parts {
-                    let mut child_origin = frame.child_origin(&self.node(child).layout);
+                    let mut child_origin = frame.child_origin(&self.layout_of(child));
                     child_origin.y += kid_shift + if table_part.is_some() { self.part_top(child) } else { 0.0 };
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
@@ -612,10 +700,123 @@ impl<'a> Writer<'a, '_> {
         // the absolutely positioned boxes this box is the containing block of
         for &child in &node.hoisted {
             self.open_group(None);
-            let child_origin = frame.child_origin(&self.node(child).layout);
+            let child_origin = frame.child_origin(&self.layout_of(child));
             let abs_base = z_base + ABS_Z_STEP;
             self.write_box(child, child_origin, flow, abs_base + 1, abs_base)?;
             self.group_stack.pop();
+        }
+        Ok(())
+    }
+
+    /// Writes the `inline-block` boxes of the lines of a box.
+    fn write_atoms(&mut self, id: NodeId, flow: Flow, z: i64, z_base: i64) -> Result<(), String> {
+        for &atom in &self.node(id).atoms {
+            // The contents of an `inline-block` box are placed relative to the top left corner of
+            // its margin box. They are moved to the line the box is on later.
+            self.open_group(Some(self.node(atom).entity));
+            // the border box is inside of the margin box, which is placed on the line
+            let margin = flow.edges_to_physical(self.node(atom).layout.margin);
+            let location = Point { x: margin.left, y: margin.top };
+            let (atom_z, atom_base) = self.child_z(atom, z, z_base);
+            self.write_box(atom, location, flow, atom_z, atom_base)?;
+            self.group_stack.pop();
+        }
+        Ok(())
+    }
+
+    /// Writes the columns of a container: what is in every column of it, where the column is,
+    /// and the rules between the columns.
+    #[allow(clippy::too_many_arguments)]
+    fn write_columns(
+        &mut self,
+        id: NodeId,
+        layouts: &'a columns::ColumnLayouts,
+        flow: Flow,
+        (content_x, content_y): (f32, f32),
+        (content_width, content_height): (f32, f32),
+        z: i64,
+        z_base: i64,
+    ) -> Result<(), String> {
+        let node = self.node(id);
+        let plan = &layouts.plan;
+        if node.content == Content::Inline {
+            self.write_atoms(id, flow, z, z_base)?;
+        }
+        // the first column of a container with a direction from right to left is at the right
+        let rtl = node.mirror_rtl;
+        let column_x = |index: usize| {
+            if rtl {
+                content_x + content_width - (index + 1) as f32 * plan.width - index as f32 * plan.gap
+            } else {
+                content_x + index as f32 * (plan.width + plan.gap)
+            }
+        };
+        for (index, (window, snapshot)) in plan.columns.iter().zip(&layouts.columns).enumerate() {
+            let window_before = std::mem::replace(&mut self.window, window);
+            let overlay_before = self.overlay.replace(snapshot);
+            // the part of a box that goes on in the next column is painted down to the bottom of
+            // the column
+            let bottom_before = std::mem::replace(&mut self.page_bottom, content_y + plan.height);
+            let frame = Frame {
+                flow,
+                origin: Point { x: column_x(index), y: content_y },
+                inline_size: plan.width,
+                block_size: plan.height,
+            };
+            let written = match node.content {
+                Content::Inline => self.write_lines(id, &frame, (0.0, 0.0), plan.width, z + 1),
+                _ => {
+                    let mut written = Ok(());
+                    for &child in self.window.children(self.nodes, id) {
+                        if self.out_of_flow[usize::from(child)]
+                            || self.node(child).style.display == taffy::Display::None
+                        {
+                            continue;
+                        }
+                        let child_origin = frame.child_origin(&self.layout_of(child));
+                        let (child_z, child_base) = self.child_z(child, z, z_base);
+                        written = self.write_box(child, child_origin, flow, child_z, child_base);
+                        if written.is_err() {
+                            break;
+                        }
+                    }
+                    written
+                }
+            };
+            self.window = window_before;
+            self.overlay = overlay_before;
+            self.page_bottom = bottom_before;
+            written?;
+        }
+
+        // the rules are in the middle of the gaps between two columns that have content
+        let Some(style) = self.computed_values.get(node.entity) else {
+            return Ok(());
+        };
+        let width = style.box_.column_rule_width.0;
+        if !style.box_.column_rule_style.is_visible() || width <= 0.0 {
+            return Ok(());
+        }
+        use crate::style::properties::computed::{Color, color_to_rgba};
+        let color = match style.box_.column_rule_color {
+            Color::CurrentColor => color_to_rgba(style.font.color),
+            color => color_to_rgba(color),
+        };
+        for index in 1..plan.columns.len() {
+            let (before, after) = (column_x(index - 1), column_x(index));
+            // the gap is between the end of the one that is on the left and the start of the other
+            let (left, right) = if rtl { (after + plan.width, before) } else { (before + plan.width, after) };
+            self.rules.push(Rule {
+                position: Position {
+                    x: PixelLength((left + right) / 2.0 - width / 2.0),
+                    y: PixelLength(content_y),
+                    width: PixelLength(width),
+                    height: PixelLength(content_height.max(0.0)),
+                    z: ZIndex(z + 1),
+                    page: self.page,
+                },
+                color,
+            });
         }
         Ok(())
     }
@@ -655,7 +856,7 @@ impl<'a> Writer<'a, '_> {
             .map(|s| s.text.text_indent.absolute(PixelLength(width)).0)
             .unwrap_or(0.0);
         // what the measure function of Taffy broke the lines for
-        let (line_width, indent) = self.node(id).measured.unwrap_or((width, indent));
+        let (line_width, indent) = self.measured_of(id).unwrap_or((width, indent));
         let cut = self.window.cut_of(id);
         // the indent is the one of the first line of the paragraph
         let indent = if cut.is_some_and(|(from, _)| from.is_some()) { 0.0 } else { indent };
@@ -745,6 +946,9 @@ impl Frame {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod subtree_tests;
 
 #[cfg(test)]
 mod tests {

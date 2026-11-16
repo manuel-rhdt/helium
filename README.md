@@ -138,8 +138,22 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   from strings and `counter(page)` / `counter(pages)`, in the styles `decimal`,
   `decimal-leading-zero`, `lower-` and `upper-roman`, `lower-` and `upper-alpha`/`latin`,
   `arabic-indic` and `persian`.
-- **Fragmentation:** `break-before`/`-after`/`-inside`, `page-break-*`, `orphans`, `widows`;
-  tables and `pre` blocks split across pages.
+- **Fragmentation:** `break-before`/`-after`/`-inside` (`auto`, `avoid`, `avoid-page`,
+  `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
+  `widows`; tables and `pre` blocks split across pages.
+- **Multi-column layout:** `column-count`, `column-width`, `columns`, `column-gap` (`normal` is
+  `1em`; also `gap` and `row-gap` take `normal`, which is no gap in a grid and a flex container),
+  `column-rule` with `-width`, `-style` and `-color`, `column-fill` and `column-span`. The columns
+  of a block container are balanced (the least height that holds the content, with the first
+  columns the fullest), keep `avoid` breaks, orphans and widows, and end at `break-before` and
+  `break-after: column`. A container with a `height` keeps it, and the columns are balanced
+  within it. A box and a paragraph that are cut between columns have the border, padding and
+  background of each part, and links work. Not supported: a container that is split over pages
+  (it moves to the next page as a whole; one that is taller than a page overflows it),
+  `column-span: all` (parsed and ignored), `column-fill: auto` (parsed, and the columns are
+  balanced), rules other than solid ones (a visible style is painted solid), tables split
+  between columns (a table is one box), absolutely positioned boxes that are placed by the
+  container, and vertical writing modes (the container is a block).
 
 ## MathML
 

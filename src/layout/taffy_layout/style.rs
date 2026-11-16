@@ -32,6 +32,14 @@ fn length_percentage(value: LengthPercentage) -> TLengthPercentage {
     }
 }
 
+/// A gap of a grid or flex container: `normal` is no gap.
+fn gap(value: GenericSize) -> TLengthPercentage {
+    match value {
+        GenericSize::Auto => TLengthPercentage::length(0.0),
+        GenericSize::LengthPercentage(value) => length_percentage(value),
+    }
+}
+
 fn length_percentage_auto(value: GenericSize) -> LengthPercentageAuto {
     match value {
         GenericSize::Auto => LengthPercentageAuto::auto(),
@@ -192,8 +200,8 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
     };
     let is_table = box_.display.is_table();
     let mut gap = Size {
-        width: length_percentage(box_.column_gap),
-        height: length_percentage(box_.row_gap),
+        width: gap(box_.column_gap),
+        height: gap(box_.row_gap),
     };
     if is_table {
         // https://www.w3.org/TR/CSS22/tables.html#separated-borders

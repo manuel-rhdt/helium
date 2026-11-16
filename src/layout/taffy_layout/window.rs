@@ -54,6 +54,9 @@ pub(super) struct Window {
     /// Whether the page ends where the document does, so that nothing cuts the margins at its
     /// end.
     pub at_end: bool,
+    /// The multi-column container that the window is a column of. The items are the ones of its
+    /// content, and the container is not cut: it is the box of the column.
+    pub scope: Option<NodeId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -95,10 +98,21 @@ impl Window {
         (from.is_some() || to.is_some()).then_some((from, to))
     }
 
+    /// The span of a box in the items of the window: the one of its content for the container
+    /// that the window is a column of.
+    pub fn span_of<'n>(&self, id: NodeId, node: &'n Node) -> Option<&'n Span> {
+        if self.scope == Some(id) {
+            node.columns.as_ref().and_then(|columns| columns.inner.as_ref()).map(|inner| &inner.span)
+        } else {
+            node.span.as_ref()
+        }
+    }
+
     /// The kids of a box that have items in the window, as a part of the list of its children.
-    pub fn children<'n>(&self, nodes: &[Node], node: &'n Node) -> &'n [NodeId] {
+    pub fn children<'n>(&self, nodes: &'n [Node], id: NodeId) -> &'n [NodeId] {
+        let node = &nodes[usize::from(id)];
         let children = &node.children;
-        if node.span.as_ref().is_none_or(|span| !span.split) {
+        if self.span_of(id, node).is_none_or(|span| !span.split) {
             return children;
         }
         let span_of = |id: &NodeId| nodes[usize::from(*id)].span.as_ref();
@@ -124,13 +138,18 @@ impl HeliumTree<'_, '_> {
     pub(super) fn window_children(&self, id: NodeId) -> &[NodeId] {
         let node = self.node(id);
         match &self.window {
+            None if node.columns.is_some() && self.plain_root != Some(id) => &[],
             None => &node.children,
             Some(window) => {
                 // a paragraph that the page continues has no out-of-flow boxes of its own
                 if node.content == Content::Inline && window.start_cut.is_some_and(|(cut, _)| cut == id) {
                     return &[];
                 }
-                window.children(&self.nodes, node)
+                // a container with columns shows the content of the column it is laid out for
+                if node.columns.is_some() && window.scope != Some(id) {
+                    return &[];
+                }
+                window.children(&self.nodes, id)
             }
         }
     }
@@ -148,10 +167,14 @@ impl HeliumTree<'_, '_> {
     /// The first (last) kid of a box that is in the window.
     fn edge_kid(&self, id: NodeId, window: &Window, first: bool) -> Option<NodeId> {
         let node = self.node(id);
-        if node.content != Content::Blocks || !node.span.as_ref().is_some_and(|span| span.split) {
+        if node.content != Content::Blocks || !window.span_of(id, node).is_some_and(|span| span.split) {
             return None;
         }
-        let children = window.children(&self.nodes, node);
+        // the content of a container with columns is only in the window of its column
+        if node.columns.is_some() && window.scope != Some(id) {
+            return None;
+        }
+        let children = window.children(&self.nodes, id);
         let in_flow = |&&child: &&NodeId| {
             self.node(child).span.as_ref().is_some_and(|span| !span.anchored)
                 && !node_is_out_of_flow(self, child)
@@ -184,6 +207,14 @@ impl HeliumTree<'_, '_> {
         let mut given = false;
         let mut current = Some(root);
         while let Some(id) = current {
+            // (the container of a column is laid out as the box of the column: nothing in it is
+            // cut, and the margins of its first kid are what the margins at the start of the
+            // column are about)
+            if window.scope == Some(id) {
+                changes.entry(id).or_default();
+                current = self.edge_kid(id, &window, true);
+                continue;
+            }
             let open = self.node(id).span.as_ref().is_some_and(|span| window.open_at_start(span));
             let change = changes.entry(id).or_default();
             let table = self.node(id).content == Content::Table;
@@ -210,6 +241,10 @@ impl HeliumTree<'_, '_> {
         // the boxes at the end of the window
         let mut current = Some(root);
         while let Some(id) = current {
+            if window.scope == Some(id) {
+                current = self.edge_kid(id, &window, false);
+                continue;
+            }
             let open = self.node(id).span.as_ref().is_some_and(|span| window.open_at_end(span));
             let change = changes.entry(id).or_default();
             let table = self.node(id).content == Content::Table;
@@ -308,7 +343,7 @@ mod tests {
     }
 
     fn window(start: u32, end: u32) -> Window {
-        Window { start, end, start_cut: None, end_cut: None, leading: Leading::Discard, at_end: false }
+        Window { start, end, start_cut: None, end_cut: None, leading: Leading::Discard, at_end: false, scope: None }
     }
 
     #[test]

@@ -486,6 +486,15 @@ impl Component for DecorationFragment {
     type Storage = DenseVecStorage<Self>;
 }
 
+/// Marks the box of a rule between two columns of a multi-column container: its
+/// [`Decoration`] is the colour of the rule.
+#[derive(Debug, Default, Copy, Clone)]
+pub struct ColumnRule;
+
+impl Component for ColumnRule {
+    type Storage = NullStorage<Self>;
+}
+
 /// Contains information needed to draw the background and outline of an element.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Decoration {

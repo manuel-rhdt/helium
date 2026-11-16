@@ -104,6 +104,12 @@ pub(super) struct Node {
     /// The width the lines of the paragraph were last broken for, and the indent of the first
     /// line, as the measure function was given them when the box was laid out for real.
     pub measured: Option<(f32, f32)>,
+    /// The inline context of a box with `inline-block` boxes as it was before their widths were
+    /// applied, and the line width and the height that the boxes were laid out for. Together
+    /// they let a layout at another width size the boxes again (see [`super::subtree`]).
+    pub atoms_before: Option<Box<(InlineFormattingContext, f32, Option<f32>)>>,
+    /// What a container with columns knows about them, if the box is one (see [`super::columns`]).
+    pub columns: Option<Box<super::columns::ColumnsNode>>,
     pub cache: Cache,
     pub layout: Layout,
 }
@@ -130,6 +136,14 @@ pub(super) struct HeliumTree<'a, 'w> {
     /// The lines of the paragraphs: by the box, the break that the lines start at and the width
     /// they are broken for.
     pub lines: HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    /// The flow of the document, once it is made: the columns are chosen from the flows of the
+    /// containers in it.
+    pub flow: Option<Rc<super::flow::Flow>>,
+    /// The height of the initial containing block of the galleys.
+    pub icb_height: f32,
+    /// The container with columns that is laid out as a plain block, to find the extents of its
+    /// content for the width of a column (see [`super::subtree`]).
+    pub plain_root: Option<NodeId>,
 }
 
 // --- building the tree ---
@@ -204,6 +218,8 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             window_style: None,
             windowed: false,
             measured: None,
+            atoms_before: None,
+            columns: None,
             cache: Cache::new(),
             layout: Layout::new(),
         });
@@ -610,7 +626,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
 
 // --- layout of the leaves ---
 
-fn calc(_val: *const (), _basis: f32) -> f32 {
+pub(super) fn calc(_val: *const (), _basis: f32) -> f32 {
     0.0
 }
 
@@ -657,11 +673,14 @@ impl HeliumTree<'_, '_> {
                 }
                 .max(0.0)
             });
+        let entity = self.node(id).entity;
+        if let Some(ifc) = self.inline_ctxs.get(entity) {
+            self.node_mut(id).atoms_before = Some(Box::new((ifc.clone(), line_width, containing_height)));
+        }
         for &atom in &atoms {
             self.layout_atom(atom, line_width, containing_height);
         }
 
-        let entity = self.node(id).entity;
         let widths = atoms
             .iter()
             .filter_map(|&atom| {
@@ -678,7 +697,7 @@ impl HeliumTree<'_, '_> {
     /// margin box and its baseline as its [`IntrinsicSize`].
     ///
     /// https://www.w3.org/TR/CSS22/visudet.html#inlineblock-width
-    fn layout_atom(&mut self, atom: NodeId, line_width: f32, containing_height: Option<f32>) {
+    pub(super) fn layout_atom(&mut self, atom: NodeId, line_width: f32, containing_height: Option<f32>) {
         let style = self.item_style(atom);
         // `auto` margins are 0
         let margin = style.margin.resolve_or_zero(Some(line_width), calc);
@@ -775,7 +794,7 @@ impl HeliumTree<'_, '_> {
     }
 
     /// Lays out a box with inline content: its content size is the size of its lines.
-    fn compute_inline_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+    pub(super) fn compute_inline_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
         self.ensure_atoms(id, &inputs);
 
         let node = &self.nodes[usize::from(id)];
@@ -1184,6 +1203,11 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
             return compute_hidden_layout(self, id);
         }
         compute_cached_layout(self, id, inputs, |tree, id, inputs| {
+            // A container with columns is a leaf, as wide as a block and as high as its columns
+            // (the one that is laid out as a plain block is the question about its content).
+            if tree.node(id).columns.is_some() && tree.plain_root != Some(id) {
+                return tree.compute_columns_layout(id, inputs);
+            }
             // An orthogonal flow is laid out in its own axes: its parent's available space is
             // turned around, and so is the result.
             let orthogonal = tree.node(id).orthogonal;
@@ -1260,9 +1284,10 @@ impl LayoutContainingBlock for HeliumTree<'_, '_> {
 
 impl CacheTree for HeliumTree<'_, '_> {
     fn cache_get(&mut self, id: NodeId, input: &LayoutInput) -> Option<LayoutOutput> {
-        // (what is laid out for a window is not what the cache has been filled with)
+        // (what is laid out for a window is not what the cache has been filled with, and a
+        // container with columns lays out its columns whenever it is asked for a layout)
         let node = self.node_mut(id);
-        if node.windowed {
+        if node.windowed || node.columns.is_some() {
             return None;
         }
         node.cache.get(input)
@@ -1270,7 +1295,7 @@ impl CacheTree for HeliumTree<'_, '_> {
 
     fn cache_store(&mut self, id: NodeId, input: &LayoutInput, output: LayoutOutput) {
         let node = self.node_mut(id);
-        if !node.windowed {
+        if !node.windowed && node.columns.is_none() {
             node.cache.store(input, output)
         }
     }
