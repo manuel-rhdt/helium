@@ -54,7 +54,7 @@ fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
         "list-style-type", "white-space", "text-indent", "text-align", "hyphens", "direction",
-        "border-spacing", "border-collapse", "widows", "orphans", "page", "math-style", "math-shift",
+        "border-spacing", "border-collapse", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
         "math-depth",
     ];
     INHERITED.iter().any(|inherited| name.eq_ignore_ascii_case(inherited))
@@ -795,6 +795,12 @@ pub enum Page {
     Orphans(usize),
     #[property]
     Widows(usize),
+    /// Not in CSS. The number of lines more or fewer than it has when it is broken as well as it
+    /// can be that a paragraph may have, so that a page that fits it better can take it (TeX's
+    /// `\looseness`, for the pages to choose, and in both directions). 0, the initial value, is the
+    /// way that the paragraph is broken as well as it can be.
+    #[property]
+    Looseness(usize),
     /// https://www.w3.org/TR/css-break-3/#break-between
     #[property]
     BreakBefore(Break),

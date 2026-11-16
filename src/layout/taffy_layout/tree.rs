@@ -135,7 +135,7 @@ pub(super) struct HeliumTree<'a, 'w> {
     pub windowed: Vec<NodeId>,
     /// The lines of the paragraphs: by the box, the break that the lines start at and the width
     /// they are broken for.
-    pub lines: HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    pub lines: LineCache,
     /// The flow of the document, once it is made: the columns are chosen from the flows of the
     /// containers in it.
     pub flow: Option<Rc<super::flow::Flow>>,
@@ -148,6 +148,11 @@ pub(super) struct HeliumTree<'a, 'w> {
     /// every container, the arguments that the kernel asked the layout service about its
     /// fragment with (see [`super::columns`]).
     pub page_fragments: HashMap<NodeId, super::columns::FragmentKey>,
+    /// The most lines more or fewer than the best breaking that the paragraphs may have (the pages
+    /// choose, see `looseness`), and the way that the paragraphs of the page that is laid out are
+    /// broken, if it is not the first: the number in the list of the ways of the paragraph.
+    pub paragraph_variants: u32,
+    pub page_variants: HashMap<NodeId, usize>,
 }
 
 // --- building the tree ---
@@ -169,6 +174,14 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
 
     /// Finds the orthogonal flows in the tree below `id` (which is laid out in `parent`'s flow):
     /// a box whose flow is vertical in a horizontal one, or horizontal in a vertical one.
+    /// The way that the paragraph in the box is broken on the page that is laid out (its number
+    /// in the list of ways, 0 for the first), and the most lines more or fewer than the best
+    /// breaking that the list has.
+    pub(super) fn variant_of(&self, id: NodeId) -> (usize, u32) {
+        let looseness = self.computed_values.get(self.node(id).entity).map_or(0, |style| style.page.looseness as u32);
+        (self.page_variants.get(&id).copied().unwrap_or(0), self.paragraph_variants.min(looseness))
+    }
+
     pub(super) fn mark_orthogonal(&mut self, id: NodeId, parent: Flow) {
         let flow = self.node(id).flow;
         if flow.is_vertical() != parent.is_vertical() {
@@ -800,6 +813,7 @@ impl HeliumTree<'_, '_> {
     /// Lays out a box with inline content: its content size is the size of its lines.
     pub(super) fn compute_inline_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
         self.ensure_atoms(id, &inputs);
+        let variant = self.variant_of(id);
 
         let node = &self.nodes[usize::from(id)];
         let entity = node.entity;
@@ -867,6 +881,7 @@ impl HeliumTree<'_, '_> {
                 ifc,
                 entity.id(),
                 cut,
+                variant,
                 PixelLength(line_width),
                 indent,
                 text_runs,
@@ -1042,38 +1057,148 @@ impl HeliumTree<'_, '_> {
     }
 }
 
+/// A place where a line of a paragraph ends, in the cut of the paragraph that the kernel stores:
+/// the break and how the line that ends there fits. The breaking of the rest of the paragraph
+/// depends on both, so cuts at the same break that follow lines that fit differently are not the
+/// same place.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub(super) struct LineCut {
+    pub at: usize,
+    pub fitness: u8,
+}
+
+impl LineCut {
+    pub fn of(cut: helium_paginate::Cut) -> LineCut {
+        LineCut {
+            at: (cut.0 >> 2) as usize,
+            fitness: (cut.0 & 3) as u8,
+        }
+    }
+
+    /// The cut, which is ordered by the break first, so that the cuts of a paragraph are in the
+    /// order of the paragraph.
+    pub fn cut(self) -> helium_paginate::Cut {
+        helium_paginate::Cut(((self.at as u32) << 2) | u32::from(self.fitness & 3))
+    }
+}
+
+/// The lines of paragraphs, by the paragraph, the place where they start, and the width.
+pub(super) type LineCache = HashMap<(u32, Option<LineCut>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>;
+
+/// The ways to break a paragraph from the break `from` (the start of the paragraph if there is none)
+/// to its end, for a line width: the lines of [`lines_from`], and, if `extra` is not 0, the
+/// breakings with the least demerits for the numbers of lines that are up to `extra` fewer and
+/// more than the paragraph has when it is broken from the break, in the order of their number
+/// of lines. They are broken from the start state of the cut, so the rest of a paragraph after a cut
+/// has variants of its own, and not those of the whole paragraph.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn variants_from(
+    cache: &mut LineCache,
+    ifc: &InlineFormattingContext,
+    node: u32,
+    from: Option<LineCut>,
+    line_width: PixelLength,
+    indent: PixelLength,
+    extra: u32,
+    text_runs: &ReadStorage<TextRun>,
+    intrinsic_sizes: &WriteStorage<IntrinsicSize>,
+    aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
+) -> Vec<Rc<Vec<crate::layout::inline::MeasuredLine>>> {
+    let first = lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns);
+    if extra == 0 {
+        return vec![first];
+    }
+    let (start, fitness, indent) = match from {
+        Some(from) => (from.at, from.fitness, PixelLength(0.0)),
+        None => (0, helium_paginate::paragraph::LineStart::DECENT, indent),
+    };
+    let found = ifc
+        .compute_variants_from(start, fitness, None, extra, line_width, indent, text_runs, intrinsic_sizes, aligns)
+        .unwrap_or_else(|error| {
+            log::error!("cannot break lines of {:?}: {}", node, error);
+            vec![]
+        });
+    // (a breaking of the number of lines of the first is the first, or one of equal demerits)
+    let mut others: Vec<_> = found
+        .into_iter()
+        .filter(|lines| !lines.is_empty() && lines.len() != first.len())
+        .map(Rc::new)
+        .collect();
+    others.sort_by_key(|lines| lines.len());
+    let mut variants = vec![first];
+    variants.extend(others);
+    variants
+}
+
 /// The lines of a paragraph that are on a page: all of them if the page has the whole paragraph,
 /// and else the lines from the cut where the page starts in the paragraph to the cut where it
 /// ends (`cut`: where the paragraph is cut by the page).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lines_between(
-    cache: &mut HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    cache: &mut LineCache,
     ifc: &InlineFormattingContext,
     node: u32,
     cut: Option<(Option<helium_paginate::Cut>, Option<helium_paginate::Cut>)>,
+    variant: (usize, u32),
     line_width: PixelLength,
     indent: PixelLength,
     text_runs: &ReadStorage<TextRun>,
     intrinsic_sizes: &WriteStorage<IntrinsicSize>,
     aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
 ) -> Vec<crate::layout::inline::MeasuredLine> {
-    let Some((from, to)) = cut else {
-        return lines_from(cache, ifc, node, None, line_width, indent, text_runs, intrinsic_sizes, aligns)
-            .as_ref()
-            .clone();
+    // the lines to the end of the paragraph, from the cut where the page starts in it: in the way
+    // that the page chose, which is a number in the list of the ways to break it
+    let from_start = |cache: &mut LineCache, from: Option<LineCut>| {
+        let (way, extra) = variant;
+        if way > 0 {
+            if let Some(lines) =
+                variants_from(cache, ifc, node, from, line_width, indent, extra, text_runs, intrinsic_sizes, aligns).get(way)
+            {
+                return lines.clone();
+            }
+        }
+        lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns)
     };
-    let from = from.map(|cut| cut.0 as usize);
-    let lines = lines_from(cache, ifc, node, from, line_width, indent, text_runs, intrinsic_sizes, aligns);
+    let Some((from, to)) = cut else {
+        return from_start(cache, None).as_ref().clone();
+    };
+    let from = from.map(LineCut::of);
+    let lines = from_start(cache, from);
     match to {
         None => lines.as_ref().clone(),
-        Some(to) => {
-            let end = lines
-                .iter()
-                .position(|line| line.to_break == to.0 as usize)
-                .map_or(lines.len(), |index| index + 1);
-            lines[..end].to_vec()
-        }
+        Some(to) => lines_until(&lines, ifc, from, LineCut::of(to), line_width, indent, text_runs, intrinsic_sizes, aligns),
     }
+}
+
+/// The lines of a part of a paragraph that ends at the break `to`, which is any place where
+/// the paragraph can be broken, from the break `from` (the start of the paragraph if there is
+/// none). `lines` are the lines from `from` to the end of the paragraph. A line of them that ends at
+/// `to` ends the part, and the lines before it are the part. If there is none, the part is broken
+/// for itself: its last line ends at `to` and is a line like the others.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lines_until(
+    lines: &[crate::layout::inline::MeasuredLine],
+    ifc: &InlineFormattingContext,
+    from: Option<LineCut>,
+    to: LineCut,
+    line_width: PixelLength,
+    indent: PixelLength,
+    text_runs: &ReadStorage<TextRun>,
+    intrinsic_sizes: &WriteStorage<IntrinsicSize>,
+    aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
+) -> Vec<crate::layout::inline::MeasuredLine> {
+    if let Some(index) = lines.iter().position(|line| line.to_break == to.at) {
+        return lines[..=index].to_vec();
+    }
+    let (start, fitness, indent) = match from {
+        Some(from) => (from.at, from.fitness, PixelLength(0.0)),
+        None => (0, helium_paginate::paragraph::LineStart::DECENT, indent),
+    };
+    ifc.compute_lines_from(start, fitness, Some(to.at), line_width, indent, text_runs, intrinsic_sizes, aligns)
+        .unwrap_or_else(|error| {
+            log::error!("cannot break lines of a part of a paragraph: {}", error);
+            vec![]
+        })
 }
 
 /// The lines of a paragraph from the break `from` (the start of the paragraph if there is none)
@@ -1083,10 +1208,10 @@ pub(super) fn lines_between(
 /// for the width of the page.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lines_from(
-    cache: &mut HashMap<(u32, Option<usize>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>,
+    cache: &mut LineCache,
     ifc: &InlineFormattingContext,
     node: u32,
-    from: Option<usize>,
+    from: Option<LineCut>,
     line_width: PixelLength,
     indent: PixelLength,
     text_runs: &ReadStorage<TextRun>,
@@ -1106,10 +1231,13 @@ pub(super) fn lines_from(
             }),
         Some(from) => {
             let whole = lines_from(cache, ifc, node, None, line_width, indent, text_runs, intrinsic_sizes, aligns);
-            match whole.iter().position(|line| line.to_break == from) {
+            // (the lines after a line of the whole paragraph that ends there and fits the same way
+            // are those of the whole paragraph; after one that fits another way, the rest is
+            // broken for the line in front)
+            match whole.iter().position(|line| line.to_break == from.at && line.fitness == from.fitness) {
                 Some(index) => whole[index + 1..].to_vec(),
                 None => ifc
-                    .compute_lines_from(from, line_width, PixelLength(0.0), text_runs, intrinsic_sizes, aligns)
+                    .compute_lines_from(from.at, from.fitness, None, line_width, PixelLength(0.0), text_runs, intrinsic_sizes, aligns)
                     .unwrap_or_else(|error| {
                         log::error!("cannot break lines of {:?}: {}", node, error);
                         vec![]
@@ -1380,4 +1508,27 @@ pub(super) fn node_is_out_of_flow(tree: &HeliumTree, id: NodeId) -> bool {
     tree.computed_values
         .get(tree.node(id).entity)
         .is_some_and(is_out_of_flow)
+}
+
+#[cfg(test)]
+mod line_cut_tests {
+    use super::LineCut;
+
+    #[test]
+    fn a_cut_keeps_the_break_and_the_fitness_of_the_line() {
+        for at in [0usize, 1, 7, 1000, 1 << 20] {
+            for fitness in 0..4u8 {
+                assert_eq!(LineCut::of(LineCut { at, fitness }.cut()), LineCut { at, fitness });
+            }
+        }
+    }
+
+    #[test]
+    fn the_cuts_of_a_paragraph_are_in_the_order_of_the_paragraph() {
+        // the break decides, and the fitness only where the break is the same
+        let cut = |at, fitness| LineCut { at, fitness }.cut();
+        assert!(cut(3, 3) < cut(4, 0));
+        assert!(cut(3, 0) < cut(3, 2));
+        assert_ne!(cut(3, 1), cut(3, 2));
+    }
 }

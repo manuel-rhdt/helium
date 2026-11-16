@@ -140,7 +140,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `arabic-indic` and `persian`.
 - **Fragmentation:** `break-before`/`-after`/`-inside` (`auto`, `avoid`, `avoid-page`,
   `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
-  `widows`; tables and `pre` blocks split across pages.
+  `widows`, and `looseness` (not in CSS: how many lines more or fewer than the best breaking a
+  paragraph may have, so that a page that fits it better can take it); tables and `pre` blocks split across pages.
 - **Multi-column layout:** `column-count`, `column-width`, `columns`, `column-gap` (`normal` is
   `1em`; also `gap` and `row-gap` take `normal`, which is no gap in a grid and a flex container),
   `column-rule` with `-width`, `-style` and `-color`, `column-fill` (`balance`, `balance-all` and

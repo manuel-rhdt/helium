@@ -621,6 +621,7 @@ impl ComputedValues {
                 page: self.page.page.clone(),
                 widows: self.page.widows,
                 orphans: self.page.orphans,
+                looseness: self.page.looseness,
                 ..Default::default()
             }),
             ..self.clone()
@@ -713,6 +714,7 @@ impl StyleBuilder {
                 page: inherited_values.page.page.clone(),
                 widows: inherited_values.page.widows,
                 orphans: inherited_values.page.orphans,
+                looseness: inherited_values.page.looseness,
                 ..Default::default()
             }),
             math: Arc::new(Math {
@@ -1304,6 +1306,8 @@ pub struct Page {
     pub page: PageName,
     pub widows: usize,
     pub orphans: usize,
+    /// How many lines more or fewer than the best breaking a paragraph may have.
+    pub looseness: usize,
     pub break_after: Break,
     pub break_before: Break,
     pub break_inside: BreakInside,
@@ -1316,6 +1320,7 @@ impl Default for Page {
             page: Default::default(),
             widows: 2,
             orphans: 2,
+            looseness: 0,
             break_after: Break::Auto,
             break_before: Break::Auto,
             break_inside: BreakInside::Auto,

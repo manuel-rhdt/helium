@@ -252,20 +252,56 @@ turns the breaks inside the box into `Avoid`.
 
 ### Paragraphs and cuts
 
+A cut is an opaque number to the kernel (`Cut`), which only stores it, compares the cuts of one
+paragraph and makes tokens of them. The layout service makes them and gives them meaning. In the
+engine (`LineCut` in `taffy_layout/tree.rs`) a cut is
+
 ```rust
-pub struct Cut {
-    pub pos: TextPos,     // index of a break opportunity of the paragraph
-    pub fitness: u8,      // fitness class of the line in front of the cut
-    pub hyphen: bool,     // whether that line ends in a hyphen
+pub(super) struct LineCut {
+    at: usize,      // index of a break opportunity of the paragraph
+    fitness: u8,    // fitness class of the line that ends at the cut (0 tight .. 3 very loose)
 }
 ```
 
-A page break inside a paragraph is a text position, not a line number: a line
-number means nothing once the width changes. The cut also carries the state of
-the line breaker, so that the demerits for adjacent lines of very different
-tightness and for consecutive hyphens are counted across the page break. The
-breaker in `paragraph.rs` has 8 such states (4 fitness classes, times whether
-the line ends in a hyphen).
+packed into the number so that cuts are in the order of the paragraph (the break first). Two cuts
+at the same break that follow lines that fit differently are two places: the breaking of the rest
+of the paragraph depends on both.
+
+A page break inside a paragraph is a break of the paragraph, not a line number: a line number
+means nothing once the width changes. The cut carries the state of the line breaker, so that
+the demerits for lines of very different tightness in a row and for two hyphens in a row are counted
+across a page break. The breaker in `paragraph.rs` has 8 states (4 fitness classes, times whether
+the line ends in a hyphen); the hyphen of the line in front is that of the break itself, and
+the fitness class is what the cut carries (`LineStart`, `compute_paragraph_lines`). The lines
+after a cut that were found with the same state are the lines of the whole paragraph, as before;
+the rest of the paragraph after a cut at another state (or at another width) is broken again from
+the cut with that state.
+
+**A page can end at any break of a paragraph.** The pages that `candidates` lists end where a
+line ends when the layout service breaks the paragraph for the page. That is what the exact
+solver and the greedy one choose among, but it is not what the kernel can express. A solution
+may have a page that ends at any break of any paragraph, and the layout will lay it out:
+
+- `LayoutService::lines_to(par, from, to, width)` gives the lines of the part of a paragraph
+  from `from` to the break `to`. Its last line ends at `to` and is a line like the others (not the
+  ragged last line of a paragraph), and the lines before it are broken to fit it
+  (`compute_lines_from` with `until`, and `compute_paragraph_lines` with `ends_paragraph:
+  false`). Where `to` is the end of a line of the paragraph, it is the lines up to it. Only the
+  break of `to` is used; the cut that the last line has, with its fitness class, is the one that the
+  next page starts with.
+- `Kernel::fill_at(start, item, to)` is the page that starts at `start` and ends in the paragraph
+  `item` at `to`, with its extent, the lines it has of the paragraph (for orphans and the
+  widows of the page that has the rest) and the rule that it breaks. `Kernel::realize` uses it for
+  a page whose end is not among the candidates, so a `Solution` with such pages is valid.
+- The page layout (`lines_between`, `lines_until`) breaks the part of the paragraph that is on a
+  page that ends at such a cut for that cut.
+
+What is missing is a solver that uses it: nothing proposes such a break yet, and the paragraphs
+are still rigid in the sense below, because the number of lines of a part that ends at a cut is
+whatever the breaker finds, and the kernel does not choose among the ways to break a part. The
+tests of the kernel use a layout service whose paragraphs can be broken anywhere
+(`Units`), and the tests of the engine give the layout a solver that ends every page one break
+before the page is full (`a_solution_with_pages_that_end_at_any_break_of_a_paragraph_is_laid_out`).
 
 Paragraphs come in two kinds:
 
@@ -279,6 +315,79 @@ Paragraphs come in two kinds:
 The restriction keeps `InlineFormattingContext::line_height`, with its
 vertical alignment and atoms, out of the kernel. It can be lifted later by
 making profiles Pareto fronts over real extents.
+
+**Variants first.** The first version of joint optimisation is simpler than the profiles below:
+the breaker gives a few complete breakings of a paragraph, each a rigid list of lines, and the
+choice among them is part of the search. For a paragraph at a width, from a start state, the
+breakings with the least demerits for the number of lines of the optimum and `extra` lines fewer
+and more (`compute_paragraph_variants`, which is what TeX's `\looseness` asks for, with a
+band). The first is the optimum, so `extra` = 0 is the breaking that there is now. Every line has
+its demerits (`ParagraphLines::demerits`, including those for following a line of another fitness
+class and a hyphen), so the demerits of the lines of one page are the share of that page. A
+number of lines that no breaking has is not among the results.
+
+The search is that of the optimum with the number of lines as a part of the state, and it is
+tested against all breakings of random small paragraphs (with forced breaks, hyphens, a start state
+and parts that end at a cut). In release builds it takes about 1 ms for a paragraph of 150 words
+(11 lines) with `extra` of 1, against 0.08 ms for the optimum alone, and 6 ms for 400 words
+(28 lines). It is meant for documents that ask for it, and the results are kept by the layout
+service.
+
+**The layout service gives them.** `LayoutService::variants(par, from, width, extra)` (and
+`variants_in` for a subtree) returns the breaking that `lines` gives, and then, if `extra` is not 0,
+the breakings with the other numbers of lines, in the order of their number of lines
+(`Vec<Rc<[ParLine]>>`). A `ParLine` has its demerits (0 for a service that does not count them, as
+the default `variants`, which gives only `lines`, is). The rest of a paragraph after a cut has
+variants of its own, broken from the state that the cut carries, and not those of the whole
+paragraph, so the state of the search is as it is without them. The service keeps the answers by
+paragraph, cut, width and `extra`; the engine's service computes them with
+`InlineFormattingContext::compute_variants_from` (`variants_from` in `taffy_layout/tree.rs`).
+
+**The pages choose among them.** `Problem::variants` (`extra`, `tolerance`) asks for it, and the
+engine sets it from the property `looseness` (not in CSS: the number of lines more or fewer than
+the best breaking that a paragraph may have, inherited, 0 initially, which is the breaking that
+there is without it; the value for the whole document is the greatest of its paragraphs, and a
+paragraph has at most the ways that its own value allows). With 0 the kernel does what it did.
+
+The walk through a page (`Kernel::walk`) carries a *label* for every way to break the paragraphs
+that are on it so far: the room used, the demerits of the lines, which ways were chosen
+(`Choice`: the item and the number in the list of the ways that the service gives for the
+paragraph from the cut where the page starts in it, if it does, and else from its start), and, for
+the paragraph that the page starts in, how many lines of it are on the page. A paragraph branches
+every label into one for every way, and a page is listed for each (`PageFill` has
+`line_demerits`, `line_extent` and `choices`). Of the labels that use the same room, the one with the
+least demerits stays, so a page has at most about two labels for every line that the ways of its
+paragraphs can differ by. A page that ends in a paragraph ends at a line of a way, and the next
+page continues with ways of its own from the cut, so the state of a node is as it is without
+ways. A way whose worst line is worse than the tolerance (TeX's `\tolerance`, 200) is left out,
+and the first way is never left out. `Solution::choices` has the ways of the pages, and
+`realize` checks them; the layout breaks the paragraphs of a page as the page chose
+(`HeliumTree::page_variants`, `lines_between`).
+
+**The exchange rate.** TeX has none: its page builder does not change how paragraphs are broken,
+and an author who wants another number of lines sets `\looseness` by hand. What TeX gives are the
+scales. Line demerits are squares of a badness-like number (`\linepenalty` + badness + penalties,
+squared), and the cost of a page is a badness-like number as well (100 times the cube of how far
+its glue stretches or shrinks, and penalties such as `\widowpenalty`, 150). The rule that is used
+(`CssObjective::line_room`) is the one that the use of `\looseness` shows: an author accepts lines
+as loose as the tolerance allows to gain a line. The demerits of the lines of a page are taken as
+the room that the page would be short of, with the square root of the demerits as the badness and a
+badness of the tolerance (200) as one line:
+
+    room = line extent x sqrt(demerits of the lines on the page) / 200
+
+and the cost of that room is the cost of the same room left on the page (the cube, in the same
+units). A page with lines of badness 200 therefore costs as much as a page that is a line short,
+and one with decent lines (badness near 0, demerits about 100 a line) costs next to nothing, so the
+extra freedom is used for pages that are empty, not for pages that are full. This is an initial
+value that follows the scales of TeX: it has not been compared with anything, and there is nothing
+yet that says what is better (see the harness in "Order of work"). The tolerance of the ways and
+the one of the rate are the same number, 200.
+
+Restrictions: the ways are chosen for the paragraphs of the flow of the document. A container
+with columns has the ways that its paragraphs have inside it narrowed to one (the room that it
+has depends on what is in front of it, so the label with the least demerits is kept), the columns
+of a container choose no ways, and `Kernel::fill_at` lists a page for the first way only.
 
 For a flexible paragraph the breaker computes *profiles*: for each line count
 within a tolerance of the optimum, the least demerits.
@@ -757,7 +866,11 @@ the first page.
    Tables are split between rows, with the columns of the table as a whole.
 3. Greedy solver, recorded problems, the harness and the metrics.
 4. Done. Page size per page; empty pages for `left` and `right`.
-5. Profiles and cuts with state in the line breaker; the joint solver.
+5. Cuts with state in the line breaker (done); a page that ends at any break of a paragraph (done);
+   variants of a paragraph by number of lines in the breaker (done) and in the layout service
+   (done); variants in the kernel and the layout, with TeX's tolerance and an exchange rate that
+   follows its scales (done, opt-in with `looseness`); the harness that says whether it is better;
+   a better rate from it; profiles after that.
 6. `fragment` for tables between rows, with pinned columns.
 7. `fragment` for grid and flex, with parallel parts.
 

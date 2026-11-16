@@ -46,11 +46,14 @@ pub trait Graph {
     fn edges(&mut self, node: &Self::Node) -> Vec<(Self::Edge, Self::Node)>;
 }
 
-/// The nodes of a path from the start to the node where it ends, and the node where it ends.
+/// The nodes of a path from the start to the node where it ends, the node where it ends, and the
+/// edges that it takes.
 #[derive(Debug, Clone)]
-pub struct Path<N> {
+pub struct Path<N, E> {
     /// The nodes that an edge leaves, from the start on. The end is not among them.
     pub nodes: Vec<N>,
+    /// The edges: `edges[i]` leaves `nodes[i]`.
+    pub edges: Vec<E>,
     pub end: N,
 }
 
@@ -58,6 +61,8 @@ struct Entry<G: Graph, C> {
     cost: C,
     previous: Option<G::Key>,
     node: G::Node,
+    /// The edge that led to the node.
+    edge: Option<G::Edge>,
 }
 
 /// The cheapest path from the start of the graph to one of its ends.
@@ -74,9 +79,10 @@ pub fn shortest_path<G, C>(
     zero: C,
     weigh: &mut dyn FnMut(&G::Edge) -> Option<C>,
     combine: &mut dyn FnMut(&C, &C, &G::Edge) -> C,
-) -> Option<Path<G::Node>>
+) -> Option<Path<G::Node, G::Edge>>
 where
     G: Graph,
+    G::Edge: Clone,
     C: Clone + PartialOrd,
 {
     let start = graph.start();
@@ -89,6 +95,7 @@ where
             cost: zero,
             previous: None,
             node: start,
+            edge: None,
         },
     );
     // The nodes are taken in the order of the flow: all edges that end at a node leave an earlier
@@ -120,6 +127,7 @@ where
                         cost,
                         previous: Some(key),
                         node: next,
+                        edge: Some(edge),
                     },
                 );
                 let rank = graph.rank(next_key);
@@ -162,8 +170,19 @@ where
     let (_, _, end) = best?;
     let mut nodes: Vec<G::Node> = chain(end).into_iter().map(|key| entries[&key].node.clone()).collect();
     nodes.reverse();
+    // the edges are the ones that led to the nodes after the first, and to the end
+    let mut edges: Vec<G::Edge> = vec![];
+    let mut at = Some(end);
+    while let Some(key) = at {
+        if let Some(edge) = &entries[&key].edge {
+            edges.push(edge.clone());
+        }
+        at = entries[&key].previous;
+    }
+    edges.reverse();
     Some(Path {
         nodes,
+        edges,
         end: entries[&end].node.clone(),
     })
 }

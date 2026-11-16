@@ -1,6 +1,8 @@
 use crate::flow::{BoxRef, BreakKind, Item, PageKind, PageSpec, Problem};
 use crate::service::LayoutService;
-use crate::token::{BreakToken, ContainerCut, Interner, Position};
+use crate::token::{BreakToken, ContainerCut, Cut, Interner, Position};
+use std::collections::HashMap;
+use std::rc::Rc;
 
 /// A page that starts at a place of the flow.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -27,6 +29,34 @@ pub struct PageFill {
     pub widow_violation: bool,
     /// A single unbreakable item is taller than the page.
     pub overflow: bool,
+    /// The demerits of the lines of the paragraphs on the page, where the page chooses among ways
+    /// to break them ([`Variants`](crate::Variants)), and 0 where it does not. A page that has a
+    /// part of a paragraph has the demerits of those lines.
+    pub line_demerits: f64,
+    /// The mean extent of the lines whose demerits are counted.
+    pub line_extent: f32,
+    /// The ways to break the paragraphs on the page that are not the first
+    /// ([`Kernel::choices`]).
+    pub choices: ChoiceId,
+}
+
+/// The way that a paragraph on a page is broken, if it is not the first of the ways that the
+/// layout service gives ([`LayoutService::variants`](crate::LayoutService::variants)): the item of
+/// the flow and the number in the list. The list is the one for the paragraph from the cut that
+/// the page starts at, if it starts in the paragraph, and from its start if not.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct Choice {
+    pub item: usize,
+    pub variant: usize,
+}
+
+/// A list of [`Choice`]s, which the kernel keeps. The first way for every paragraph is
+/// [`ChoiceId::NONE`].
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
+pub struct ChoiceId(pub u32);
+
+impl ChoiceId {
+    pub const NONE: ChoiceId = ChoiceId(0);
 }
 
 impl PageFill {
@@ -66,9 +96,17 @@ pub struct PageFragment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Solution {
     pub pages: Vec<PageStart>,
+    /// The way to break the paragraphs of every page, if it is not the first way for all of them,
+    /// by the number of the page ([`PageFill::choices`]). Empty if it is.
+    pub choices: Vec<ChoiceId>,
 }
 
 impl Solution {
+    /// The pages, with the first way to break every paragraph.
+    pub fn new(pages: Vec<PageStart>) -> Self {
+        Solution { pages, choices: vec![] }
+    }
+
     /// The pages of a fragment of a container, and where the last of them ends.
     pub fn fragment_end(&self) -> Option<(&[PageStart], PageStart)> {
         self.pages.split_last().map(|(end, pages)| (pages, *end))
@@ -98,6 +136,12 @@ pub struct Kernel<'a> {
     left_right_matter: bool,
     /// The start of the first page.
     first: BreakToken,
+    /// While a page that ends at any cut of a paragraph is listed ([`Kernel::fill_at`]): the
+    /// paragraph and the cut.
+    force_end: Option<(usize, Cut)>,
+    /// The lists of choices that pages have, by their number; the first is the empty one.
+    choices: Vec<Rc<[Choice]>>,
+    choice_ids: HashMap<Vec<Choice>, ChoiceId>,
 }
 
 /// How an end of a page is treated.
@@ -126,6 +170,8 @@ type Fills = (Vec<PageFill>, Vec<Vec<PageFragment>>);
 struct Found {
     token: BreakToken,
     legal: Legal,
+    /// Whether the lines of the paragraph that the next fragment of a container starts with are
+    /// fewer than `widows`.
     widows: bool,
     spec: PageSpec,
     kind: PageKind,
@@ -136,9 +182,53 @@ struct Found {
 struct StartParagraph {
     item: usize,
     widows: u32,
-    /// The number of the lines from the start of the page to the end of the paragraph, known
-    /// when the walk is behind the paragraph.
+}
+
+/// A way to break the paragraphs on the page that is walked, so far.
+#[derive(Debug, Clone, Default)]
+struct Label {
+    /// The extent of the content of the page up to the last box or line.
+    used: f64,
+    /// The demerits of the lines that are on the page.
+    demerits: f64,
+    /// The extent and the number of the lines whose demerits are counted.
+    line_extent: f64,
+    lines: u32,
+    /// The ways to break the paragraphs on the page that are not the first.
+    choices: Vec<Choice>,
+    /// The number of the lines from the start of the page to the end of the paragraph that the
+    /// page starts in, known when the walk is behind the paragraph.
     tail: Option<u32>,
+}
+
+/// What listing a page that ends at a place did.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Emit {
+    Go,
+    /// The way is too full to end at a later place. The others may not be.
+    Dropped,
+    /// The page cannot go on behind this place for any way.
+    Stop,
+}
+
+/// The labels that cost the least where the room that they use is the same.
+fn prune(labels: Vec<Label>) -> Vec<Label> {
+    if labels.len() <= 1 {
+        return labels;
+    }
+    let key = |label: &Label| ((label.used * 64.0).round() as i64, label.tail);
+    let mut kept: Vec<Label> = vec![];
+    for label in labels {
+        match kept.iter_mut().find(|other| key(other) == key(&label)) {
+            Some(other) => {
+                if label.demerits < other.demerits {
+                    *other = label;
+                }
+            }
+            None => kept.push(label),
+        }
+    }
+    kept
 }
 
 impl<'a> Kernel<'a> {
@@ -168,6 +258,9 @@ impl<'a> Kernel<'a> {
             tokens,
             left_right_matter,
             first,
+            force_end: None,
+            choices: vec![Rc::from(vec![])],
+            choice_ids: HashMap::from([(vec![], ChoiceId::NONE)]),
         }
     }
 
@@ -298,6 +391,28 @@ impl<'a> Kernel<'a> {
         self.walk(start, false).0
     }
 
+    /// The page that starts at `start` and ends in the paragraph `item` at the cut `to`, which can
+    /// be any place where the paragraph can be broken. [`candidates`](Self::candidates) lists
+    /// the pages that end where a line of the paragraph ends as the layout service breaks it for
+    /// the page; this is the page that a solver gets that wants to break the paragraph somewhere
+    /// else. The service breaks the part of the paragraph that is on the page to end at the cut
+    /// ([`LayoutService::lines_to`]), and the end of the page is the cut as the service makes it
+    /// (`fill.end`), which is not necessarily `to`.
+    ///
+    /// `None` if the page is not possible: its content does not fit on it, or `item` is not a
+    /// paragraph at or after the start, or it is on a page of its own further on.
+    pub fn fill_at(&mut self, start: &PageStart, item: usize, to: Cut) -> Option<PageFill> {
+        if !matches!(self.problem.items.get(item), Some(Item::Paragraph { .. })) {
+            return None;
+        }
+        self.force_end = Some((item, to));
+        let fills = self.walk(start, false).0;
+        self.force_end = None;
+        fills.into_iter().last().filter(|fill| {
+            matches!(self.tokens.position(fill.end), Position::InParagraph { item: found, .. } if found == item)
+        })
+    }
+
     /// The fragments of containers that are on the page that starts at `start` and ends at `end`,
     /// in order. They were asked of the layout service when the page was listed, and the same
     /// arguments give the same fragments.
@@ -311,6 +426,10 @@ impl<'a> Kernel<'a> {
 
     /// The pages that can start at `start`, and with `record` the fragments of the containers
     /// that are on each.
+    ///
+    /// A page that chooses among ways to break paragraphs ([`Problem::variants`]) is walked with
+    /// a label for every way that its content so far has, which are as many as the rooms that
+    /// they use: a page is listed for every one of them.
     fn walk(&mut self, start: &PageStart, record: bool) -> Fills {
         let problem = self.problem;
         let items = &problem.items;
@@ -318,6 +437,8 @@ impl<'a> Kernel<'a> {
         let page_kind = problem.pages.kind(start.index);
         let spec = problem.pages.spec(position, page_kind);
         let mut fills: Fills = (vec![], vec![]);
+        // (a page that ends at a cut that was asked for is listed for the first way only)
+        let variants = if self.force_end.is_some() { crate::Variants::default() } else { problem.variants };
         // The last page that there can be takes the rest of the content, whatever breaks it has,
         // unless it is the last page of a fragment of a container.
         let last_page = problem.max_pages.is_some_and(|max| start.index + 1 >= max);
@@ -336,21 +457,17 @@ impl<'a> Kernel<'a> {
             Position::InContainer { cut, .. } => Some(cut),
             _ => None,
         };
-        let mut start_paragraph = match (position, items.get(item)) {
+        let start_paragraph = match (position, items.get(item)) {
             (Position::InParagraph { .. }, Some(&Item::Paragraph { widows, .. })) => {
-                Some(StartParagraph {
-                    item,
-                    widows,
-                    tail: None,
-                })
+                Some(StartParagraph { item, widows })
             }
             _ => None,
         };
 
-        // The content of the page up to the last box or line, and the gaps after it, which are
-        // only part of the page if more content follows. `leading` is whether gaps are still
-        // discarded.
-        let mut used = 0.0;
+        // The content of the page up to the last box or line, for every way to break the
+        // paragraphs on it, and the gaps after it, which are only part of the page if more content
+        // follows. `leading` is whether gaps are still discarded.
+        let mut labels = vec![Label::default()];
         let mut pending = 0.0;
         let mut leading = !keep_gaps;
         let mut first = true;
@@ -361,7 +478,10 @@ impl<'a> Kernel<'a> {
         while item < items.len() {
             match items[item] {
                 Item::Box { node } => {
-                    used += pending + self.service.extent(node, spec.inline_size);
+                    let extent = pending + self.service.extent(node, spec.inline_size);
+                    for label in &mut labels {
+                        label.used += extent;
+                    }
                     pending = 0.0;
                     leading = false;
                     item += 1;
@@ -378,9 +498,19 @@ impl<'a> Kernel<'a> {
                     if item < items.len() && !take_rest {
                         let token = self.tokens.intern(Position::Item(item));
                         let legal = Legal { orphans: broken_orphans, widows: broken_widows, ..Legal::new(kind, None) };
-                        let widows = widow_violation(start_paragraph, None);
-                        let found = Found { token, legal, widows, spec, kind: page_kind };
-                        if !self.emit(record, found, used, &mut first, &on_page, &mut fills) {
+                        let found = Found { token, legal, widows: false, spec, kind: page_kind };
+                        let mut stop = false;
+                        labels.retain(|label| {
+                            match self.emit(record, &found, label, 0.0, None, start_paragraph, &mut first, &on_page, &mut fills) {
+                                Emit::Go => true,
+                                Emit::Dropped => false,
+                                Emit::Stop => {
+                                    stop = true;
+                                    true
+                                }
+                            }
+                        });
+                        if stop || labels.is_empty() {
                             return fills;
                         }
                     }
@@ -391,50 +521,141 @@ impl<'a> Kernel<'a> {
                     widows: widows_wanted,
                     avoid_inside,
                 } => {
-                    let lines = self.service.lines(id, cut.take(), spec.inline_size);
+                    // (the paragraph that the page is to end in, at a cut that the service may not
+                    // have among the ends of its lines)
+                    let forced_end = self.force_end.filter(|&(forced, _)| forced == item).map(|(_, to)| to);
+                    let from_cut = cut.take();
+                    // the ways to break the paragraph on this page, with their numbers in the list
+                    // that the service has
+                    let ways: Vec<(usize, Rc<[crate::ParLine]>)> = match forced_end {
+                        Some(to) => vec![(0, self.service.lines_to(id, from_cut, to, spec.inline_size))],
+                        None if variants.extra == 0 => vec![(0, self.service.lines(id, from_cut, spec.inline_size))],
+                        None => self
+                            .service
+                            .variants(id, from_cut, spec.inline_size, variants.extra)
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(number, lines)| {
+                                *number == 0 || lines.iter().all(|line| line.badness <= variants.tolerance)
+                            })
+                            .collect(),
+                    };
+                    let count_demerits = variants.extra > 0;
                     let in_start = start_paragraph.is_some_and(|start| start.item == item);
                     let end_kind = if avoid_inside {
                         BreakKind::Avoid
                     } else {
                         BreakKind::Allowed
                     };
-                    for (number, line) in lines.iter().enumerate() {
-                        used += pending + line.extent;
-                        pending = 0.0;
-                        leading = false;
-                        if number + 1 < lines.len() && !take_rest {
-                            let lines_on_page = number as u32 + 1;
-                            let token = self.tokens.intern(Position::InParagraph {
-                                item,
-                                cut: line.end,
-                            });
-                            let legal = Legal {
-                                orphans: broken_orphans,
-                                widows: broken_widows,
-                                ..Legal::new(end_kind, Some((lines_on_page, orphans)))
-                            };
-                            let mut widows = if in_start {
-                                widow_violation(start_paragraph, Some(lines_on_page))
-                            } else {
-                                widow_violation(start_paragraph, None)
-                            };
-                            // The lines that the next fragment of the container starts with are
-                            // the rest of the paragraph.
-                            if ends_fragment && ((lines.len() - lines_on_page as usize) as u32) < widows_wanted {
-                                widows = true;
+                    let mut behind: Vec<Label> = vec![];
+                    for label in &labels {
+                        for (way, lines) in &ways {
+                            let mut here = label.clone();
+                            if *way > 0 {
+                                here.choices.push(Choice { item, variant: *way });
                             }
-                            let found = Found { token, legal, widows, spec, kind: page_kind };
-                            if !self.emit(record, found, used, &mut first, &on_page, &mut fills) {
+                            let mut ahead = pending;
+                            let mut alive = true;
+                            for (number, line) in lines.iter().enumerate() {
+                                here.used += ahead + line.extent;
+                                ahead = 0.0;
+                                if count_demerits {
+                                    here.demerits += line.demerits;
+                                    here.line_extent += line.extent;
+                                    here.lines += 1;
+                                }
+                                if number + 1 < lines.len() && !take_rest {
+                                    let lines_on_page = number as u32 + 1;
+                                    let token = self.tokens.intern(Position::InParagraph {
+                                        item,
+                                        cut: line.end,
+                                    });
+                                    let legal = Legal {
+                                        orphans: broken_orphans,
+                                        widows: broken_widows,
+                                        ..Legal::new(end_kind, Some((lines_on_page, orphans)))
+                                    };
+                                    // The lines that the next fragment of the container starts with
+                                    // are the rest of the paragraph.
+                                    let widows = ends_fragment
+                                        && ((lines.len() - lines_on_page as usize) as u32) < widows_wanted;
+                                    let found = Found { token, legal, widows, spec, kind: page_kind };
+                                    let on_this_page = in_start.then_some(lines_on_page);
+                                    match self.emit(
+                                        record,
+                                        &found,
+                                        &here,
+                                        0.0,
+                                        on_this_page,
+                                        start_paragraph,
+                                        &mut first,
+                                        &on_page,
+                                        &mut fills,
+                                    ) {
+                                        Emit::Go => {}
+                                        // (the way is too full for the rest of the paragraph)
+                                        Emit::Dropped | Emit::Stop => {
+                                            alive = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if !alive {
+                                continue;
+                            }
+                            if forced_end.is_some() {
+                                // the page ends at the cut: the end of the last of the lines
+                                if let Some(last) = lines.last() {
+                                    let lines_on_page = lines.len() as u32;
+                                    let token = self.tokens.intern(Position::InParagraph { item, cut: last.end });
+                                    let legal = Legal {
+                                        orphans: broken_orphans,
+                                        widows: broken_widows,
+                                        ..Legal::new(end_kind, Some((lines_on_page, orphans)))
+                                    };
+                                    let found = Found { token, legal, widows: false, spec, kind: page_kind };
+                                    let on_this_page = in_start.then_some(lines_on_page);
+                                    self.emit(
+                                        record,
+                                        &found,
+                                        &here,
+                                        0.0,
+                                        on_this_page,
+                                        start_paragraph,
+                                        &mut first,
+                                        &on_page,
+                                        &mut fills,
+                                    );
+                                }
                                 return fills;
                             }
+                            if in_start {
+                                here.tail = Some(lines.len() as u32);
+                            }
+                            behind.push(here);
                         }
                     }
-                    if let Some(start) = start_paragraph.as_mut().filter(|_| in_start) {
-                        start.tail = Some(lines.len() as u32);
+                    // (of the ways that use the same room, the one with the least demerits)
+                    labels = prune(behind);
+                    pending = 0.0;
+                    leading = false;
+                    if labels.is_empty() {
+                        return fills;
                     }
                     item += 1;
                 }
                 Item::Container { node, avoid_inside } => {
+                    // The room that a container has depends on what is in front of it, so the
+                    // ways to break the paragraphs in front of it are narrowed to the one with the
+                    // least demerits.
+                    let best = labels
+                        .iter()
+                        .min_by(|left, right| left.demerits.total_cmp(&right.demerits))
+                        .cloned()
+                        .expect("a page has a way to break its paragraphs");
+                    labels = vec![best];
+                    let used = labels[0].used;
                     let from = container_from.take();
                     let available = f64::from(spec.block_size) - used - pending;
                     let fragments = self.service.fragment(node, from, spec.inline_size, available);
@@ -469,7 +690,18 @@ impl<'a> Kernel<'a> {
                         if record {
                             here.push(page_fragment);
                         }
-                        if !self.emit(record, found, used + pending + fragment.used, &mut first, &here, &mut fills) {
+                        if self.emit(
+                            record,
+                            &found,
+                            &labels[0],
+                            pending + fragment.used,
+                            None,
+                            start_paragraph,
+                            &mut first,
+                            &here,
+                            &mut fills,
+                        ) != Emit::Go
+                        {
                             return fills;
                         }
                     }
@@ -477,7 +709,7 @@ impl<'a> Kernel<'a> {
                     let Some((fragment, page_fragment)) = ended else {
                         return fills;
                     };
-                    used += pending + fragment.used;
+                    labels[0].used += pending + fragment.used;
                     pending = 0.0;
                     leading = false;
                     broken_orphans |= fragment.orphan_violation || fragment.avoid_violation;
@@ -492,36 +724,45 @@ impl<'a> Kernel<'a> {
         let end = self.tokens.intern(Position::Item(items.len()));
         if start.at != end {
             let legal = Legal { orphans: broken_orphans, widows: broken_widows, ..Legal::new(BreakKind::Allowed, None) };
-            let widows = widow_violation(start_paragraph, None);
-            let found = Found { token: end, legal, widows, spec, kind: page_kind };
-            self.emit(record, found, used, &mut first, &on_page, &mut fills);
+            let found = Found { token: end, legal, widows: false, spec, kind: page_kind };
+            for label in &labels {
+                self.emit(record, &found, label, 0.0, None, start_paragraph, &mut first, &on_page, &mut fills);
+            }
         }
         fills
     }
 
-    /// Adds the fill of the page that ends at the token. Returns whether to go on.
+    /// Adds the fill of the page that ends at the token, with the way to break its paragraphs that
+    /// the label is, and `add` more room used. `on_this_page` is the number of lines of the
+    /// paragraph that the page starts in that it has, if it ends in it.
+    #[allow(clippy::too_many_arguments)]
     fn emit(
-        &self,
+        &mut self,
         record: bool,
-        found: Found,
-        used: f64,
+        found: &Found,
+        label: &Label,
+        add: f64,
+        on_this_page: Option<u32>,
+        start_paragraph: Option<StartParagraph>,
         first: &mut bool,
         fragments: &[PageFragment],
         fills: &mut Fills,
-    ) -> bool {
-        let Found { token: end, legal, widows, spec, kind } = found;
-        let used = used as f32;
+    ) -> Emit {
+        let Found { token: end, legal, widows, spec, kind } = *found;
+        let used = (label.used + add) as f32;
         let overflow = used > spec.block_size;
         // A page that is too full does not take the break after it, unless there is no break
         // in between: its content then gets a page of its own.
         if overflow && !*first {
-            return false;
+            return Emit::Dropped;
         }
         *first = false;
         let orphan_violation = legal.orphans
             || legal
                 .cut
                 .is_some_and(|(on_page, orphans)| on_page < orphans);
+        let widows = widows || widow_violation(start_paragraph, label.tail, on_this_page);
+        let choices = self.choice_id(&label.choices);
         fills.0.push(PageFill {
             end,
             spec,
@@ -531,12 +772,38 @@ impl<'a> Kernel<'a> {
             orphan_violation,
             widow_violation: widows || legal.widows,
             overflow,
+            line_demerits: label.demerits,
+            line_extent: if label.lines > 0 { (label.line_extent / f64::from(label.lines)) as f32 } else { 0.0 },
+            choices,
         });
         // (the fragments are only recorded if there are some to ask for)
         if record {
             fills.1.push(fragments.to_vec());
         }
-        !legal.kind.is_forced()
+        if legal.kind.is_forced() {
+            Emit::Stop
+        } else {
+            Emit::Go
+        }
+    }
+
+    /// The number of a list of choices.
+    fn choice_id(&mut self, choices: &[Choice]) -> ChoiceId {
+        if choices.is_empty() {
+            return ChoiceId::NONE;
+        }
+        if let Some(&id) = self.choice_ids.get(choices) {
+            return id;
+        }
+        let id = ChoiceId(self.choices.len() as u32);
+        self.choices.push(Rc::from(choices));
+        self.choice_ids.insert(choices.to_vec(), id);
+        id
+    }
+
+    /// The ways to break the paragraphs of a page that are not the first.
+    pub fn choices(&self, id: ChoiceId) -> Rc<[Choice]> {
+        self.choices[id.0 as usize].clone()
     }
 
     /// Checks a solution and returns its pages.
@@ -560,10 +827,22 @@ impl<'a> Kernel<'a> {
             let fills = self.candidates(&start);
             let next = starts.get(page + 1).or(last_end.as_ref());
             let expected = next.map_or(end, |next| next.at);
-            let fill = fills
+            let wanted = solution.choices.get(page).copied();
+            let found = fills
                 .into_iter()
-                .find(|fill| fill.end == expected)
-                .ok_or(Invalid::NotACandidate { page })?;
+                .find(|fill| fill.end == expected && wanted.is_none_or(|choices| fill.choices == choices));
+            let fill = match found {
+                Some(fill) => fill,
+                // A page can end at any cut of a paragraph, not only where a line ends when the
+                // paragraph is broken for the page.
+                None => match self.tokens.position(expected) {
+                    Position::InParagraph { item, cut } => self
+                        .fill_at(&start, item, cut)
+                        .filter(|fill| fill.end == expected)
+                        .ok_or(Invalid::NotACandidate { page })?,
+                    _ => return Err(Invalid::NotACandidate { page }),
+                },
+            };
             let valid = match next {
                 // (the end of a fragment is not the end of the document)
                 Some(next) if page + 1 == starts.len() => {
@@ -582,10 +861,6 @@ impl<'a> Kernel<'a> {
 
 /// Whether the page has fewer lines of the paragraph that it starts in than `widows`, where the
 /// page ends after `on_page` lines of that paragraph, or not in it.
-fn widow_violation(start: Option<StartParagraph>, on_page: Option<u32>) -> bool {
-    start.is_some_and(|start| {
-        on_page
-            .or(start.tail)
-            .is_some_and(|lines| lines < start.widows)
-    })
+fn widow_violation(start: Option<StartParagraph>, tail: Option<u32>, on_page: Option<u32>) -> bool {
+    start.is_some_and(|start| on_page.or(tail).is_some_and(|lines| lines < start.widows))
 }
