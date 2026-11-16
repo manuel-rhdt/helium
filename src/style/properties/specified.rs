@@ -1326,6 +1326,15 @@ pub enum Unit {
     Ex,
     /// The advance of the glyph `0` of the font.
     Ch,
+    /// 1% of the width and of the height of the page area, and of the smaller and the larger of
+    /// the two.
+    Vw,
+    Vh,
+    /// The page area in the inline and in the block axis.
+    Vi,
+    Vb,
+    Vmin,
+    Vmax,
     In,
 }
 
@@ -1348,6 +1357,12 @@ impl FromStr for Unit {
             "rem" => Ok(Unit::Rem),
             "ex" => Ok(Unit::Ex),
             "ch" => Ok(Unit::Ch),
+            "vw" | "svw" | "lvw" | "dvw" => Ok(Unit::Vw),
+            "vh" | "svh" | "lvh" | "dvh" => Ok(Unit::Vh),
+            "vi" | "svi" | "lvi" | "dvi" => Ok(Unit::Vi),
+            "vb" | "svb" | "lvb" | "dvb" => Ok(Unit::Vb),
+            "vmin" | "svmin" | "lvmin" | "dvmin" => Ok(Unit::Vmin),
+            "vmax" | "svmax" | "lvmax" | "dvmax" => Ok(Unit::Vmax),
             "mm" => Ok(Unit::Mm),
             "in" => Ok(Unit::In),
             _ => Err(()),
@@ -1600,7 +1615,7 @@ impl ComputedValue<BorderWidth> for super::computed::PixelLength {
             BorderWidth::Medium => PixelLength(3.0),
             BorderWidth::Thick => PixelLength(5.0),
             &BorderWidth::Quantity(Quantity { value, unit }) => {
-                PixelLength::from_val_unit(value, unit, (&*style.font).into())
+                PixelLength::from_val_unit(value, unit, super::computed::FontSizes::of(style))
             }
         }
     }
@@ -1622,7 +1637,7 @@ impl ComputedValue<FontSize> for super::computed::PixelLength {
     fn from_specified(font_size: &FontSize, style: &super::computed::ComputedValues) -> Self {
         match *font_size {
             FontSize::Quantity(Quantity { value, unit }) => {
-                PixelLength::from_val_unit(value, unit, (&*style.font).into())
+                PixelLength::from_val_unit(value, unit, super::computed::FontSizes::of(style))
             }
             FontSize::Percentage(percentage) => percentage.0 * style.font.font_size,
             FontSize::Smaller => 0.8 * style.font.font_size,

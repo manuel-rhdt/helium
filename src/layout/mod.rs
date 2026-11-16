@@ -226,6 +226,18 @@ pub fn layout(
         flow_constructor.styles.clear_author_rules();
     }
     flow_constructor.use_document_fonts();
+    // `vw` and `vh` are relative to the page area
+    if !crop {
+        let style = page_style(&flow_constructor.styles);
+        let (width, height) = page_box(&style, device);
+        let margin = |value: GenericSize, container: PixelLength| {
+            value.absolute(Default::default(), container).max(PixelLength(0.0)).0
+        };
+        crate::style::properties::computed::set_viewport(
+            width.0 - margin(style.position.margin_left, width) - margin(style.position.margin_right, width),
+            height.0 - margin(style.position.margin_top, width) - margin(style.position.margin_bottom, width),
+        );
+    }
     dom.traverse(&mut flow_constructor);
     flow_constructor.ensure_root();
     info!("TIMED: construct {:?}", time_before.elapsed());
