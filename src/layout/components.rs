@@ -597,71 +597,51 @@ impl Component for LineBreakPossibilities {
     type Storage = DenseVecStorage<Self>;
 }
 
-#[derive(Debug, Clone)]
-pub struct Glyphs(pub Vec<GlyphIndex>);
-
-/// Writes glyphs as a literal string of 16-bit glyph indices. A literal string is about half the
-/// size of a hex string. Only the bytes that are special inside a literal string need an escape.
-/// The string is written in chunks from a buffer on the stack: a document has a string for
-/// almost every word.
-fn write_glyph_string(
-    f: &mut lemon_pdf::object::Formatter,
-    glyphs: impl Iterator<Item = GlyphIndex>,
-) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let mut buffer = [0u8; 256];
-    let mut len = 0;
-    let mut open = false;
-    for GlyphIndex(glyph) in glyphs {
-        if !open {
-            buffer[0] = b'(';
-            len = 1;
-            open = true;
-        }
-        // a glyph takes at most four bytes, and the closing parenthesis one
-        if len + 5 > buffer.len() {
-            f.write_all(&buffer[..len])?;
-            len = 0;
-        }
-        for byte in (glyph as u16).to_be_bytes() {
-            match byte {
-                b'(' | b')' | b'\\' => {
-                    buffer[len] = b'\\';
-                    buffer[len + 1] = byte;
-                    len += 2;
-                }
-                b'\r' => {
-                    buffer[len] = b'\\';
-                    buffer[len + 1] = b'r';
-                    len += 2;
-                }
-                _ => {
-                    buffer[len] = byte;
-                    len += 1;
-                }
-            }
-        }
-    }
-    if open {
-        buffer[len] = b')';
-        f.write_all(&buffer[..len + 1])?;
-    }
-    Ok(())
-}
-
-impl lemon_pdf::PdfFormat for Glyphs {
-    fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
-        write_glyph_string(f, self.0.iter().copied())
-    }
-}
-
 /// A glyph of a `TJ` operator with the kern that goes in front of it, in tenths of a font unit
 /// (a thousandth of an em); zero for no kern. Kerns below a tenth are not worth writing.
 #[derive(Debug, Copy, Clone)]
 pub struct KernedGlyph {
     pub glyph: GlyphIndex,
     pub kern: i32,
+    /// The byte offset in the text of its [`TextPiece`] of the first character that the glyph
+    /// was shaped from, or [`NO_CLUSTER`]. Glyphs of the same cluster (a conjunct, a ligature)
+    /// have the same offset.
+    pub cluster: u32,
+}
+
+/// The `cluster` of a glyph that stands for no text (the parts of a stretched operator).
+pub const NO_CLUSTER: u32 = u32::MAX;
+
+/// A run of the glyphs of a [`TextOps`] with the text that they stand for. Backends work out
+/// from it what text the glyphs of the page stand for (the `ToUnicode` map and the `/ActualText`
+/// of PDF, the characters of a word in HTML): the display list says what text every glyph was
+/// drawn for, and every backend decides how to carry that.
+///
+/// The glyphs of a piece are in the order in which they are drawn, from left to right. In
+/// right-to-left text (`rtl`) that is the reverse of the order of the text.
+#[derive(Debug, Clone)]
+pub struct TextPiece {
+    /// The glyphs of the piece: a range of [`TextOps::glyphs`].
+    pub glyphs: std::ops::Range<u32>,
+    /// The text of the glyphs: a range of [`TextOps::text`].
+    pub text: std::ops::Range<u32>,
+    pub rtl: bool,
+    pub kind: PieceKind,
+}
+
+/// What the text of a [`TextPiece`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PieceKind {
+    /// The characters that the glyphs were shaped from. The invisible formatting characters
+    /// between two clusters have no glyphs and are not part of the text of either.
+    Shaped,
+    /// The text of a formula, which is kept exactly: its invisible operators say how the
+    /// formula is read.
+    Formula,
+    /// Glyphs that the layout added to the text, like the hyphen at a line break. The text is
+    /// what they stand for in the text (a soft hyphen), not the character that they are the
+    /// glyphs of, so it says nothing about what the same glyph stands for elsewhere.
+    Inserted,
 }
 
 /// The glyphs of a `TJ` operator: a range of [`TextOps::glyphs`], and the kern after the last one.
@@ -703,49 +683,21 @@ impl GlyphRange {
         }
     }
 
-    /// The elements of the operator as a PDF array.
-    pub fn array<'a>(self, glyphs: &'a [KernedGlyph]) -> KernedArray<'a> {
-        KernedArray { range: self, glyphs }
-    }
-}
-
-/// The operand of a `TJ` operator.
-#[derive(Debug)]
-pub struct KernedArray<'a> {
-    range: GlyphRange,
-    glyphs: &'a [KernedGlyph],
-}
-
-#[derive(Debug)]
-struct GlyphString<'a>(&'a [KernedGlyph]);
-
-impl lemon_pdf::PdfFormat for GlyphString<'_> {
-    fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
-        write_glyph_string(f, self.0.iter().map(|glyph| glyph.glyph))
-    }
-}
-
-impl lemon_pdf::PdfFormat for KernedArray<'_> {
-    fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
-        let mut array = Some(f.format_array());
-        self.range.for_each_item(self.glyphs, |item| {
-            let current = array.take().expect("the array is put back after every element");
-            array = Some(match item {
-                KernedItem::Glyphs(glyphs) => current.value(&GlyphString(glyphs)),
-                KernedItem::Kern(kern) => current.value(&kern),
-            });
-        });
-        array.expect("the array is put back after every element").finish()
-    }
 }
 
 /// The operators of a text and the glyphs of its `TJ` operators, which are ranges of one `Vec`:
 /// a `Vec` for every run of glyphs between two kerns was most of the memory of a long text.
 /// Dereferences to the operators.
+///
+/// The `pieces` say what text the glyphs were shaped from, which is kept in `text`: it is the
+/// part of the display list that tells a backend which characters it is showing. They are in the
+/// order of the glyphs, which they do not have to cover completely.
 #[derive(Debug, Default, Clone)]
 pub struct TextOps {
     ops: Vec<TextOperator>,
     pub glyphs: Vec<KernedGlyph>,
+    pub text: String,
+    pub pieces: Vec<TextPiece>,
 }
 
 impl std::ops::Deref for TextOps {
@@ -762,29 +714,76 @@ impl std::ops::DerefMut for TextOps {
 }
 
 impl TextOps {
-    pub fn from_parts(ops: Vec<TextOperator>, glyphs: Vec<KernedGlyph>) -> Self {
-        TextOps { ops, glyphs }
+    /// Text operators that show no glyphs yet.
+    pub fn from_ops(ops: Vec<TextOperator>) -> Self {
+        TextOps { ops, ..TextOps::default() }
     }
 
-    pub fn into_parts(self) -> (Vec<TextOperator>, Vec<KernedGlyph>) {
-        (self.ops, self.glyphs)
+    /// Takes the operators out and leaves the glyphs, the text and the pieces that they refer
+    /// to, so that the operators can be rewritten without moving those.
+    pub fn take_ops(&mut self) -> Vec<TextOperator> {
+        std::mem::take(&mut self.ops)
     }
 
     /// Appends a `TJ` operator that shows one glyph.
-    pub fn push_glyph(&mut self, glyph: GlyphIndex) {
+    pub fn push_glyph(&mut self, glyph: GlyphIndex, cluster: u32) {
         let start = self.glyphs.len() as u32;
-        self.glyphs.push(KernedGlyph { glyph, kern: 0 });
+        self.glyphs.push(KernedGlyph { glyph, kern: 0, cluster });
         self.ops.push(TextOperator::KernedGlyphs(GlyphRange { start, end: start + 1, trailing_kern: 0 }));
     }
 
-    /// Appends the operators of `other` and its glyphs.
+    /// Records that the glyphs `glyphs` (indices of [`TextOps::glyphs`]) stand for `characters`.
+    /// The `cluster` of each of them is a byte offset in `characters`.
+    pub fn push_piece(&mut self, glyphs: std::ops::Range<usize>, characters: &str, rtl: bool, kind: PieceKind) {
+        if glyphs.is_empty() {
+            return;
+        }
+        let start = self.text.len() as u32;
+        self.text.push_str(characters);
+        self.pieces.push(TextPiece {
+            glyphs: glyphs.start as u32..glyphs.end as u32,
+            text: start..self.text.len() as u32,
+            rtl,
+            kind,
+        });
+    }
+
+    /// The text of a piece.
+    pub fn piece_text(&self, piece: &TextPiece) -> &str {
+        &self.text[piece.text.start as usize..piece.text.end as usize]
+    }
+
+    /// The name of the font that each glyph is drawn with, indexed like [`TextOps::glyphs`]. A
+    /// glyph that no operator shows has no font (an empty name).
+    pub fn glyph_fonts(&self) -> Vec<&str> {
+        let mut fonts = vec![""; self.glyphs.len()];
+        let mut font = "";
+        for op in &self.ops {
+            match op {
+                TextOperator::SetFont(name, _) => font = name,
+                TextOperator::KernedGlyphs(range) => fonts[range.start as usize..range.end as usize].fill(font),
+                _ => {}
+            }
+        }
+        fonts
+    }
+
+    /// Appends the operators of `other`, its glyphs and its text.
     pub fn append(&mut self, other: TextOps) {
-        let base = self.glyphs.len() as u32;
+        let glyph_base = self.glyphs.len() as u32;
+        let text_base = self.text.len() as u32;
         self.glyphs.extend(other.glyphs);
+        self.text.push_str(&other.text);
+        self.pieces.extend(other.pieces.into_iter().map(|piece| TextPiece {
+            glyphs: piece.glyphs.start + glyph_base..piece.glyphs.end + glyph_base,
+            text: piece.text.start + text_base..piece.text.end + text_base,
+            rtl: piece.rtl,
+            kind: piece.kind,
+        }));
         self.ops.extend(other.ops.into_iter().map(|mut op| {
             if let TextOperator::KernedGlyphs(range) = &mut op {
-                range.start += base;
-                range.end += base;
+                range.start += glyph_base;
+                range.end += glyph_base;
             }
             op
         }));
@@ -858,9 +857,10 @@ pub enum TextOperator {
     /// for glyphs that the font positions vertically, like marks and cursive attachments.
     SetRise(PixelLength),
     SetTransform(TransformMatrix),
-    /// Starts marked content whose `/ActualText` is the given text: extractors use it instead of
-    /// the `ToUnicode` text of the glyphs that follow, up to `EndActualText`. Used for clusters
-    /// that a per-glyph `ToUnicode` map cannot describe.
+    /// Starts marked content that stands for the given text, up to the matching
+    /// `EndMarkedContent`. The PDF writer adds it where the text of glyphs cannot be given by the
+    /// `ToUnicode` map of a font (see `pdf::text::with_actual_text`); the layout does not: it
+    /// says what its glyphs stand for with the pieces of [`TextOps`].
     BeginActualText(String),
     /// Starts marked content that is not part of the text of the document (a page number):
     /// extractors that honour `/Artifact` leave it out.

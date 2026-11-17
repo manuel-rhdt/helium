@@ -1,4 +1,5 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
+use crate::font_usage::FontUsage;
 use crate::layout::components::TextOperator;
 use crate::style::properties::computed::PixelLength;
 use crate::tagging::TagRecorder;
@@ -10,7 +11,11 @@ use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::{DocumentContext, Page, Pt, Version};
 
 pub(crate) mod color_glyph;
+mod encoding;
+pub(crate) use encoding::GlyphEncoding;
+mod font;
 mod gradient;
+pub(crate) mod text;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -89,7 +94,8 @@ fn paint_items(
     display_list: &mut display_list::DisplayList,
     page_height: PixelLength,
     filter: Option<StreamFilter>,
-    font_map: &HashMap<String, IndirectReference<lemon_pdf::font::Font>>,
+    font_map: &HashMap<String, font::EmbeddedFont>,
+    usage: &FontUsage,
     images: &HashMap<*const crate::image::LoadedImage, Embedded>,
     color_glyphs: &std::cell::RefCell<color_glyph::ColorGlyphs>,
     tagged: bool,
@@ -273,26 +279,6 @@ fn paint_items(
                 page_context.fill_path()?;
                 page_context.apply_operator("EMC")?;
             }
-            &DisplayItem::Text(
-                display_list::Point { x, y },
-                font_size,
-                ref font_name,
-                ref glyphs,
-            ) => {
-                let x = x;
-                let y = page_height - y;
-                page_context.begin_text()?;
-                let mut marked = MarkedContent::default();
-                let font_ref = font_map[font_name];
-                let key = page_context.add_font(font_ref);
-                page_context.set_font(&key, font_size.into())?;
-                page_context.set_position(x.into(), y.into())?;
-                marked.before_content(page_context, tagged)?;
-                page_context.push_operand(glyphs)?;
-                page_context.apply_operator("Tj")?;
-                marked.finish(page_context)?;
-                page_context.end_text()?;
-            }
             DisplayItem::Paragraph(par) => {
                 let x = par.start_pos.0;
                 let y = page_height - par.start_pos.1;
@@ -301,15 +287,21 @@ fn paint_items(
                 page_context.set_position(x.into(), y.into())?;
                 let mut marked = MarkedContent::default();
 
-                for op in par.ops.iter() {
+                // the text that the fonts cannot describe is given where it is drawn
+                let marked_ops = text::with_actual_text(&par.ops, usage);
+                let ops: &[TextOperator] = marked_ops.as_deref().unwrap_or(&par.ops);
+                // the encoding of the font that is selected: the text starts by selecting one
+                let mut encoding = encoding::GlyphEncoding::Identity;
+                for op in ops {
                     match op {
                         TextOperator::SetFont(font_name, size) => {
                             // A font that draws no glyph anywhere is not embedded (e.g.
                             // the font of text that is drawn entirely with fallback
                             // fonts). Selecting it would change nothing.
-                            if let Some(&font_ref) = font_map.get(font_name) {
-                                let key = page_context.add_font(font_ref);
+                            if let Some(font) = font_map.get(font_name) {
+                                let key = page_context.add_font(font.reference);
                                 page_context.set_font(&key, (*size).into())?;
+                                encoding = font.encoding;
                             }
                         }
                         &TextOperator::SetColor(color) => {
@@ -323,7 +315,7 @@ fn paint_items(
                         }
                         &TextOperator::KernedGlyphs(range) => {
                             marked.before_content(page_context, tagged)?;
-                            page_context.push_operand(range.array(&par.ops.glyphs))?;
+                            page_context.push_operand(text::KernedArray::new(range, &par.ops.glyphs, encoding))?;
                             page_context.apply_operator("TJ")?;
                         }
                         &TextOperator::NewLine { x_offset, leading } => {
@@ -486,26 +478,10 @@ pub fn write_pdf(
         .map(|_| context.create_reference())
         .collect();
 
-    // The glyphs of the text of SVG images are shown with the embedded fonts of the document, so
-    // they have to be recorded in the fonts before these are embedded.
-    let mut svg_font_names = crate::svg_text::SvgFontNames::new();
-    {
-        let mut seen = std::collections::HashSet::new();
-        let display_lists = print_pages
-            .islands
-            .iter_mut()
-            .map(|island| &mut island.display_list)
-            .chain(print_pages.pages.iter_mut().map(|page| &mut page.display_list));
-        for display_list in display_lists {
-            for item in display_list.items() {
-                if let DisplayItem::Image { image, .. } = item
-                    && let crate::image::LoadedImage::Svg(svg) = &**image
-                {
-                    crate::svg_text::register_glyphs(&svg.tree, &mut print_pages.font_map, &mut svg_font_names, &mut seen);
-                }
-            }
-        }
-    }
+    // The fonts are embedded with the glyphs that the document draws. The glyphs of the text of
+    // SVG images are shown with the embedded fonts of the document too, so the fonts of those
+    // are added to the font map first.
+    let (usage, svg_font_names) = crate::font_usage::collect(&mut print_pages);
 
     // The colour glyphs of the page and of the SVG images, painted by one code path. The fonts are
     // known once the fonts of the SVG text have been added to the font map.
@@ -513,13 +489,11 @@ pub fn write_pdf(
         std::rc::Rc::new(std::cell::RefCell::new(color_glyph::ColorGlyphs::new(&print_pages.font_map)));
 
     let mut font_map = HashMap::new();
-    for (font_name, font) in &print_pages.font_map {
-        if !font.glyph_advances.lock().is_empty() {
-            log::info!("Embedding font {} into PDF file.", font_name);
-            let font = font.embed_into_pdf(&mut context, !no_filter)?;
-            let font: IndirectReference<lemon_pdf::font::Font> = context.write_object(font)?;
-            font_map.insert(font_name.clone(), font);
-        }
+    for (font_name, glyphs) in usage.fonts() {
+        let Some(font) = print_pages.font_map.get(font_name) else { continue };
+        log::info!("Embedding font {} into PDF file.", font_name);
+        let font = font::embed_into_pdf(font, glyphs, &mut context, !no_filter)?;
+        font_map.insert(font_name.to_owned(), font);
     }
 
     // Every image is embedded once, however often it is painted.
@@ -531,7 +505,9 @@ pub fn write_pdf(
         svg_font_names,
         font_map
             .iter()
-            .filter_map(|(name, &font)| Some((name.clone(), (font, print_pages.font_map.get(name)?.upem))))
+            .filter_map(|(name, font)| {
+                Some((name.clone(), (font.reference, print_pages.font_map.get(name)?.upem, font.encoding)))
+            })
             .collect(),
     );
     // The content of the `foreignObject` elements of SVG images (HTML and MathML) was laid out
@@ -552,6 +528,7 @@ pub fn write_pdf(
                     height,
                     page_filter,
                     &font_map,
+                    &usage,
                     &images,
                     &color_glyphs,
                     false,
@@ -607,6 +584,7 @@ pub fn write_pdf(
                 page_height,
                 filter,
                 &font_map,
+                &usage,
                 &images,
                 &color_glyphs,
                 tagged,

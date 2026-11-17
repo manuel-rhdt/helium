@@ -15,7 +15,7 @@ use std::fmt::Write;
 use specs::{Join, World, WorldExt};
 
 use crate::layout::components::{
-    Decoration, DecorationFragment, EdgeValues, Fragmented, KernedGlyph, KernedItem, LayoutEntity, Paragraph,
+    Decoration, DecorationFragment, EdgeValues, Fragmented, KernedGlyph, KernedItem, LayoutEntity, NO_CLUSTER, Paragraph,
     Position, TextOperator, TextRun,
 };
 use crate::layout::construct::AssignLayoutEntity;
@@ -233,12 +233,36 @@ fn dump_paragraphs(world: &World) -> Vec<String> {
     let mut out = Vec::new();
     for (pos, paragraph) in (&positions, &paragraphs).join() {
         let ops: Vec<String> = paragraph.ops.iter().map(|op| op_json(op, &paragraph.ops.glyphs)).collect();
+        // the text that the glyphs were shaped from, with the cluster of every glyph
+        let pieces: Vec<String> = paragraph
+            .ops
+            .pieces
+            .iter()
+            .map(|piece| {
+                let clusters: Vec<String> = paragraph.ops.glyphs[piece.glyphs.start as usize..piece.glyphs.end as usize]
+                    .iter()
+                    .map(|glyph| match glyph.cluster {
+                        NO_CLUSTER => "null".to_string(),
+                        cluster => cluster.to_string(),
+                    })
+                    .collect();
+                format!(
+                    "{{\"text\": {}, \"rtl\": {}, \"glyphs\": [{}, {}], \"clusters\": [{}]}}",
+                    json_string(paragraph.ops.piece_text(piece)),
+                    piece.rtl,
+                    piece.glyphs.start,
+                    piece.glyphs.end,
+                    clusters.join(", ")
+                )
+            })
+            .collect();
         out.push(format!(
-            "{{\"page\": {}, \"x\": {}, \"y\": {}, \"ops\": [{}]}}",
+            "{{\"page\": {}, \"x\": {}, \"y\": {}, \"ops\": [{}], \"pieces\": [{}]}}",
             pos.page,
             number(paragraph.start_pos.0.0),
             number(paragraph.start_pos.1.0),
-            ops.join(", ")
+            ops.join(", "),
+            pieces.join(", ")
         ));
     }
     out

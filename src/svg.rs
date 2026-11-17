@@ -91,7 +91,7 @@ pub struct SvgWriter {
     /// The fonts of the document that the glyphs of SVG text are shown with: the font of the
     /// font database of the SVG images, and the embedded font (with its units per em).
     font_names: crate::svg_text::SvgFontNames,
-    fonts: HashMap<String, (IndirectReference<lemon_pdf::font::Font>, u32)>,
+    fonts: HashMap<String, (IndirectReference<lemon_pdf::font::Font>, u32, crate::pdf::GlyphEncoding)>,
     /// The colour glyphs (emoji) of the document, which `pdf::color_glyph` paints for the text of
     /// the page too.
     color_glyphs: std::rc::Rc<std::cell::RefCell<crate::pdf::color_glyph::ColorGlyphs>>,
@@ -264,7 +264,7 @@ impl SvgWriter {
     pub fn set_fonts(
         &mut self,
         names: crate::svg_text::SvgFontNames,
-        fonts: HashMap<String, (IndirectReference<lemon_pdf::font::Font>, u32)>,
+        fonts: HashMap<String, (IndirectReference<lemon_pdf::font::Font>, u32, crate::pdf::GlyphEncoding)>,
     ) {
         self.font_names = names;
         self.fonts = fonts;
@@ -820,7 +820,7 @@ impl SvgWriter {
             let mut current: Option<&str> = None;
             for glyph in &span.positioned_glyphs {
                 let name = &self.font_names[&glyph.font];
-                let (font, upem) = self.fonts[name];
+                let (font, upem, encoding) = self.fonts[name];
                 if current != Some(name.as_str()) {
                     let key = c.add_font(font);
                     c.set_font(&key, Pt(font_size))?;
@@ -832,7 +832,7 @@ impl SvgWriter {
                     c.push_operand(f64::from(value))?;
                 }
                 c.apply_operator("Tm")?;
-                c.draw_cid_glyphs([glyph.id.0 as u16])?;
+                c.draw_cid_glyphs([encoding.code(crate::layout::text::font::GlyphIndex(u32::from(glyph.id.0)))])?;
             }
             c.end_text()?;
             // Colour glyphs (emoji) have no outline to fill: the text above only advances over
