@@ -11,3 +11,5 @@ poster
 emoji
 typography
 article
+slides
+cv

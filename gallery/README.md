@@ -18,6 +18,8 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 | `typography/` | a specimen of OpenType features in EB Garamond, set in two columns that flow (`column-count`) and chosen with `font-feature-settings` and the `font-variant-*` properties: ligatures, real small capitals, old-style, lining and tabular figures, fractions, superiors, historical forms, case-sensitive forms, stylistic sets (needs EB Garamond, which CI downloads) |
 | `design/` | gradients, blend modes, tiled patterns, rounded boxes, SVG images (clip path, mask, pattern, text), a dashboard |
 | `article/` | a two-column physics letter in the layout of a journal such as Physical Review Letters: a full-width title block and abstract, then 10 pt text in two columns of 24 em that run over the pages, run-in headings, numbered MathML equations, SVG figures with real data from `generate.py` (an exact first-passage calculation and a Langevin simulation), tables with rules, numbered references, running heads on facing pages |
+| `slides/` | a ten-slide conference talk on 16:9 pages: a full-bleed photo title, big-number cards, a split slide with a picture, a code slide with highlighted source, a gradient quote, a chart drawn in SVG, a before-and-after comparison, a picture mosaic, a roadmap and a closing slide; the pictures come from `generate.py` (numpy and Pillow) |
+| `cv/` | a one-page CV: gradient sidebar, an illustrated portrait and icons in inline SVG, skill rings from conic gradients, bars, a timeline built from borders and generated content, stat and project cards, tags, a pull quote |
 
 ## Build locally
 
