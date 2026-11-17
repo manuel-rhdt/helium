@@ -67,6 +67,9 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   used). The structure tree does not reach into a `foreignObject` (no `Formula` tags there).
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
   document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
+- **Tables across pages:** a table is split between its rows, and the header rows (the first
+  `thead`) are repeated at the top of every page that goes on inside of the table. Footers are
+  not repeated.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.
 
 ## CSS

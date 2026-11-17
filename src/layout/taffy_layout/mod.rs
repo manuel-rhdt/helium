@@ -223,7 +223,8 @@ impl TaffyBlockLayout {
         let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow));
         let first_class = classes.of(helium_paginate::Position::Item(0)).clone();
         let first_spec = geometry.spec(&geometry.context(0, &first_class));
-        let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone());
+        let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone())
+            .with_repeats(flow.repeats.clone());
         // the pages choose among the ways to break the paragraphs that ask for it (`looseness`)
         let looseness = flow
             .paragraphs
@@ -243,6 +244,17 @@ impl TaffyBlockLayout {
         };
         tree.icb_height = first_spec.block_size;
 
+        // the header rows that the pages repeat inside of a table
+        let headers: HashMap<NodeId, (NodeId, window::Window)> = (0..tree.nodes.len())
+            .map(NodeId::from)
+            .filter(|&id| tree.node(id).content == Content::Table)
+            .filter_map(|table| {
+                let header = tree.repeated_header(table)?;
+                let span = tree.node(header).span.as_ref()?;
+                let whole = window::Window::over(span.start, span.end);
+                Some((table, (header, whole)))
+            })
+            .collect();
         // choose the pages
         let before = std::time::Instant::now();
         let mut service = service::TreeService::new(&mut tree, &flow, first_spec.block_size);
@@ -298,6 +310,7 @@ impl TaffyBlockLayout {
                         line_extent: 0.0,
                         choices: helium_paginate::ChoiceId::NONE,
                         floats_used: 0.0,
+                        repeated: 0.0,
                         placed: helium_paginate::FloatList::NONE,
                         carry: helium_paginate::FloatList::NONE,
                     },
@@ -315,6 +328,7 @@ impl TaffyBlockLayout {
 
         let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
         let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
+        let mut repeated: std::collections::HashSet<Entity> = std::collections::HashSet::new();
         let mut rules: Vec<Rule> = vec![];
         let mut line_stats = LineStats::default();
         let reporting = PAGINATION_REPORT.load(std::sync::atomic::Ordering::Relaxed);
@@ -397,7 +411,7 @@ impl TaffyBlockLayout {
             );
             let height = tree.node(root).layout.size.height;
             // (the text of the page is what is left of it next to the floats)
-            let text_used = fill.used - fill.floats_used;
+            let text_used = fill.used - fill.floats_used - fill.repeated;
             if !fill.overflow && (height - text_used).abs() > 0.5 {
                 log::warn!(
                     "page {} has {height} of text, but the paginator counted {text_used}",
@@ -443,6 +457,9 @@ impl TaffyBlockLayout {
                 // (the text ends above the floats at the bottom of the page)
                 page_bottom: edges.top.0 + spec.block_size - bottom_floats,
                 fragments: &mut fragments,
+                headers: &headers,
+                repeating: false,
+                repeated: &mut repeated,
                 overlay: None,
                 rules: &mut rules,
                 line_stats: &mut line_stats,
@@ -553,7 +570,14 @@ impl TaffyBlockLayout {
         // boxes are painted would change from one run to the next)
         let mut fragments: Vec<_> = fragments.into_iter().collect();
         fragments.sort_by_key(|(entity, _)| entity.id());
-        for (entity, parts) in fragments {
+        for (entity, mut parts) in fragments {
+            // a box that was written again (the header rows of a table) was written as it is on
+            // the first page, too: that is the first of its parts
+            if repeated.contains(&entity) {
+                if let (Some(&position), Some(&decoration)) = (positions.get(entity), decorations.get(entity)) {
+                    parts.insert(0, Fragment { position, decoration });
+                }
+            }
             if parts.len() < 2 {
                 continue;
             }
@@ -630,6 +654,15 @@ struct Writer<'a, 'w> {
     page_bottom: f32,
     /// The parts of the boxes that are on more than one page.
     fragments: &'a mut HashMap<Entity, Vec<Fragment>>,
+    /// The header rows that the tables repeat, by table: the row group and a window of the items
+    /// that it has.
+    headers: &'a HashMap<NodeId, (NodeId, window::Window)>,
+    /// Whether the header of a table is being written again, behind a page break. It is written
+    /// as parts of the boxes (the box is on the page that it was first written on, too), and it
+    /// is not part of the structure of the document.
+    repeating: bool,
+    /// The boxes that have been written again, which have a part on every page of the table.
+    repeated: &'a mut std::collections::HashSet<Entity>,
     /// The layouts of the boxes in the column that is being written, which are not the ones the
     /// nodes have (they are the ones of the last column).
     overlay: Option<&'a HashMap<NodeId, columns::Snap>>,
@@ -706,7 +739,7 @@ impl<'a> Writer<'a, '_> {
 
     fn emit(&mut self, element: BlockLevelElement) {
         // absolutely positioned and inline-block boxes are not paginated with the main flow
-        if self.group_stack.is_empty() {
+        if self.group_stack.is_empty() && !self.repeating {
             self.text_list.push(element);
             self.last_flow_entity = Some(element.entity());
         }
@@ -749,11 +782,14 @@ impl<'a> Writer<'a, '_> {
             .span
             .as_ref()
             .filter(|span| !span.split && !span.kids.is_empty() && content != Content::Inline);
+        // A page that goes on inside of a table has the header rows of the table at its top.
+        let repeat = if open_start && content == Content::Table { self.repeat_of(id) } else { None };
+        let repeat_height = repeat.map_or(0.0, |(_, height)| height);
         let (cut_top, cut_height) = match table_part {
             Some(_) => {
                 let (top, bottom) =
                     window::table_fragment(self.nodes, self.window, node, layout.size.height);
-                (top, Some(bottom - top))
+                (top, Some(bottom - top + repeat_height))
             }
             None => (0.0, None),
         };
@@ -778,7 +814,9 @@ impl<'a> Writer<'a, '_> {
         let content_y = origin.y + border.top + padding.top;
         let content_width = width - (border.left + border.right) - (padding.left + padding.right);
         let content_height = height - (border.top + border.bottom) - (padding.top + padding.bottom);
-        if !open_start {
+        if self.repeating {
+            self.repeated.insert(entity);
+        } else if !open_start {
             self.set_position(entity, content_x, content_y, content_width, content_height, z);
         }
 
@@ -817,10 +855,10 @@ impl<'a> Writer<'a, '_> {
                 edges.right.extend_end = PixelLength(0.0);
             }
         }
-        if !open_start {
+        if !open_start && !self.repeating {
             let _ = self.decorations.insert(entity, decoration);
         }
-        if open_start || open_end {
+        if open_start || open_end || self.repeating {
             // The part of a box that goes on on the next page reaches the bottom of the content
             // area of its page, also where the content on the page ends above it.
             let fragment_height = if open_end {
@@ -924,9 +962,23 @@ impl<'a> Writer<'a, '_> {
                     Some(span) => span.kids.iter().copied().filter(|&kid| self.in_window(kid)).collect(),
                     None => node.table.iter().flat_map(|table| table.boxes.iter().copied()).collect(),
                 };
+                if let Some((header, _)) = repeat {
+                    // the header rows again, at the top of the part of the table on this page
+                    let header_layout = self.layout_of(header);
+                    let mut header_origin = frame.child_origin(&header_layout);
+                    header_origin.y += shift - header_layout.location.y;
+                    let (header_z, header_base) = self.child_z(header, z, z_base);
+                    let headers = self.headers;
+                    let window_before = std::mem::replace(&mut self.window, &headers[&id].1);
+                    let repeating_before = std::mem::replace(&mut self.repeating, true);
+                    let written = self.write_box(header, header_origin, flow, header_z, header_base);
+                    self.repeating = repeating_before;
+                    self.window = window_before;
+                    written?;
+                }
                 for child in parts {
                     let mut child_origin = frame.child_origin(&self.layout_of(child));
-                    child_origin.y += kid_shift + if table_part.is_some() { self.part_top(child) } else { 0.0 };
+                    child_origin.y += kid_shift + repeat_height + if table_part.is_some() { self.part_top(child) } else { 0.0 };
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
                 }
@@ -1084,6 +1136,14 @@ impl<'a> Writer<'a, '_> {
             });
         }
         Ok(())
+    }
+
+    /// The header rows that the page repeats at the top of a table that it goes on in, and their
+    /// height: the page starts behind the header (and behind the break that follows it).
+    fn repeat_of(&self, table: NodeId) -> Option<(NodeId, f32)> {
+        let (header, _) = self.headers.get(&table)?;
+        let span = self.node(*header).span.as_ref()?;
+        (self.window.start > span.end).then(|| (*header, self.layout_of(*header).size.height))
     }
 
     /// How far the top of the part of a row group that is on the page is below its top.

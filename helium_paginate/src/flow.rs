@@ -216,6 +216,22 @@ pub struct Problem {
     /// ([`FLOAT_FRACTION`](Problem::FLOAT_FRACTION)). A float that does not fit under it waits
     /// for a page of floats.
     pub float_fraction: f32,
+    /// Boxes that are repeated at the top of the pages that go on in the middle of a table: the
+    /// header rows (see [`Repeat`]).
+    pub repeats: Vec<Repeat>,
+}
+
+/// A box that is repeated at the top of every page that starts inside of a table, after the
+/// box: the header rows of the table. The box takes room on such a page, in front of the content.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Repeat {
+    /// The first item behind the header. A page that starts at an item after this one (behind the
+    /// break that follows the header) repeats it.
+    pub from: usize,
+    /// The end of the table: a page that starts at this item or after it does not repeat it.
+    pub to: usize,
+    /// The extent of the header.
+    pub node: NodeRef,
 }
 
 /// The ways to break a paragraph that a page can choose among (see
@@ -263,7 +279,14 @@ impl Problem {
             variants: Variants::default(),
             float_fraction: Self::FLOAT_FRACTION,
             waiting: None,
+            repeats: vec![],
         }
+    }
+
+    /// The header rows of the tables are repeated on the pages that go on inside of them.
+    pub fn with_repeats(mut self, repeats: Vec<Repeat>) -> Self {
+        self.repeats = repeats;
+        self
     }
 
     /// The part of a page that floats take at the most, where there is text on the page: LaTeX's

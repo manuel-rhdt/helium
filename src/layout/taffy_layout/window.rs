@@ -86,6 +86,21 @@ struct Changes {
 }
 
 impl Window {
+    /// A window of the items `start..end` that cuts nothing: everything in it is whole.
+    pub fn over(start: u32, end: u32) -> Self {
+        Window {
+            start,
+            end,
+            start_cut: None,
+            end_cut: None,
+            leading: Leading::Natural,
+            at_end: false,
+            scope: None,
+            start_container: None,
+            end_container: None,
+        }
+    }
+
     /// Whether a box that spans the items `start..end` has items in front of the window.
     pub fn open_at_start(&self, span: &Span) -> bool {
         span.start < self.start && span.end > self.start

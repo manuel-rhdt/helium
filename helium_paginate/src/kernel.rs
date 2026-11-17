@@ -43,6 +43,9 @@ pub struct PageFill {
     pub choices: ChoiceId,
     /// The room that the floats on the page take; `used` has it, too.
     pub floats_used: f32,
+    /// The room that the repeated header of a table takes at the top of the page; `used` has it,
+    /// too.
+    pub repeated: f32,
     /// The floats on the page, in the order of the flow: the ones that were waiting for it first
     /// ([`Kernel::floats`]).
     pub placed: FloatList,
@@ -244,6 +247,8 @@ struct Label {
     float_space: f64,
     placed: Vec<usize>,
     deferred: Vec<usize>,
+    /// The room of the header of a table that the page repeats (`used` has it).
+    repeated: f64,
 }
 
 impl Label {
@@ -581,6 +586,14 @@ impl<'a> Kernel<'a> {
         // to go on, too; where nothing fits next to them, and at the end of the document, it is the
         // only one.
         let mut first_label = Label::default();
+        // the header of a table that the page goes on in is repeated at its top
+        if let Position::Item(first_item) = position {
+            for repeat in problem.repeats.iter().filter(|repeat| repeat.from < first_item && first_item < repeat.to) {
+                let extent = self.service.extent(repeat.node, spec.inline_size);
+                first_label.used += extent;
+                first_label.repeated += extent;
+            }
+        }
         if start.carry != FloatList::NONE {
             let carried = self.floats(start.carry);
             let at_end = item >= items.len();
@@ -1017,6 +1030,7 @@ impl<'a> Kernel<'a> {
             line_extent: 0.0,
             choices: ChoiceId::NONE,
             floats_used: used,
+            repeated: 0.0,
             placed,
             carry,
         });
@@ -1071,6 +1085,7 @@ impl<'a> Kernel<'a> {
             line_extent: if label.lines > 0 { (label.line_extent / f64::from(label.lines)) as f32 } else { 0.0 },
             choices,
             floats_used: label.float_space as f32,
+            repeated: label.repeated as f32,
             placed,
             carry,
         });

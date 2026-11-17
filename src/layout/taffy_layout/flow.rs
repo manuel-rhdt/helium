@@ -76,6 +76,8 @@ pub(super) struct Flow {
     /// The number of extents that are the ones of the flow of the page: the extents of the flows
     /// of the multi-column containers come behind them.
     pub page_extents: usize,
+    /// The header rows of the tables, which the pages that go on inside of a table repeat.
+    pub repeats: Vec<helium_paginate::Repeat>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +197,7 @@ pub(super) fn extract(tree: &mut HeliumTree, root: NodeId, rtl: bool, paged: boo
             parents: vec![None; nodes],
             rtl,
             page_extents: 0,
+            repeats: vec![],
         },
         level: BreakLevel::Page,
         paged,
@@ -557,6 +560,19 @@ impl Extractor<'_, '_, '_> {
             split: kind == Kind::Block,
             anchored: false,
         });
+        // the header rows of a table are repeated where a page goes on inside of the table
+        if kind == Kind::Table && self.level == BreakLevel::Page {
+            if let Some(header) = self.tree.repeated_header(id) {
+                if let Some(header_end) = self.tree.node(header).span.as_ref().map(|span| span.end) {
+                    let node = self.extent(Anchor::Top(header), Anchor::Bottom(header));
+                    self.flow.repeats.push(helium_paginate::Repeat {
+                        from: header_end as usize,
+                        to: end as usize,
+                        node,
+                    });
+                }
+            }
+        }
     }
 
     /// The children of a block container: the breaks and gaps between them, and their items.
