@@ -108,8 +108,11 @@
     while |z| &lt;= 20 and n &lt; limit:
         z = z*z + c
         n = n + 1
-    if n == limit:  colour = inside
-    else:           t = n + 1 - log2(log|z|);  colour = palette(t)</pre>
+    if n == limit:  
+        colour = inside
+    else:           
+        t = n + 1 - log2(log|z|);  
+        colour = palette(t)</pre>
 <ol class="steps">
   <li>Choose the window and the resolution; here 1500 × 900 pixels.</li>
   <li>Run the loop above with the iteration limit set to 300.</li>
