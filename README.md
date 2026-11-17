@@ -130,9 +130,10 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   for the common languages). A pseudo-element is a box of its own, so `display`, `position`,
   borders, backgrounds and the like apply to it. The counter styles are the ones of the
   `@page` margin boxes (which share the code) plus `lower-greek`, `disc`, `circle`, `square` and
-  `none`. `<ol>`, `<ul>`, `<menu>` and `<li>` use the `list-item` counter, with `<ol start>`
-  and `<li value>`, but the markers of the items are still numbered by the element, not by
-  that counter. Not supported: `content` on elements (e.g. `content: url()`), images and
+  `none`. `display: list-item` (the default of `<li>`) counts in the `list-item` counter, which
+  `<ol>`, `<ul>` and `<menu>` start and `<ol start>` and `<li value>` set; the number of
+  the marker is the value of that counter, so `counter-increment: list-item` and the like
+  change it (not supported: `<ol reversed>`). Not supported: `content` on elements (e.g. `content: url()`), images and
   `url()` in `content`, `::marker`, `::first-line` and `::first-letter`, `counter-reset:
   reversed()`, `target-counter()`, and pseudo-elements of replaced elements (`img`, `input`,
   `br`, ...). Counters in `@page` margin boxes are only `page` and `pages`.

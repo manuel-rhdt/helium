@@ -184,7 +184,7 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
     let box_ = &style.box_;
     let display = match box_.display {
         Display::None | Display::TableColumn | Display::TableColumnGroup => taffy::Display::None,
-        Display::Block | Display::Inline | Display::InlineBlock => taffy::Display::Block,
+        Display::Block | Display::ListItem | Display::Inline | Display::InlineBlock => taffy::Display::Block,
         Display::Flex | Display::InlineFlex => taffy::Display::Flex,
         Display::Grid | Display::InlineGrid => taffy::Display::Grid,
         // A table is laid out as a grid (see `tree::HeliumTree::build_table`). The internal

@@ -889,6 +889,8 @@ pub enum BlendMode {
 pub enum Display {
     None,
     Block,
+    /// A block box that counts in the `list-item` counter and has a marker.
+    ListItem,
     Inline,
     InlineBlock,
     Flex,
@@ -925,6 +927,7 @@ impl Display {
         matches!(
             self,
             Display::Block
+                | Display::ListItem
                 | Display::Flex
                 | Display::Grid
                 | Display::Table

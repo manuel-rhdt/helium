@@ -140,8 +140,6 @@ pub struct CounterState {
 /// `list-item` counter, `<ol start>` and `<li value>` set it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ListHints {
-    /// `<li>`: the element is a list item (this renderer has no `display: list-item`).
-    pub is_item: bool,
     /// `<ol>`, `<ul>` and `<menu>`: they start a new `list-item` counter.
     pub resets_list_item: bool,
     /// The number the list starts at, if `<ol start>` gives one.
@@ -187,7 +185,7 @@ impl CounterState {
         }
 
         let mentions = |list: &CounterList, name: &str| list.0.iter().any(|(entry, _)| entry == name);
-        let is_item = hints.is_item;
+        let is_item = style.box_.display == Display::ListItem;
 
         // `counter-reset`; a list starts a new `list-item` counter at one before its first item
         let mut resets = style.box_.counter_reset.0.clone();

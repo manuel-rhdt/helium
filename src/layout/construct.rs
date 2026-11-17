@@ -394,7 +394,6 @@ impl FlowConstructor {
                         hints.start = integer(local_name!("start"));
                     }
                     "li" => {
-                        hints.is_item = true;
                         hints.value = integer(local_name!("value"));
                     }
                     _ => {}
@@ -630,6 +629,7 @@ impl Traversal<DomRef> for FlowConstructor {
             self.inside_svg = Some(node.clone());
         }
         let scoped = node.clone();
+        self.entity_constructor.list_item_value = self.counters.value("list-item");
         self.entity_constructor.build_entity(node);
         self.entity_constructor.record_transform_scope(&scoped);
         self.record_vertical_align(&scoped);
@@ -710,56 +710,6 @@ fn cascade_declarations<'a>(
         }
     }
     cascade
-}
-
-/// The number shown next to a list item: `<ol start>` sets the first number and `<li value>`
-/// restarts the count at that item.
-/// https://html.spec.whatwg.org/multipage/grouping-content.html#the-ol-element
-fn list_item_ordinal<'a, N: AbstractNode<'a>>(node: &N) -> i64 {
-    /// The value of an attribute, if it is a valid HTML integer.
-    fn integer(element_data: &ElementData, name: html5ever::LocalName) -> Option<i64> {
-        let attributes = element_data.attributes.borrow();
-        let attribute = attributes.get(&QualName::new(None, ns!(), name))?;
-        attribute.value.trim().parse::<i64>().ok()
-    }
-    fn is_li(data: &ElementData) -> bool {
-        data.name == QualName::new(None, ns!(html), local_name!("li"))
-    }
-
-    // An `<ol>` numbers from its `start` attribute; a list item that is not in an ordered list
-    // gets no number of its own (its marker does not use one).
-    let start = match node.parent_node() {
-        Some(parent) => match parent.html_data() {
-            ParsedData::Element(data)
-                if data.name == QualName::new(None, ns!(html), local_name!("ol")) =>
-            {
-                integer(data, local_name!("start")).unwrap_or(1)
-            }
-            _ => 1,
-        },
-        None => 1,
-    };
-
-    // Run the count over the preceding list items in document order.
-    let mut preceding = vec![];
-    let mut previous = node.previous_sibling();
-    while let Some(sibling) = previous {
-        previous = sibling.previous_sibling();
-        preceding.push(sibling);
-    }
-    let mut ordinal = start;
-    for sibling in preceding.into_iter().rev() {
-        if let ParsedData::Element(data) = sibling.html_data() {
-            if is_li(data) {
-                ordinal = integer(data, local_name!("value")).unwrap_or(ordinal) + 1;
-            }
-        }
-    }
-
-    match node.html_data() {
-        ParsedData::Element(data) => integer(data, local_name!("value")).unwrap_or(ordinal),
-        _ => ordinal,
-    }
 }
 
 /// The `colspan` and `rowspan` attributes of a table cell, if it has any.
@@ -963,6 +913,8 @@ impl FontSelector {
 }
 
 pub struct EntityConstructor {
+    /// The value of the `list-item` counter of the element that is built.
+    list_item_value: i64,
     font_match_cache: HashMap<FontSelector, String>,
     /// The fonts that the document can use, with its `@font-face` rules.
     fonts: Arc<super::text::font::FontContext>,
@@ -1024,6 +976,7 @@ impl EntityConstructor {
         world.insert(components::CanvasEntities::default());
         world.insert(components::TransformScopes::default());
         EntityConstructor {
+            list_item_value: 0,
             world,
             font_match_cache: Default::default(),
             fonts: super::text::font::FontContext::system(),
@@ -1169,10 +1122,11 @@ impl EntityConstructor {
                     self.in_word = false;
                 }
 
-                let is_list_item =
-                    element_data.name == QualName::new(None, ns!(html), local_name!("li"));
+                let is_list_item = style.box_.display == Display::ListItem;
+                // the number of the item is the value of its `list-item` counter, which counts
+                // the items and follows `<ol start>` and `<li value>`
                 let ordinal = if is_list_item {
-                    list_item_ordinal(&node)
+                    self.list_item_value
                 } else {
                     0
                 };

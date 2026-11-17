@@ -166,7 +166,7 @@ impl HeliumTree<'_, '_> {
             let Some(style) = self.computed_values.get(node.entity) else {
                 continue;
             };
-            if !matches!(style.box_.display, Display::Block | Display::InlineBlock) {
+            if !matches!(style.box_.display, Display::Block | Display::ListItem | Display::InlineBlock) {
                 continue;
             }
             if style.box_.column_count == ColumnCount::Auto && style.box_.column_width == ColumnWidth::Auto {
