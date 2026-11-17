@@ -22,7 +22,6 @@ z-index:
 margin-trim:
 
 # painting that is not implemented
-opacity:
 box-shadow:
 outline:
 text-shadow:

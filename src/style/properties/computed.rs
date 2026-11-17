@@ -908,6 +908,10 @@ impl StyleBuilder {
         self.resolve_font_size_math();
         self.update_root_font_size();
         self.new_values.fixup();
+        if self.new_values.box_.opacity < 1.0 && matches!(self.new_values.box_.display, Display::Inline) {
+            let font = Arc::make_mut(&mut self.new_values.font);
+            font.inline_opacity *= self.new_values.box_.opacity;
+        }
         if self.is_display_none {
             AsMut::<Box>::as_mut(&mut self.new_values).display = Display::None;
         }
@@ -963,6 +967,8 @@ pub struct Box {
     pub grid_auto_flow: GridAutoFlow,
     pub transform: super::transform::Transform,
     pub transform_origin: super::transform::TransformOrigin,
+    /// 1 is opaque, 0 is invisible. Not inherited.
+    pub opacity: f32,
     pub grid_column_start: GridPlacement,
     pub grid_column_end: GridPlacement,
     pub grid_row_start: GridPlacement,
@@ -1011,6 +1017,7 @@ impl Default for Box {
             grid_auto_flow: Default::default(),
             transform: Default::default(),
             transform_origin: Default::default(),
+            opacity: 1.0,
             grid_column_start: Default::default(),
             grid_column_end: Default::default(),
             grid_row_start: Default::default(),
@@ -1099,6 +1106,11 @@ pub struct Font {
     /// The language of the element, from the `lang` attribute. It is not a CSS property but
     /// inherited like one, so it lives in the inherited font struct.
     pub lang: Language,
+    /// The opacity of the inline boxes that the box is in, and of the box itself if it is an
+    /// inline box. It is inherited. An inline box cannot be painted as a group (its text is part
+    /// of the paragraph of its block), so this is multiplied into the alpha of the colours that
+    /// are painted for it.
+    pub inline_opacity: f32,
 }
 
 /// The language of the content of an element (a BCP 47 language tag like `zh-Hant-TW`), or
@@ -1170,6 +1182,7 @@ impl Default for Font {
             font_variant_east_asian: Default::default(),
             font_variant_position: Default::default(),
             lang: Language::default(),
+            inline_opacity: 1.0,
         }
     }
 }

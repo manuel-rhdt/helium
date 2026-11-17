@@ -86,6 +86,65 @@ enum Embedded {
     Svg(lemon_pdf::form::FormReference, f32, f32),
 }
 
+/// The opacity (`ca` and `CA`) that is set in the graphics state of the content stream being
+/// written, so that an `ExtGState` is only written when it changes. It follows `Push` and `Pop`
+/// (`q` and `Q`), which restore the opacity.
+#[derive(Debug)]
+struct Alpha {
+    /// `UNKNOWN` after something that changes the opacity without restoring it.
+    fill: u16,
+    stroke: u16,
+    saved: Vec<(u16, u16)>,
+}
+
+impl Alpha {
+    const UNKNOWN: u16 = u16::MAX;
+
+    fn new() -> Self {
+        Alpha { fill: u16::from(u8::MAX), stroke: u16::from(u8::MAX), saved: vec![] }
+    }
+
+    /// Forgets the opacity: the next colour or `reset` writes it again.
+    fn invalidate(&mut self) {
+        self.fill = Self::UNKNOWN;
+        self.stroke = Self::UNKNOWN;
+    }
+
+    fn push(&mut self) {
+        self.saved.push((self.fill, self.stroke));
+    }
+
+    fn pop(&mut self) {
+        if let Some((fill, stroke)) = self.saved.pop() {
+            self.fill = fill;
+            self.stroke = stroke;
+        }
+    }
+
+    fn set_fill(&mut self, context: &mut PageContext<'_, '_, '_>, alpha: u8) -> Result<(), Error> {
+        if self.fill != u16::from(alpha) {
+            context.set_fill_alpha(f64::from(alpha) / f64::from(u8::MAX))?;
+            self.fill = u16::from(alpha);
+        }
+        Ok(())
+    }
+
+    fn set_stroke(&mut self, context: &mut PageContext<'_, '_, '_>, alpha: u8) -> Result<(), Error> {
+        if self.stroke != u16::from(alpha) {
+            context.set_stroke_alpha(f64::from(alpha) / f64::from(u8::MAX))?;
+            self.stroke = u16::from(alpha);
+        }
+        Ok(())
+    }
+
+    /// Makes what is painted next opaque, for the items that do not have a colour of their own
+    /// (images, colour glyphs) and must not take the transparency of the colour set before.
+    fn reset(&mut self, context: &mut PageContext<'_, '_, '_>) -> Result<(), Error> {
+        self.set_fill(context, u8::MAX)?;
+        self.set_stroke(context, u8::MAX)
+    }
+}
+
 /// Paints the items of a display list. The coordinates of the items are in pixels from the top
 /// left corner of a page that is `page_height` high.
 #[allow(clippy::too_many_arguments)]
@@ -102,10 +161,159 @@ fn paint_items(
     recorder: &mut Option<TagRecorder>,
     page_index: usize,
 ) -> Result<(), Error> {
-    for item in display_list.items() {
+    let items: Vec<&DisplayItem> = display_list.items().collect();
+    paint_slice(
+        page_context,
+        &items,
+        page_height,
+        filter,
+        font_map,
+        usage,
+        images,
+        color_glyphs,
+        tagged,
+        recorder,
+        page_index,
+    )
+}
+
+/// Paints items. The ones between a `BeginGroup` and its `EndGroup` are painted into a form that
+/// is a transparency group, which is drawn with the opacity of the group.
+#[allow(clippy::too_many_arguments)]
+fn paint_slice(
+    page_context: &mut PageContext<'_, '_, '_>,
+    items: &[&DisplayItem],
+    page_height: PixelLength,
+    filter: Option<StreamFilter>,
+    font_map: &HashMap<String, font::EmbeddedFont>,
+    usage: &FontUsage,
+    images: &HashMap<*const crate::image::LoadedImage, Embedded>,
+    color_glyphs: &std::cell::RefCell<color_glyph::ColorGlyphs>,
+    tagged: bool,
+    recorder: &mut Option<TagRecorder>,
+    page_index: usize,
+) -> Result<(), Error> {
+    let mut alpha = Alpha::new();
+    let mut remaining = items.iter().copied();
+    while let Some(item) = remaining.next() {
         match item {
-            DisplayItem::Push => page_context.save_graphics_state()?,
-            DisplayItem::Pop => page_context.restore_graphics_state()?,
+            &DisplayItem::BeginGroup { opacity, bbox } => {
+                // the items of the group, up to the `EndGroup` that belongs to it
+                let mut inner = vec![];
+                let mut depth = 1;
+                for next in remaining.by_ref() {
+                    match next {
+                        DisplayItem::BeginGroup { .. } => depth += 1,
+                        DisplayItem::EndGroup => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    inner.push(next);
+                }
+                // an invisible group paints nothing
+                if opacity <= 0.0 || inner.is_empty() {
+                    continue;
+                }
+                let area = [
+                    Pt::from(bbox.x),
+                    Pt::from(page_height - bbox.y - bbox.height),
+                    Pt::from(bbox.x + bbox.width),
+                    Pt::from(page_height - bbox.y),
+                ];
+                let form = page_context.pdf_context.write_form(
+                    area,
+                    Some(lemon_pdf::form::TransparencyGroup::new(
+                        lemon_pdf::image::ColorSpace::DeviceRGB,
+                    )),
+                    filter,
+                    |form| {
+                        // Content of a form is not part of the structure of the page: it is
+                        // not tagged.
+                        paint_slice(
+                            form,
+                            &inner,
+                            page_height,
+                            filter,
+                            font_map,
+                            usage,
+                            images,
+                            color_glyphs,
+                            false,
+                            &mut None,
+                            page_index,
+                        )
+                    },
+                )?;
+                let key = page_context.add_xobject(form);
+                alpha.push();
+                page_context.save_graphics_state()?;
+                page_context.push_operand(RawPdf("/Artifact".into()))?;
+                page_context.apply_operator("BMC")?;
+                // the opacity is of the group as a whole; the group itself starts out opaque
+                let opacity = f64::from(opacity);
+                page_context.apply_ext_gstate(
+                    lemon_pdf::graphics_state::ExtGState::new()
+                        .with_fill_alpha(opacity)
+                        .with_stroke_alpha(opacity),
+                )?;
+                page_context.draw_xobject(&key)?;
+                page_context.apply_operator("EMC")?;
+                page_context.restore_graphics_state()?;
+                alpha.pop();
+            }
+            // consumed by the `BeginGroup` that it belongs to
+            DisplayItem::EndGroup => {}
+            _ => paint_item(
+                page_context,
+                item,
+                &mut alpha,
+                page_height,
+                filter,
+                font_map,
+                usage,
+                images,
+                color_glyphs,
+                tagged,
+                recorder,
+                page_index,
+            )?,
+        }
+    }
+    Ok(())
+}
+
+/// Paints an item that is not a group.
+#[allow(clippy::too_many_arguments)]
+fn paint_item(
+    page_context: &mut PageContext<'_, '_, '_>,
+    item: &DisplayItem,
+    alpha: &mut Alpha,
+    page_height: PixelLength,
+    filter: Option<StreamFilter>,
+    font_map: &HashMap<String, font::EmbeddedFont>,
+    usage: &FontUsage,
+    images: &HashMap<*const crate::image::LoadedImage, Embedded>,
+    color_glyphs: &std::cell::RefCell<color_glyph::ColorGlyphs>,
+    tagged: bool,
+    recorder: &mut Option<TagRecorder>,
+    page_index: usize,
+) -> Result<(), Error> {
+    {
+        match item {
+            // handled by `paint_slice`
+            DisplayItem::BeginGroup { .. } | DisplayItem::EndGroup => {}
+            DisplayItem::Push => {
+                alpha.push();
+                page_context.save_graphics_state()?
+            }
+            DisplayItem::Pop => {
+                alpha.pop();
+                page_context.restore_graphics_state()?
+            }
         &DisplayItem::Transform(matrix) => {
             // the matrix is in pixels with y down, from the top left corner of the page: bring
             // it to the points and the y axis of the PDF
@@ -134,6 +342,7 @@ fn paint_items(
                 let green = floatize(color.green);
                 let blue = floatize(color.blue);
                 page_context.device_rgb_fill_color(red, green, blue)?;
+                alpha.set_fill(page_context, color.alpha)?;
             }
             &DisplayItem::StrokeColor(color) => {
                 let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
@@ -141,6 +350,7 @@ fn paint_items(
                 let green = floatize(color.green);
                 let blue = floatize(color.blue);
                 page_context.device_rgb_stroke_color(red, green, blue)?;
+                alpha.set_stroke(page_context, color.alpha)?;
             }
             &DisplayItem::LineString {
                 ref points,
@@ -158,7 +368,7 @@ fn paint_items(
                     page_context.apply_operator("BMC")?;
                     page_context.move_to(x, y)?
                 } else {
-                    continue;
+                    return Ok(());
                 }
 
                 for (x, y) in point_iter {
@@ -182,6 +392,7 @@ fn paint_items(
                 page_context.apply_operator("EMC")?;
             }
             DisplayItem::ColorGlyph(item) => {
+                alpha.reset(page_context)?;
                 page_context.push_operand(RawPdf("/Artifact".into()))?;
                 page_context.apply_operator("BMC")?;
                 color_glyphs.borrow_mut().paint_at(
@@ -196,12 +407,16 @@ fn paint_items(
                 page_context.apply_operator("EMC")?;
             }
             DisplayItem::Gradient(resolved) => {
-                gradient::paint(page_context, resolved, page_height, filter)?
+                alpha.reset(page_context)?;
+                gradient::paint(page_context, resolved, page_height, filter)?;
+                // a gradient without a clip leaves its opacity set
+                alpha.invalidate();
             }
             DisplayItem::Image { rect, image } => {
                 let Some(embedded) = images.get(&std::sync::Arc::as_ptr(image)) else {
-                    continue;
+                    return Ok(());
                 };
+                alpha.reset(page_context)?;
                 page_context.push_operand(RawPdf("/Artifact".into()))?;
                 page_context.apply_operator("BMC")?;
                 match *embedded {
@@ -250,6 +465,7 @@ fn paint_items(
                 page_context.apply_operator("EMC")?;
             }
             DisplayItem::BlendGroup(group) => {
+                alpha.reset(page_context)?;
                 gradient::paint_blend_group(page_context, group, page_height, filter)?
             }
             DisplayItem::ClipPath { path, even_odd } => {
@@ -312,6 +528,7 @@ fn paint_items(
                                 floatize(color.green),
                                 floatize(color.blue),
                             )?;
+                            alpha.set_fill(page_context, color.alpha)?;
                         }
                         &TextOperator::KernedGlyphs(range) => {
                             marked.before_content(page_context, tagged)?;

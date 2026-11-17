@@ -1243,8 +1243,8 @@ impl EntityConstructor {
         self.fonts = fonts;
     }
 
-    /// Records the transform of the node, if it has one, and that the node is inside of the
-    /// transformed box that its parent is inside of.
+    /// Records the transform and the opacity of the node, if it has any, and that the node is
+    /// inside of the transformed or translucent box that its parent is inside of.
     fn record_transform_scope(&mut self, node: &DomRef) {
         let Some(LayoutEntity(entity)) = node.layout_entity.get() else {
             return;
@@ -1258,13 +1258,17 @@ impl EntityConstructor {
             .and_then(|parent| parent.layout_entity.get())
             .and_then(|LayoutEntity(parent)| scopes.scope.get(&parent).copied());
         // a transform of an inline box that is not replaced does nothing
-        let transformed = !style.box_.transform.0.is_empty()
-            && !matches!(style.box_.display, Display::Inline);
-        if transformed {
+        // (nor does an opacity: the colours of its text and decorations are made translucent
+        // instead, where they are made)
+        let not_inline = !matches!(style.box_.display, Display::Inline);
+        let transformed = !style.box_.transform.0.is_empty() && not_inline;
+        let translucent = style.box_.opacity < 1.0 && not_inline;
+        if transformed || translucent {
             scopes.boxes.insert(
                 entity,
                 components::TransformBox {
                     parent: parent_scope,
+                    opacity: if translucent { style.box_.opacity } else { 1.0 },
                     transform: style.box_.transform.clone(),
                     origin: style.box_.transform_origin,
                     font_size: (&*style.font).into(),
@@ -1319,7 +1323,10 @@ impl EntityConstructor {
         let face = components::TextFace {
             font_name: font.postscript_name(),
             font_size: style.font.font_size,
-            color: color_to_rgba(style.font.color),
+            color: crate::style::properties::color::with_opacity(
+                color_to_rgba(style.font.color),
+                style.font.inline_opacity,
+            ),
             fallback,
         };
         (font, face)

@@ -1114,22 +1114,26 @@ pub struct PageGeometry {
     pub margin: EdgeValues<PixelLength>,
 }
 
-/// The boxes that have a `transform`, and which box every entity is inside of.
+/// The boxes that have a `transform` or an `opacity` below 1, and which box every entity is
+/// inside of.
 ///
-/// A transform applies to the box and to everything inside of it. The display list is flat, so
-/// the items of a transformed box are found by their entity: `scope` is the nearest box with a
-/// transform that an entity is in (or is itself).
+/// A transform or an opacity applies to the box and to everything inside of it. The display
+/// list is flat, so the items of such a box are found by their entity: `scope` is the nearest
+/// box with a transform or an opacity that an entity is in (or is itself).
 #[derive(Debug, Clone, Default)]
 pub struct TransformScopes {
     pub boxes: std::collections::HashMap<Entity, TransformBox>,
     pub scope: std::collections::HashMap<Entity, Entity>,
 }
 
-/// A box with a `transform`.
+/// A box with a `transform` or an `opacity` below 1.
 #[derive(Debug, Clone)]
 pub struct TransformBox {
-    /// The box with a transform that this box is inside of.
+    /// The box with a transform or an opacity that this box is inside of.
     pub parent: Option<Entity>,
+    /// The `opacity` of the box: its content is painted as a group that is made translucent as a
+    /// whole when this is below 1.
+    pub opacity: f32,
     pub transform: crate::style::properties::transform::Transform,
     pub origin: crate::style::properties::transform::TransformOrigin,
     /// For the lengths in `em` and `rem`.

@@ -481,6 +481,13 @@ pub enum DisplayItem {
     /// Applies a transformation (the CSS `transform`) to what follows, until the enclosing `Pop`.
     /// The matrix is in the coordinates of the page: pixels, y pointing down.
     Transform([f32; 6]),
+    /// Paints the items up to the matching `EndGroup` as a group that is made translucent as a
+    /// whole (the CSS `opacity`). `bbox` covers everything that the group paints.
+    BeginGroup {
+        opacity: f32,
+        bbox: Rect,
+    },
+    EndGroup,
     Push,
     Pop,
 }
@@ -548,6 +555,7 @@ fn wrap_transforms(
     depth: usize,
     scopes: &crate::layout::components::TransformScopes,
     positions: &ReadStorage<Position>,
+    page: Rect,
 ) -> Vec<DisplayElement> {
     enum Slot {
         Item(DisplayElement),
@@ -571,16 +579,37 @@ fn wrap_transforms(
         match slot {
             Slot::Item(item) => out.push(item),
             Slot::Group(root) => {
-                let inner = wrap_transforms(groups.remove(&root).unwrap_or_default(), depth + 1, scopes, positions);
-                let matrix = scopes.boxes.get(&root).zip(positions.get(root)).and_then(|(b, p)| {
-                    b.transform.matrix(&b.origin, p.x.0, p.y.0, p.width.0, p.height.0, b.font_size)
-                });
-                match (matrix, inner.first().map(|first| first.z_index)) {
-                    (Some(matrix), Some(z)) => {
-                        out.push(DisplayElement { z_index: z, entity: root, item: DisplayItem::Push });
-                        out.push(DisplayElement { z_index: z, entity: root, item: DisplayItem::Transform(matrix) });
+                let inner = wrap_transforms(groups.remove(&root).unwrap_or_default(), depth + 1, scopes, positions, page);
+                let (matrix, opacity) = scopes
+                    .boxes
+                    .get(&root)
+                    .zip(positions.get(root))
+                    .map(|(b, p)| {
+                        let matrix =
+                            b.transform.matrix(&b.origin, p.x.0, p.y.0, p.width.0, p.height.0, b.font_size);
+                        (matrix, b.opacity)
+                    })
+                    .unwrap_or((None, 1.0));
+                let translucent = opacity < 1.0;
+                match inner.first().map(|first| first.z_index) {
+                    Some(z) if matrix.is_some() || translucent => {
+                        let element = |item| DisplayElement { z_index: z, entity: root, item };
+                        // the group is outside of the transformation: it is a group of the
+                        // page, which paints what is transformed
+                        if translucent {
+                            out.push(element(DisplayItem::BeginGroup { opacity, bbox: page }));
+                        }
+                        if let Some(matrix) = matrix {
+                            out.push(element(DisplayItem::Push));
+                            out.push(element(DisplayItem::Transform(matrix)));
+                        }
                         out.extend(inner);
-                        out.push(DisplayElement { z_index: z, entity: root, item: DisplayItem::Pop });
+                        if matrix.is_some() {
+                            out.push(element(DisplayItem::Pop));
+                        }
+                        if translucent {
+                            out.push(element(DisplayItem::EndGroup));
+                        }
                     }
                     _ => out.extend(inner),
                 }
@@ -605,13 +634,14 @@ impl DisplayList {
         &mut self,
         scopes: &crate::layout::components::TransformScopes,
         positions: &ReadStorage<Position>,
+        page: Rect,
     ) {
         if scopes.boxes.is_empty() {
             return;
         }
         self.items.sort_by_key(|elem| ZIndex(elem.z_index.0));
         let items = std::mem::take(&mut self.items);
-        self.items = wrap_transforms(items, 0, scopes, positions);
+        self.items = wrap_transforms(items, 0, scopes, positions, page);
         self.ordered = true;
     }
 
@@ -1608,7 +1638,8 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         let mut display_list = text_builder.display_list;
         {
             let scopes = world.read_resource::<crate::layout::components::TransformScopes>();
-            display_list.apply_transforms(&scopes, &world.read_storage::<Position>());
+            let page_rect = Rect { x: PixelLength(0.0), y: PixelLength(0.0), width: page.size.0, height: page.size.1 };
+            display_list.apply_transforms(&scopes, &world.read_storage::<Position>(), page_rect);
         }
 
         let bitset = text_builder.bitset;
