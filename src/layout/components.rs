@@ -431,6 +431,9 @@ pub struct TextRun {
     pub line_height: PixelLength,
     pub baseline: PixelLength,
     pub decoration: crate::style::properties::specified::TextDecoration,
+    /// The background color of the inline box that the text is in (the nearest ancestor that has
+    /// one, up to the block): painted behind the text, over the em box of its font.
+    pub background: Option<crate::style::properties::computed::RGBA>,
     pub hyphens: crate::style::properties::specified::Hyphens,
     pub manual_hyphen_points: Vec<usize>,
     /// The language of the text, for shaping, fallback fonts and hyphenation.

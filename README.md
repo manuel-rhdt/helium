@@ -66,7 +66,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   pixel, `pt` is 4/3 pixel). Percentages as `width`/`height` are not a size (the `viewBox` is
   used). The structure tree does not reach into a `foreignObject` (no `Formula` tags there).
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
-  document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
+  document), `style`, `colspan`, `rowspan`, `<ol start>`, `<ol type>`, `<ul type>`, `<li type>`, `<li value>`, `<progress>` and `<meter>` (a bar), `<col>` widths.
 - **Nesting:** elements nested deeper than 512 levels (as in browsers) are flattened at that
   depth instead of overflowing the stack.
 - **Tables across pages:** a table is split between its rows, and the header rows (the first
@@ -95,10 +95,10 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `padding-block`, `inset-inline`, `inline-size`, ... without the logical `border-*`; they follow the
   `writing-mode` and `direction` of the box itself), `aspect-ratio` (also for the images and `<canvas>` boxes, which are blank and 300 by 150 pixels
   unless their attributes say otherwise), `vertical-align` (on inline boxes, and `top`, `middle` and `bottom` in table cells; the baselines of
-  the cells in a row are not aligned), `position: absolute` and `position: relative` (`left`, `right`,
+  the cells in a row are not aligned), `position: absolute`, `position: fixed` (an absolutely positioned box of the first page: it is not repeated on the other pages) and `position: relative` (also `sticky`; `left`, `right`,
   `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in
   vertical text too; percentages of `left`/`right` in vertical lines count as `auto`), block, inline, flexbox
-  (`flex-*` with `flex-flow`, `gap` with one or two values, `justify-*`, `align-*`, `place-*`) and grid (`grid-template-*`, `grid-auto-*`,
+  (`flex-*` with `flex-flow`, `gap` with one or two values, `justify-*`, `align-*`, `place-*`) and grid (`grid-template-*` and `grid-auto-*` with `repeat()` (a count, `auto-fill` and `auto-fit`), `minmax()` and `fit-content()`,
   `grid-column`, `grid-row`, also for absolutely positioned children, which are placed in their grid area) layout, tables (`border-collapse`, `border-spacing`).
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
@@ -135,7 +135,9 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   inside of the directory of the document (or `--resource-root`) like the images of `<img>`. In a
   background with a blend mode, the images are painted over the blended layers, without being
   blended. Text in an SVG image that is a background is set in the system and built-in fonts, not
-  in the `@font-face` fonts of the document.
+  in the `@font-face` fonts of the document. The background color of an inline box (`<mark>`, a
+  `<span>`) is painted behind its text over the em box of the font, line by line; its padding,
+  border and background images are not painted (and the padding does not take room).
 - **Shadows:** `box-shadow` with offsets, blur radius, spread, colour and several shadows. The
   blur is a Gaussian, drawn as a stack of translucent shapes (vector, no raster image). The
   shadow is clipped to the outside of the border box, follows `border-radius`, and is painted

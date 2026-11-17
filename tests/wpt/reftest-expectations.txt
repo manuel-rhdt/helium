@@ -116,8 +116,6 @@ css/CSS2/box-display/containing-block-023.xht
 css/CSS2/box-display/display-005.xht
 css/CSS2/box-display/display-006.xht
 css/CSS2/box-display/display-007.xht
-css/CSS2/box-display/display-008.xht
-css/CSS2/box-display/display-009.xht
 css/CSS2/box-display/display-014.xht
 css/CSS2/box-display/inline-text-after-block-in-inline-margin.html
 css/CSS2/box-display/multiple-block-in-inlines-margins-collapse.html
@@ -537,3 +535,12 @@ css/mediaqueries/negation-001.html
 css/mediaqueries/prefers-color-scheme-svg-as-image.html
 css/mediaqueries/scripting-print-noscript.html
 css/mediaqueries/scripting-print-script.html
+
+# Their references paint the background of an inline box (now painted); the tests need a column group background, opacity groups and attr()
+css/CSS2/box-display/display-012.xht
+css/CSS2/box-display/display-013.xht
+css/css-color/t32-opacity-offscreen-multiple-boxes-1-c.xht
+css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.xht
+css/css-values/attr-style-sharing-1.html
+css/css-values/attr-style-sharing-2.html
+css/css-values/attr-style-sharing-3.html

@@ -2,7 +2,7 @@
 
 use crate::style::properties::computed::{
     BoxSizing, ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
-    GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize,
+    GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize, TrackEntry, Breadth,
 };
 use crate::layout::writing_mode::Flow;
 use crate::style::properties::specified::{Display, PositionSpec};
@@ -106,7 +106,7 @@ pub(super) fn self_alignment(value: SelfAlignment) -> Option<taffy::AlignSelf> {
     })
 }
 
-fn track_size<T>(size: TrackSize) -> T
+fn breadth<T>(size: Breadth) -> T
 where
     T: TaffyAuto
         + TaffyMinContent
@@ -116,26 +116,71 @@ where
         + taffy::style_helpers::FromFr,
 {
     match size {
-        TrackSize::Auto => auto(),
-        TrackSize::MinContent => min_content(),
-        TrackSize::MaxContent => max_content(),
-        TrackSize::Fraction(value) => fr(value),
-        TrackSize::Length(LengthPercentage::PixelLength(px)) => length(px.0),
-        TrackSize::Length(LengthPercentage::Percentage(p)) => percent(p.0),
-        TrackSize::Length(LengthPercentage::Both { length: px, .. }) => length(px.0),
+        Breadth::Auto => auto(),
+        Breadth::MinContent => min_content(),
+        Breadth::MaxContent => max_content(),
+        Breadth::Fraction(value) => fr(value),
+        Breadth::Length(LengthPercentage::PixelLength(px)) => length(px.0),
+        Breadth::Length(LengthPercentage::Percentage(p)) => percent(p.0),
+        Breadth::Length(LengthPercentage::Both { length: px, .. }) => length(px.0),
     }
 }
 
-fn track_list<T>(list: &TrackList) -> Vec<T>
-where
-    T: TaffyAuto
-        + TaffyMinContent
-        + TaffyMaxContent
-        + taffy::style_helpers::FromLength
-        + taffy::style_helpers::FromPercent
-        + taffy::style_helpers::FromFr,
-{
-    list.0.iter().map(|&size| track_size(size)).collect()
+fn track_size(size: TrackSize) -> taffy::TrackSizingFunction {
+    match size {
+        TrackSize::Breadth(b) => breadth(b),
+        TrackSize::MinMax(min, max) => taffy::MinMax {
+            // A flexible minimum is not valid; the parser does not let it through
+            min: match min {
+                Breadth::Fraction(_) => taffy::MinTrackSizingFunction::auto(),
+                Breadth::Auto => taffy::MinTrackSizingFunction::auto(),
+                Breadth::MinContent => taffy::MinTrackSizingFunction::min_content(),
+                Breadth::MaxContent => taffy::MinTrackSizingFunction::max_content(),
+                Breadth::Length(LengthPercentage::PixelLength(px))
+                | Breadth::Length(LengthPercentage::Both { length: px, .. }) => {
+                    taffy::MinTrackSizingFunction::length(px.0)
+                }
+                Breadth::Length(LengthPercentage::Percentage(p)) => taffy::MinTrackSizingFunction::percent(p.0),
+            },
+            max: breadth(max),
+        },
+        TrackSize::FitContent(limit) => taffy::MinMax {
+            min: taffy::MinTrackSizingFunction::auto(),
+            max: match limit {
+                LengthPercentage::Percentage(p) => taffy::MaxTrackSizingFunction::fit_content_percent(p.0),
+                LengthPercentage::PixelLength(px) | LengthPercentage::Both { length: px, .. } => {
+                    taffy::MaxTrackSizingFunction::fit_content_px(px.0)
+                }
+            },
+        },
+    }
+}
+
+/// The tracks that `grid-auto-rows` and `grid-auto-columns` repeat (no `repeat()` there).
+fn auto_track_list(list: &TrackList) -> Vec<taffy::TrackSizingFunction> {
+    list.0
+        .iter()
+        .filter_map(|entry| match entry {
+            TrackEntry::Size(size) => Some(track_size(*size)),
+            TrackEntry::AutoRepeat { .. } => None,
+        })
+        .collect()
+}
+
+fn track_list(list: &TrackList) -> Vec<taffy::GridTemplateComponent<String>> {
+    list.0
+        .iter()
+        .map(|entry| match entry {
+            TrackEntry::Size(size) => taffy::GridTemplateComponent::Single(track_size(*size)),
+            TrackEntry::AutoRepeat { fit, tracks } => {
+                taffy::GridTemplateComponent::Repeat(taffy::GridTemplateRepetition {
+                    count: if *fit { taffy::RepetitionCount::AutoFit } else { taffy::RepetitionCount::AutoFill },
+                    tracks: tracks.iter().map(|&t| track_size(t)).collect(),
+                    line_names: Vec::new(),
+                })
+            }
+        })
+        .collect()
 }
 
 fn grid_placement(value: GridPlacement) -> taffy::GridPlacement<String> {
@@ -247,8 +292,8 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
         item_is_table: is_table,
         grid_template_columns: track_list(&box_.grid_template_columns),
         grid_template_rows: track_list(&box_.grid_template_rows),
-        grid_auto_columns: track_list(&box_.grid_auto_columns),
-        grid_auto_rows: track_list(&box_.grid_auto_rows),
+        grid_auto_columns: auto_track_list(&box_.grid_auto_columns),
+        grid_auto_rows: auto_track_list(&box_.grid_auto_rows),
         grid_auto_flow: match box_.grid_auto_flow {
             GridAutoFlow::Row => taffy::GridAutoFlow::Row,
             GridAutoFlow::Column => taffy::GridAutoFlow::Column,
@@ -273,8 +318,8 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
         }),
         position: match style.box_.position {
             PositionSpec::Static => Position::Static,
-            PositionSpec::Relative => Position::Relative,
-            PositionSpec::Absolute => Position::Absolute,
+            PositionSpec::Relative | PositionSpec::Sticky => Position::Relative,
+            PositionSpec::Absolute | PositionSpec::Fixed => Position::Absolute,
         },
         inset: Rect {
             left: length_percentage_auto(pos.left),

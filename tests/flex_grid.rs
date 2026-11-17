@@ -219,3 +219,52 @@ fn flex_container_taller_than_a_page() {
     );
     assert!(element(&dump["document"], "c").is_some());
 }
+
+#[test]
+fn grid_tracks_with_repeat() {
+    check_layout(
+        "grid_repeat",
+        r#"<!doctype html><div style="display:grid;width:300px;grid-template-columns:repeat(3,1fr)">
+        <div data-expected-width="100">a</div><div data-expected-width="100">b</div>
+        <div data-expected-width="100" data-expected-height="20" style="height:20px">c</div></div>
+        <div style="display:grid;width:400px;grid-template-columns:repeat(2,50px 100px) 1fr">
+        <div data-expected-width="50">a</div><div data-expected-width="100">b</div>
+        <div data-expected-width="50">c</div><div data-expected-width="100">d</div>
+        <div data-expected-width="100">e</div></div>"#,
+    );
+}
+
+#[test]
+fn grid_tracks_with_minmax() {
+    check_layout(
+        "grid_minmax",
+        r#"<!doctype html><div style="display:grid;width:300px;grid-template-columns:minmax(100px,1fr) 50px;grid-auto-rows:minmax(40px,auto)">
+        <div data-expected-width="250" data-expected-height="40">a</div><div data-expected-width="50">b</div>
+        <div data-expected-height="60" style="height:60px">c</div></div>
+        <div style="display:grid;width:300px;grid-template-columns:fit-content(40px) 1fr">
+        <div data-expected-width="40">a very long text</div><div data-expected-width="260">b</div></div>"#,
+    );
+}
+
+#[test]
+fn grid_tracks_that_repeat_to_fill_the_container() {
+    check_layout(
+        "grid_auto_fill",
+        r#"<!doctype html><div style="display:grid;width:400px;grid-template-columns:repeat(auto-fill,minmax(100px,1fr))">
+        <div data-expected-width="100">1</div><div data-expected-width="100">2</div>
+        <div data-expected-width="100">3</div><div data-expected-width="100">4</div>
+        <div data-expected-width="100" data-expected-y="20" style="height:20px">5</div></div>"#,
+    );
+}
+
+#[test]
+fn an_invalid_track_list_is_dropped() {
+    // `repeat(0, ...)` and a flexible minimum are not valid: one column of the whole width
+    check_layout(
+        "grid_invalid",
+        r#"<!doctype html><div style="display:grid;width:300px;grid-template-columns:repeat(0,1fr)">
+        <div data-expected-width="300">a</div></div>
+        <div style="display:grid;width:300px;grid-template-columns:minmax(1fr,2fr)">
+        <div data-expected-width="300">a</div></div>"#,
+    );
+}

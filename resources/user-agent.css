@@ -282,6 +282,17 @@ area:visited[rel~="help"] {
   outline: auto;
 }
 
+progress,
+meter {
+  display: inline-block;
+  width: 10em;
+  height: 1em;
+  vertical-align: -0.2em;
+  border: 1px solid #999;
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+
 mark {
   background: yellow;
   color: black;
