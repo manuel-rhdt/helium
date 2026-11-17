@@ -376,153 +376,31 @@ impl FlowConstructor {
         }
     }
 
-    /// What an element (or a pseudo-element) with the style `style` does to the counter `name`:
-    /// its increment and the value that it sets, for the starting value of a reversed counter.
-    /// A list item makes the implicit increment of `list-item`, which is down in a reversed list.
-    fn counter_step(
-        style: &ComputedValues,
-        name: &str,
-        value_hint: Option<i64>,
-    ) -> (Option<i64>, Option<i64>) {
-        let is_item = style.box_.display == Display::ListItem && name == "list-item";
-        let increment = match style.box_.counter_increment.get(name) {
-            Some(_) => Some(
-                style.box_.counter_increment.all(name).map(|entry| i64::from(entry.value.unwrap_or(1))).sum(),
-            ),
-            None if is_item => Some(-1),
-            None => None,
-        };
-        let set = match style.box_.counter_set.all(name).last() {
-            Some(entry) => Some(i64::from(entry.value.unwrap_or(0))),
-            None => value_hint.filter(|_| is_item),
-        };
-        (increment, set)
-    }
-
-    /// The steps that `node`, its pseudo-elements and its descendants make to the counter
-    /// `name` of an enclosing scope, in tree order. Nested counters of the same name hide what
-    /// is in them, and elements without a box do nothing.
-    fn collect_counter_steps(&mut self, node: &DomRef, name: &str, steps: &mut Vec<(Option<i64>, Option<i64>)>) {
-        let Some(element) = node.clone().into_element_ref() else { return };
-        self.ensure_style(node);
-        let Some(style) = NodeData::style(node) else { return };
-        let generated = element.pseudo_element().is_some();
-        if style.box_.display == Display::None || (!generated && element.name.ns != ns!(html)) {
-            return;
-        }
-        let value_hint = Self::li_value(&element);
-        steps.push(Self::counter_step(&style, name, value_hint));
-        if !generated {
-            if let Some(pseudo_style) = self.pseudo_style(&element, &style, PseudoElement::Before) {
-                if pseudo_style.box_.counter_reset.get(name).is_none() {
-                    steps.push(Self::counter_step(&pseudo_style, name, None));
-                }
-            }
-        }
-        for child in TreeLinked::children(node) {
-            if self.resets_counter(&child, name) {
-                continue;
-            }
-            self.collect_counter_steps(&child, name, steps);
-        }
-        if !generated {
-            if let Some(pseudo_style) = self.pseudo_style(&element, &style, PseudoElement::After) {
-                if pseudo_style.box_.counter_reset.get(name).is_none() {
-                    steps.push(Self::counter_step(&pseudo_style, name, None));
-                }
-            }
-        }
-    }
-
-    /// Whether the element makes a counter of that name of its own (`counter-reset`).
-    fn resets_counter(&mut self, node: &DomRef, name: &str) -> bool {
-        let Some(element) = node.clone().into_element_ref() else { return false };
-        // lists start a `list-item` counter of their own
-        if name == "list-item"
-            && element.name.ns == ns!(html)
-            && matches!(&*element.name.local, "ol" | "ul" | "menu")
-        {
-            return true;
-        }
-        self.ensure_style(node);
-        NodeData::style(node).is_some_and(|style| style.box_.counter_reset.get(name).is_some())
-    }
-
-    /// The `value` attribute of a list item.
-    fn li_value(element: &crate::tree::ElementRef) -> Option<i64> {
-        if element.name.ns != ns!(html) || element.name.local != local_name!("li") {
-            return None;
-        }
-        element
-            .attributes
-            .borrow()
-            .get(&QualName::new(None, ns!(), local_name!("value")))
-            .and_then(|attribute| attribute.value.trim().parse::<i64>().ok())
-    }
-
-    /// The starting value of the reversed counter `name` that `node` resets without a value:
-    /// found from the elements in its scope, which are the element, its descendants, and its
-    /// following siblings with their descendants.
-    fn reversed_initial(&mut self, node: &DomRef, name: &str) -> i64 {
-        let mut steps = vec![];
-        self.collect_counter_steps(node, name, &mut steps);
-        let mut sibling = TreeLinked::next_sibling(node);
-        while let Some(current) = sibling {
-            // a following sibling that makes its own counter ends the scope
-            if self.resets_counter(&current, name) {
-                break;
-            }
-            self.collect_counter_steps(&current, name, &mut steps);
-            sibling = TreeLinked::next_sibling(&current);
-        }
-        super::counters::reversed_initial(steps)
-    }
-
     /// Counts the counters of an element that is reached.
     fn enter_counters(&mut self, node: &DomRef, style: &ComputedValues) {
         let parent = node.parent().map_or(0, |parent| crate::tree::GetOpaqueNode::get_opaque(&parent).0);
         let mut hints = super::counters::ListHints::default();
         if let ParsedData::Element(data) = &node.html_data {
             if data.name.ns == ns!(html) {
-                let attributes = data.attributes.borrow();
-                let attribute = |name| attributes.get(&QualName::new(None, ns!(), name));
-                let integer =
-                    |name| attribute(name).and_then(|attribute| attribute.value.trim().parse::<i64>().ok());
+                let integer = |name| {
+                    data.attributes
+                        .borrow()
+                        .get(&QualName::new(None, ns!(), name))
+                        .and_then(|attribute| attribute.value.trim().parse::<i64>().ok())
+                };
                 match &*data.name.local {
                     "ol" | "ul" | "menu" => {
                         hints.resets_list_item = true;
                         hints.start = integer(local_name!("start"));
-                        hints.reversed = &*data.name.local == "ol" && attribute(local_name!("reversed")).is_some();
                     }
-                    "li" => hints.value = integer(local_name!("value")),
+                    "li" => {
+                        hints.value = integer(local_name!("value"));
+                    }
                     _ => {}
                 }
             }
         }
-        // the reversed counters that start from their scope
-        let mut names: Vec<String> = style
-            .box_
-            .counter_reset
-            .0
-            .iter()
-            .filter(|entry| entry.reversed && entry.value.is_none())
-            .map(|entry| entry.name.clone())
-            .collect();
-        if hints.reversed
-            && hints.start.is_none()
-            && style.box_.counter_reset.get("list-item").is_none()
-            && style.box_.display != Display::None
-        {
-            names.push("list-item".to_owned());
-        }
-        let mut initials = HashMap::new();
-        if style.box_.display != Display::None {
-            for name in names {
-                let initial = self.reversed_initial(node, &name);
-                initials.insert(name, initial);
-            }
-        }
-        self.counters.enter(parent, style, hints, &initials);
+        self.counters.enter(parent, style, hints);
     }
 
     /// Computes the style of the node, and before that the one of its ancestors, if they do not

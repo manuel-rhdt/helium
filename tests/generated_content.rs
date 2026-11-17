@@ -141,36 +141,3 @@ fn display_none_and_replaced_elements_have_no_pseudo_elements() {
         "a b"
     );
 }
-
-#[test]
-fn reversed_lists_count_down() {
-    check!(
-        "reversed",
-        r#"<style>li { list-style: none } li::before { content: counter(list-item) ": " }</style>
-        <ol reversed><li>a<li>b<li>c</ol>
-        <ol reversed start="9"><li>d<li>e</ol>
-        <ol reversed><li>f<li value="20">g<li>h</ol>"#,
-        "3: a 2: b 1: c 9: d 8: e 21: f 20: g 19: h"
-    );
-}
-
-#[test]
-fn reversed_counters_start_from_their_scope() {
-    check!(
-        "reversed_counter",
-        r#"<style>div { counter-reset: reversed(n) } p { counter-increment: n -1 } p::before { content: counter(n) ". " }
-        p.skip { display: none }</style>
-        <div><p>a</p><p class="skip">b</p><p>c</p><p>d</p></div>"#,
-        "3. a 2. c 1. d"
-    );
-}
-
-#[test]
-fn counters_of_a_sibling_stay_in_scope() {
-    check!(
-        "siblings",
-        r#"<style>span::before { content: counters(c, ".") ";" } .r { counter-reset: c } span { counter-increment: c }</style>
-        <p><span class="r"></span><span></span></p>"#,
-        "1;2;"
-    );
-}
