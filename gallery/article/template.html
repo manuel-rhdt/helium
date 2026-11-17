@@ -47,11 +47,12 @@
   .eq math { margin: 0; }
   .eq .no { font-size: 10pt; padding-left: 6pt; }
 
-  figure { margin: 8pt 0; break-inside: avoid; }
+  /* Figures and tables float to the top of the column (or, in the page, of the next page) that they are called for in, like in TeX */
+  figure { margin: 0 0 8pt; float: top; }
   figure svg { display: block; width: 100%; height: auto; }
   figcaption { font-size: 9pt; line-height: 11pt; text-align: justify; margin-top: 4pt; }
   figcaption b, .tcap b { letter-spacing: 0.04em; }
-  .table { margin: 8pt 0; break-inside: avoid; }
+  .table { margin: 0 0 8pt; float: top; }
   .tcap { font-size: 9pt; line-height: 11pt; text-align: center; margin-bottom: 4pt; }
   table { width: 100%; border-collapse: collapse; font-size: 9pt; border-top: 0.8pt solid #000; border-bottom: 0.8pt solid #000; }
   th { font-weight: normal; border-bottom: 0.5pt solid #000; padding: 2pt 3pt; text-align: center; }
@@ -89,7 +90,7 @@
 <div class="eq">@@EQ2@@<span class="no">(2)</span></div>
 <p class="first">The minima are at <i>x<sub>a</sub></i> = ±1, where @@UPP@@ = 2, the top of the barrier is at <i>x<sub>b</sub></i> = 0, where @@UPP@@ = −1, and the barrier height is Δ<i>U</i>&nbsp;=&nbsp;1/4 (Fig. 1).</p>
 
-<figure>
+<figure style="float: bottom; margin: 8pt 0 0">
   @@FIG1@@
   <figcaption><b>FIG. 1.</b> The potential of Eq. (2). The two wells have their minima at <i>x<sub>a</sub></i> = ±1; the particle escapes over the barrier top at <i>x<sub>b</sub></i> = 0.</figcaption>
 </figure>
