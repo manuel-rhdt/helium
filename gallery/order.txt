@@ -10,3 +10,4 @@ figures
 poster
 emoji
 typography
+article

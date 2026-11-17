@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Finite-noise corrections to Kramers escape</title>
+<meta name="description" content="A two-column physics letter in the layout of a journal such as Physical Review Letters: a full-width title block and abstract, then 10 pt text in two columns of 24 em that run over the pages, run-in headings, numbered MathML equations, figures drawn as SVG, a table with rules and numbered references. The calculation in it is real; the journal, the authors and the text are made up.">
+<meta name="keywords" content="multi-column layout, two columns, MathML, SVG figures, running heads, scientific article">
+<style>
+  /* Letter size, 7 in of text: two columns of 3.375 in with a gap of 0.25 in */
+  @page {
+    size: 8.5in 11in;
+    margin: 0.95in 0.75in 0.9in;
+    @top-left { content: counter(page); font: 9pt "TeX Gyre Termes", Times, serif; }
+    @top-right { content: "FINITE-NOISE CORRECTIONS TO KRAMERS ESCAPE"; font: 8pt "TeX Gyre Termes", Times, serif; letter-spacing: 0.08em; }
+  }
+  @page :right {
+    @top-left { content: "FINITE-NOISE CORRECTIONS TO KRAMERS ESCAPE"; font: 8pt "TeX Gyre Termes", Times, serif; letter-spacing: 0.08em; }
+    @top-right { content: counter(page); font: 9pt "TeX Gyre Termes", Times, serif; }
+  }
+  @page :first {
+    margin-top: 0.8in;
+    @top-left { content: "EXAMPLE LETTERS"; font: bold 10pt "TeX Gyre Termes", Times, serif; letter-spacing: 0.12em; }
+    @top-right { content: "VOLUME 1, NUMBER 1  ·  17 NOVEMBER 2026"; font: 8pt "TeX Gyre Termes", Times, serif; letter-spacing: 0.08em; }
+    @bottom-center { content: "A demonstration for the Helium gallery: the journal, the authors and the text are made up, the calculation is real."; font: italic 8pt "TeX Gyre Termes", Times, serif; }
+  }
+
+  html { font: 10pt/12pt "TeX Gyre Termes", "Times New Roman", Times, serif; color: #000; hyphens: auto; }
+  body { margin: 0; orphans: 2; widows: 2; }
+
+  /* The title block spans both columns */
+  .head { text-align: center; }
+  h1 { font: bold 17pt/20pt "TeX Gyre Termes", Times, serif; margin: 0 0 10pt; hyphens: manual; }
+  .authors { font-size: 11pt; line-height: 14pt; margin: 0 0 3pt; }
+  .authors sup, .affil sup { font-size: 0.7em; line-height: 0; }
+  .affil { font-style: italic; font-size: 9pt; line-height: 11pt; margin: 0; }
+  .date { font-size: 9pt; margin: 5pt 0 9pt; }
+  .abstract { margin: 0 0.4in; font-size: 9pt; line-height: 11pt; text-align: justify; padding-bottom: 7pt; border-bottom: 0.6pt solid #000; margin-bottom: 9pt; }
+  .abstract p { margin: 0; }
+
+  /* The text: two columns that run over the pages */
+  .cols { column-count: 2; column-gap: 0.25in; text-align: justify; }
+  .cols p { margin: 0; text-indent: 1em; }
+  .cols .first { text-indent: 0; }
+  .cols i.run { font-style: italic; }
+
+  .eq { display: grid; grid-template-columns: 1fr auto; align-items: center; margin: 6pt 0; text-indent: 0; break-inside: avoid; }
+  .eq math { margin: 0; }
+  .eq .no { font-size: 10pt; padding-left: 6pt; }
+
+  figure { margin: 8pt 0; break-inside: avoid; }
+  figure svg { display: block; width: 100%; height: auto; }
+  figcaption { font-size: 9pt; line-height: 11pt; text-align: justify; margin-top: 4pt; }
+  figcaption b, .tcap b { letter-spacing: 0.04em; }
+  .table { margin: 8pt 0; break-inside: avoid; }
+  .tcap { font-size: 9pt; line-height: 11pt; text-align: center; margin-bottom: 4pt; }
+  table { width: 100%; border-collapse: collapse; font-size: 9pt; border-top: 0.8pt solid #000; border-bottom: 0.8pt solid #000; }
+  th { font-weight: normal; border-bottom: 0.5pt solid #000; padding: 2pt 3pt; text-align: center; }
+  td { padding: 1pt 3pt; text-align: center; font-variant-numeric: tabular-nums; }
+  .tnote { font-size: 8.5pt; line-height: 10pt; margin-top: 3pt; }
+
+  .refs { margin-top: 6pt; font-size: 8.5pt; line-height: 10pt; text-align: left; }
+  .refs ol { list-style: none; margin: 0; padding: 0; }
+  .refs li { margin: 0 0 2pt; padding-left: 1.7em; text-indent: -1.7em; hyphens: manual; }
+  .refs .n { display: inline-block; width: 1.7em; text-indent: 0; }
+  .refs .h { font-weight: bold; text-indent: 0; display: block; margin: 8pt 0 3pt; letter-spacing: 0.06em; font-size: 8.5pt; }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>Finite-noise corrections to Kramers escape in the symmetric quartic double well</h1>
+  <p class="authors">A. Author<sup>1</sup> and B. Coauthor<sup>2</sup></p>
+  <p class="affil"><sup>1</sup>Department of Physics, Example University, Example City 00000, Country</p>
+  <p class="affil"><sup>2</sup>Institute for Statistical Mechanics, Sample Institute, Sample Town 00000, Country</p>
+  <p class="date">(Received 17 November 2026)</p>
+</div>
+
+<div class="abstract">
+  <p>Kramers’ formula for the rate of thermally activated escape is exact only when the barrier is high compared with the noise strength. For the symmetric quartic double well we compute the escape rate of an overdamped particle exactly, from the mean first-passage time, and compare it with Kramers’ formula for barrier heights from Δ<i>U</i>/<i>D</i> = 0.4 to 6. The formula overestimates the rate by up to 14% for noise strengths <i>D</i> below 0.22 and underestimates it by 31% at <i>D</i> = 0.5; to leading order in <i>D</i> the relative correction is numerically −3<i>D</i>/2. The quadrature is checked against Langevin simulations.</p>
+</div>
+
+<div class="cols">
+
+<p class="first"><i class="run">Introduction.</i>—Thermally activated escape over a barrier is the elementary process behind reaction rates, nucleation, and the switching of bistable devices [1–4]. For a particle that moves in a potential <i>U</i>(<i>x</i>) with strong friction and is driven by white noise of strength <i>D</i>, the rate of escape from a well was obtained by Kramers [2]. His result is an asymptotic one: it holds when the barrier height Δ<i>U</i> is large compared with <i>D</i>, and the reviews [3,5] discuss the conditions under which it can be trusted. How good it is at moderate Δ<i>U</i>/<i>D</i>, where experiments on small systems usually operate, is a quantitative question that is easiest to answer in a case where the exact rate is known.</p>
+
+<p><i class="run">Model.</i>—We take the overdamped Langevin equation</p>
+<div class="eq"><math display="block"><mfrac><mrow><mi mathvariant="normal">d</mi><mi>x</mi></mrow><mrow><mi mathvariant="normal">d</mi><mi>t</mi></mrow></mfrac><mo>=</mo><mo>−</mo><msup><mi>U</mi><mo>′</mo></msup><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo>+</mo><msqrt><mrow><mn>2</mn><mi>D</mi></mrow></msqrt><mi>ξ</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo></math><span class="no">(1)</span></div>
+<p class="first">with <math><mo>⟨</mo><mi>ξ</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo><mi>ξ</mi><mo stretchy="false">(</mo><mi>t</mi><mo>′</mo><mo stretchy="false">)</mo><mo>⟩</mo><mo>=</mo><mi>δ</mi><mo stretchy="false">(</mo><mi>t</mi><mo>−</mo><mi>t</mi><mo>′</mo><mo stretchy="false">)</mo></math>, in the symmetric double well</p>
+<div class="eq"><math display="block"><mi>U</mi><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo>=</mo><mfrac><msup><mi>x</mi><mn>4</mn></msup><mn>4</mn></mfrac><mo>−</mo><mfrac><msup><mi>x</mi><mn>2</mn></msup><mn>2</mn></mfrac></math><span class="no">(2)</span></div>
+<p class="first">The minima are at <i>x<sub>a</sub></i> = ±1, where <math><msup><mi>U</mi><mo>″</mo></msup></math> = 2, the top of the barrier is at <i>x<sub>b</sub></i> = 0, where <math><msup><mi>U</mi><mo>″</mo></msup></math> = −1, and the barrier height is Δ<i>U</i>&nbsp;=&nbsp;1/4 (Fig. 1).</p>
+
+<figure>
+  <svg viewBox="0 0 324 200" width="324" height="200" role="img" aria-label="The double well potential"><rect x="14" y="8" width="300" height="158" fill="none" stroke="#000" stroke-width="0.8"/><line x1="70.2" y1="166" x2="70.2" y2="162" stroke="#000" stroke-width="0.8"/><text x="70.2" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">−1</text><line x1="164.0" y1="166" x2="164.0" y2="162" stroke="#000" stroke-width="0.8"/><text x="164.0" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">0</text><line x1="257.8" y1="166" x2="257.8" y2="162" stroke="#000" stroke-width="0.8"/><text x="257.8" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">1</text><text x="164.0" y="195" font-size="11" text-anchor="middle" font-style="italic" font-family="TeX Gyre Termes, Times, serif">x</text><text x="11" y="87.0" font-size="11" text-anchor="middle" font-style="italic" transform="rotate(-90 11 87.0)" font-family="TeX Gyre Termes, Times, serif">U(x)</text><polyline points="14.0,32.0 15.5,39.8 17.0,47.2 18.5,54.3 20.0,61.1 21.5,67.5 23.0,73.7 24.6,79.6 26.1,85.2 27.6,90.5 29.1,95.5 30.6,100.3 32.1,104.8 33.6,109.0 35.1,113.0 36.6,116.8 38.1,120.3 39.6,123.7 41.1,126.8 42.6,129.6 44.2,132.3 45.7,134.8 47.2,137.1 48.7,139.2 50.2,141.1 51.7,142.8 53.2,144.4 54.7,145.8 56.2,147.1 57.7,148.2 59.2,149.1 60.7,149.9 62.2,150.6 63.7,151.2 65.3,151.6 66.8,151.9 68.3,152.1 69.8,152.2 71.3,152.2 72.8,152.0 74.3,151.8 75.8,151.5 77.3,151.1 78.8,150.7 80.3,150.1 81.8,149.5 83.3,148.8 84.9,148.1 86.4,147.3 87.9,146.4 89.4,145.5 90.9,144.6 92.4,143.6 93.9,142.6 95.4,141.5 96.9,140.4 98.4,139.3 99.9,138.2 101.4,137.0 102.9,135.8 104.5,134.6 106.0,133.4 107.5,132.2 109.0,131.0 110.5,129.7 112.0,128.5 113.5,127.3 115.0,126.1 116.5,124.9 118.0,123.7 119.5,122.5 121.0,121.4 122.5,120.2 124.1,119.1 125.6,118.0 127.1,116.9 128.6,115.9 130.1,114.9 131.6,113.9 133.1,112.9 134.6,112.0 136.1,111.2 137.6,110.3 139.1,109.5 140.6,108.7 142.1,108.0 143.6,107.3 145.2,106.7 146.7,106.1 148.2,105.6 149.7,105.1 151.2,104.6 152.7,104.2 154.2,103.9 155.7,103.6 157.2,103.3 158.7,103.1 160.2,103.0 161.7,102.9 163.2,102.8 164.8,102.8 166.3,102.9 167.8,103.0 169.3,103.1 170.8,103.3 172.3,103.6 173.8,103.9 175.3,104.2 176.8,104.6 178.3,105.1 179.8,105.6 181.3,106.1 182.8,106.7 184.4,107.3 185.9,108.0 187.4,108.7 188.9,109.5 190.4,110.3 191.9,111.2 193.4,112.0 194.9,112.9 196.4,113.9 197.9,114.9 199.4,115.9 200.9,116.9 202.4,118.0 203.9,119.1 205.5,120.2 207.0,121.4 208.5,122.5 210.0,123.7 211.5,124.9 213.0,126.1 214.5,127.3 216.0,128.5 217.5,129.7 219.0,131.0 220.5,132.2 222.0,133.4 223.5,134.6 225.1,135.8 226.6,137.0 228.1,138.2 229.6,139.3 231.1,140.4 232.6,141.5 234.1,142.6 235.6,143.6 237.1,144.6 238.6,145.5 240.1,146.4 241.6,147.3 243.1,148.1 244.7,148.8 246.2,149.5 247.7,150.1 249.2,150.7 250.7,151.1 252.2,151.5 253.7,151.8 255.2,152.0 256.7,152.2 258.2,152.2 259.7,152.1 261.2,151.9 262.7,151.6 264.3,151.2 265.8,150.6 267.3,149.9 268.8,149.1 270.3,148.2 271.8,147.1 273.3,145.8 274.8,144.4 276.3,142.8 277.8,141.1 279.3,139.2 280.8,137.1 282.3,134.8 283.8,132.3 285.4,129.6 286.9,126.8 288.4,123.7 289.9,120.3 291.4,116.8 292.9,113.0 294.4,109.0 295.9,104.8 297.4,100.3 298.9,95.5 300.4,90.5 301.9,85.2 303.4,79.6 305.0,73.7 306.5,67.5 308.0,61.1 309.5,54.3 311.0,47.2 312.5,39.8 314.0,32.0" fill="none" stroke="#000" stroke-width="1.6"/><circle cx="70.2" cy="152.2" r="3.2" fill="#000"/><circle cx="257.8" cy="152.2" r="3.2" fill="#000"/><line x1="203.4" y1="152.2" x2="203.4" y2="102.8" stroke="#000" stroke-width="1"/><polygon points="203.4,102.8 200.9,108.8 205.9,108.8" fill="#000"/><polygon points="203.4,152.2 200.9,146.2 205.9,146.2" fill="#000"/><text x="209.4" y="131.5" font-size="11" font-family="TeX Gyre Termes, Times, serif">ΔU = 1/4</text><text x="63.2" y="146.2" font-size="11" text-anchor="end" font-style="italic" font-family="TeX Gyre Termes, Times, serif">x<tspan font-size="8" dy="2">a</tspan></text><text x="164.0" y="95.8" font-size="11" text-anchor="middle" font-style="italic" font-family="TeX Gyre Termes, Times, serif">x<tspan font-size="8" dy="2">b</tspan></text></svg>
+  <figcaption><b>FIG. 1.</b> The potential of Eq. (2). The two wells have their minima at <i>x<sub>a</sub></i> = ±1; the particle escapes over the barrier top at <i>x<sub>b</sub></i> = 0.</figcaption>
+</figure>
+
+<p><i class="run">Kramers’ formula.</i>—For Δ<i>U</i>/<i>D</i> → ∞ the rate of escape from the well at <i>x<sub>a</sub></i> over the barrier at <i>x<sub>b</sub></i> is [2,3]</p>
+<div class="eq"><math display="block"><msub><mi>r</mi><mi>K</mi></msub><mo>=</mo><mfrac><msqrt><mrow><msup><mi>U</mi><mo>″</mo></msup><mo stretchy="false">(</mo><msub><mi>x</mi><mi>a</mi></msub><mo stretchy="false">)</mo><mo>|</mo><msup><mi>U</mi><mo>″</mo></msup><mo stretchy="false">(</mo><msub><mi>x</mi><mi>b</mi></msub><mo stretchy="false">)</mo><mo>|</mo></mrow></msqrt><mrow><mn>2</mn><mi>π</mi></mrow></mfrac><msup><mi>e</mi><mrow><mo>−</mo><mi>Δ</mi><mi>U</mi><mo>/</mo><mi>D</mi></mrow></msup></math><span class="no">(3)</span></div>
+<p class="first">which for the potential (2) is</p>
+<div class="eq"><math display="block"><msub><mi>r</mi><mi>K</mi></msub><mo>=</mo><mfrac><msqrt><mn>2</mn></msqrt><mrow><mn>2</mn><mi>π</mi></mrow></mfrac><msup><mi>e</mi><mrow><mo>−</mo><mn>1</mn><mo>/</mo><mo stretchy="false">(</mo><mn>4</mn><mi>D</mi><mo stretchy="false">)</mo></mrow></msup></math><span class="no">(4)</span></div>
+<p class="first">It is Eq. (4) that we compare with the exact rate.</p>
+
+<p><i class="run">Exact rate.</i>—In one variable the mean first-passage time can be written in closed form [4,5]. A particle that starts at <i>x</i><sub>0</sub> in the left well, and is absorbed at the top of the barrier, needs the time</p>
+<div class="eq"><math display="block"><mi>τ</mi><mo stretchy="false">(</mo><msub><mi>x</mi><mn>0</mn></msub><mo stretchy="false">)</mo><mo>=</mo><mfrac><mn>1</mn><mi>D</mi></mfrac><munderover><mo>∫</mo><msub><mi>x</mi><mn>0</mn></msub><mn>0</mn></munderover><mspace width="0.17em"/><mi mathvariant="normal">d</mi><mi>y</mi><mspace width="0.17em"/><msup><mi>e</mi><mrow><mi>U</mi><mo stretchy="false">(</mo><mi>y</mi><mo stretchy="false">)</mo><mo>/</mo><mi>D</mi></mrow></msup><mspace width="0.17em"/><munderover><mo>∫</mo><mrow><mo>−</mo><mi mathvariant="normal">∞</mi></mrow><mi>y</mi></munderover><mspace width="0.17em"/><mi mathvariant="normal">d</mi><mi>z</mi><mspace width="0.17em"/><msup><mi>e</mi><mrow><mo>−</mo><mi>U</mi><mo stretchy="false">(</mo><mi>z</mi><mo stretchy="false">)</mo><mo>/</mo><mi>D</mi></mrow></msup></math><span class="no">(5)</span></div>
+<p class="first">when the left side is reflecting. At the barrier top the particle is equally likely to fall to either side, so only every second arrival there ends in the other well, and the escape rate is</p>
+<div class="eq"><math display="block"><mi>r</mi><mo>=</mo><mfrac><mn>1</mn><mrow><mn>2</mn><mi>τ</mi><mo stretchy="false">(</mo><mn>−1</mn><mo stretchy="false">)</mo></mrow></mfrac></math><span class="no">(6)</span></div>
+<p class="first">We evaluate Eq. (5) by the trapezoid rule on grids of 6×10<sup>5</sup> and 2×10<sup>4</sup> points; halving the grids changes the rate by less than 2×10<sup>−11</sup> (relative) for <i>D</i> = 0.05, 0.1 and 0.3.</p>
+<p>As a check we integrated Eq. (1) directly by the Euler–Maruyama method, with a time step of 10<sup>−3</sup> and 4000 paths for each of five noise strengths. The rates agree with the quadrature to within 6%; they are the lower ones, as expected of a method that can miss the crossing of the barrier top between two steps.</p>
+
+<p><i class="run">Results.</i>—Table I and Fig. 2 give the rate, and Fig. 3 its ratio to Kramers’ value. The formula overestimates the exact rate for every <i>D</i> below 0.22, by at most 14% (near <i>D</i> = 0.09, Δ<i>U</i>/<i>D</i> = 2.7). At <i>D</i> ≈ 0.22 the two agree, and for larger <i>D</i> the formula underestimates the rate, by 31% at <i>D</i> = 0.5. The agreement near <i>D</i> = 0.22 is only where the deviation changes its sign: at Δ<i>U</i>/<i>D</i> = 1.2 the barrier is hardly one, and the agreement says nothing about the validity of the formula.</p>
+
+<div class="table">
+  <div class="tcap"><b>TABLE I.</b> Escape rate <i>r</i> from Eq. (6), Kramers’ rate <i>r<sub>K</sub></i> from Eq. (4), their ratio, and the rate from the simulations.</div>
+  <table>
+    <tr><th><i>D</i></th><th><i>r</i></th><th><i>r<sub>K</sub></i></th><th><i>r</i>/<i>r<sub>K</sub></i></th><th>simulation</th></tr>
+    <tr><td>0.05</td><td>0.0014</td><td>0.0015</td><td>0.911</td><td>—</td></tr><tr><td>0.10</td><td>0.0162</td><td>0.0185</td><td>0.878</td><td>—</td></tr><tr><td>0.15</td><td>0.0389</td><td>0.0425</td><td>0.914</td><td>0.0380</td></tr><tr><td>0.20</td><td>0.0630</td><td>0.0645</td><td>0.977</td><td>0.0595</td></tr><tr><td>0.30</td><td>0.1105</td><td>0.0978</td><td>1.130</td><td>0.1060</td></tr><tr><td>0.50</td><td>0.1983</td><td>0.1365</td><td>1.452</td><td>0.1928</td></tr>
+  </table>
+</div>
+
+
+<figure>
+  <svg viewBox="0 0 324 200" width="324" height="200" role="img" aria-label="Escape rate against barrier height over noise strength"><rect x="44" y="8" width="270" height="158" fill="none" stroke="#000" stroke-width="0.8"/><line x1="44.0" y1="166" x2="44.0" y2="162" stroke="#000" stroke-width="0.8"/><text x="44.0" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">0</text><line x1="121.1" y1="166" x2="121.1" y2="162" stroke="#000" stroke-width="0.8"/><text x="121.1" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">2</text><line x1="198.3" y1="166" x2="198.3" y2="162" stroke="#000" stroke-width="0.8"/><text x="198.3" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">4</text><line x1="275.4" y1="166" x2="275.4" y2="162" stroke="#000" stroke-width="0.8"/><text x="275.4" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">6</text><line x1="44" y1="157.7" x2="48" y2="157.7" stroke="#000" stroke-width="0.8"/><text x="39" y="161.2" font-size="10" text-anchor="end" font-family="TeX Gyre Termes, Times, serif">−4</text><line x1="44" y1="116.1" x2="48" y2="116.1" stroke="#000" stroke-width="0.8"/><text x="39" y="119.6" font-size="10" text-anchor="end" font-family="TeX Gyre Termes, Times, serif">−3</text><line x1="44" y1="74.5" x2="48" y2="74.5" stroke="#000" stroke-width="0.8"/><text x="39" y="78.0" font-size="10" text-anchor="end" font-family="TeX Gyre Termes, Times, serif">−2</text><line x1="44" y1="32.9" x2="48" y2="32.9" stroke="#000" stroke-width="0.8"/><text x="39" y="36.4" font-size="10" text-anchor="end" font-family="TeX Gyre Termes, Times, serif">−1</text><text x="179.0" y="195" font-size="11" text-anchor="middle" font-style="italic" font-family="TeX Gyre Termes, Times, serif">ΔU/D</text><text x="11" y="87.0" font-size="11" text-anchor="middle" font-style="italic" transform="rotate(-90 11 87.0)" font-family="TeX Gyre Termes, Times, serif"><tspan font-style="normal">log</tspan><tspan font-style="normal" font-size="8" dy="2">10</tspan><tspan dy="-2"> r</tspan></text><polyline points="285.1,132.5 275.8,128.2 266.9,124.1 258.3,120.1 250.0,116.3 242.1,112.7 234.5,109.2 227.2,105.8 220.1,102.6 213.3,99.5 206.8,96.5 200.5,93.6 194.5,90.8 188.7,88.2 183.2,85.6 177.8,83.2 172.7,80.8 167.7,78.5 162.9,76.3 158.4,74.2 154.0,72.1 149.7,70.2 145.7,68.3 141.7,66.4 138.0,64.6 134.4,62.9 130.9,61.2 127.5,59.6 124.3,58.1 121.2,56.5 118.3,55.1 115.4,53.6 112.7,52.3 110.0,50.9 107.5,49.6 105.0,48.3 102.7,47.1 100.4,45.9 98.3,44.7 96.2,43.5 94.2,42.4 92.2,41.3 90.4,40.2 88.6,39.2 86.9,38.1 85.2,37.1 83.6,36.1 82.1,35.2 80.6,34.2 79.2,33.3 77.9,32.3 76.6,31.4 75.3,30.6 74.1,29.7 73.0,28.8 71.8,28.0 70.8,27.1 69.7,26.3 68.7,25.5 67.8,24.7 66.9,23.9 66.0,23.1 65.2,22.4 64.3,21.6 63.6,20.9 62.8,20.1 62.1,19.4 61.4,18.6 60.7,17.9 60.1,17.2" fill="none" stroke="#000" stroke-width="1.4"/><polyline points="285.1,131.2 275.8,126.8 266.9,122.6 258.3,118.6 250.0,114.8 242.1,111.0 234.5,107.5 227.2,104.0 220.1,100.7 213.3,97.6 206.8,94.5 200.5,91.6 194.5,88.8 188.7,86.1 183.2,83.4 177.8,80.9 172.7,78.5 167.7,76.2 162.9,74.0 158.4,71.8 154.0,69.8 149.7,67.8 145.7,65.9 141.7,64.1 138.0,62.3 134.4,60.6 130.9,59.0 127.5,57.4 124.3,55.9 121.2,54.5 118.3,53.1 115.4,51.7 112.7,50.4 110.0,49.2 107.5,48.0 105.0,46.9 102.7,45.8 100.4,44.7 98.3,43.7 96.2,42.7 94.2,41.8 92.2,40.9 90.4,40.0 88.6,39.2 86.9,38.4 85.2,37.6 83.6,36.9 82.1,36.1 80.6,35.5 79.2,34.8 77.9,34.2 76.6,33.5 75.3,33.0 74.1,32.4 73.0,31.9 71.8,31.3 70.8,30.8 69.7,30.3 68.7,29.9 67.8,29.4 66.9,29.0 66.0,28.6 65.2,28.2 64.3,27.8 63.6,27.5 62.8,27.1 62.1,26.8 61.4,26.4 60.7,26.1 60.1,25.8" fill="none" stroke="#000" stroke-width="1.2" stroke-dasharray="5 3"/><circle cx="108.3" cy="50.4" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><circle cx="92.2" cy="42.3" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><circle cx="76.1" cy="31.9" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><circle cx="68.1" cy="26.0" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><circle cx="63.3" cy="21.1" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><line x1="182.9" y1="22.6" x2="217.6" y2="22.6" stroke="#000" stroke-width="1.4"/><text x="223.4" y="26.1" font-size="10" font-family="TeX Gyre Termes, Times, serif">exact</text><line x1="182.9" y1="37.1" x2="217.6" y2="37.1" stroke="#000" stroke-width="1.2" stroke-dasharray="5 3"/><text x="223.4" y="40.6" font-size="10" font-family="TeX Gyre Termes, Times, serif">Kramers</text><circle cx="200.2" cy="51.7" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><text x="223.4" y="55.2" font-size="10" font-family="TeX Gyre Termes, Times, serif">simulation</text></svg>
+  <figcaption><b>FIG. 2.</b> The logarithm of the escape rate against Δ<i>U</i>/<i>D</i>: exact (solid line), Kramers’ formula (dashed), and simulations (circles).</figcaption>
+</figure>
+
+<p>For <i>D</i> → 0 the ratio of the rates approaches one as</p>
+<div class="eq"><math display="block"><mfrac><mi>r</mi><msub><mi>r</mi><mi>K</mi></msub></mfrac><mo>=</mo><mn>1</mn><mo>−</mo><mfrac><mn>3</mn><mn>2</mn></mfrac><mi>D</mi><mo>+</mo><mi>O</mi><mo stretchy="false">(</mo><msup><mi>D</mi><mn>2</mn></msup><mo stretchy="false">)</mo></math><span class="no">(7)</span></div>
+<p class="first">The coefficient is a numerical result: the quotient (<i>r</i>/<i>r<sub>K</sub></i> − 1)/<i>D</i>, evaluated at <i>D</i> = 2.5, 5, and 7.5 × 10<sup>−3</sup> and extrapolated linearly to <i>D</i> = 0, gives −1.50 (dotted line in Fig. 3). We have not derived it analytically; an asymptotic expansion in <i>D</i>, as in Refs. [3,4], would serve to confirm it.</p>
+
+<p><i class="run">Corrected formula.</i>—Taken at face value, Eq. (7) suggests the corrected rate</p>
+<div class="eq"><math display="block"><msub><mi>r</mi><mi>c</mi></msub><mo>=</mo><msub><mi>r</mi><mi>K</mi></msub><mo stretchy="false">(</mo><mn>1</mn><mo>−</mo><mfrac><mn>3</mn><mn>2</mn></mfrac><mi>D</mi><mo stretchy="false">)</mo></math><span class="no">(8)</span></div>
+<p class="first">Table II compares it with Eq. (4). The corrected formula is within 1% of the exact rate up to <i>D</i> = 0.038 and within 5% up to <i>D</i> = 0.11; beyond that the linear term overshoots, because the ratio turns around at <i>D</i> ≈ 0.09 (Fig. 3) while Eq. (8) keeps falling. The correction is therefore useful in the range where Kramers’ formula is already good, and not beyond it.</p>
+
+<div class="table">
+  <div class="tcap"><b>TABLE II.</b> Relative deviation (in %) of Kramers’ rate <i>r<sub>K</sub></i> of Eq. (4) and of the corrected rate <i>r<sub>c</sub></i> of Eq. (8) from the exact rate <i>r</i>.</div>
+  <table>
+    <tr><th><i>D</i></th><th>Δ<i>U</i>/<i>D</i></th><th><i>r<sub>K</sub></i> vs. <i>r</i></th><th><i>r<sub>c</sub></i> vs. <i>r</i></th></tr>
+    <tr><td>0.01</td><td>25.0</td><td>+1.6</td><td>+0.1</td></tr><tr><td>0.02</td><td>12.5</td><td>+3.3</td><td>+0.2</td></tr><tr><td>0.05</td><td>5.0</td><td>+9.8</td><td>+1.5</td></tr><tr><td>0.10</td><td>2.5</td><td>+13.9</td><td>−3.2</td></tr><tr><td>0.15</td><td>1.7</td><td>+9.4</td><td>−15.2</td></tr>
+  </table>
+</div>
+
+<figure>
+  <svg viewBox="0 0 324 200" width="324" height="200" role="img" aria-label="Ratio of the exact rate to the Kramers rate"><rect x="44" y="8" width="270" height="158" fill="none" stroke="#000" stroke-width="0.8"/><line x1="44.0" y1="166" x2="44.0" y2="162" stroke="#000" stroke-width="0.8"/><text x="44.0" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">0</text><line x1="98.0" y1="166" x2="98.0" y2="162" stroke="#000" stroke-width="0.8"/><text x="98.0" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">0.1</text><line x1="152.0" y1="166" x2="152.0" y2="162" stroke="#000" stroke-width="0.8"/><text x="152.0" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">0.2</text><line x1="206.0" y1="166" x2="206.0" y2="162" stroke="#000" stroke-width="0.8"/><text x="206.0" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">0.3</text><line x1="260.0" y1="166" x2="260.0" y2="162" stroke="#000" stroke-width="0.8"/><text x="260.0" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">0.4</text><line x1="314.0" y1="166" x2="314.0" y2="162" stroke="#000" stroke-width="0.8"/><text x="314.0" y="179" font-size="10" text-anchor="middle" font-family="TeX Gyre Termes, Times, serif">0.5</text><line x1="44" y1="166.0" x2="48" y2="166.0" stroke="#000" stroke-width="0.8"/><text x="39" y="169.5" font-size="10" text-anchor="end" font-family="TeX Gyre Termes, Times, serif">0.8</text><line x1="44" y1="120.9" x2="48" y2="120.9" stroke="#000" stroke-width="0.8"/><text x="39" y="124.4" font-size="10" text-anchor="end" font-family="TeX Gyre Termes, Times, serif">1.0</text><line x1="44" y1="75.7" x2="48" y2="75.7" stroke="#000" stroke-width="0.8"/><text x="39" y="79.2" font-size="10" text-anchor="end" font-family="TeX Gyre Termes, Times, serif">1.2</text><line x1="44" y1="30.6" x2="48" y2="30.6" stroke="#000" stroke-width="0.8"/><text x="39" y="34.1" font-size="10" text-anchor="end" font-family="TeX Gyre Termes, Times, serif">1.4</text><text x="179.0" y="195" font-size="11" text-anchor="middle" font-style="italic" font-family="TeX Gyre Termes, Times, serif">D</text><text x="11" y="87.0" font-size="11" text-anchor="middle" font-style="italic" transform="rotate(-90 11 87.0)" font-family="TeX Gyre Termes, Times, serif">r / r<tspan font-size="8" dy="2">K</tspan></text><line x1="44.0" y1="120.9" x2="314.0" y2="120.9" stroke="#777" stroke-width="0.7" stroke-dasharray="2 2"/><polyline points="49.4,124.4 51.6,125.9 53.8,127.5 56.1,129.1 58.3,130.9 60.5,132.7 62.7,134.5 65.0,136.3 67.2,138.1 69.4,139.8 71.6,141.4 73.9,142.8 76.1,144.1 78.3,145.2 80.5,146.2 82.8,146.9 85.0,147.6 87.2,148.0 89.4,148.3 91.6,148.5 93.9,148.6 96.1,148.5 98.3,148.4 100.5,148.1 102.8,147.7 105.0,147.3 107.2,146.7 109.4,146.1 111.7,145.5 113.9,144.7 116.1,143.9 118.3,143.1 120.6,142.2 122.8,141.2 125.0,140.3 127.2,139.2 129.4,138.2 131.7,137.1 133.9,136.0 136.1,134.8 138.3,133.7 140.6,132.5 142.8,131.3 145.0,130.0 147.2,128.8 149.5,127.5 151.7,126.2 153.9,124.9 156.1,123.5 158.4,122.2 160.6,120.8 162.8,119.5 165.0,118.1 167.2,116.7 169.5,115.3 171.7,113.9 173.9,112.5 176.1,111.1 178.4,109.7 180.6,108.2 182.8,106.8 185.0,105.4 187.3,103.9 189.5,102.4 191.7,101.0 193.9,99.5 196.2,98.1 198.4,96.6 200.6,95.1 202.8,93.6 205.0,92.1 207.3,90.7 209.5,89.2 211.7,87.7 213.9,86.2 216.2,84.7 218.4,83.2 220.6,81.7 222.8,80.2 225.1,78.7 227.3,77.2 229.5,75.7 231.7,74.2 234.0,72.7 236.2,71.2 238.4,69.7 240.6,68.2 242.8,66.7 245.1,65.2 247.3,63.7 249.5,62.2 251.7,60.7 254.0,59.2 256.2,57.7 258.4,56.2 260.6,54.6 262.9,53.1 265.1,51.6 267.3,50.1 269.5,48.6 271.8,47.1 274.0,45.6 276.2,44.1 278.4,42.6 280.6,41.1 282.9,39.6 285.1,38.1 287.3,36.6 289.5,35.1 291.8,33.6 294.0,32.2 296.2,30.7 298.4,29.2 300.7,27.7 302.9,26.2 305.1,24.7 307.3,23.2 309.6,21.7 311.8,20.2 314.0,18.7" fill="none" stroke="#000" stroke-width="1.4"/><polyline points="44.0,120.9 48.2,123.5 52.3,126.1 56.5,128.7 60.6,131.3 64.8,133.9 68.9,136.5 73.1,139.1 77.2,141.7 81.4,144.3 85.5,146.9 89.7,149.5 93.8,152.1 98.0,154.7 102.2,157.3 106.3,159.9 110.5,162.5 114.6,165.1 118.8,167.7 122.9,170.3 127.1,172.9 131.2,175.5 135.4,178.2 139.5,180.8 143.7,183.4 147.8,186.0 152.0,188.6 156.2,191.2 160.3,193.8 164.5,196.4 168.6,199.0 172.8,201.6 176.9,204.2 181.1,206.8 185.2,209.4 189.4,212.0 193.5,214.6 197.7,217.2 201.8,219.8 206.0,222.4" fill="none" stroke="#000" stroke-width="1.1" stroke-dasharray="1.5 2.5"/><circle cx="125.0" cy="145.0" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><circle cx="152.0" cy="138.5" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><circle cx="206.0" cy="102.0" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><circle cx="260.0" cy="70.8" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><circle cx="314.0" cy="27.7" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><line x1="71.0" y1="23.8" x2="98.0" y2="23.8" stroke="#000" stroke-width="1.4"/><text x="103.4" y="27.3" font-size="10" font-family="TeX Gyre Termes, Times, serif">exact</text><line x1="71.0" y1="46.4" x2="98.0" y2="46.4" stroke="#000" stroke-width="1.1" stroke-dasharray="1.5 2.5"/><text x="103.4" y="49.9" font-size="10" font-family="TeX Gyre Termes, Times, serif">1 − 3D/2</text><circle cx="84.5" cy="68.9" r="3" fill="#fff" stroke="#000" stroke-width="1.1"/><text x="103.4" y="72.4" font-size="10" font-family="TeX Gyre Termes, Times, serif">simulation</text></svg>
+  <figcaption><b>FIG. 3.</b> The ratio of the exact rate to Kramers’ rate against <i>D</i> (solid line), the leading correction 1 − 3<i>D</i>/2 of Eq. (7) (dotted), and simulations (circles).</figcaption>
+</figure>
+
+<p><i class="run">Conclusion.</i>—In the symmetric quartic double well Kramers’ formula is within 14% of the exact rate where it overestimates it, and the leading relative correction is −3<i>D</i>/2, which improves the formula only up to <i>D</i> = 0.11. The size of the deviation at the noise strengths where Δ<i>U</i>/<i>D</i> is a few should be kept in mind when rates are compared with Kramers’ formula, as it is in work on stochastic resonance [6,7].</p>
+
+<p><i class="run">Note.</i>—This is a demonstration for the Helium gallery. The journal, the authors, and their institutions are invented, and so is the text around the calculation; the numbers and the figures are computed by <span style="font-family: monospace; font-size: 8.5pt;">generate.py</span> in the directory of this document.</p>
+
+<div class="refs">
+  <span class="h">REFERENCES</span>
+  <ol>
+    <li><span class="n">[1]</span>A. Einstein, Ann. Phys. (Leipzig) <b>17</b>, 549 (1905).</li>
+    <li><span class="n">[2]</span>H. A. Kramers, Physica (Utrecht) <b>7</b>, 284 (1940).</li>
+    <li><span class="n">[3]</span>P. Hänggi, P. Talkner, and M. Borkovec, Rev. Mod. Phys. <b>62</b>, 251 (1990).</li>
+    <li><span class="n">[4]</span>H. Risken, <i>The Fokker–Planck Equation</i>, 2nd ed. (Springer, Berlin, 1989).</li>
+    <li><span class="n">[5]</span>C. W. Gardiner, <i>Handbook of Stochastic Methods</i>, 3rd ed. (Springer, Berlin, 2004).</li>
+    <li><span class="n">[6]</span>R. Benzi, A. Sutera, and A. Vulpiani, J. Phys. A <b>14</b>, L453 (1981).</li>
+    <li><span class="n">[7]</span>L. Gammaitoni, P. Hänggi, P. Jung, and F. Marchesoni, Rev. Mod. Phys. <b>70</b>, 223 (1998).</li>
+  </ol>
+</div>
+
+</div>
+</body>
+</html>
