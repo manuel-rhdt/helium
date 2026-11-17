@@ -148,8 +148,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `color()` (a colour that sRGB cannot hold, like `color(display-p3 1 0 0)`, is not clipped, in fills,
   strokes, text, backgrounds and borders: it is written in one ICC space with the primaries of Rec. 2020 and a gamma of 2.4 (written once;
   it holds Display P3 and nearly all that CSS can write, and an iPhone shows it as it says), and only a colour that
-  Rec. 2020 cannot hold is clipped, to it. The other colours are device RGB, which every page defines as sRGB
-  (`DefaultRGB`). Gradients, `color-mix()`, SVG images and the layers of colour glyphs are still
+  Rec. 2020 cannot hold is clipped, to it. The other colours are in an ICC space of sRGB (written once), and device RGB, which images and
+  shadings still use, is defined as sRGB for every page (`DefaultRGB`). Gradients, `color-mix()`, SVG images and the layers of colour glyphs are still
   sRGB, and a wide colour is clipped there), with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
   painted for backgrounds, borders, text, text decorations and gradients. `color-mix()` mixes
   two colours (also nested, and with `var()`) in `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`,

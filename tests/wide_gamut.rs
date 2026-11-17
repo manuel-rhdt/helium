@@ -46,8 +46,9 @@ fn profiles(pdf: &str) -> usize {
 #[test]
 fn a_color_of_display_p3_is_in_the_rec2020_profile() {
     let pdf = render("p3", "<p style=\"background: color(display-p3 1 0 0)\">x</p>");
-    let fills = space_colors(&pdf, true);
-    assert_eq!(fills.len(), 1, "{fills:?}");
+    // the black of the text is in the sRGB space too: it is the colour that is not 0 0 0
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).take(1).collect();
+    assert!(!fills.is_empty(), "{fills:?}");
     // Display P3 red in Rec. 2020: the linear coordinates to the power of 1 / 2.4
     assert!(close(&fills[0].1, [0.88892, 0.27657, 0.0]), "{:?}", fills[0]);
     assert!(pdf.contains("/ICCBased"), "{pdf}");
@@ -59,16 +60,18 @@ fn a_color_of_display_p3_is_in_the_rec2020_profile() {
 #[test]
 fn rec2020_green_is_its_own_primary() {
     let pdf = render("rec2020", "<p style=\"background: color(rec2020 0 1 0)\">x</p>");
-    let fills = space_colors(&pdf, true);
-    assert_eq!(fills.len(), 1, "{fills:?}");
+    // the black of the text is in the sRGB space too: it is the colour that is not 0 0 0
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).take(1).collect();
+    assert!(!fills.is_empty(), "{fills:?}");
     assert!(close(&fills[0].1, [0.0, 1.0, 0.0]), "{:?}", fills[0]);
 }
 
 #[test]
 fn a_color_that_rec2020_cannot_hold_is_clipped_to_it() {
     let pdf = render("prophoto", "<p style=\"background: color(prophoto-rgb 0 1 0)\">x</p>");
-    let fills = space_colors(&pdf, true);
-    assert_eq!(fills.len(), 1, "{fills:?}");
+    // the black of the text is in the sRGB space too: it is the colour that is not 0 0 0
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).take(1).collect();
+    assert!(!fills.is_empty(), "{fills:?}");
     assert!(fills[0].1.iter().all(|v| (0.0..=1.0).contains(v)), "{:?}", fills[0]);
     assert!(!pdf.contains("/CalRGB"));
 }
@@ -96,15 +99,17 @@ fn the_profile_is_written_once_for_the_whole_document() {
 }
 
 #[test]
-fn a_color_inside_of_srgb_stays_device_rgb() {
+fn a_color_inside_of_srgb_is_in_the_srgb_profile() {
     let pdf = render(
         "inside",
         "<p style=\"color: color(display-p3 0.5 0.5 0.5); background: lab(50 20 30); border: 2px solid oklch(0.6 0.1 200)\">x</p>",
     );
-    assert!(space_colors(&pdf, true).is_empty() && space_colors(&pdf, false).is_empty());
-    assert!(rgb_count(&pdf) >= 2);
-    assert!(!pdf.contains("/CalRGB"), "no colour outside of sRGB, so no colour space of it");
-    assert_eq!(profiles(&pdf), 1, "only the sRGB profile of DefaultRGB");
+    // the colours are in the sRGB profile (one for the document), the same one that DefaultRGB uses
+    assert!(space_colors(&pdf, true).len() >= 2, "{:?}", space_colors(&pdf, true));
+    assert!(!space_colors(&pdf, true).iter().chain(space_colors(&pdf, false).iter()).any(|(_, c)| c.iter().any(|v| !(0.0..=1.0).contains(v))));
+    assert_eq!(rgb_count(&pdf), 0, "no device RGB colour in the content");
+    assert!(!pdf.contains("/CalRGB"));
+    assert_eq!(profiles(&pdf), 1, "only the sRGB profile");
     assert!(pdf.contains("/DefaultRGB"));
 }
 
@@ -112,7 +117,8 @@ fn a_color_inside_of_srgb_stays_device_rgb() {
 fn opacity_and_alpha_keep_the_wide_color() {
     // the alpha of a colour is set apart from its colour space
     let pdf = render("alpha", "<p style=\"background: color(display-p3 0 1 0 / 40%); opacity: 0.8\">x</p>");
-    assert_eq!(space_colors(&pdf, true).len(), 1, "{:?}", space_colors(&pdf, true));
+    assert!(!space_colors(&pdf, true).is_empty(), "{:?}", space_colors(&pdf, true));
+    assert_eq!(profiles(&pdf), 2, "the sRGB profile and the wide one");
     assert!(pdf.contains("/ca 0.4") || pdf.contains("/ca .4"), "{pdf}");
 }
 

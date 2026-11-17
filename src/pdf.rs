@@ -169,9 +169,10 @@ fn rec2020_gamma24_components(xyz: [f64; 3]) -> [f64; 3] {
     multiply(&XYZ_TO_REC2020, xyz).map(|linear| linear.clamp(0.0, 1.0).powf(1.0 / 2.4))
 }
 
-/// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is device
-/// RGB, which is sRGB (what `DefaultRGB` says, and the output intent of a PDF/A file). Any other
-/// colour is in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4, written once for the
+/// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is in an ICC
+/// space of sRGB, written once for the document: CSS chooses its colours deliberately, and the file
+/// says in which space they are, whatever a viewer takes the device to be. (Device colours, which images
+/// and shadings still have, are sRGB too: the page defines `DefaultRGB`.) Any other colour is in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4, written once for the
 /// document: matrix/TRC profiles are the best supported wide-gamut encoding of PDF viewers, and this one
 /// holds Display P3 and nearly all that CSS can write. (It has a pure gamma and not the curve of
 /// Rec. 2020 because an iPhone decodes every Rec. 2020 profile with a gamma of 2.4.) Only a colour that
@@ -180,8 +181,10 @@ fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: P
     let xyz = match color {
         PaintColor::Srgb(color) => {
             let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
-            let (r, g, b) = (channel(color.red), channel(color.green), channel(color.blue));
-            return if stroke { context.device_rgb_stroke_color(r, g, b) } else { context.device_rgb_fill_color(r, g, b) };
+            let space = context.pdf_context.icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
+            let space = context.add_color_space(space);
+            let components = [channel(color.red), channel(color.green), channel(color.blue)];
+            return if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) };
         }
         PaintColor::DisplayP3(color) => {
             let decode = |value: f64| if value <= 0.040_45 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) };

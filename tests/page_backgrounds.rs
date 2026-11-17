@@ -19,13 +19,13 @@ fn render(name: &str, html: &str) -> String {
     String::from_utf8_lossy(&std::fs::read(output).unwrap()).into_owned()
 }
 
-/// The colours of the rectangles that cover the 300pt x 200pt page, in stream order.
+/// The colours (`sc` of an sRGB profile) of the rectangles that cover the 300pt x 200pt page, in stream order.
 fn page_fills(pdf: &str) -> Vec<String> {
     let mut fills = vec![];
     for (end, _) in pdf.match_indices(" 0 0 300 200 re f") {
         // the colour operands in front of `rg`
         let head = &pdf[..end];
-        let rg = head.rfind(" rg").unwrap();
+        let rg = head.rfind(" sc").unwrap();
         let operands: Vec<&str> = head[..rg].split_whitespace().rev().take(3).collect();
         fills.push(format!("{} {} {}", operands[2], operands[1], operands[0]));
     }
@@ -64,7 +64,7 @@ fn the_background_of_the_body_is_the_background_of_the_canvas() {
     );
     // one rectangle for every page, and none in the box of the body
     assert_eq!(page_fills(&pdf), ["1 0.933333 0.8", "1 0.933333 0.8"]);
-    assert_eq!(pdf.matches("1 0.933333 0.8 rg").count(), 2, "the body is not painted again");
+    assert_eq!(pdf.matches("1 0.933333 0.8 sc").count(), 2, "the body is not painted again");
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn the_root_element_wins_over_the_body_and_the_body_keeps_its_own_background() {
     );
     assert_eq!(page_fills(&pdf), ["0.062745 0.12549 0.188235"]);
     // the background of the body is painted in the box of the body
-    assert_eq!(pdf.matches("1 0.933333 0.8 rg").count(), 1);
+    assert_eq!(pdf.matches("1 0.933333 0.8 sc").count(), 1);
 }
 
 #[test]
