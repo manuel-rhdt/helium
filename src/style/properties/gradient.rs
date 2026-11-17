@@ -274,7 +274,6 @@ fn parse_gradient<'i>(
             (GradientKind::Conic(conic), how)
         }
     };
-    let interpolation = interpolation.unwrap_or_default();
     let conic = matches!(kind, GradientKind::Conic(_));
 
     let mut stops = vec![];
@@ -287,7 +286,26 @@ fn parse_gradient<'i>(
     if !input.is_exhausted() || stops.len() < 2 {
         return Err(input.new_error_for_next_token());
     }
+    // Without an `in <space>` the colours are interpolated in Oklab, except those of the legacy sRGB
+    // syntaxes, which are in gamma-encoded sRGB (CSS Color 4, 13.3): that is when every stop is one of them.
+    let interpolation = interpolation.unwrap_or_else(|| default_interpolation(&stops));
     Ok(Gradient { kind, repeating, interpolation, stops })
+}
+
+/// Whether a colour has one of the legacy sRGB syntaxes: hex, a name, `rgb()`, `hsl()` or `hwb()` (with
+/// alpha too). `currentcolor` has the colour of the element, which is not known here; it counts as one.
+fn is_legacy_syntax(color: &Color) -> bool {
+    matches!(color, Color::CurrentColor | Color::Rgba(_) | Color::Hsl(_) | Color::Hwb(_))
+}
+
+/// How the colours of a gradient are interpolated when the gradient does not say: in sRGB for legacy
+/// sRGB colours only (what the web has always done), else in Oklab (CSS Color 4, 13.3).
+fn default_interpolation<L>(stops: &[Stop<L, Color>]) -> Interpolation {
+    if stops.iter().all(|stop| is_legacy_syntax(&stop.color)) {
+        Interpolation::default()
+    } else {
+        Interpolation { space: super::color_mix::Space::Oklab, ..Interpolation::default() }
+    }
 }
 
 fn parse_angle<'i>(input: &mut Parser<'i>) -> ParseResult<f32> {
@@ -1166,6 +1184,24 @@ mod tests {
             Some(Image::Gradient(gradient)) => gradient,
             other => panic!("{css:?} parsed as {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_default_space_is_srgb_for_legacy_colours_and_oklab_for_the_others() {
+        let space = |css| gradient(css).interpolation.space;
+        use super::super::color_mix::Space;
+        // hex, names, rgb(), hsl() and hwb(), also with alpha, and currentcolor
+        assert_eq!(space("linear-gradient(red, #00f)"), Space::Srgb);
+        assert_eq!(space("linear-gradient(rgb(255 0 0 / 50%), hsl(120 100% 50%), hwb(0 0% 0%), transparent)"), Space::Srgb);
+        assert_eq!(space("linear-gradient(currentcolor, white)"), Space::Srgb);
+        // any other syntax, also one that is sRGB, makes it Oklab, and so does a mix with a legacy one
+        assert_eq!(space("linear-gradient(color(srgb 1 0 0), blue)"), Space::Oklab);
+        assert_eq!(space("linear-gradient(red, color(display-p3 0 1 0))"), Space::Oklab);
+        assert_eq!(space("radial-gradient(lab(50 40 30), oklch(0.6 0.2 120))"), Space::Oklab);
+        assert_eq!(space("conic-gradient(red, lch(50 50 50))"), Space::Oklab);
+        // what the gradient says wins
+        assert_eq!(space("linear-gradient(in srgb, color(display-p3 1 0 0), color(display-p3 0 1 0))"), Space::Srgb);
+        assert_eq!(space("linear-gradient(in lab, red, blue)"), Space::Lab);
     }
 
     #[test]
