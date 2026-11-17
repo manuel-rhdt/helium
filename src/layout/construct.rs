@@ -286,6 +286,9 @@ impl FlowConstructor {
                 let cascade = cascade_declarations(&matched_rules, size_hint.as_ref(), inline_style.as_ref());
                 style_builder.apply_cascade(cascade.iter().copied());
                 let mut style = style_builder.build();
+                if box_parent_style.as_ref().is_some_and(|parent| !parent.text.white_space.wraps()) {
+                    std::sync::Arc::make_mut(&mut style.box_).parent_nowrap = true;
+                }
                 if parent_is_flex_or_grid {
                     style.blockify();
                 }
@@ -1918,7 +1921,13 @@ impl EntityConstructor {
         let is_empty_container = style.box_.display.is_flex_or_grid()
             && inline_level_elements.is_empty()
             && replaced_text.is_none();
-        if !has_block_level_elements && !is_empty_container {
+        // The text of a flex or grid container is in an anonymous item of it, which is aligned
+        // like any other item: the container does not lay it out as a block of its own (unless it
+        // is the text of a replaced element, like the value of an `input`).
+        let has_anonymous_item = style.box_.display.is_flex_or_grid()
+            && !inline_level_elements.is_empty()
+            && replaced_text.is_none();
+        if !has_block_level_elements && !is_empty_container && !has_anonymous_item {
             // no block-level elements were found, so we create a inline_formatting_context
             if inline_level_elements.is_empty()
                 && let Some(text) = replaced_text

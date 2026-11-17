@@ -782,6 +782,18 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                 penalty: 0,
             });
 
+            // whether an element has content (text, or an inline-level box) behind it
+            let mut content_after = vec![false; elements.len()];
+            for index in (0..elements.len().saturating_sub(1)).rev() {
+                let later = elements[index + 1];
+                content_after[index] = content_after[index + 1]
+                    || text_runs.get(later).is_some_and(|run| !run.text.trim().is_empty())
+                    || intrinsic_sizes.get(later).is_some()
+                    || computed_values
+                        .get(later)
+                        .is_some_and(|style| style.box_.display.is_atomic_inline());
+            }
+
             let mut advance = Pen::default();
 
             for (index, &entity) in elements.iter().enumerate() {
@@ -934,7 +946,11 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             other_breaks.next();
                         }
                         let cur_char = &text_run.text[glyph_info.cluster as usize..];
-                        let ends_run = cur_char.trim_start().is_empty();
+                        // Only a space at the very end of the paragraph is a break in `nowrap`
+                        // text: one in front of more content (an inline-level box, more text)
+                        // is not.
+                        let ends_run =
+                            cur_char.trim_start().is_empty() && !content_after[index];
                         if cur_char.starts_with(|chr: char| chr.is_whitespace())
                             && (wraps || ends_run)
                         {
@@ -1128,9 +1144,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         glue_shrink: Px(0.0),
                         penalty: 0,
                     };
+                    // (the white space of the parent decides, not the one of the box itself)
                     let wraps = computed_values
                         .get(entity)
-                        .is_none_or(|style| style.text.white_space.wraps());
+                        .is_none_or(|style| !style.box_.parent_nowrap);
                     if wraps
                         && index > 0
                         && break_points.last().is_some_and(|last| last.advance_after != advance.px())

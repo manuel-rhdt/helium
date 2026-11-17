@@ -268,3 +268,36 @@ fn an_invalid_track_list_is_dropped() {
         <div data-expected-width="300">a</div></div>"#,
     );
 }
+
+/// Text that is a direct child of a flex container is an (anonymous) item: it is centred like the
+/// same text in a `<span>`.
+#[test]
+fn bare_text_in_a_flex_container_is_aligned_like_an_item() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let origin = |name: &str, content: &str| {
+        let input = dir.join(format!("flex_text__{name}.html"));
+        std::fs::write(
+            &input,
+            format!(
+                "<style>body{{margin:0}}div{{display:flex;justify-content:center;align-items:center;width:200px;height:60px}}</style><div>{content}</div>"
+            ),
+        )
+        .unwrap();
+        let output = common::helium()
+            .unwrap()
+            .arg("--dump-layout")
+            .arg("-")
+            .arg(&input)
+            .arg(dir.join(format!("flex_text__{name}.pdf")))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let dump: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let text = &dump["paint"]["text"][0];
+        (text["x"].as_f64().unwrap(), text["y"].as_f64().unwrap())
+    };
+    let (bare_x, bare_y) = origin("bare", "7");
+    let (span_x, span_y) = origin("span", "<span>7</span>");
+    assert!((bare_x - span_x).abs() < 0.01 && (bare_y - span_y).abs() < 0.01, "{bare_x},{bare_y} vs {span_x},{span_y}");
+    assert!(bare_x > 50.0, "not centred: {bare_x}");
+}
