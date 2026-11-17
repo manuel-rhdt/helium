@@ -171,12 +171,49 @@ impl RasterImage {
     }
 
     /// The image as the PDF library embeds it.
+    /// Whether the image has CMYK colours: a JPEG file with four components (only JPEG files
+    /// can).
+    pub fn is_cmyk(&self) -> bool {
+        jpeg_components(&self.data) == Some(4)
+    }
+
     pub fn to_pdf_image(&self) -> Result<Image, String> {
         match &self.decoded {
             Some(image) => Ok(image.clone()),
             None => to_pdf_image(&self.data).map(|(image, _)| image),
         }
     }
+}
+
+/// The number of colour components of a JPEG file, from the header of its frame.
+fn jpeg_components(data: &[u8]) -> Option<u8> {
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut at = 2;
+    while at + 4 <= data.len() {
+        if data[at] != 0xFF {
+            return None;
+        }
+        let marker = data[at + 1];
+        match marker {
+            // fill bytes, and the markers that have no data
+            0xFF => at += 1,
+            0x01 | 0xD0..=0xD7 | 0xD8 => at += 2,
+            // the start of the data: no frame header was found
+            0xD9 | 0xDA => return None,
+            _ => {
+                let length = usize::from(u16::from_be_bytes([data[at + 2], data[at + 3]]));
+                // the frame headers (and not the tables with the markers in between)
+                if matches!(marker, 0xC0..=0xCF) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+                    // length, precision, height, width, then the number of components
+                    return data.get(at + 9).copied();
+                }
+                at += 2 + length;
+            }
+        }
+    }
+    None
 }
 
 /// The image for the PDF library, and whether its pixels were decoded (and not the file kept).
@@ -463,5 +500,19 @@ mod tests {
         assert!(load("", dir, &FontContext::system()).is_err());
         assert!(load("data:image/png,abc", dir, &FontContext::system()).unwrap_err().contains("JPEG, PNG and SVG"));
         assert!(load("../../etc/passwd", dir, &FontContext::system()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod jpeg_tests {
+    use super::*;
+
+    #[test]
+    fn the_components_of_jpeg_files_are_read() {
+        assert_eq!(jpeg_components(include_bytes!("../tests/data/cmyk.jpg")), Some(4));
+        assert_eq!(jpeg_components(include_bytes!("../tests/data/rgb.jpg")), Some(3));
+        // not a JPEG file, and a truncated one
+        assert_eq!(jpeg_components(b"\x89PNG\r\n"), None);
+        assert_eq!(jpeg_components(&include_bytes!("../tests/data/cmyk.jpg")[..30]), None);
     }
 }

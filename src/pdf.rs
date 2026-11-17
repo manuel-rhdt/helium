@@ -629,7 +629,6 @@ fn embed_images(
     display_list: &mut display_list::DisplayList,
     images: &mut HashMap<*const crate::image::LoadedImage, Embedded>,
     svg_writer: &mut crate::svg::SvgWriter,
-    pdfa: Option<PdfALevel>,
 ) {
     for item in display_list.items() {
         let DisplayItem::Image { image, .. } = item else {
@@ -642,12 +641,6 @@ fn embed_images(
         let embedded = match &**image {
             crate::image::LoadedImage::Raster(raster) => raster
                 .to_pdf_image()
-                .inspect(|pdf_image| {
-                    // the output intent of a PDF/A file is RGB: CMYK needs a profile of its own
-                    if pdfa.is_some() && pdf_image.color_space() == lemon_pdf::image::ColorSpace::DeviceCMYK {
-                        log::warn!("A CMYK image does not conform to PDF/A (the output intent is sRGB).");
-                    }
-                })
                 .and_then(|pdf_image| context.write_image(pdf_image).map_err(|error| error.to_string()))
                 .map(Embedded::Raster),
             crate::image::LoadedImage::Svg(svg) => svg_writer
@@ -701,6 +694,29 @@ impl std::str::FromStr for PdfALevel {
     }
 }
 
+/// The output intent of a PDF/A file is RGB, and PDF/A does not allow device CMYK colours without
+/// one that is CMYK, so a CMYK image is an error. (An image has to be converted to RGB.)
+fn check_pdfa_images(print_pages: &mut PrintPages) -> Result<(), Error> {
+    let lists = print_pages
+        .pages
+        .iter_mut()
+        .map(|page| &mut page.display_list)
+        .chain(print_pages.islands.iter_mut().map(|island| &mut island.display_list));
+    for list in lists {
+        for item in list.items() {
+            if let DisplayItem::Image { image, .. } = item {
+                if matches!(&**image, crate::image::LoadedImage::Raster(raster) if raster.is_cmyk()) {
+                    return Err(Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "the document has a CMYK image, which PDF/A does not allow (the colours are sRGB): convert it to RGB",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Writes the pages as a PDF file. If `tagged`, it is a tagged PDF whose structure tree is the
 /// `structure` of the pages. With a `pdfa` level the file is written to conform to it.
 pub fn write_pdf(
@@ -711,6 +727,10 @@ pub fn write_pdf(
     tagged: bool,
     pdfa: Option<PdfALevel>,
 ) -> Result<(), Error> {
+    if pdfa.is_some() {
+        // before the file is made, so that there is none if there is an error
+        check_pdfa_images(&mut print_pages)?;
+    }
     let file = BufWriter::new(File::create(output_path)?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
@@ -827,7 +847,7 @@ pub fn write_pdf(
     // own, which come after it, so the last one is written first.
     for index in (0..print_pages.islands.len()).rev() {
         let mut island = std::mem::take(&mut print_pages.islands[index]);
-        embed_images(&mut context, &mut island.display_list, &mut images, &mut svg_writer, pdfa);
+        embed_images(&mut context, &mut island.display_list, &mut images, &mut svg_writer);
         let (width, height) = (island.width, island.height);
         let form = context.write_form(
             [Pt(0.0), Pt(0.0), Pt::from(width), Pt::from(height)],
@@ -852,7 +872,7 @@ pub fn write_pdf(
         svg_writer.add_island(index as u64, form);
     }
     for page in &mut print_pages.pages {
-        embed_images(&mut context, &mut page.display_list, &mut images, &mut svg_writer, pdfa);
+        embed_images(&mut context, &mut page.display_list, &mut images, &mut svg_writer);
     }
 
     log::info!("Write {} pages.", print_pages.pages.len());
