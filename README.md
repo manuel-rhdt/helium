@@ -9,6 +9,7 @@ helium [options] input.html output.pdf
 
 | Option | Effect |
 | --- | --- |
+| `--svg` / `--html` | read the input as a standalone SVG file / as HTML (by default: SVG if the extension is `.svg` or the first element is `<svg`) |
 | `--no-compression` | write uncompressed content streams (for inspecting the PDF) |
 | `--crop` | size the page to its content instead of A4 |
 | `--no-tags` | write an untagged PDF |
@@ -54,6 +55,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   elements (it does not win over one in a style sheet), a
   `foreignObject` in an SVG file (`<img src="x.svg">`: the content needs the document),
   hyperlinks and tags (accessibility structure) inside of a `foreignObject`.
+- **SVG as the input:** `helium drawing.svg out.pdf` makes one page of the size of the drawing
+  (`width` and `height`, else the `viewBox`, else 300 by 150 pixels; no margin),
+  with `<foreignObject>` content (HTML, MathML) and `<style>` elements as in an inline `<svg>`.
+  The file is read by the HTML parser, not an XML parser: empty elements (`<div/>`) are expanded
+  first, and the XML declaration and the document type are dropped, but names with a namespace
+  prefix (`<svg:rect>`, `<xhtml:div>`) and entities of an internal DTD are not understood.
+  Percentages as `width`/`height` are not a size (the `viewBox` is used). The structure tree does
+  not reach into a `foreignObject` (no `Formula` tags there).
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
   document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.

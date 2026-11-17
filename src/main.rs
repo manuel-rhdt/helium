@@ -27,6 +27,7 @@ pub mod font_usage;
 pub mod image;
 mod svg;
 pub mod svg_dom;
+mod svg_input;
 mod svg_text;
 pub mod layout;
 pub mod node_data_ref;
@@ -81,7 +82,14 @@ struct Options {
     /// of only from the directory of the document
     #[structopt(long = "resource-root", parse(from_os_str))]
     resource_root: Option<PathBuf>,
-    /// The input HTML file to process
+    /// Read the input as a standalone SVG file (one page of the size of the drawing) instead of
+    /// HTML. By default this is decided by the extension `.svg` or by the first element.
+    #[structopt(long = "svg")]
+    svg_flag: bool,
+    /// Read the input as HTML even if it looks like an SVG file.
+    #[structopt(long = "html", conflicts_with = "svg_flag")]
+    html_flag: bool,
+    /// The input file to process: HTML, or SVG (which may hold HTML and MathML in `foreignObject`)
     #[structopt(parse(from_os_str))]
     input: PathBuf,
     /// Path where the output PDF file will be stored
@@ -114,7 +122,21 @@ fn main() -> Result<(), Error> {
         .unwrap_or(Path::new("."))
         .to_path_buf();
     let file = fs::read(&opt.input)?;
-    let html = String::from_utf8_lossy(&file);
+    let text = String::from_utf8_lossy(&file);
+    // a standalone SVG file is one page that the drawing fills
+    let is_svg = if opt.svg_flag {
+        true
+    } else if opt.html_flag {
+        false
+    } else {
+        opt.input.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+            || svg_input::looks_like_svg(&text)
+    };
+    let html = if is_svg {
+        std::borrow::Cow::Owned(svg_input::wrap(&text))
+    } else {
+        text
+    };
 
     let before_render_tree = Instant::now();
     let dom = generate_render_tree(&html);
