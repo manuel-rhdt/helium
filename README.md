@@ -13,6 +13,7 @@ helium [options] input.html output.pdf
 | `--no-compression` | write uncompressed content streams (for inspecting the PDF) |
 | `--crop` | one page that is as large as the content, instead of A4 pages: no page breaks (also not forced ones), page margins, `@page` rules or margin boxes. The page is as wide as the content needs (what shrink-to-fit comes to with no limit, so text is not broken into lines: give the `body` a `width` to set one) and as high as the content, up to 100 000 pixels, after which it has another page |
 | `--no-tags` | write an untagged PDF |
+| `--pdfa <level>` | write a PDF/A file: level `2a`, `2b`, `2u`, `3a`, `3b` or `3u`. Adds the identification to the XMP packet and an output intent with an sRGB profile (made in code, so there is no file and no licence to care about), which is what makes the device colours that the pages use conformant. The level `a` needs the structure tree (not with `--no-tags`). Not checked: what the document uses that PDF/A forbids, except that a CMYK image is reported as a warning |
 | `--no-system-fonts` | use only the built-in fonts, so that the output does not depend on the machine |
 | `--dump-layout <file>` | write the computed layout as JSON (`-` for stdout) |
 | `--check-layout` | evaluate the `data-expected-*` attributes of the document against the layout |
@@ -296,6 +297,15 @@ from the elements with a `bookmark-level` (UA default: `h1` to `h6` and `role=he
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
 groups for `opacity`.
+
+### Conformance
+
+The gallery is validated with [veraPDF](https://verapdf.org) for PDF/UA-1 and for every level of
+`--pdfa` (`tests/conformance.rs`; the test is skipped unless `VERAPDF_LIB` is the directory with the
+jars of veraPDF, which `tools/fetch_verapdf.sh DIR` downloads to `DIR/lib`). All documents conform
+but one: the sidebar of the `cv` has headings before the `h1`, which PDF/UA-1 does not allow. This
+says that veraPDF finds nothing wrong in the gallery, which is not a proof for every document: it
+checks what a program can check, and not for example whether the reading order makes sense.
 
 ## Not supported
 
