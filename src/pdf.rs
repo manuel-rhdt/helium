@@ -153,18 +153,22 @@ fn component(value: f32) -> f64 {
     (f64::from(value) * 100_000.0).round() / 100_000.0
 }
 
-/// The white of CIE XYZ as CSS has it (D65).
-const D65_WHITE: [f64; 3] = [0.950_455_927, 1.0, 1.089_057_751];
-
-/// The factor of the matrix of the `CalRGB` space that carries CIE XYZ: the components of a colour
-/// are X, Y and Z divided by it, so that every colour (Z of a blue is above 1) is in [0, 1].
-const XYZ_CARRIER_SCALE: f64 = 1.2;
+/// The Bradford adaptation from the white of D65 (the XYZ of the colours of CSS) to the white of D50
+/// (CSS Color 4, 10.3).
+#[rustfmt::skip]
+const D65_TO_D50: [[f64; 3]; 3] = [
+    [ 1.047_929_792_5,  0.022_946_870_6, -0.050_192_266_3],
+    [ 0.029_627_808_8,  0.990_434_426_8, -0.017_073_799_1],
+    [-0.009_243_040_6,  0.015_055_191_5,  0.751_874_281_4],
+];
 
 /// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is device
 /// RGB, which is sRGB (what the colours of a PDF are without a profile, and with the output intent
 /// of a PDF/A file). A colour of Display P3 has an ICC profile of that space, written once for the
-/// document, and any other colour is in a `CalRGB` space whose three components are CIE XYZ
-/// (a viewer shows it as well as its screen can). Nothing is clipped here. The alpha is not set.
+/// document, and any other colour is in a `CalRGB` space whose three components are CIE XYZ, adapted to
+/// D50 and divided by the white point of D50, so that (1, 1, 1) is the white (a viewer shows it as well
+/// as its screen can). That space is the one that was exact on an iPhone: a matrix that is not the
+/// white point at (1, 1, 1) is renormalised there. Nothing is clipped here. The alpha is not set.
 fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
     use lemon_pdf::color_space::CalRgbColorSpace;
 
@@ -179,14 +183,16 @@ fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: P
             (context.add_color_space(profile), color.components().map(component))
         }
         PaintColor::Xyz(color) => {
-            let space = CalRgbColorSpace {
-                white_point: D65_WHITE,
-                gamma: [1.0; 3],
-                matrix: [XYZ_CARRIER_SCALE, 0.0, 0.0, 0.0, XYZ_CARRIER_SCALE, 0.0, 0.0, 0.0, XYZ_CARRIER_SCALE],
-            };
-            let [x, y, z] = color.components();
-            let carried = [x, y, z].map(|value| (f64::from(value) / XYZ_CARRIER_SCALE * 100_000.0).round() / 100_000.0);
-            (context.add_color_space(space), carried)
+            let space = CalRgbColorSpace::xyz_carrier(lemon_pdf::color_space::D50_WHITE_POINT);
+            let xyz = color.components().map(f64::from);
+            let components: Vec<f64> = (0..3)
+                .map(|row| {
+                    let adapted: f64 = (0..3).map(|column| D65_TO_D50[row][column] * xyz[column]).sum();
+                    // the component of a colour that exists is from 0 to 1; one that is not is clamped
+                    (adapted / lemon_pdf::color_space::D50_WHITE_POINT[row]).clamp(0.0, 1.0)
+                })
+                .collect();
+            (context.add_color_space(space), [components[0], components[1], components[2]])
         }
     };
     if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) }

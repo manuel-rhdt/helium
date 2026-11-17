@@ -55,11 +55,14 @@ fn a_color_outside_of_display_p3_is_xyz_in_a_calrgb_space() {
     let pdf = render("xyz", "<p style=\"background: color(rec2020 0 1 0)\">x</p>");
     let fills = space_colors(&pdf, true);
     assert_eq!(fills.len(), 1, "{fills:?}");
-    // X, Y and Z of Rec. 2020 green, divided by the 1.2 of the matrix of the space
-    assert!(close(&fills[0].1, [0.1446 / 1.2, 0.6780 / 1.2, 0.0281 / 1.2]), "{:?}", fills[0]);
+    // X, Y and Z of Rec. 2020 green adapted to D50 (Bradford) and divided by the white of D50: the
+    // components of the carrier whose (1, 1, 1) is the white point (the one that is exact on an iPhone)
+    assert!(close(&fills[0].1, [0.17183, 0.67532, 0.03633]), "{:?}", fills[0]);
     assert!(pdf.contains("/CalRGB"), "{pdf}");
     assert!(pdf.contains("/Gamma"));
     assert!(pdf.contains("/WhitePoint"));
+    // the matrix is the white point on its diagonal: (1, 1, 1) is the white
+    assert!(pdf.contains("0.964296") && pdf.contains("0.825105"), "{pdf}");
     assert!(!pdf.contains("/ICCBased"), "an ICC profile is only written for a colour that needs it");
 }
 
