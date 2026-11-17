@@ -298,6 +298,37 @@ fn resolve_radii(
 }
 
 /// A closed path around `rect`.
+/// The complementary error function (Abramowitz and Stegun 7.1.26, an error below 1.5e-7).
+fn erfc(x: f32) -> f32 {
+    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
+    let poly = t
+        * (0.254_829_6 + t * (-0.284_496_74 + t * (1.421_413_8 + t * (-1.453_152_1 + t * 1.061_405_4))));
+    let erf = 1.0 - poly * (-x * x).exp();
+    if x >= 0.0 { 1.0 - erf } else { 1.0 + erf }
+}
+
+/// Radii that fit into a box of the size `width` by `height`: all are scaled down by the same
+/// factor if two of them would meet on a side that is too short.
+fn fit_radii(
+    radii: [(PixelLength, PixelLength); 4],
+    width: PixelLength,
+    height: PixelLength,
+) -> [(PixelLength, PixelLength); 4] {
+    let [tl, tr, br, bl] = radii;
+    let mut factor = 1.0_f32;
+    for (sum, size) in [
+        (tl.0.0 + tr.0.0, width.0),
+        (bl.0.0 + br.0.0, width.0),
+        (tl.1.0 + bl.1.0, height.0),
+        (tr.1.0 + br.1.0, height.0),
+    ] {
+        if sum > size && sum > 0.0 {
+            factor = factor.min(size / sum);
+        }
+    }
+    radii.map(|(rx, ry)| (PixelLength(rx.0 * factor), PixelLength(ry.0 * factor)))
+}
+
 fn rect_path(rect: Rect) -> Vec<PathSegment> {
     let p = |x: PixelLength, y: PixelLength| Point::new(x, y);
     vec![
@@ -842,6 +873,95 @@ impl DisplayList {
         self.gradients(&images, Some(clip), entity, z);
     }
 
+    /// Paints an outer `box-shadow` of the border box `rect` with the radii `radii`: below the box
+    /// and not inside of it.
+    ///
+    /// The blur is a Gaussian with the standard deviation half the blur radius. It is painted as
+    /// a stack of shapes of one colour that grow by the blur radius from the inside out, with the
+    /// transparency chosen so that the layers add up to the edge profile of the Gaussian. This is
+    /// vector graphics, with no raster image and no soft mask.
+    fn box_shadow(
+        &mut self,
+        rect: Rect,
+        radii: [(PixelLength, PixelLength); 4],
+        shadow: &crate::style::properties::computed::BoxShadow,
+        color: RGBA,
+        entity: Entity,
+        z: ZIndex,
+    ) {
+        if color.alpha == 0 {
+            return;
+        }
+        let blur = shadow.blur.max(0.0);
+        let layers = if blur > 0.0 { ((blur * 2.0).ceil() as usize).clamp(4, 32) } else { 1 };
+        let source = f32::from(color.alpha) / 255.0;
+        // the area the shadow can reach, outside of which the clip is a hole around the box
+        let reach = blur + shadow.spread.max(0.0) + shadow.x.abs().max(shadow.y.abs()) + 1.0;
+        let outer = Rect {
+            x: rect.x - PixelLength(reach),
+            y: rect.y - PixelLength(reach),
+            width: rect.width + PixelLength(2.0 * reach),
+            height: rect.height + PixelLength(2.0 * reach),
+        };
+        let mut hole = rect_path(outer);
+        hole.extend(rounded_rect_path(rect, radii));
+
+        self.append(DisplayItem::Push, entity, z);
+        self.append(DisplayItem::ClipPath { path: hole, even_odd: true }, entity, z);
+        // the edge profile: the share of the colour at `distance` outside of the edge
+        let profile = |distance: f32| 0.5 * erfc(distance / (blur / 2.0 * std::f32::consts::SQRT_2));
+        // `achieved` is what the layers painted so far add up to, with the transparency of every
+        // one rounded to 8 bits: the error of a layer is made good by the next ones
+        let mut achieved = 0.0_f32;
+        for layer in 0..layers {
+            // from the outermost layer to the innermost: its edge is `offset` outside of the
+            // edge of the shadow, and it reaches `step` inward from there
+            let (offset, target) = if blur > 0.0 {
+                let step = 2.0 * blur / layers as f32;
+                let offset = blur - step * layer as f32;
+                (offset, profile(offset - step / 2.0))
+            } else {
+                (0.0, 1.0)
+            };
+            let wanted = target * source;
+            let needed = if achieved < 1.0 { 1.0 - (1.0 - wanted) / (1.0 - achieved) } else { 0.0 };
+            let alpha = (needed * 255.0).round().clamp(0.0, 255.0) as u8;
+            achieved = 1.0 - (1.0 - achieved) * (1.0 - f32::from(alpha) / 255.0);
+            let outset = shadow.spread + offset;
+            let width = rect.width.0 + 2.0 * outset;
+            let height = rect.height.0 + 2.0 * outset;
+            if alpha == 0 || width <= 0.0 || height <= 0.0 {
+                continue;
+            }
+            let layer_rect = Rect {
+                x: rect.x + PixelLength(shadow.x - outset),
+                y: rect.y + PixelLength(shadow.y - outset),
+                width: PixelLength(width),
+                height: PixelLength(height),
+            };
+            // the corners grow with the shadow, but a square corner stays square
+            let grow = |(rx, ry): (PixelLength, PixelLength)| {
+                if rx.0 <= 0.0 || ry.0 <= 0.0 {
+                    (PixelLength(0.0), PixelLength(0.0))
+                } else {
+                    (PixelLength((rx.0 + outset).max(0.0)), PixelLength((ry.0 + outset).max(0.0)))
+                }
+            };
+            let grown = [grow(radii[0]), grow(radii[1]), grow(radii[2]), grow(radii[3])];
+            let fitted = fit_radii(grown, layer_rect.width, layer_rect.height);
+            let color = RGBA { alpha, ..color };
+            self.append(DisplayItem::Push, entity, z);
+            self.append(DisplayItem::Color(color), entity, z);
+            self.append(
+                DisplayItem::FillPath { path: rounded_rect_path(layer_rect, fitted), even_odd: false },
+                entity,
+                z,
+            );
+            self.append(DisplayItem::Pop, entity, z);
+        }
+        self.append(DisplayItem::Pop, entity, z);
+    }
+
     /// Paints the background of a style over a rectangle, behind everything else.
     fn page_background(&mut self, style: &ComputedValues, rect: Rect, entity: Entity) {
         let z = ZIndex(i64::MIN);
@@ -1140,6 +1260,18 @@ impl<'a> System<'a> for DisplayDecoration {
                 })
                 .filter(|_| !propagated)
                 .unwrap_or_default();
+            if let Some(style) = styles.get(style_entity) {
+                // the shadows, the first on top: so the last is painted first
+                let radii = resolve_radii(&deco.radius, border_box.width, border_box.height);
+                for shadow in style.box_.box_shadow.iter().rev().filter(|shadow| !shadow.inset) {
+                    use crate::style::properties::computed::Color;
+                    let color = match shadow.color {
+                        Color::CurrentColor => crate::style::properties::color::color_to_rgba(style.font.color),
+                        color => crate::style::properties::color::color_to_rgba(color),
+                    };
+                    self.display_list.box_shadow(border_box, radii, shadow, color, entity, z);
+                }
+            }
             if collapsed.is_none() && deco.radius.is_rounded() {
                 let outer = resolve_radii(&deco.radius, border_box.width, border_box.height);
                 if outer.iter().any(|&(rx, ry)| rx.0 > 0.0 && ry.0 > 0.0) {

@@ -131,6 +131,11 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   background with a blend mode, the images are painted over the blended layers, without being
   blended. Text in an SVG image that is a background is set in the system and built-in fonts, not
   in the `@font-face` fonts of the document.
+- **Shadows:** `box-shadow` with offsets, blur radius, spread, colour and several shadows. The
+  blur is a Gaussian, drawn as a stack of translucent shapes (vector, no raster image). The
+  shadow is clipped to the outside of the border box, follows `border-radius`, and is painted
+  for boxes that are not split over pages (a fragment of a split box has none). `inset` shadows
+  are not drawn, and `text-shadow` is not supported.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color()`, with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
   painted for backgrounds, borders, text, text decorations and gradients.
@@ -275,7 +280,7 @@ groups for `opacity`.
 
 Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`,
 `@supports`, `@import`, `calc()`, `overflow`, `float: left`/`right`, `position:
-fixed`/`sticky`, `z-index`, `box-shadow`,
+fixed`/`sticky`, `z-index`, `text-shadow`, inset shadows,
 `outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form
 interaction.

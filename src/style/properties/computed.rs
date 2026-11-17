@@ -969,6 +969,8 @@ pub struct Box {
     pub transform_origin: super::transform::TransformOrigin,
     /// 1 is opaque, 0 is invisible. Not inherited.
     pub opacity: f32,
+    /// The shadows of the box, the first on top. Not inherited.
+    pub box_shadow: Vec<BoxShadow>,
     pub grid_column_start: GridPlacement,
     pub grid_column_end: GridPlacement,
     pub grid_row_start: GridPlacement,
@@ -1018,6 +1020,7 @@ impl Default for Box {
             transform: Default::default(),
             transform_origin: Default::default(),
             opacity: 1.0,
+            box_shadow: Vec::new(),
             grid_column_start: Default::default(),
             grid_column_end: Default::default(),
             grid_row_start: Default::default(),
@@ -1233,6 +1236,17 @@ impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
             vertical: length(spec.vertical),
         }
     }
+}
+
+/// One shadow of `box-shadow`, in pixels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoxShadow {
+    pub x: f32,
+    pub y: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub color: Color,
+    pub inset: bool,
 }
 
 #[derive(Debug, Clone)]
