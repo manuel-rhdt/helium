@@ -1,10 +1,11 @@
 //! How the glyphs of the display list are written as the strings of `Tj` and `TJ` operators.
 //!
-//! The text of the display list is made of glyph indices of fonts. The `Identity-H` encoding
-//! of the embedded fonts makes a glyph index the code of the glyph in the string: two bytes,
-//! big endian.
+//! The text of the display list is made of glyph indices of fonts. The encoding of the embedded
+//! font (see [`GlyphEncoding`]) turns them into the codes of the strings: two bytes each, big
+//! endian.
 
 use crate::font_usage::FontUsage;
+use crate::pdf::encoding::GlyphEncoding;
 use crate::layout::components::{GlyphRange, KernedGlyph, KernedItem, NO_CLUSTER, TextOperator, TextOps};
 use crate::layout::text::clusters::{PieceClusters, trim_invisible, unit_start};
 use crate::layout::text::font::GlyphIndex;
@@ -15,6 +16,7 @@ use crate::layout::text::font::GlyphIndex;
 /// almost every word.
 fn write_glyph_string(
     f: &mut lemon_pdf::object::Formatter,
+    encoding: GlyphEncoding,
     glyphs: impl Iterator<Item = GlyphIndex>,
 ) -> std::io::Result<()> {
     use std::io::Write;
@@ -22,7 +24,7 @@ fn write_glyph_string(
     let mut buffer = [0u8; 256];
     let mut len = 0;
     let mut open = false;
-    for GlyphIndex(glyph) in glyphs {
+    for glyph in glyphs {
         if !open {
             buffer[0] = b'(';
             len = 1;
@@ -33,7 +35,7 @@ fn write_glyph_string(
             f.write_all(&buffer[..len])?;
             len = 0;
         }
-        for byte in (glyph as u16).to_be_bytes() {
+        for byte in encoding.code(glyph).to_be_bytes() {
             match byte {
                 b'(' | b')' | b'\\' => {
                     buffer[len] = b'\\';
@@ -59,25 +61,27 @@ fn write_glyph_string(
     Ok(())
 }
 
-/// The operand of a `TJ` operator: the elements of `range` as a PDF array.
+/// The operand of a `TJ` operator: the elements of `range` as a PDF array, for a font with the
+/// given encoding.
 #[derive(Debug)]
 pub struct KernedArray<'a> {
     range: GlyphRange,
     glyphs: &'a [KernedGlyph],
+    encoding: GlyphEncoding,
 }
 
 impl<'a> KernedArray<'a> {
-    pub fn new(range: GlyphRange, glyphs: &'a [KernedGlyph]) -> Self {
-        KernedArray { range, glyphs }
+    pub fn new(range: GlyphRange, glyphs: &'a [KernedGlyph], encoding: GlyphEncoding) -> Self {
+        KernedArray { range, glyphs, encoding }
     }
 }
 
 #[derive(Debug)]
-struct GlyphString<'a>(&'a [KernedGlyph]);
+struct GlyphString<'a>(&'a [KernedGlyph], GlyphEncoding);
 
 impl lemon_pdf::PdfFormat for GlyphString<'_> {
     fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {
-        write_glyph_string(f, self.0.iter().map(|glyph| glyph.glyph))
+        write_glyph_string(f, self.1, self.0.iter().map(|glyph| glyph.glyph))
     }
 }
 
@@ -87,7 +91,7 @@ impl lemon_pdf::PdfFormat for KernedArray<'_> {
         self.range.for_each_item(self.glyphs, |item| {
             let current = array.take().expect("the array is put back after every element");
             array = Some(match item {
-                KernedItem::Glyphs(glyphs) => current.value(&GlyphString(glyphs)),
+                KernedItem::Glyphs(glyphs) => current.value(&GlyphString(glyphs, self.encoding)),
                 KernedItem::Kern(kern) => current.value(&kern),
             });
         });

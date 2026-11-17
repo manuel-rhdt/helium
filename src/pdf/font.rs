@@ -1,4 +1,5 @@
 use crate::font_usage::GlyphUsage;
+use crate::pdf::encoding::GlyphEncoding;
 use crate::layout::text::font::{Font, FontUnit, GlyphIndex};
 use std::collections::BTreeMap;
 use lemon_pdf::DocumentContext;
@@ -22,6 +23,12 @@ enum FontProgram {
     TrueType(TrueTypeFontFile),
     /// A bare CFF table (`FontFile3` with subtype `CIDFontType0C`).
     Cff(FontFile3),
+}
+
+/// A font that is embedded into the document: what the content streams need to show its glyphs.
+pub(crate) struct EmbeddedFont {
+    pub reference: IndirectReference<PdfFont>,
+    pub encoding: GlyphEncoding,
 }
 
 /// A reference to the embedded font program of a CIDFont.
@@ -236,7 +243,8 @@ pub(crate) fn embed_into_pdf(
     usage: &GlyphUsage,
     pdf_context: &mut DocumentContext,
     compress: bool,
-) -> Result<PdfFont> {
+) -> Result<EmbeddedFont> {
+    let encoding = GlyphEncoding::choose(font, usage);
     let font_file = embedded_font_bytes(font, usage)?;
     let name = format!("{}+{}", subset_tag(font, usage), font.postscript_name());
     let font_data = match pdf_font_stream(font, &font_file, compress)? {
@@ -363,7 +371,7 @@ endcodespacerange
     for chunk in entries.chunks(100) {
         writeln!(to_unicode_stream, "{} beginbfchar", chunk.len())?;
         for (glyph, uni) in chunk {
-            write!(to_unicode_stream, "<{:04X}>\t<", glyph.0 as u16)?;
+            write!(to_unicode_stream, "<{:04X}>\t<", encoding.code(**glyph))?;
             for chr in uni.encode_utf16() {
                 write!(to_unicode_stream, "{:04X}", chr)?;
             }
@@ -384,17 +392,18 @@ end"
     let base_name = if font.is_truetype() {
         name.clone()
     } else {
-        format!("{}-Identity-H", &name)
+        format!("{}-{}", &name, encoding.cmap_name())
     };
 
     let font = CompositeFont {
         subtype: FontType::Type0,
         base_font: Name::from(base_name),
-        encoding: Name::from("Identity-H"),
+        encoding: Name::from(encoding.cmap_name()),
         descendant_fonts: [cid_font],
         to_unicode: Some(to_unicode_stream),
     };
-    Ok(PdfFont::Composite(font))
+    let reference = pdf_context.write_object(PdfFont::Composite(font))?;
+    Ok(EmbeddedFont { reference, encoding })
 }
 
 #[cfg(test)]

@@ -379,7 +379,6 @@ impl<'world> System<'world> for LayoutMathGlyphs {
         WriteStorage<'world, Paragraph>,
         WriteStorage<'world, VectorGraphics>,
         ReadStorage<'world, ComputedValues>,
-        Read<'world, FontMap>,
         Read<'world, crate::tagging::StructureTree>,
     );
     fn run(
@@ -392,7 +391,6 @@ impl<'world> System<'world> for LayoutMathGlyphs {
             mut paragraphs,
             mut vector_graphics,
             computed_values,
-            font_map,
             structure,
         ): Self::SystemData,
     ) {
