@@ -429,10 +429,6 @@ css/css-color/t424-hsl-values-b-4.html
 css/css-color/t425-hsla-h-rotating-b.xht
 css/css-color/t425-hsla-values-b.xht
 css/css-color/t43-svg-keywords-a.xht
-css/css-color/tagged-images-001.html
-css/css-color/tagged-images-003.html
-css/css-color/tagged-images-004.html
-css/css-color/untagged-images-001.html
 css/css-lists/counter-reset-reversed-display-none.html
 css/css-lists/counter-reset-reversed-list-item-start.html
 css/css-lists/counter-reset-reversed-list-item.html

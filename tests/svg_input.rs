@@ -197,7 +197,7 @@ fn an_empty_html_element_does_not_hold_what_follows() {
     );
     let r = render("empty", &svg);
     // the empty div has no height: whatever is painted with its color has none either
-    let filled: Vec<_> = r.pdf.lines().filter(|line| line.contains("1 0.8 0 rg")).collect();
+    let filled: Vec<_> = r.pdf.lines().filter(|line| line.contains("1 0.8 0 sc")).collect();
     assert!(!filled.is_empty(), "the background is not painted at all");
     for line in filled {
         assert!(line.contains(" 0 re f"), "the background is not empty: {}", line);
