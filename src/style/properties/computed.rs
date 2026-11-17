@@ -6,7 +6,7 @@ use super::specified::{
 };
 pub use super::specified::{
     BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle,
-    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, Break, BreakInside, Float, FloatReference,
+    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, Break, BreakInside, BookmarkLabel, BookmarkLevel, BookmarkState, Float, FloatReference,
     Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
 
@@ -1409,6 +1409,10 @@ pub struct Page {
     pub break_after: Break,
     pub break_before: Break,
     pub break_inside: BreakInside,
+    /// The entry of the element in the outline of the PDF (none of these is inherited).
+    pub bookmark_level: BookmarkLevel,
+    pub bookmark_label: BookmarkLabel,
+    pub bookmark_state: BookmarkState,
     /// Not inherited.
     pub float: Float,
     pub float_reference: FloatReference,
@@ -1425,6 +1429,9 @@ impl Default for Page {
             break_after: Break::Auto,
             break_before: Break::Auto,
             break_inside: BreakInside::Auto,
+            bookmark_level: BookmarkLevel::None,
+            bookmark_label: BookmarkLabel::default(),
+            bookmark_state: BookmarkState::Open,
             float: Float::None,
             float_reference: FloatReference::Column,
         }

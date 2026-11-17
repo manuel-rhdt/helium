@@ -47,7 +47,12 @@ fn converts_loremipsum_to_pdf() -> Result<(), Box<dyn std::error::Error>> {
 /// page objects.
 fn pdf_page_count(pdf: &[u8]) -> usize {
     let text = String::from_utf8_lossy(pdf);
-    let count_pos = text.find("/Count ").expect("no /Count in page tree") + "/Count ".len();
+    // the `/Count` of the page tree (the outline has one too)
+    let tree_pos = text.find("/Type /Pages").expect("no page tree");
+    let dict_start = text[..tree_pos].rfind("<<").expect("page tree is no dictionary");
+    let count_pos = dict_start
+        + text[dict_start..].find("/Count ").expect("no /Count in page tree")
+        + "/Count ".len();
     let declared: usize = text[count_pos..]
         .split(|c: char| !c.is_ascii_digit())
         .next()

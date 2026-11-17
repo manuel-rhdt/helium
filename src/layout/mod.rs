@@ -19,7 +19,7 @@ pub mod writing_mode;
 
 use crate::PixelLength;
 use crate::layout::components::{
-    EntityHrefs, GoToDestination, Hyperlinks, LayoutContext, Position, RootNode,
+    EntityHrefs, GoToDestination, Hyperlinks, Outline, OutlineEntry, LayoutContext, Position, RootNode,
 };
 use crate::style::{
     device::Device,
@@ -161,6 +161,64 @@ pub fn resolve_hyperlink_destinations(world: &mut World, dom: &DomRef) {
         };
         link.destination = Some(GoToDestination { page, x, y });
     }
+}
+
+/// Collects the elements with a `bookmark-level` (by default `h1` to `h6`) for the outline of the
+/// PDF.
+///
+/// An element that is not laid out (`display: none`) or has no label is left out, as are the
+/// contents of SVG images. Must run after pagination, like [`resolve_hyperlink_destinations`].
+pub fn collect_outline(world: &mut World, dom: &DomRef) {
+    use crate::style::properties::computed::ComputedValues;
+    use crate::style::properties::specified::BookmarkLevel;
+    use html5ever::{local_name, ns};
+
+    fn walk(
+        node: &DomRef,
+        positions: &specs::ReadStorage<Position>,
+        styles: &specs::ReadStorage<ComputedValues>,
+        out: &mut Vec<OutlineEntry>,
+    ) {
+        if let Some(element) = node.clone().into_element_ref() {
+            if element.name.ns != ns!(html) && element.name.local == local_name!("svg") {
+                return;
+            }
+            let layout = node.layout_entity.get().map(|entity| entity.0);
+            if let Some(entity) = layout {
+                if let (Some(style), Some(&Position { x, y, page, .. })) = (styles.get(entity), positions.get(entity)) {
+                    if let BookmarkLevel::Level(level) = style.page.bookmark_level {
+                        let mut text = String::new();
+                        crate::tagging::text_content(node, &mut text);
+                        let text = crate::tagging::collapse_whitespace(&text);
+                        let title = style
+                            .page
+                            .bookmark_label
+                            .resolve(&text, |name| crate::tagging::attribute(&element, name));
+                        let title = crate::tagging::collapse_whitespace(&title);
+                        if !title.is_empty() {
+                            out.push(OutlineEntry {
+                                level,
+                                closed: style.page.bookmark_state == crate::style::properties::specified::BookmarkState::Closed,
+                                title,
+                                destination: GoToDestination { page, x, y },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        for child in crate::tree::TreeLinked::children(node) {
+            walk(&child, positions, styles, out);
+        }
+    }
+
+    let mut entries = Vec::new();
+    {
+        let positions = world.read_storage::<Position>();
+        let styles = world.read_storage::<ComputedValues>();
+        walk(dom, &positions, &styles, &mut entries);
+    }
+    world.write_resource::<Outline>().0 = entries;
 }
 
 /// The style of the page: what the `@page` rules without a selector set.
@@ -344,6 +402,7 @@ pub fn layout(
     // tagged with the nodes of this tree.
     layout_context.insert(crate::tagging::StructureTree::build(&dom));
     layout_context.insert(Hyperlinks::default());
+    layout_context.insert(Outline::default());
 
     layout_context.register::<components::IntrinsicSize>();
     layout_context.register::<components::ContainingBlock>();
@@ -429,6 +488,7 @@ pub fn layout(
     // are final. Only possible here because the page of every element is only known after
     // pagination.
     resolve_hyperlink_destinations(&mut layout_context, &dom);
+    collect_outline(&mut layout_context, &dom);
 
     layout_islands(&mut layout_context, shared_styles, islands, stylesheet_base_dir)?;
 

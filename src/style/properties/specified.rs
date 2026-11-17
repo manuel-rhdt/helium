@@ -826,6 +826,15 @@ pub enum Page {
     /// way that the paragraph is broken as well as it can be.
     #[property]
     Looseness(usize),
+    /// https://www.w3.org/TR/css-gcpm-3/#bookmark-level
+    #[property]
+    BookmarkLevel(BookmarkLevel),
+    /// https://www.w3.org/TR/css-gcpm-3/#bookmark-label
+    #[property]
+    BookmarkLabel(BookmarkLabel),
+    /// https://www.w3.org/TR/css-gcpm-3/#bookmark-state
+    #[property]
+    BookmarkState(BookmarkState),
     /// https://www.w3.org/TR/css-break-3/#break-between
     #[property]
     BreakBefore(Break),
@@ -3206,6 +3215,118 @@ impl Break {
     /// Whether this value asks to avoid a break between columns.
     pub fn avoids_column(self) -> bool {
         matches!(self, Break::Avoid | Break::AvoidColumn)
+    }
+}
+
+/// `bookmark-level`: `none` or the level (1 or more) of the entry that the element has in the
+/// outline (the bookmarks) of the PDF. Not inherited.
+/// https://www.w3.org/TR/css-gcpm-3/#bookmark-level
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum BookmarkLevel {
+    #[default]
+    None,
+    Level(u8),
+}
+
+impl<'i> PropertyValue<'i> for BookmarkLevel {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(BookmarkLevel::None);
+        }
+        match input.next()?.clone() {
+            // levels deeper than 255 are not told apart
+            Token::Number { int_value: Some(level), .. } if level >= 1 => {
+                Ok(BookmarkLevel::Level(level.min(255) as u8))
+            }
+            _ => Err(ParseError::unexpected_token()),
+        }
+    }
+}
+
+/// `bookmark-state`: whether the entries below the entry of the element are shown when the PDF is
+/// opened. Not inherited.
+/// https://www.w3.org/TR/css-gcpm-3/#bookmark-state
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PropertyValue)]
+pub enum BookmarkState {
+    #[default]
+    Open,
+    Closed,
+}
+
+/// A part of the value of `bookmark-label`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BookmarkLabelPart {
+    String(String),
+    /// `content()` and `content(text)`: the text of the element.
+    Content,
+    /// `attr(name)`: the value of the attribute of the element.
+    Attr(String),
+}
+
+/// `bookmark-label`: the text of the entry of the element in the outline. The initial value is
+/// `content(text)`. Of the functions of CSS GCPM only `content()`, `content(text)` and
+/// `attr(<name>)` are supported (not `content(before)`, `string()` and `counter()`). Not
+/// inherited.
+/// https://www.w3.org/TR/css-gcpm-3/#bookmark-label
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BookmarkLabel(pub Vec<BookmarkLabelPart>);
+
+impl BookmarkLabel {
+    /// The label of an element, with `text` its text and `attribute` the lookup of its attributes.
+    pub fn resolve(&self, text: &str, attribute: impl Fn(&str) -> Option<String>) -> String {
+        if self.0.is_empty() {
+            return text.to_owned();
+        }
+        let mut label = String::new();
+        for part in &self.0 {
+            match part {
+                BookmarkLabelPart::String(string) => label.push_str(string),
+                BookmarkLabelPart::Content => label.push_str(text),
+                BookmarkLabelPart::Attr(name) => label.push_str(&attribute(name).unwrap_or_default()),
+            }
+        }
+        label
+    }
+}
+
+impl<'i> PropertyValue<'i> for BookmarkLabel {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let mut parts = Vec::new();
+        // `none` is the empty label
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(BookmarkLabel(vec![BookmarkLabelPart::String(String::new())]));
+        }
+        while let Ok(token) = input.next().cloned() {
+            match token {
+                Token::QuotedString(string) => parts.push(BookmarkLabelPart::String(string.as_ref().into())),
+                Token::Function(name) if name.eq_ignore_ascii_case("content") => {
+                    input.parse_nested_block(|input| {
+                        if !input.is_exhausted() {
+                            input.expect_ident_matching("text")?;
+                        }
+                        Ok(())
+                    })?;
+                    parts.push(BookmarkLabelPart::Content);
+                }
+                Token::Function(name) if name.eq_ignore_ascii_case("attr") => {
+                    let attribute = input.parse_nested_block(|input| {
+                        let name = input.expect_ident()?.to_string();
+                        input.expect_exhausted()?;
+                        Ok(name)
+                    })?;
+                    parts.push(BookmarkLabelPart::Attr(attribute));
+                }
+                _ => return Err(ParseError::unexpected_token()),
+            }
+        }
+        if parts.is_empty() {
+            return Err(ParseError::unexpected_token());
+        }
+        Ok(BookmarkLabel(parts))
     }
 }
 
