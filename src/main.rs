@@ -30,6 +30,7 @@ pub mod svg_dom;
 mod svg_input;
 mod svg_text;
 pub mod layout;
+pub mod metadata;
 pub mod node_data_ref;
 mod parser;
 mod pdf;

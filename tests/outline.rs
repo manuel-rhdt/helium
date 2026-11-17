@@ -78,3 +78,11 @@ fn closed_state_gives_a_negative_count() {
     );
     assert_eq!(count(&pdf, "/Count -2"), 1);
 }
+
+#[test]
+fn the_outline_panel_is_opened() {
+    let with = render("panel", "<h1>One</h1>");
+    assert_eq!(count(&with, "/PageMode /UseOutlines"), 1);
+    let without = render("no_panel", "<p>text</p>");
+    assert_eq!(count(&without, "/PageMode"), 0);
+}

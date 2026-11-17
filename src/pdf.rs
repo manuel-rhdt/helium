@@ -678,11 +678,38 @@ pub fn write_pdf(
         .map(|page| (page.content_rect.clone(), page.height))
         .collect();
     let mut recorder = tagged.then(|| TagRecorder::new(&structure, print_pages.pages.len()));
-    if let Some(title) = &structure.title {
-        context
-            .document_info
-            .insert("Title".to_owned(), TextString(title.clone()));
+    if structure.title.is_some() {
         context.set_display_doc_title(true);
+    }
+    // the document information dictionary and the XMP packet say the same
+    let metadata = &structure.metadata;
+    let date = metadata.date.or_else(crate::metadata::Timestamp::from_environment);
+    let producer = format!("Helium {}", env!("CARGO_PKG_VERSION"));
+    {
+        let info = &mut context.document_info;
+        let mut set = |key: &str, value: String| {
+            info.insert(key.to_owned(), TextString(value));
+        };
+        if let Some(title) = &structure.title {
+            set("Title", title.clone());
+        }
+        if !metadata.authors.is_empty() {
+            set("Author", metadata.authors.join(", "));
+        }
+        if let Some(description) = &metadata.description {
+            set("Subject", description.clone());
+        }
+        if let Some(keywords) = &metadata.keywords {
+            set("Keywords", keywords.clone());
+        }
+        if let Some(creator) = &metadata.creator {
+            set("Creator", creator.clone());
+        }
+        set("Producer", producer);
+        if let Some(date) = date {
+            set("CreationDate", date.pdf());
+            set("ModDate", date.pdf());
+        }
     }
     if let Some(lang) = &structure.lang {
         context.set_lang(lang);
@@ -696,7 +723,7 @@ pub fn write_pdf(
             log::warn!("The document has no `<title>`: the PDF does not conform to PDF/UA.");
         }
     }
-    context.set_metadata(&xmp_metadata(structure.title.as_deref(), structure.lang.as_deref(), tagged))?;
+    context.set_metadata(&xmp_metadata(&structure, date, tagged))?;
     // All pages get their references up front so that links can point to later pages.
     let page_references: Vec<IndirectReference<Page>> = (0..print_pages.pages.len())
         .map(|_| context.create_reference())
@@ -893,6 +920,10 @@ pub fn write_pdf(
         context.add_reserved_page(page_references[page_index], page)?;
     }
     write_outline(&mut context, &outline, &page_references, &page_sizes, crop)?;
+    if !outline.is_empty() {
+        // viewers open the panel of the bookmarks
+        context.set_page_mode(lemon_pdf::PageMode::UseOutlines);
+    }
     if let Some(recorder) = recorder {
         recorder.finish(&mut context, &page_references)?;
     }
@@ -995,7 +1026,8 @@ pub(crate) fn emit_path(
     Ok(())
 }
 
-fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String {
+fn xmp_metadata(structure: &crate::tagging::StructureTree, date: Option<crate::metadata::Timestamp>, tagged: bool) -> String {
+    let (title, lang, metadata) = (structure.title.as_deref(), structure.lang.as_deref(), &structure.metadata);
     fn escape(text: &str) -> String {
         text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
     }
@@ -1008,6 +1040,25 @@ fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String
     }
     if let Some(lang) = lang {
         properties += &format!("   <dc:language><rdf:Bag><rdf:li>{}</rdf:li></rdf:Bag></dc:language>\n", escape(lang));
+    }
+    if !metadata.authors.is_empty() {
+        let authors: String = metadata.authors.iter().map(|author| format!("<rdf:li>{}</rdf:li>", escape(author))).collect();
+        properties += &format!("   <dc:creator><rdf:Seq>{authors}</rdf:Seq></dc:creator>\n");
+    }
+    if let Some(description) = &metadata.description {
+        properties += &format!(
+            "   <dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">{}</rdf:li></rdf:Alt></dc:description>\n",
+            escape(description)
+        );
+    }
+    if let Some(keywords) = &metadata.keywords {
+        properties += &format!("   <pdf:Keywords>{}</pdf:Keywords>\n", escape(keywords));
+    }
+    if let Some(creator) = &metadata.creator {
+        properties += &format!("   <xmp:CreatorTool>{}</xmp:CreatorTool>\n", escape(creator));
+    }
+    if let Some(date) = date {
+        properties += &format!("   <xmp:CreateDate>{0}</xmp:CreateDate>\n   <xmp:ModifyDate>{0}</xmp:ModifyDate>\n", date.xmp());
     }
     properties += &format!(
         "   <pdf:Producer>Helium {}</pdf:Producer>\n",
@@ -1023,6 +1074,7 @@ fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String
   <rdf:Description rdf:about=\"\"
     xmlns:dc=\"http://purl.org/dc/elements/1.1/\"
     xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"
+    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"
     xmlns:pdfuaid=\"http://www.aiim.org/pdfua/ns/id/\">
 {properties}  </rdf:Description>
  </rdf:RDF>

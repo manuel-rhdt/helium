@@ -284,7 +284,7 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 
 PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from the HTML
 (headings, paragraphs, lists, tables, links, figures, formulas) and the PDF/UA identifier;
-document title and language; XMP metadata; link annotations; a document outline (bookmarks)
+document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; link annotations; a document outline (bookmarks)
 from the elements with a `bookmark-level` (UA default: `h1` to `h6` and `role=heading` with `aria-level`; entries nest by level, elements that are not displayed are left out), with `bookmark-label` (strings, `content()`, `attr()`) and `bookmark-state`; `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
