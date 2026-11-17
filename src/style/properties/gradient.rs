@@ -784,6 +784,13 @@ pub struct Resolved {
     pub tiling: Option<Tiling>,
 }
 
+impl Resolved {
+    /// Whether a stop has a colour that sRGB cannot hold (its channels are outside of 0 to 1).
+    pub fn has_wide_colors(&self) -> bool {
+        self.stops.iter().any(is_wide)
+    }
+}
+
 /// A gradient that is a tile that repeats, in pixels in the space of the page (y pointing
 /// down).
 #[derive(Debug, Clone, PartialEq)]
@@ -988,11 +995,9 @@ fn repeat_stops(stops: Vec<(f32, PaintColor)>) -> Vec<(f32, PaintColor)> {
     if !(period > 0.0) || !(last_copy - first_copy < MAX_REPEATS) {
         // all stops at the same position, or too many to be told apart: the average colour
         let n = stops.len().max(1) as f32;
-        // (the mean of the colours, in sRGB)
-        let mean = |channel: fn(&SrgbColor) -> u8| {
-            (stops.iter().map(|s| f32::from(channel(&s.1.clip_to_srgb()))).sum::<f32>() / n).round() as u8
-        };
-        let color = PaintColor::srgb(mean(|c| c.red), mean(|c| c.green), mean(|c| c.blue), mean(|c| c.alpha));
+        // (the mean of the colours, in sRGB, with the channels that a colour outside of it has)
+        let mean = |channel: usize| stops.iter().map(|s| s.1.to_extended_srgb()[channel]).sum::<f32>() / n;
+        let color = PaintColor::from_extended_srgb([mean(0), mean(1), mean(2)], mean(3));
         return vec![(0.0, color)];
     }
     let mut repeated = Vec::with_capacity(stops.len() * (last_copy - first_copy + 1.0) as usize);
@@ -1005,10 +1010,14 @@ fn repeat_stops(stops: Vec<(f32, PaintColor)>) -> Vec<(f32, PaintColor)> {
 }
 
 fn rgba_components(color: PaintColor) -> [f32; 4] {
-    // (the colours of a gradient are interpolated in sRGB for now)
-    let color = color.clip_to_srgb();
-    let channel = |value: u8| f32::from(value) / 255.0;
-    [channel(color.red), channel(color.green), channel(color.blue), channel(color.alpha)]
+    // (the colours of a gradient are interpolated in sRGB, from the channels that a colour outside of it
+    // has: they are outside of 0 to 1 and nothing is clipped here)
+    color.to_extended_srgb()
+}
+
+/// Whether a stop has a colour that sRGB cannot hold.
+fn is_wide(stop: &ResolvedStop) -> bool {
+    stop.color[..3].iter().any(|channel| !(-0.001..=1.001).contains(channel))
 }
 
 /// Interpolates premultiplied colours.
@@ -1091,7 +1100,9 @@ const SPACE_STOPS: usize = 4096;
 /// the colours that the gradient has in its colour space: in sRGB only the transitions between
 /// opacities need them (premultiplied interpolation), in another space every transition does.
 fn with_steps(stops: &[ResolvedStop], how: Interpolation) -> Vec<ResolvedStop> {
-    if how.space == super::color_mix::Space::Srgb {
+    // (the transitions of a gradient with a colour outside of sRGB are cut into steps too: the shading
+    // of the PDF interpolates in the space of its profile and not in sRGB)
+    if how.space == super::color_mix::Space::Srgb && !stops.iter().any(is_wide) {
         return with_premultiplied_steps(stops);
     }
     let transitions = stops

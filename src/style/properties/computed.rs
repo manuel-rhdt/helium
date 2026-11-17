@@ -114,6 +114,23 @@ impl PaintColor {
         }
     }
 
+    /// The colour as sRGB channels that are outside of 0 to 1 for a colour that sRGB cannot hold, and
+    /// the alpha from 0 to 1: nothing is lost (see [`PaintColor::from_extended_srgb`]).
+    pub fn to_extended_srgb(self) -> [f32; 4] {
+        super::color::to_extended_srgb(self)
+    }
+
+    /// The colour with these extended sRGB channels and this alpha (0 to 1): sRGB if it fits, else a
+    /// wider space.
+    pub fn from_extended_srgb(rgb: [f32; 3], alpha: f32) -> Self {
+        super::color::from_extended_srgb(rgb, alpha)
+    }
+
+    /// CIE XYZ (D65) of extended sRGB channels.
+    pub fn xyz_of_extended_srgb(rgb: [f32; 3]) -> [f32; 3] {
+        super::color::extended_srgb_to_xyz(rgb)
+    }
+
     /// The colour in sRGB, the nearest one that fits if it has none: the channels of a colour
     /// outside of the gamut are clipped to the range. This loses the colour; use it only where
     /// nothing but sRGB can be painted, and where the colour is painted by the PDF writer match

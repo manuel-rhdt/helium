@@ -22,6 +22,7 @@ use lemon_pdf::Pt;
 use super::RawPdf;
 use crate::style::properties::computed::PixelLength;
 use crate::display_list::BlendGroup;
+use crate::style::properties::computed::PaintColor;
 use crate::style::properties::gradient::{Geometry, Resolved, ResolvedStop};
 use crate::style::properties::specified::BlendMode;
 
@@ -282,7 +283,28 @@ fn paint_plain(
     let min_alpha = alphas.clone().fold(f32::INFINITY, f32::min);
     let max_alpha = alphas.fold(f32::NEG_INFINITY, f32::max);
 
-    let color = build(context, space, gradient, |c| Rgb(f64::from(c[0]), f64::from(c[1]), f64::from(c[2])))?;
+    // The colours of a gradient with one that sRGB cannot hold are in the ICC space of the wide colours
+    // (the channels of the stops are the extended sRGB ones; the stops are close enough for the shading to
+    // interpolate in that space). A conic gradient is a mesh with device colours: it is clipped to sRGB.
+    let wide = gradient.has_wide_colors() && !matches!(gradient.geometry, Geometry::Conic { .. });
+    let profile = if wide { Some(super::wide_color_space(context)?) } else { None };
+    let mut color = build(context, space, gradient, |c| {
+        if wide {
+            let xyz = PaintColor::xyz_of_extended_srgb([c[0], c[1], c[2]]).map(f64::from);
+            let [r, g, b] = super::rec2020_gamma24_components(xyz);
+            Rgb(r, g, b)
+        } else {
+            let channel = |value: f32| f64::from(value.clamp(0.0, 1.0));
+            Rgb(channel(c[0]), channel(c[1]), channel(c[2]))
+        }
+    })?;
+    if let Some(profile) = profile {
+        color.shading = match color.shading {
+            Shading::Axial(shading) => Shading::Axial(shading.with_icc_profile(profile)),
+            Shading::Radial(shading) => Shading::Radial(shading.with_icc_profile(profile)),
+            other => other,
+        };
+    }
     if max_alpha - min_alpha < 1e-4 {
         // one opacity for the whole gradient
         if max_alpha < 1.0 {

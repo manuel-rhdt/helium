@@ -10,6 +10,7 @@ use super::color::{
     D50_WHITE, Rgb, apply, color_to_paint, d50_to_d65, lab_to_xyz, oklab_to_srgb, srgb_decode, srgb_encode, to_u8,
     xyz_to_srgb,
 };
+use cssparser::color::PredefinedColorSpace;
 use cssparser::{Parser, Token};
 use cssparser_color::{Color, RgbaLegacy, hsl_to_rgb, hwb_to_rgb};
 
@@ -325,17 +326,26 @@ fn mix(space: Space, method: HueMethod, first: Color, second: Color, w1: f32, w2
     if matches!(first, Color::CurrentColor) || matches!(second, Color::CurrentColor) {
         return Err(());
     }
-    // (the colours are mixed in sRGB, whatever their gamut: a colour outside of it is clipped to
-    // it first, which the README says of `color-mix()` and the spaces with a wide gamut)
-    let components = |c: super::computed::PaintColor| {
-        let c = c.clip_to_srgb();
-        [f32::from(c.red) / 255.0, f32::from(c.green) / 255.0, f32::from(c.blue) / 255.0, f32::from(c.alpha) / 255.0]
-    };
-    let [r, g, b, alpha] = blend(space, method, components(color_to_paint(first)), components(color_to_paint(second)), w1, w2);
-    Ok(Color::Rgba(RgbaLegacy::new(to_u8(r), to_u8(g), to_u8(b), (alpha * alpha_scale).clamp(0.0, 1.0))))
+    // The colours are mixed in the space of the mix, from the channels they have: those of a colour
+    // outside of sRGB are outside of 0 to 1 and nothing is clipped.
+    let components = |c: Color| super::computed::PaintColor::to_extended_srgb(color_to_paint(c));
+    let [r, g, b, alpha] = blend(space, method, components(first), components(second), w1, w2);
+    let alpha = (alpha * alpha_scale).clamp(0.0, 1.0);
+    if [r, g, b].iter().all(|channel| (-0.001..=1.001).contains(channel)) {
+        Ok(Color::Rgba(RgbaLegacy::new(to_u8(r), to_u8(g), to_u8(b), alpha)))
+    } else {
+        // a colour that sRGB cannot hold: its channels as a `color(srgb ...)`, which keeps them
+        Ok(Color::ColorFunction(cssparser_color::ColorFunction::new(
+            PredefinedColorSpace::Srgb,
+            Some(r),
+            Some(g),
+            Some(b),
+            Some(alpha),
+        )))
+    }
 }
 
-/// The point at `t` (0 to 1) on the way from `first` to `second` (sRGB, 0 to 1, with alpha as the
+/// The point at `t` (0 to 1) on the way from `first` to `second` (sRGB, 0 to 1 and beyond for colours that sRGB cannot hold, with alpha as the
 /// fourth component) when the colours are interpolated as `how` says.
 pub fn interpolate(how: Interpolation, first: [f32; 4], second: [f32; 4], t: f32) -> [f32; 4] {
     blend(how.space, how.method, first, second, 1.0 - t, t)
@@ -369,7 +379,7 @@ fn blend(space: Space, method: HueMethod, first: [f32; 4], second: [f32; 4], w1:
         }
     }
     let [r, g, b] = from_space(space, out);
-    [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0), alpha.clamp(0.0, 1.0)]
+    [r, g, b, alpha.clamp(0.0, 1.0)]
 }
 
 #[cfg(test)]

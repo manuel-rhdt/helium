@@ -209,6 +209,36 @@ fn from_linear(linear: Rgb, alpha: Option<f32>) -> PaintColor {
     PaintColor::Xyz(XyzColor::new(xyz[0], xyz[1], xyz[2], alpha))
 }
 
+/// The colour as sRGB with the channels that it has, which are outside of 0 to 1 for a colour that sRGB
+/// cannot hold ("extended" sRGB, the encoding of CSS Color 4 without the clipping), and the alpha
+/// from 0 to 1.
+pub(super) fn to_extended_srgb(color: PaintColor) -> [f32; 4] {
+    let alpha = f32::from(color.alpha()) / 255.0;
+    match color {
+        PaintColor::Srgb(c) => [f32::from(c.red) / 255.0, f32::from(c.green) / 255.0, f32::from(c.blue) / 255.0, alpha],
+        PaintColor::DisplayP3(c) => {
+            let [r, g, b] = c.components();
+            let linear = xyz_to_srgb(apply(&P3_TO_XYZ, [srgb_decode(r), srgb_decode(g), srgb_decode(b)]));
+            [srgb_encode(linear[0]), srgb_encode(linear[1]), srgb_encode(linear[2]), alpha]
+        }
+        PaintColor::Xyz(c) => {
+            let linear = xyz_to_srgb(c.components());
+            [srgb_encode(linear[0]), srgb_encode(linear[1]), srgb_encode(linear[2]), alpha]
+        }
+    }
+}
+
+/// The colour with these extended sRGB channels (see [`to_extended_srgb`]) and alpha (0 to 1): sRGB if
+/// that holds it, else a wider space, so that nothing is clipped.
+pub(super) fn from_extended_srgb([r, g, b]: Rgb, alpha: f32) -> PaintColor {
+    from_linear([srgb_decode(r), srgb_decode(g), srgb_decode(b)], Some(alpha.clamp(0.0, 1.0)))
+}
+
+/// CIE XYZ (D65) of a colour with extended sRGB channels.
+pub(super) fn extended_srgb_to_xyz([r, g, b]: Rgb) -> Rgb {
+    apply(&SRGB_TO_XYZ, [srgb_decode(r), srgb_decode(g), srgb_decode(b)])
+}
+
 /// Display P3 to sRGB with the channels clipped: [`PaintColor::clip_to_srgb`].
 pub(super) fn p3_to_srgb_clipped(color: DisplayP3Color) -> SrgbColor {
     let [r, g, b] = color.components();
