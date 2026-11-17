@@ -2348,14 +2348,38 @@ impl Default for BorderStyle {
     }
 }
 
+/// A colour, or a `color-mix()` of colours (which is computed here: see
+/// [`super::color_mix`]).
+fn parse_css_color<'i>(input: &mut Parser<'i>) -> Result<Color, ()> {
+    let state = input.state();
+    match Color::parse(input) {
+        Ok(color) => Ok(color),
+        Err(_) => {
+            input.reset(&state);
+            super::color_mix::parse(input, &mut parse_css_color)
+        }
+    }
+}
+
 impl<'i> PropertyValue<'i> for Color {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
-        Color::parse(input).map_err(|error| match error.kind {
-            cssparser::ParseErrorKind::Basic(kind) => ParseError::from_basic_kind(kind),
-            cssparser::ParseErrorKind::Custom(()) => ParseError::unexpected_token(),
-        })
+        let state = input.state();
+        match Color::parse(input) {
+            Ok(color) => Ok(color),
+            Err(error) => {
+                input.reset(&state);
+                if let Ok(mixed) = super::color_mix::parse(input, &mut parse_css_color) {
+                    return Ok(mixed);
+                }
+                input.reset(&state);
+                Err(match error.kind {
+                    cssparser::ParseErrorKind::Basic(kind) => ParseError::from_basic_kind(kind),
+                    cssparser::ParseErrorKind::Custom(()) => ParseError::unexpected_token(),
+                })
+            }
+        }
     }
 }
 
@@ -2407,7 +2431,7 @@ impl<'i> PropertyValue<'i> for ShadowList {
                     continue;
                 }
                 if color.is_none() {
-                    if let Ok(parsed) = input.try_parse(|input| Color::parse(input).map_err(|_| ())) {
+                    if let Ok(parsed) = input.try_parse(|input| Color::from_css_property_value(input).map_err(|_| ())) {
                         color = Some(parsed);
                         continue;
                     }

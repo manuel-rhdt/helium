@@ -67,6 +67,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   used). The structure tree does not reach into a `foreignObject` (no `Formula` tags there).
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
   document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
+- **Nesting:** elements nested deeper than 512 levels (as in browsers) are flattened at that
+  depth instead of overflowing the stack.
 - **Tables across pages:** a table is split between its rows, and the header rows (the first
   `thead`) are repeated at the top of every page that goes on inside of the table. Footers are
   not repeated.
@@ -141,7 +143,11 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   are not drawn, and `text-shadow` is not supported.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color()`, with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
-  painted for backgrounds, borders, text, text decorations and gradients.
+  painted for backgrounds, borders, text, text decorations and gradients. `color-mix()` mixes
+  two colours (also nested, and with `var()`) in `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`,
+  `lch`, `oklab`, `oklch`, `xyz`, `xyz-d50` and `xyz-d65`, with percentages, alpha premultiplied
+  and the hue methods. It is computed when the style sheet is read, so `currentcolor` cannot be
+  mixed (the declaration is dropped), nor the RGB spaces with a wide gamut, nor `none`.
 - **Opacity:** `opacity` (a number or a percentage; not inherited). A box with an opacity below 1
   and everything inside of it are painted as a transparency group, which is made translucent as a
   whole. The content of such a group is not tagged in the structure tree, and a box that is

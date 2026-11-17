@@ -385,8 +385,6 @@ css/css-color/color-mix-currentcolor-001.html
 css/css-color/color-mix-currentcolor-002.html
 css/css-color/color-mix-currentcolor-003.html
 css/css-color/color-mix-currentcolor-nested-for-color-property.html
-css/css-color/color-mix-percents-01.html
-css/css-color/color-mix-percents-02.html
 css/css-color/composited-filters-under-opacity.html
 css/css-color/currentcolor-004.html
 css/css-color/hsl-009.html

@@ -10,7 +10,7 @@ use cssparser_color::{Color, hsl_to_rgb, hwb_to_rgb};
 use super::computed::RGBA;
 
 /// Linear-light sRGB components.
-type Rgb = [f32; 3];
+pub(super) type Rgb = [f32; 3];
 
 // CIE XYZ (D65) → linear-light sRGB. https://drafts.csswg.org/css-color-4/#color-conversion-code
 #[rustfmt::skip]
@@ -49,7 +49,7 @@ const REC2020_TO_XYZ: [[f32; 3]; 3] = [
 ];
 
 // The D50 white point of CIELAB and ProPhoto RGB.
-const D50_WHITE: Rgb = [0.9642956764295677, 1.0, 0.8251046025104602];
+pub(super) const D50_WHITE: Rgb = [0.9642956764295677, 1.0, 0.8251046025104602];
 
 // Bradford chromatic adaptation from the D50 white of CIELAB and ProPhoto to D65.
 #[rustfmt::skip]
@@ -59,7 +59,7 @@ const D50_TO_D65: [[f32; 3]; 3] = [
     [ 0.01231401, -0.02050765,  1.33036593],
 ];
 
-fn apply(matrix: &[[f32; 3]; 3], v: Rgb) -> Rgb {
+pub(super) fn apply(matrix: &[[f32; 3]; 3], v: Rgb) -> Rgb {
     [
         matrix[0][0] * v[0] + matrix[0][1] * v[1] + matrix[0][2] * v[2],
         matrix[1][0] * v[0] + matrix[1][1] * v[1] + matrix[1][2] * v[2],
@@ -67,16 +67,16 @@ fn apply(matrix: &[[f32; 3]; 3], v: Rgb) -> Rgb {
     ]
 }
 
-fn xyz_to_srgb(xyz: Rgb) -> Rgb {
+pub(super) fn xyz_to_srgb(xyz: Rgb) -> Rgb {
     apply(&XYZ_TO_SRGB, xyz)
 }
 
-fn d50_to_d65(xyz: Rgb) -> Rgb {
+pub(super) fn d50_to_d65(xyz: Rgb) -> Rgb {
     apply(&D50_TO_D65, xyz)
 }
 
 /// The sRGB transfer function of https://drafts.csswg.org/css-color-4/#color-conversion-code.
-fn srgb_encode(linear: f32) -> f32 {
+pub(super) fn srgb_encode(linear: f32) -> f32 {
     let sign = linear.signum();
     let abs = linear.abs();
     if abs > 0.0031308 {
@@ -86,7 +86,7 @@ fn srgb_encode(linear: f32) -> f32 {
     }
 }
 
-fn srgb_decode(encoded: f32) -> f32 {
+pub(super) fn srgb_decode(encoded: f32) -> f32 {
     let sign = encoded.signum();
     let abs = encoded.abs();
     if abs <= 0.04045 {
@@ -124,7 +124,7 @@ fn rec2020_decode(encoded: f32) -> f32 {
 }
 
 /// CIELAB (D50) to XYZ, https://drafts.csswg.org/css-color-4/#lab-to-xyz.
-fn lab_to_xyz(lightness: f32, a: f32, b: f32) -> Rgb {
+pub(super) fn lab_to_xyz(lightness: f32, a: f32, b: f32) -> Rgb {
     const KAPPA: f32 = 24389.0 / 27.0;
     const EPSILON: f32 = 216.0 / 24389.0;
 
@@ -144,7 +144,7 @@ fn lab_to_xyz(lightness: f32, a: f32, b: f32) -> Rgb {
 }
 
 /// Oklab to linear-light sRGB, https://bottosson.github.io/posts/oklab/, as in CSS Color 4.
-fn oklab_to_srgb(lightness: f32, a: f32, b: f32) -> Rgb {
+pub(super) fn oklab_to_srgb(lightness: f32, a: f32, b: f32) -> Rgb {
     let l = lightness + 0.3963377774 * a + 0.2158037573 * b;
     let m = lightness - 0.1055613458 * a - 0.0638541728 * b;
     let s = lightness - 0.0894841775 * a - 1.2914855480 * b;
@@ -158,7 +158,7 @@ fn oklab_to_srgb(lightness: f32, a: f32, b: f32) -> Rgb {
     ]
 }
 
-fn to_u8(value: f32) -> u8 {
+pub(super) fn to_u8(value: f32) -> u8 {
     (value * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
