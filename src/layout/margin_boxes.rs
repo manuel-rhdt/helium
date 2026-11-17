@@ -189,58 +189,51 @@ pub struct PageLabelRange {
 #[derive(Debug, Clone, Default)]
 pub struct PageLabels(pub Vec<PageLabelRange>);
 
-/// The margin boxes that can hold the number of the page, in the order in which the first one
-/// that does decides the label of a page with `-helium-page-label: auto`: the footer before the
-/// header, and the middle before the sides.
-const FOLIO_ORDER: [MarginBoxKind; 6] = [
-    MarginBoxKind::BottomCenter,
-    MarginBoxKind::BottomRight,
-    MarginBoxKind::BottomLeft,
-    MarginBoxKind::TopCenter,
-    MarginBoxKind::TopRight,
-    MarginBoxKind::TopLeft,
-];
+/// The style that the PDF has for a counter style. The other styles (leading zeros, scripts,
+/// symbols) are numbers in decimal.
+fn label_style(style: crate::style::parse::CounterStyle) -> LabelStyle {
+    use crate::style::parse::CounterStyle;
+
+    match style {
+        CounterStyle::LowerRoman => LabelStyle::LowerRoman,
+        CounterStyle::UpperRoman => LabelStyle::UpperRoman,
+        CounterStyle::LowerAlpha => LabelStyle::LowerLetters,
+        CounterStyle::UpperAlpha => LabelStyle::UpperLetters,
+        _ => LabelStyle::Decimal,
+    }
+}
 
 /// The style of the number and the prefix of a label written like `content`: the literal text
 /// before `counter(page, <style>)` is the prefix. `None` if there is no `counter(page)` that only
 /// strings come before; what comes after the number is not part of the label.
 fn label_of(content: &[ContentItem]) -> Option<(LabelStyle, String)> {
-    use crate::style::parse::CounterStyle;
-
     let mut prefix = String::new();
     for item in content {
         match item {
             ContentItem::String(string) => prefix.push_str(string),
             ContentItem::Counter(CounterName::Pages, _) => return None,
-            ContentItem::Counter(CounterName::Page, style) => {
-                // the other styles (leading zeros, scripts, symbols) are numbers in decimal
-                let style = match style {
-                    CounterStyle::LowerRoman => LabelStyle::LowerRoman,
-                    CounterStyle::UpperRoman => LabelStyle::UpperRoman,
-                    CounterStyle::LowerAlpha => LabelStyle::LowerLetters,
-                    CounterStyle::UpperAlpha => LabelStyle::UpperLetters,
-                    _ => LabelStyle::Decimal,
-                };
-                return Some((style, prefix));
-            }
+            ContentItem::Counter(CounterName::Page, style) => return Some((label_style(*style), prefix)),
         }
     }
     None
 }
 
-/// The label of a page from the number that its margin boxes print, for
-/// `-helium-page-label: auto`, so that the page box of a viewer says what the page does (PDF/UA-2
-/// asks for this). `None` if no margin box of the page prints the number.
-fn folio(boxes: &[ResolvedMarginBox]) -> Option<(LabelStyle, String)> {
-    FOLIO_ORDER.iter().find_map(|kind| {
-        let margin_box = boxes.iter().find(|margin_box| margin_box.kind == *kind)?;
-        label_of(&margin_box.content)
-    })
+/// The style of the number of a page for `-helium-page-label: auto`: if the margin boxes of the
+/// page (headers and footers) have exactly one `counter(page)` between them, its style. With none
+/// or with several (which could differ) there is nothing to follow. The text around the counter
+/// is not a prefix of the label: it could be anything, like the title of the book.
+fn sole_counter_style(boxes: &[ResolvedMarginBox]) -> Option<LabelStyle> {
+    let mut styles = boxes.iter().flat_map(|margin_box| &margin_box.content).filter_map(|item| match item {
+        ContentItem::Counter(CounterName::Page, style) => Some(label_style(*style)),
+        _ => None,
+    });
+    let style = styles.next()?;
+    styles.next().is_none().then_some(style)
 }
 
 /// The ranges of the labels of the pages. The label of a page is decided by its
-/// `-helium-page-label` and the value of its `page` counter. A page that has no label from that
-/// has its number in decimal. Empty if all labels are the numbers of the pages in decimal, which
+/// `-helium-page-label` (`auto`: the style of the one `counter(page)` of its margin boxes) and
+/// the value of its `page` counter. A page that has no label from that has its number in decimal. Empty if all labels are the numbers of the pages in decimal, which
 /// the PDF needs no `/PageLabels` for.
 ///
 /// Must run after the margin boxes are known, like [`MarginBoxPaint`].
@@ -263,7 +256,7 @@ pub fn page_label_ranges(world: &specs::World) -> Vec<PageLabelRange> {
         let (style, prefix) = match margin_boxes.label_spec(&context) {
             PageLabelSpec::None => None,
             PageLabelSpec::Content(content) => label_of(content),
-            PageLabelSpec::Auto => folio(margin_boxes.for_page(&context)),
+            PageLabelSpec::Auto => sole_counter_style(margin_boxes.for_page(&context)).map(|style| (style, String::new())),
         }
         .unwrap_or((LabelStyle::Decimal, String::new()));
         // a label of the PDF has a positive number: the others are written out
@@ -429,37 +422,59 @@ mod test {
     }
 
     #[test]
-    fn the_label_of_a_page_is_the_number_that_it_prints() {
+    fn auto_follows_the_one_counter_of_the_margin_boxes() {
         use crate::style::parse::CounterStyle;
 
         let number = |style| ContentItem::Counter(CounterName::Page, style);
+        let pages = |style| ContentItem::Counter(CounterName::Pages, style);
         let text = |text: &str| ContentItem::String(text.into());
         // no number
-        assert_eq!(folio(&[]), None);
-        assert_eq!(folio(&[margin_box(MarginBoxKind::TopLeft, vec![text("Title")])]), None);
-        // the style and the text before the number
+        assert_eq!(sole_counter_style(&[]), None);
+        assert_eq!(sole_counter_style(&[margin_box(MarginBoxKind::TopLeft, vec![text("Title")])]), None);
+        // one counter, wherever it is, and whatever is around it: the text is no prefix
+        let one = |kind, content| sole_counter_style(&[margin_box(kind, content)]);
         assert_eq!(
-            folio(&[margin_box(MarginBoxKind::BottomCenter, vec![text("A-"), number(CounterStyle::UpperRoman), text(" of")])]),
-            Some((LabelStyle::UpperRoman, "A-".to_string()))
+            one(MarginBoxKind::BottomCenter, vec![text("A-"), number(CounterStyle::UpperRoman), text(" of ")]),
+            Some(LabelStyle::UpperRoman)
+        );
+        assert_eq!(
+            one(MarginBoxKind::TopLeft, vec![text("My Book - "), number(CounterStyle::LowerAlpha)]),
+            Some(LabelStyle::LowerLetters)
+        );
+        // the total of pages is another counter
+        assert_eq!(
+            one(MarginBoxKind::BottomRight, vec![number(CounterStyle::LowerRoman), text("/"), pages(CounterStyle::Decimal)]),
+            Some(LabelStyle::LowerRoman)
         );
         // styles that the PDF has no label for are decimal
+        assert_eq!(one(MarginBoxKind::BottomCenter, vec![number(CounterStyle::DecimalLeadingZero)]), Some(LabelStyle::Decimal));
+        // several counters, in one box or in several: nothing to follow
         assert_eq!(
-            folio(&[margin_box(MarginBoxKind::BottomCenter, vec![number(CounterStyle::DecimalLeadingZero)])]),
-            Some((LabelStyle::Decimal, String::new()))
+            one(MarginBoxKind::BottomCenter, vec![number(CounterStyle::LowerRoman), number(CounterStyle::Decimal)]),
+            None
         );
-        // the footer before the header, and the middle before the sides
         let boxes = [
             margin_box(MarginBoxKind::TopCenter, vec![number(CounterStyle::LowerAlpha)]),
             margin_box(MarginBoxKind::BottomRight, vec![number(CounterStyle::LowerRoman)]),
-            margin_box(MarginBoxKind::BottomLeft, vec![number(CounterStyle::UpperRoman)]),
         ];
-        assert_eq!(folio(&boxes), Some((LabelStyle::LowerRoman, String::new())));
-        // a total of pages before the number is not a prefix
-        let boxes = [margin_box(
-            MarginBoxKind::BottomCenter,
-            vec![ContentItem::Counter(CounterName::Pages, CounterStyle::Decimal), number(CounterStyle::Decimal)],
-        )];
-        assert_eq!(folio(&boxes), None);
+        assert_eq!(sole_counter_style(&boxes), None);
+    }
+
+    #[test]
+    fn the_label_property_has_a_prefix() {
+        use crate::style::parse::CounterStyle;
+
+        let content = [
+            ContentItem::String("A-".into()),
+            ContentItem::Counter(CounterName::Page, CounterStyle::UpperRoman),
+            ContentItem::String(" of".into()),
+        ];
+        assert_eq!(label_of(&content), Some((LabelStyle::UpperRoman, "A-".to_string())));
+        assert_eq!(label_of(&[ContentItem::String("x".into())]), None);
+        assert_eq!(
+            label_of(&[ContentItem::Counter(CounterName::Pages, CounterStyle::Decimal), content[1].clone()]),
+            None
+        );
     }
 
     fn list(entries: &[(&str, Option<i32>)]) -> CounterList {

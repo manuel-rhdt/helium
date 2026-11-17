@@ -17,18 +17,16 @@ const STYLE: &str = "<style>@page { size: 200px 120px; margin: 20px; @bottom-cen
     div { height: 60px } .front { page: front } .appendix { page: appendix }</style>";
 
 #[test]
-fn page_labels_follow_the_numbers_that_the_pages_print() {
+fn auto_labels_follow_the_style_of_the_one_counter() {
     let pdf = render(
         "ranges",
         &format!("{STYLE}<div class=front>1</div><div class=front>2</div><div>3</div><div>4</div><div class=appendix>5</div>"),
     );
     assert_eq!(pdf.matches("/PageLabels").count(), 1);
     // front matter in roman numerals from the first page, the body in decimal from the third
-    // page (its number), the appendix with a prefix from the fifth
-    assert_eq!(
-        page_labels(&pdf),
-        "/Nums [ 0 << /S /r /St 1 >> 2 << /S /D /St 3 >> 4 << /S /A /P (A-) /St 5 >> ]"
-    );
+    // page (its number), the appendix in letters from the fifth; the "A-" of the footer is text
+    // around the counter, not a prefix
+    assert_eq!(page_labels(&pdf), "/Nums [ 0 << /S /r /St 1 >> 2 << /S /D /St 3 >> 4 << /S /A /St 5 >> ]");
 }
 
 /// The `/Nums` array of the page labels, with the white space normalized.
@@ -107,4 +105,66 @@ fn the_label_property_is_independent_of_the_margin_boxes() {
         &format!("<style>{PAGE} @page {{ -helium-page-label: none; @bottom-center {{ content: counter(page, lower-roman) }} }}</style><div>1</div><div>2</div>"),
     );
     assert_eq!(pdf.matches("/PageLabels").count(), 0);
+}
+
+fn labels_of(name: &str, css: &str) -> String {
+    let pdf = render(name, &format!("<style>{PAGE} {css}</style><div>1</div><div>2</div><div>3</div><div>4</div>"));
+    if pdf.contains("/PageLabels") { page_labels(&pdf) } else { "none".to_string() }
+}
+
+#[test]
+fn auto_needs_exactly_one_counter() {
+    // the number is in the header and in the footer, in different styles: nothing to follow
+    assert_eq!(
+        labels_of("two", "@page { @top-right { content: counter(page, lower-roman) } @bottom-center { content: counter(page) } }"),
+        "none"
+    );
+    // no number
+    assert_eq!(labels_of("no_number", "@page { @bottom-center { content: \"Draft\" } }"), "none");
+    // the one counter can be in any margin box, and the total of pages is another counter
+    assert_eq!(
+        labels_of("header", "@page { @top-left { content: counter(page, lower-roman) \" / \" counter(pages) } }"),
+        "/Nums [ 0 << /S /r /St 1 >> ]"
+    );
+    // two counters in one margin box
+    assert_eq!(
+        labels_of("both", "@page { @bottom-center { content: counter(page, lower-roman) \" (\" counter(page) \")\" } }"),
+        "none"
+    );
+}
+
+#[test]
+fn text_around_the_counter_is_not_a_prefix() {
+    // a running title on the right pages must not become part of the labels
+    assert_eq!(
+        labels_of(
+            "title",
+            "@page :left { @bottom-left { content: counter(page) } } @page :right { @bottom-right { content: \"My Book \\2014  \" counter(page) } }"
+        ),
+        "none"
+    );
+    assert_eq!(
+        labels_of("page_of", "@page { @bottom-center { content: \"Page \" counter(page, upper-roman) \" of \" counter(pages) } }"),
+        "/Nums [ 0 << /S /R /St 1 >> ]"
+    );
+}
+
+#[test]
+fn even_and_odd_pages_can_differ() {
+    // the same style on left and right pages: one range, whatever the position
+    assert_eq!(
+        labels_of(
+            "same",
+            "@page :left { @bottom-left { content: counter(page, lower-roman) } } @page :right { @bottom-right { content: counter(page, lower-roman) } }"
+        ),
+        "/Nums [ 0 << /S /r /St 1 >> ]"
+    );
+    // other styles: the labels follow the pages, a range for every page
+    assert_eq!(
+        labels_of(
+            "differ",
+            "@page :left { @bottom-left { content: counter(page, lower-roman) } } @page :right { @bottom-right { content: counter(page) } }"
+        ),
+        "/Nums [ 0 << /S /D /St 1 >> 1 << /S /r /St 2 >> 2 << /S /D /St 3 >> 3 << /S /r /St 4 >> ]"
+    );
 }
