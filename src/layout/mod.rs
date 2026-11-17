@@ -197,6 +197,11 @@ fn page_box(
     (width, height)
 }
 
+/// The height of the page of a document that is cropped, in pixels: it is not meant to limit
+/// anything (the page is cropped to the content), but is finite to keep the precision of the
+/// coordinates, which are counted from the top of the page.
+const CROP_PAGE_HEIGHT: f32 = 100_000.0;
+
 pub fn layout(
     dom: DomRef,
     device: Device,
@@ -257,12 +262,15 @@ pub fn layout(
             .max(PixelLength(0.0))
     };
     let margin;
-    let page_width;
+    let mut page_width;
     let page_height;
     if crop {
+        // One page without margins (no `@page`, no margin boxes), as wide as the content needs
+        // (measured by the layout) and as high as `CROP_PAGE_HEIGHT`: the media box is then
+        // fitted to what is painted. A document that is taller than that has several pages.
         margin = Default::default();
         page_width = PixelLength(0.0);
-        page_height = PixelLength(0.0);
+        page_height = PixelLength(CROP_PAGE_HEIGHT);
     } else {
         let (width, height) = page_box(&style, device);
         page_width = width;
@@ -363,13 +371,20 @@ pub fn layout(
     let RootNode(root_entity) = *layout_context.read_resource();
     let root_entity = root_entity.expect("Could not find root entity.");
     time_before = Instant::now();
-    taffy_layout::TaffyBlockLayout {
+    page_width = taffy_layout::TaffyBlockLayout {
         root_entity,
         page_width,
         page_height,
         margin,
+        shrink_wrap: crop,
     }
-    .run(&mut layout_context)?;
+    .run_sized(&mut layout_context)?;
+    // (the width of a cropped document is known only now)
+    layout_context.insert(components::PageGeometry {
+        width: page_width,
+        height: page_height,
+        margin,
+    });
     info!("TIMED: block layout {:?}", time_before.elapsed());
 
     let mut place_inline_blocks = inline::PlaceInlineBlocks;
@@ -510,6 +525,7 @@ fn run_island_passes(world: &mut World, width: PixelLength, height: PixelLength)
         page_width: width,
         page_height: height,
         margin,
+        shrink_wrap: false,
     }
     .run(world)?;
 

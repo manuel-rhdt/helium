@@ -81,6 +81,10 @@ pub struct TaffyBlockLayout {
     pub page_width: PixelLength,
     pub page_height: PixelLength,
     pub margin: EdgeValues<PixelLength>,
+    /// Make the page as wide as the content (the max-content width of the root, which is what
+    /// shrink-to-fit comes to when nothing limits it), instead of `page_width`: for a document
+    /// that is cropped to its content.
+    pub shrink_wrap: bool,
 }
 
 /// The part of a box on one page.
@@ -91,6 +95,12 @@ struct Fragment {
 
 impl TaffyBlockLayout {
     pub fn run(self, world: &mut World) -> Result<(), String> {
+        self.run_sized(world).map(|_| ())
+    }
+
+    /// Lays out the pages and returns the width of the page: `page_width`, or the width of the
+    /// content if the layout is to `shrink_wrap` it.
+    pub fn run_sized(self, world: &mut World) -> Result<PixelLength, String> {
         world.register::<Position>();
         world.register::<Decoration>();
         world.register::<IntrinsicSize>();
@@ -130,6 +140,7 @@ impl TaffyBlockLayout {
         let table_columns = world.read_storage::<TableColumns>();
 
         let content_width = (self.page_width - self.margin.left - self.margin.right).0;
+        let page_width_unmeasured = self.page_width;
         let mut tree = HeliumTree {
             nodes: vec![],
             computed_values: &computed_values,
@@ -142,6 +153,7 @@ impl TaffyBlockLayout {
             table_spans: &table_spans,
             table_columns: &table_columns,
             fallback_line_width: content_width.max(0.0),
+            measuring_max_content: false,
             window: None,
             windowed: vec![],
             lines: HashMap::new(),
@@ -162,11 +174,40 @@ impl TaffyBlockLayout {
             .collect();
 
         // the flow of the document, and the geometry of the page at every place of it
-        let flow = std::rc::Rc::new(flow::extract(&mut tree, root, page_margins.rtl, self.page_height.0 > 0.0));
+        let flow = std::rc::Rc::new(flow::extract(
+            &mut tree,
+            root,
+            page_margins.rtl,
+            self.page_height.0 > 0.0,
+            self.shrink_wrap,
+        ));
         tree.flow = Some(flow.clone());
+
+        // The width of the page of a document that is cropped: what the content needs. The root
+        // is laid out once with no limit (the containers with columns need the flow for that), and
+        // what it comes to is the width of the page.
+        let page_width = if self.shrink_wrap {
+            tree.clear_window();
+            tree.measuring_max_content = true;
+            taffy::compute_root_layout(
+                &mut tree,
+                root,
+                Size {
+                    width: AvailableSpace::MaxContent,
+                    height: AvailableSpace::Definite(self.page_height.0),
+                },
+            );
+            tree.measuring_max_content = false;
+            let measured = tree.node(root).layout.size.width;
+            tree.clear_window();
+            PixelLength(measured.max(0.0))
+        } else {
+            page_width_unmeasured
+        };
+        tree.fallback_line_width = (page_width - self.margin.left - self.margin.right).0.max(0.0);
         let geometry = paginate::Geometry {
             margins: &page_margins,
-            size: (self.page_width, self.page_height),
+            size: (page_width, self.page_height),
             margin: self.margin,
         };
         let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow));
@@ -501,7 +542,7 @@ impl TaffyBlockLayout {
         drop(inline_ctxs);
         drop(intrinsic_sizes);
         *world.write_resource::<crate::layout::pages::Pages>() = crate::layout::pages::Pages(page_contexts);
-        Ok(())
+        Ok(page_width)
     }
 }
 
@@ -1313,6 +1354,7 @@ mod tests {
             page_width,
             page_height: PixelLength(1000.0),
             margin: EdgeValues::all(PixelLength(0.0)),
+            shrink_wrap: false,
         }
         .run(&mut world)
         .expect("taffy block layout failed");

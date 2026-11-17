@@ -240,6 +240,10 @@ impl TreeSink for Sink {
         attrs: Vec<Attribute>,
         flags: ElementFlags,
     ) -> Self::Handle {
+        // The prefix of an element (`<s:svg>`, from an XML parser) has no meaning once its
+        // namespace is known, and the rest of Helium compares whole names (`QualName` equality
+        // includes the prefix), so it is dropped here.
+        let name = QualName::new(None, name.ns, name.local);
         // the content of a `<template>` is a tree of its own, which is not part of the document
         let template_contents = flags
             .template
@@ -371,19 +375,84 @@ impl TreeSink for Sink {
     }
 }
 
-fn parse_html() -> html5ever::Parser<Sink> {
-    let sink = Sink {
+fn new_sink(on_parse_error: Option<Box<dyn FnMut(Cow<'static, str>)>>) -> Sink {
+    Sink {
         document_node: NodeRef::new(NodeData::from_html_data(ParsedData::Document(
             DocumentData {
                 _quirks_mode: QuirksMode::NoQuirks.into(),
             },
         ))),
-        on_parse_error: RefCell::new(None),
-    };
-    html5ever::parse_document(sink, html5ever::ParseOpts::default())
+        on_parse_error: RefCell::new(on_parse_error),
+    }
+}
+
+fn parse_html() -> html5ever::Parser<Sink> {
+    html5ever::parse_document(new_sink(None), html5ever::ParseOpts::default())
 }
 
 pub fn generate_render_tree(html: &str) -> DomRef {
     let parser = parse_html();
     parser.one(html)
+}
+
+/// Reads the text as XML (well-formed, with namespaces: `xmlns` and prefixes are resolved),
+/// which is what a `.svg` or `.xhtml` file is. Unlike the HTML parser it does not repair: the
+/// first error is returned.
+pub fn generate_render_tree_xml(text: &str) -> Result<DomRef, String> {
+    let errors = std::rc::Rc::new(RefCell::new(Vec::<String>::new()));
+    let sink = new_sink(Some(Box::new({
+        let errors = errors.clone();
+        move |message| errors.borrow_mut().push(message.into_owned())
+    })));
+    let document = xml5ever::driver::parse_document(sink, xml5ever::driver::XmlParseOpts::default())
+        .one(text);
+    let first = errors.borrow().first().cloned();
+    match first {
+        Some(message) => Err(format!("not well-formed XML: {message}")),
+        None => Ok(document),
+    }
+}
+
+/// Makes the tree of an XML document one that the layout can use, which expects an `html`
+/// element with a `body`: an XHTML document is as it is, and an SVG document becomes the only
+/// content of the body of a document whose page has the size of the drawing.
+pub fn into_html_document(document: &DomRef) -> Result<DomRef, String> {
+    use html5ever::{local_name, ns};
+    let root = document
+        .children()
+        .find(|child| child.as_element().is_some())
+        .ok_or("the document has no root element")?;
+    let element = root.as_element().expect("an element");
+    let is = |namespace, local| element.name.ns == namespace && element.name.local == local;
+    if is(ns!(html), local_name!("html")) {
+        return Ok(document.clone());
+    }
+    if !is(ns!(svg), local_name!("svg")) {
+        return Err(format!(
+            "the root element <{}> is neither SVG nor XHTML",
+            element.name.local
+        ));
+    }
+    let attribute = |name: &str| {
+        let key = QualName::new(None, ns!(), html5ever::LocalName::from(name));
+        element.attributes.borrow().get(&key).map(|attribute| attribute.value.to_string())
+    };
+    let css = crate::svg_input::page_css(
+        attribute("width").as_deref(),
+        attribute("height").as_deref(),
+        attribute("viewBox").as_deref(),
+    );
+    let html_element = |name| NodeRef::new_element(QualName::new(None, ns!(html), name), []);
+    let html = html_element(local_name!("html"));
+    let head = html_element(local_name!("head"));
+    let style = html_element(local_name!("style"));
+    let body = html_element(local_name!("body"));
+    style.append(NodeRef::new_text(css.as_str()));
+    head.append(style);
+    html.append(head);
+    // (appending detaches the root element from the document)
+    body.append(root);
+    html.append(body);
+    document.append(html);
+    Ok(document.clone())
 }

@@ -9,8 +9,9 @@ helium [options] input.html output.pdf
 
 | Option | Effect |
 | --- | --- |
+| `--xml` / `--html` | read the input with the XML parser / the HTML parser (by default: XML for the extensions `.svg`, `.xhtml`, `.xht` and `.xml`, HTML for all others) |
 | `--no-compression` | write uncompressed content streams (for inspecting the PDF) |
-| `--crop` | size the page to its content instead of A4 |
+| `--crop` | one page that is as large as the content, instead of A4 pages: no page breaks (also not forced ones), page margins, `@page` rules or margin boxes. The page is as wide as the content needs (what shrink-to-fit comes to with no limit, so text is not broken into lines: give the `body` a `width` to set one) and as high as the content, up to 100 000 pixels, after which it has another page |
 | `--no-tags` | write an untagged PDF |
 | `--no-system-fonts` | use only the built-in fonts, so that the output does not depend on the machine |
 | `--dump-layout <file>` | write the computed layout as JSON (`-` for stdout) |
@@ -54,6 +55,16 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   elements (it does not win over one in a style sheet), a
   `foreignObject` in an SVG file (`<img src="x.svg">`: the content needs the document),
   hyperlinks and tags (accessibility structure) inside of a `foreignObject`.
+- **SVG and XHTML as the input:** a file with the extension `.svg`, `.xhtml`, `.xht` or `.xml` is
+  read as XML (`xml5ever`): namespaces and prefixes are resolved (`<s:svg>`, `<x:div>`, `<m:math>`),
+  empty elements (`<div/>`) are empty, and a file that is not well-formed is an error instead of
+  being repaired. Entities of an internal DTD are not expanded. The root is an XHTML `html`
+  element, laid out as an HTML document, or an `svg` element: `helium drawing.svg out.pdf` makes one
+  page of the size of the drawing (`width` and `height`, else the `viewBox`, else 300 by 150
+  pixels; no margin), with `<foreignObject>` content (HTML, MathML) and `<style>` elements as in
+  an inline `<svg>`. Lengths mean the same in the SVG and in the HTML in it (a user unit is a CSS
+  pixel, `pt` is 4/3 pixel). Percentages as `width`/`height` are not a size (the `viewBox` is
+  used). The structure tree does not reach into a `foreignObject` (no `Formula` tags there).
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
   document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.

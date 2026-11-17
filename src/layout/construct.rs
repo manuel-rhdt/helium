@@ -767,7 +767,13 @@ impl FlowConstructor {
             if !for_this_media {
                 return;
             }
-            if name == &QualName::new(None, ns!(html), local_name!("style")) {
+            // a `<style>` in an `<svg>` is in the SVG namespace; its `type` says the language
+            let svg_style = name == &QualName::new(None, ns!(svg), local_name!("style"));
+            let css_type = attributes
+                .borrow()
+                .get(&QualName::new(None, ns!(), local_name!("type")))
+                .is_none_or(|ty| ty.value.trim().is_empty() || ty.value.trim().eq_ignore_ascii_case("text/css"));
+            if name == &QualName::new(None, ns!(html), local_name!("style")) || (svg_style && css_type) {
                 for child in TreeLinked::children(node) {
                     if let ParsedData::Text(css) = &child.html_data {
                         // relative URLs in the style sheet are relative to the document
