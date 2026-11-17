@@ -206,6 +206,8 @@ pub(super) fn window(
         Position::InParagraph { item, cut } => (item + 1, Some((paragraph(item), cut)), false),
         Position::InContainer { item, .. } => (item + 1, None, false),
     };
+    // (a page of floats ends where it starts)
+    let last = last.max(first);
     Window {
         start: first as u32,
         end: last as u32,

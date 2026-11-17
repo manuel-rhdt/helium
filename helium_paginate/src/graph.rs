@@ -220,7 +220,7 @@ impl Graph for PageGraph<'_, '_> {
     type Node = PageStart;
     type Edge = PageEdge;
     type Key = PageKey;
-    type Rank = ((usize, u64), u8, usize);
+    type Rank = ((usize, u64), usize, u8, usize, u32);
 
     fn start(&mut self) -> PageStart {
         self.kernel.first_page()
@@ -232,7 +232,11 @@ impl Graph for PageGraph<'_, '_> {
     }
 
     fn rank(&mut self, key: PageKey) -> Self::Rank {
-        (self.kernel.position(key.0).order(), key.1 as u8, key.2)
+        // (a page of floats ends where it starts, with fewer floats waiting)
+        let waiting = self.kernel.waiting_in(key.2);
+        // (the token is last: places with the same order can be different tokens, which wait for
+        // different floats)
+        (self.kernel.position(key.0).order(), usize::MAX - waiting, key.1 as u8, key.2, key.0 .0)
     }
 
     fn is_end(&mut self, node: &PageStart) -> bool {
@@ -247,6 +251,7 @@ impl Graph for PageGraph<'_, '_> {
             let next = next.unwrap_or(PageStart {
                 at: fill.end,
                 index: node.index + 1,
+                carry: fill.carry,
             });
             edges.push((
                 PageEdge {

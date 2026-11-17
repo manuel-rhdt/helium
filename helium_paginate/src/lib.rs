@@ -18,10 +18,10 @@ mod service;
 mod solver;
 mod token;
 
-pub use flow::{BoxRef, BreakKind, BreakLevel, Item, ItemId, NodeRef, PageKind, PageSpec, PageTable, ParId, Problem, Variants};
+pub use flow::{BoxRef, BreakKind, BreakLevel, FloatSide, Item, ItemId, NodeRef, PageKind, PageSpec, PageTable, ParId, Problem, Variants};
 pub use columns::{plan_fragment, ColumnFill, FragmentPlan};
-pub use kernel::{Choice, ChoiceId, Invalid, Kernel, PageFill, PageFragment, PageStart, Solution};
-pub use service::{Fragment, GalleyFlow, GalleyService, LayoutService};
+pub use kernel::{Choice, ChoiceId, FloatList, Invalid, Kernel, PageFill, PageFragment, PageStart, Solution};
+pub use service::{ContainerFloat, Fragment, GalleyFlow, GalleyService, LayoutService};
 pub use graph::{shortest_path, Graph, Path, PageEdge, PageGraph, PageKey};
 pub use solver::{balance, ColumnCost, CssCost, CssObjective, ExactSolver, FullestFirst, Objective, Solver, TallestColumn};
 pub use service::ParLine;

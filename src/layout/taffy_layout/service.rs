@@ -71,6 +71,8 @@ pub(super) struct TreeService<'t, 'a, 'w> {
     subtrees: HashMap<(u32, u32), Rc<Subtree>>,
     subtree_lines: HashMap<(u32, u32, Option<u32>, u32), Rc<[ParLine]>>,
     subtree_variants: HashMap<(u32, u32, Option<u32>, u32, u32), Vec<Rc<[ParLine]>>>,
+    /// The extent of a float on a page, by the float and the width of the page.
+    floats: HashMap<(u32, u32), f64>,
     /// By the container, where the fragment starts, the width of the page and the height that is
     /// left on it.
     fragments: HashMap<(u32, Option<ContainerCut>, u32, u64), Rc<[Fragment]>>,
@@ -113,6 +115,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             subtree_lines: HashMap::new(),
             subtree_variants: HashMap::new(),
             fragments: HashMap::new(),
+            floats: HashMap::new(),
         }
     }
 
@@ -174,7 +177,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                     }
                     lines.insert(node, paragraph_width(tree, node));
                 }
-                Item::Break { .. } | Item::Container { .. } => {}
+                Item::Break { .. } | Item::Container { .. } | Item::Float { .. } => {}
             }
         }
         let subtree = Rc::new(Subtree {
@@ -504,6 +507,35 @@ impl LayoutService for TreeService<'_, '_, '_> {
         let fragments: Rc<[Fragment]> = Rc::from(found);
         self.fragments.insert(key, fragments.clone());
         fragments
+    }
+
+    fn container_floats(&mut self, container: BoxRef) -> Rc<[helium_paginate::ContainerFloat]> {
+        let id = NodeId::from(container.0 as usize);
+        let inner = self.tree.node(id).columns.as_ref().and_then(|columns| columns.inner.clone());
+        inner
+            .map(|inner| {
+                inner
+                    .hoisted
+                    .iter()
+                    .map(|&(node, side, anchor)| helium_paginate::ContainerFloat {
+                        node: BoxRef(usize::from(node) as u32),
+                        side,
+                        anchor,
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| Rc::from(vec![]))
+    }
+
+    fn float_extent(&mut self, float: BoxRef, page_inline: f32) -> f64 {
+        let key = (float.0, page_inline.to_bits());
+        if let Some(&extent) = self.floats.get(&key) {
+            return extent;
+        }
+        let id = NodeId::from(float.0 as usize);
+        let extent = f64::from(self.tree.layout_float(id, page_inline, self.icb_height).outer_height());
+        self.floats.insert(key, extent);
+        extent
     }
 
     fn content_extent(&mut self, root: BoxRef, inline: f32) -> f64 {

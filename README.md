@@ -194,6 +194,17 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
   `widows`, and `looseness` (not in CSS: how many lines more or fewer than the best breaking a
   paragraph may have, so that a page that fits it better can take it); tables and `pre` blocks split across pages.
+- **Floats in the manner of TeX:** `float: top` and `float: bottom` (CSS GCPM) for a box between
+  the blocks of a block container. The box is taken out of the text and shown at the top or the
+  bottom of the page that the place where it is called for is on, if it fits next to the text there
+  (floats take at most 70% of such a page), else at the top of a later page; floats keep their
+  order, and a float that cannot share a page with text, or that waits at the end of the document,
+  gets a page of floats. In a container with columns `float: top` and `bottom` place a float in a
+  column, as wide as the column (floats that wait go on in the next column and over the page
+  break), and `float-reference: page` makes it a float of the page, as wide as the page, which is
+  placed at the top or bottom of the next page and takes room from the container that continues
+  there. Not supported: floats in paragraphs, in tables and in flex and grid containers, and
+  `float: left` and `right`.
 - **Multi-column layout:** `column-count`, `column-width`, `columns`, `column-gap` (`normal` is
   `1em`; also `gap` and `row-gap` take `normal`, which is no gap in a grid and a flex container),
   `column-rule` with `-width`, `-style` and `-color`, `column-fill` (`balance`, `balance-all` and
@@ -263,7 +274,7 @@ groups for `opacity`.
 ## Not supported
 
 Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`,
-`@supports`, `@import`, `calc()`, `overflow`, `float`, `position:
+`@supports`, `@import`, `calc()`, `overflow`, `float: left`/`right`, `position:
 fixed`/`sticky`, `z-index`, `box-shadow`,
 `outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form
