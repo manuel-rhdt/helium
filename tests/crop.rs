@@ -89,6 +89,30 @@ fn text_is_not_broken_into_lines() {
 }
 
 #[test]
+fn an_inline_block_is_as_wide_as_its_content() {
+    // not as wide as its longest word: an inline-block is shrink-to-fit, and with no limit it is
+    // as wide as its text (the body has the font too: the line has a strut of it)
+    let words = "word ".repeat(40);
+    let r = html(
+        "inline_block",
+        &format!(
+            "<body style=\"margin:0;font:16px/20px sans-serif\"><div style=\"display:inline-block\">{words}</div></body>"
+        ),
+    );
+    assert_eq!(r.size.1, 15.0, "{:?}", r.size);
+    assert!(r.size.0 > 595.0, "{:?}", r.size);
+    // with a padding of 10 pixels on both sides, which adds 15 points
+    let padded = html(
+        "inline_block_padded",
+        &format!(
+            "<body style=\"margin:0;font:16px/20px sans-serif\"><div style=\"display:inline-block;padding:10px\">{words}</div></body>"
+        ),
+    );
+    assert_eq!(padded.size.1, 30.0, "{:?}", padded.size);
+    assert!((padded.size.0 - r.size.0 - 15.0).abs() < 0.02, "{:?} {:?}", padded.size, r.size);
+}
+
+#[test]
 fn page_rules_and_margins_do_not_apply() {
     let r = html(
         "page_rules",

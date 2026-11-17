@@ -129,6 +129,10 @@ pub(super) struct HeliumTree<'a, 'w> {
     /// The line width to use for the `inline-block` boxes of an inline context if its width is
     /// not known when it is first measured.
     pub fallback_line_width: f32,
+    /// Whether the document is being measured for the width it needs (a document that is
+    /// cropped): the `inline-block` boxes are then laid out with no limit for a `MaxContent`
+    /// width, which has no width to fall back to.
+    pub measuring_max_content: bool,
     /// The window that Taffy is shown, if any.
     pub window: Option<super::window::Window>,
     /// The boxes that are laid out differently in the window.
@@ -669,10 +673,16 @@ impl HeliumTree<'_, '_> {
         let inline_extras = (style.padding.resolve_or_zero(parent_width, calc)
             + style.border.resolve_or_zero(parent_width, calc))
         .horizontal_axis_sum();
+        // (large, not infinite: the widths are added and subtracted)
+        const UNBOUNDED: f32 = 1.0e7;
+        let available = match inputs.available_space.width {
+            AvailableSpace::MaxContent if self.measuring_max_content => Some(UNBOUNDED),
+            other => other.into_option(),
+        };
         let line_width = inputs
             .known_dimensions
             .width
-            .or(inputs.available_space.width.into_option())
+            .or(available)
             .map(|width| width - inline_extras)
             .unwrap_or(self.fallback_line_width)
             .max(0.0);

@@ -153,6 +153,7 @@ impl TaffyBlockLayout {
             table_spans: &table_spans,
             table_columns: &table_columns,
             fallback_line_width: content_width.max(0.0),
+            measuring_max_content: false,
             window: None,
             windowed: vec![],
             lines: HashMap::new(),
@@ -187,6 +188,7 @@ impl TaffyBlockLayout {
         // what it comes to is the width of the page.
         let page_width = if self.shrink_wrap {
             tree.clear_window();
+            tree.measuring_max_content = true;
             taffy::compute_root_layout(
                 &mut tree,
                 root,
@@ -195,6 +197,7 @@ impl TaffyBlockLayout {
                     height: AvailableSpace::Definite(self.page_height.0),
                 },
             );
+            tree.measuring_max_content = false;
             let measured = tree.node(root).layout.size.width;
             tree.clear_window();
             PixelLength(measured.max(0.0))
