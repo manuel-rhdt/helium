@@ -66,6 +66,26 @@ fn greek(mut n: usize) -> String {
     result.into_iter().collect()
 }
 
+/// The additive numerals of the `georgian` counter style, for 1 to 19999.
+fn georgian(mut n: usize) -> String {
+    const NUMERALS: [(usize, char); 37] = [
+        (10000, 'ჵ'), (9000, 'ჰ'), (8000, 'ჯ'), (7000, 'ჴ'), (6000, 'ხ'), (5000, 'ჭ'),
+        (4000, 'წ'), (3000, 'ძ'), (2000, 'ც'), (1000, 'ჩ'), (900, 'შ'), (800, 'ყ'),
+        (700, 'ღ'), (600, 'ქ'), (500, 'ფ'), (400, 'ჳ'), (300, 'ტ'), (200, 'ს'), (100, 'რ'),
+        (90, 'ჟ'), (80, 'პ'), (70, 'ო'), (60, 'ჲ'), (50, 'ნ'), (40, 'მ'), (30, 'ლ'),
+        (20, 'კ'), (10, 'ი'), (9, 'თ'), (8, 'ჱ'), (7, 'ზ'), (6, 'ვ'), (5, 'ე'), (4, 'დ'),
+        (3, 'გ'), (2, 'ბ'), (1, 'ა'),
+    ];
+    let mut result = String::new();
+    for &(value, numeral) in &NUMERALS {
+        while n >= value {
+            result.push(numeral);
+            n -= value;
+        }
+    }
+    result
+}
+
 /// The decimal digits of `value` in a script whose zero is `zero`.
 fn digits(value: i64, zero: char) -> String {
     value
@@ -96,6 +116,7 @@ pub fn format_counter(value: i64, style: CounterStyle) -> String {
         (CounterStyle::LowerAlpha, Some(n)) => alphabetic(n),
         (CounterStyle::UpperAlpha, Some(n)) => alphabetic(n).to_uppercase(),
         (CounterStyle::LowerGreek, Some(n)) => greek(n),
+        (CounterStyle::Georgian, Some(n)) if n < 20000 => georgian(n),
         (CounterStyle::ArabicIndic, _) => digits(value, '\u{660}'),
         (CounterStyle::Persian, _) => digits(value, '\u{6f0}'),
         _ => value.to_string(),
@@ -209,7 +230,12 @@ impl CounterState {
                     set.last().expect("the counter was just added").id
                 }
             };
-            *self.values.entry(id).or_insert(0) += i64::from(by.unwrap_or(1));
+            // an increment that would leave the range of a 32 bit integer is not made
+            let value = self.values.entry(id).or_insert(0);
+            let step = i64::from(by.unwrap_or(1));
+            if i32::try_from(*value + step).is_ok() {
+                *value += step;
+            }
         }
 
         // `counter-set`; `<li value>` sets the `list-item` counter
@@ -302,6 +328,8 @@ mod tests {
         assert_eq!(format_counter(2, CounterStyle::UpperAlpha), "B");
         assert_eq!(format_counter(2, CounterStyle::LowerGreek), "β");
         assert_eq!(format_counter(5, CounterStyle::None), "");
+        assert_eq!(format_counter(19999, CounterStyle::Georgian), "ჵჰშჟთ");
+        assert_eq!(format_counter(20000, CounterStyle::Georgian), "20000");
         assert_eq!(format_counter(12, CounterStyle::Persian), "۱۲");
     }
 }

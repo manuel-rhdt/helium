@@ -276,6 +276,8 @@ pub enum CounterStyle {
     LowerAlpha,
     UpperAlpha,
     LowerGreek,
+    /// ა ბ გ … (1 to 19999)
+    Georgian,
     /// ٠ ١ ٢ ٣ …
     ArabicIndic,
     /// The extended Arabic-Indic digits of Persian and Urdu: ۰ ۱ ۲ ۳ …
@@ -299,6 +301,7 @@ impl CounterStyle {
             "lower-alpha" | "lower-latin" => CounterStyle::LowerAlpha,
             "upper-alpha" | "upper-latin" => CounterStyle::UpperAlpha,
             "lower-greek" => CounterStyle::LowerGreek,
+            "georgian" => CounterStyle::Georgian,
             "arabic-indic" => CounterStyle::ArabicIndic,
             "persian" => CounterStyle::Persian,
             "disc" => CounterStyle::Disc,

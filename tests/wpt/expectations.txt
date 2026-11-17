@@ -73,7 +73,6 @@ css/css-flexbox/flex-base-size-ignores-min-max-width-003.html
 css/css-flexbox/flex-basis-014.html
 css/css-flexbox/flex-container-max-content-002.tentative.html
 css/css-flexbox/flex-container-min-content-002.tentative.html
-css/css-flexbox/flex-item-percentage-height-img-001.html
 css/css-flexbox/flex-one-sets-flex-basis-to-zero-px.html
 css/css-flexbox/intrinsic-size/col-wrap-baseline-001.html
 css/css-flexbox/orthogonal-writing-modes-and-intrinsic-sizing.html

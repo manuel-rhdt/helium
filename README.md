@@ -129,14 +129,19 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   without a box do not count) and `quotes` (`auto` picks the marks of the language of the text
   for the common languages). A pseudo-element is a box of its own, so `display`, `position`,
   borders, backgrounds and the like apply to it. The counter styles are the ones of the
-  `@page` margin boxes (which share the code) plus `lower-greek`, `disc`, `circle`, `square` and
+  `@page` margin boxes (which share the code) plus `lower-greek`, `georgian`, `disc`, `circle`, `square` and
   `none`. `display: list-item` (the default of `<li>`) counts in the `list-item` counter, which
   `<ol>`, `<ul>` and `<menu>` start and `<ol start>` and `<li value>` set; the number of
   the marker is the value of that counter, so `counter-increment: list-item` and the like
   change it (not supported: `<ol reversed>`). Not supported: `content` on elements (e.g. `content: url()`), images and
   `url()` in `content`, `::marker`, `::first-line` and `::first-letter`, `counter-reset:
   reversed()`, `target-counter()`, and pseudo-elements of replaced elements (`img`, `input`,
-  `br`, ...). Counters in `@page` margin boxes are only `page` and `pages`.
+  `br`, ...). Counters in `@page` margin boxes are only `page` and `pages`. A counter value stays
+  within a 32 bit integer (an increment that would leave the range is not made), and a name that
+  is repeated in one `counter-*` property counts every time. The behaviour is the one of
+  the published CSS Lists 3 (a counter of the previous sibling is only inherited when the parent
+  has none of that name); `counter-reset: reversed()` and `<ol reversed>`, which are only in the
+  editor's draft, are not supported.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
 - **Cascade:** selectors (`selectors` crate, with `:is()` and `:where()`), `inherit`, `initial`,
   `unset`.

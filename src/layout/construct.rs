@@ -1268,7 +1268,10 @@ impl EntityConstructor {
                         );
                     }
 
-                    if &*text != text.trim_end() {
+                    // (white space that collapsed away leaves the state as it was: the line
+                    // still has no content)
+                    if text.is_empty() {
+                    } else if &*text != text.trim_end() {
                         // this text node ends with whitespace
                         self.trim_next_inline_whitespace = true
                     } else {
