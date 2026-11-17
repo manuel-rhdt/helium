@@ -561,10 +561,12 @@ fn transform_chain(
                 .filter(|&candidate| {
                     positions.get(candidate).is_some_and(|b| {
                         b.page == pos.page
+                            // half-open: a paragraph has no height and sits at the top of its
+                            // block, which is the bottom edge of the box above it
                             && x >= b.x.0
-                            && x <= b.x.0 + b.width.0
+                            && x < b.x.0 + b.width.0
                             && y >= b.y.0
-                            && y <= b.y.0 + b.height.0
+                            && y < b.y.0 + b.height.0
                     })
                 })
                 .max_by_key(|&candidate| depth(candidate));

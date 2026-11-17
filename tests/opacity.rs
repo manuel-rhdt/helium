@@ -175,3 +175,35 @@ fn an_inline_block_and_a_replaced_element_are_groups() {
     );
     assert_eq!(groups(&pdf), 1, "{}", pdf);
 }
+
+/// The text that is painted in the page content after the (only) transparency group, i.e.
+/// outside of it.
+fn text_after_the_group(pdf: &str) -> usize {
+    let at = pdf.find(" Do").expect("a form is drawn");
+    let rest = &pdf[at..];
+    let end = rest.find("endstream").unwrap_or(rest.len());
+    rest[..end].matches("BT").count()
+}
+
+#[test]
+fn the_opacity_of_a_text_block_does_not_leak_to_the_next_adjacent_block() {
+    let pdf = render(
+        "adjacent",
+        "<style>@page{size:120mm 50mm;margin:4mm}body{background:#36c;color:#fff;font:16pt serif}</style>\
+         <div style=\"opacity:.45\">A: half</div><div>B: full?</div><p style=\"margin:2mm 0\">C: full?</p>",
+    );
+    assert_eq!(groups(&pdf), 1, "{}", pdf);
+    // B and C are painted outside of the group
+    assert_eq!(text_after_the_group(&pdf), 2, "{}", pdf);
+}
+
+#[test]
+fn the_opacity_of_a_block_does_not_leak_to_a_following_blockquote() {
+    let pdf = render(
+        "blockquote",
+        "<style>@page{size:120mm 50mm;margin:4mm}body{color:#fff;background:#36c;font:16pt serif}</style>\
+         <div style=\"opacity:.45;height:10mm\">\u{201C}</div><blockquote>quoted</blockquote>",
+    );
+    assert_eq!(groups(&pdf), 1, "{}", pdf);
+    assert_eq!(text_after_the_group(&pdf), 1, "{}", pdf);
+}
