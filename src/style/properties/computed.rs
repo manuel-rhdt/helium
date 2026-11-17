@@ -982,6 +982,10 @@ pub struct Box {
     pub grid_column_end: GridPlacement,
     pub grid_row_start: GridPlacement,
     pub grid_row_end: GridPlacement,
+    /// Whether the parent of the element does not wrap its lines (`white-space: nowrap` or
+    /// `pre`): the line may not break in front of or behind an `inline-block` box in it. (The
+    /// breaks around an inline-level box are those of the parent, not of the box.)
+    pub parent_nowrap: bool,
 }
 
 impl Default for Box {
@@ -1032,6 +1036,7 @@ impl Default for Box {
             grid_column_end: Default::default(),
             grid_row_start: Default::default(),
             grid_row_end: Default::default(),
+            parent_nowrap: false,
         }
     }
 }

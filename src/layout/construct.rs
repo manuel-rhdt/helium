@@ -286,6 +286,9 @@ impl FlowConstructor {
                 let cascade = cascade_declarations(&matched_rules, size_hint.as_ref(), inline_style.as_ref());
                 style_builder.apply_cascade(cascade.iter().copied());
                 let mut style = style_builder.build();
+                if box_parent_style.as_ref().is_some_and(|parent| !parent.text.white_space.wraps()) {
+                    std::sync::Arc::make_mut(&mut style.box_).parent_nowrap = true;
+                }
                 if parent_is_flex_or_grid {
                     style.blockify();
                 }

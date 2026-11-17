@@ -187,6 +187,17 @@ fn inline_blocks_separated_by_spaces_do_not_wrap_in_nowrap() {
     assert_eq!(rows(&nowrap), 1);
 }
 
+/// The breaks in front of and behind an inline-level box are those of its parent: a `nowrap` box
+/// does not keep a wrapping row of boxes together.
+#[test]
+fn nowrap_on_an_inline_block_does_not_stop_the_breaks_around_it() {
+    let boxes = r#"<span style="display: inline-block; white-space: nowrap; width: 50px; height: 10px; background-color: #ff0000"></span>"#.repeat(4);
+    let dump = dump("box_nowrap", &format!(r#"<div style="width: 140px">{}</div>"#, boxes));
+    let mut ys: Vec<f64> = rects_with(&dump, [255, 0, 0]).iter().map(|r| r["y"].as_f64().unwrap()).collect();
+    ys.dedup();
+    assert!(ys.len() >= 2, "{ys:?}");
+}
+
 /// Text with a break opportunity between its letters (CJK, emoji) still advances over every glyph:
 /// a `nowrap` box that is sized by its contents is as wide as all of the text.
 #[test]

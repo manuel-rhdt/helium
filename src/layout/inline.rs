@@ -1144,9 +1144,10 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         glue_shrink: Px(0.0),
                         penalty: 0,
                     };
+                    // (the white space of the parent decides, not the one of the box itself)
                     let wraps = computed_values
                         .get(entity)
-                        .is_none_or(|style| style.text.white_space.wraps());
+                        .is_none_or(|style| !style.box_.parent_nowrap);
                     if wraps
                         && index > 0
                         && break_points.last().is_some_and(|last| last.advance_after != advance.px())
