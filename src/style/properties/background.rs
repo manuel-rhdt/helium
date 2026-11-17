@@ -550,6 +550,7 @@ mod tests {
         Gradient {
             kind: GradientKind::Linear(LinearDirection::default()),
             repeating: false,
+            interpolation: Default::default(),
             stops: vec![
                 Stop { color: RGBA { red: 255, green: 0, blue: 0, alpha: 255 }, positions: vec![] },
                 Stop { color: RGBA { red: 0, green: 0, blue: 255, alpha: 255 }, positions: vec![] },

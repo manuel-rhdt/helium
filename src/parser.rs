@@ -187,6 +187,31 @@ impl DomAccess for NodeRef<NodeData> {
     }
 }
 
+/// The deepest nesting of elements that a document has, as in browsers (Chrome has 512). Recursion
+/// over the tree (the style cascade, the layout, the drop of the tree) needs stack for every
+/// level, so a document that nests deeper would overflow it. An element that would be deeper is
+/// added to the deepest ancestor that can still have children: the tree is flattened there.
+pub const MAX_DEPTH: usize = 512;
+
+/// Where a child of `parent` is added: `parent`, or its nearest ancestor that is above [`MAX_DEPTH`].
+fn clamp_parent(parent: &NodeRef<NodeData>) -> NodeRef<NodeData> {
+    let mut depth = 0;
+    let mut ancestor = parent.parent();
+    while let Some(node) = ancestor {
+        depth += 1;
+        ancestor = node.parent();
+    }
+    let mut target = parent.clone();
+    while depth >= MAX_DEPTH {
+        match target.parent() {
+            Some(above) => target = above,
+            None => break,
+        }
+        depth -= 1;
+    }
+    target
+}
+
 pub struct Sink {
     document_node: NodeRef<NodeData>,
     on_parse_error: RefCell<Option<Box<dyn FnMut(Cow<'static, str>)>>>,
@@ -279,7 +304,7 @@ impl TreeSink for Sink {
     #[inline]
     fn append(&self, parent: &Self::Handle, child: NodeOrText<Self::Handle>) {
         match child {
-            NodeOrText::AppendNode(node) => parent.append(node),
+            NodeOrText::AppendNode(node) => clamp_parent(parent).append(node),
             NodeOrText::AppendText(text) => {
                 if let Some(last_child) = parent.last_child() {
                     if let Some(existing) = last_child.as_text() {

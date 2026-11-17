@@ -2087,6 +2087,33 @@ impl<'a> System<'a> for LineBoxCreator {
                             });
                             text_cursor = piece_start + piece_width;
                         }
+                        if let Some(background) = run.background.filter(|_| piece_width > Px(0.0) && !flow.is_vertical()) {
+                            // the background of an inline box is the em box of its font
+                            let ascent = font.scale_to_px(font.ascent(), run.face.font_size);
+                            let descent = Px(0.0) - font.scale_to_px(font.descent(), run.face.font_size);
+                            let x = line_pos.x + advance + physical_x;
+                            let middle = line_pos.y + line.baseline + physical_y + (descent - ascent) / 2.0;
+                            entities
+                                .build_entity()
+                                .with(
+                                    components::Position { y: line_pos.y, height: Px(0.0), ..line_pos },
+                                    &mut positions,
+                                )
+                                .with(
+                                    components::VectorGraphics {
+                                        ops: vec![GraphicsOp::Line {
+                                            from_x: x,
+                                            from_y: middle,
+                                            to_x: x + piece_width,
+                                            to_y: middle,
+                                            thickness: ascent + descent,
+                                        }],
+                                        color: Some(background),
+                                    },
+                                    &mut graphics,
+                                )
+                                .build();
+                        }
                         if !run.decoration.is_none() && piece_width > Px(0.0) {
                             let page_pos = components::Position {
                                 y: line_pos.y,

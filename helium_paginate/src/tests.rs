@@ -206,6 +206,7 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         line_extent: 0.0,
         choices: ChoiceId::NONE,
         floats_used: 0.0,
+        repeated: 0.0,
         placed: FloatList::NONE,
         carry: FloatList::NONE,
     };

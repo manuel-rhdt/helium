@@ -279,7 +279,10 @@ impl FlowConstructor {
                     });
                 // the `width` and `height` attributes of an image are presentational hints: they
                 // rank below all the rules of the author
-                let size_hint = image_size_hint(element_ref).or_else(|| table_hint(node, element_ref));
+                let size_hint = image_size_hint(element_ref)
+                    .or_else(|| table_hint(node, element_ref))
+                    .or_else(|| list_type_hint(node, element_ref))
+                    .or_else(|| gauge_hint(element_ref));
                 let cascade = cascade_declarations(&matched_rules, size_hint.as_ref(), inline_style.as_ref());
                 style_builder.apply_cascade(cascade.iter().copied());
                 let mut style = style_builder.build();
@@ -1556,7 +1559,14 @@ impl EntityConstructor {
                         &style.font.lang,
                         &mut self.in_word,
                     );
-                    self.build_text_entity(style, transformed.as_deref().unwrap_or(&*text))
+                    let background = inline_background(&node);
+                    let built = self.build_text_entity(style, transformed.as_deref().unwrap_or(&*text));
+                    if background.is_some() {
+                        if let Some(run) = self.world.write_storage::<components::TextRun>().get_mut(built.0) {
+                            run.background = background;
+                        }
+                    }
+                    built
                 }
             }
             // comments and the like have no box
@@ -1680,6 +1690,7 @@ impl EntityConstructor {
                 line_height,
                 baseline,
                 decoration,
+                background: None,
                 hyphens,
                 manual_hyphen_points,
                 lang,
@@ -2404,6 +2415,88 @@ fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
     }
     // pixels are the size of the image box itself (see `image_of`)
     has_percentage.then(|| PropertyDeclarationBlock::parse_inline(&css))
+}
+
+/// The background color of the nearest inline ancestor of a text that has one (the text is
+/// painted on it). The ancestors that are blocks have their own background.
+fn inline_background<'a, N: AbstractNode<'a>>(node: &N) -> Option<crate::style::properties::computed::RGBA> {
+    let mut ancestor = node.parent_node();
+    while let Some(parent) = ancestor {
+        let style = parent.style();
+        if !matches!(style.box_.display, Display::Inline) {
+            return None;
+        }
+        let color = crate::style::properties::color::color_to_rgba(style.background.background_color);
+        if color.alpha > 0 {
+            return Some(color);
+        }
+        ancestor = parent.parent_node();
+    }
+    None
+}
+
+/// The bar of a `<progress>` and of a `<meter>`: a background that is filled up to the part of the
+/// `value` in the range of the element (an indeterminate `<progress>` has no value and is empty).
+fn gauge_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
+    let is_meter = *element.name.local == *"meter";
+    if !is_meter && *element.name.local != *"progress" {
+        return None;
+    }
+    let number = |name: &str| -> Option<f64> {
+        let attributes = element.attributes.borrow();
+        let value = attributes.get(&QualName::new(None, ns!(), html5ever::LocalName::from(name)))?.value.trim().parse::<f64>().ok()?;
+        value.is_finite().then_some(value)
+    };
+    let min = if is_meter { number("min").unwrap_or(0.0) } else { 0.0 };
+    let max = number("max").filter(|&max| max > min).unwrap_or(if is_meter { min.max(1.0) } else { 1.0 });
+    let fraction = match number("value") {
+        Some(value) => ((value - min) / (max - min)).clamp(0.0, 1.0),
+        None => 0.0,
+    };
+    let percent = (fraction * 100.0 * 100.0).round() / 100.0;
+    let fill = if is_meter { "#3a9d3a" } else { "#2b7de9" };
+    Some(PropertyDeclarationBlock::parse_inline(&format!(
+        "background: linear-gradient(to right, {fill} {percent}%, #e3e3e3 {percent}%)"
+    )))
+}
+
+/// The presentational hint of the `type` attribute of `<ol>`, `<ul>` and `<li>`: the
+/// `list-style-type`.
+/// https://html.spec.whatwg.org/multipage/rendering.html#lists
+fn list_type_hint(node: &DomRef, element: &ElementData) -> Option<PropertyDeclarationBlock> {
+    let local = &element.name.local;
+    let is_ordered = |element: &ElementData| *element.name.local == *"ol";
+    let kind = if is_ordered(element) {
+        true
+    } else if *local == local_name!("ul") {
+        false
+    } else if *local == *"li" {
+        // the kind of the list the item is in
+        let parent = node.parent()?.into_element_ref()?;
+        is_ordered(&parent)
+    } else {
+        return None;
+    };
+    let value = element.attributes.borrow().get(&QualName::new(None, ns!(), local_name!("type")))?.value.to_string();
+    let style = if kind {
+        // the values of an ordered list are case sensitive
+        match value.as_str() {
+            "1" => "decimal",
+            "a" => "lower-alpha",
+            "A" => "upper-alpha",
+            "i" => "lower-roman",
+            "I" => "upper-roman",
+            _ => return None,
+        }
+    } else {
+        match value.to_ascii_lowercase().as_str() {
+            "disc" => "disc",
+            "circle" => "circle",
+            "square" => "square",
+            _ => return None,
+        }
+    };
+    Some(PropertyDeclarationBlock::parse_inline(&format!("list-style-type: {}", style)))
 }
 
 /// The presentational hints of the `cellspacing` attribute of a `<table>` (`border-spacing`) and

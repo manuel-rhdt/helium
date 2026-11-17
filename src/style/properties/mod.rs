@@ -1,5 +1,6 @@
 pub mod background;
 pub mod color;
+pub mod color_mix;
 pub mod computed;
 pub mod custom;
 pub mod font_features;

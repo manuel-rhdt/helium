@@ -706,6 +706,9 @@ pub enum Box {
     /// https://www.w3.org/TR/css-color-4/#transparency
     #[property]
     Opacity(Opacity),
+    /// https://www.w3.org/TR/css-backgrounds-3/#box-shadow
+    #[property]
+    BoxShadow(ShadowList),
     #[property]
     GridColumnStart(GridPlacement),
     #[property]
@@ -1501,11 +1504,10 @@ impl<'i> PropertyValue<'i> for ColumnRuleShorthand {
     }
 }
 
-/// A track size of `grid-template-columns`, `grid-template-rows`, `grid-auto-columns` and
-/// `grid-auto-rows`.
-/// https://www.w3.org/TR/css-grid-1/#track-sizing
+/// A track breadth: one end of a track size.
+/// https://www.w3.org/TR/css-grid-1/#typedef-track-breadth
 #[derive(Debug, Copy, Clone)]
-pub enum TrackSize {
+pub enum Breadth {
     Auto,
     MinContent,
     MaxContent,
@@ -1514,33 +1516,82 @@ pub enum TrackSize {
     Length(QuantityOrPercentage),
 }
 
-impl<'i> PropertyValue<'i> for TrackSize {
+impl<'i> PropertyValue<'i> for Breadth {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         if let Ok(length) = input.try_parse(QuantityOrPercentage::from_css_property_value) {
-            return Ok(TrackSize::Length(length));
+            return Ok(Breadth::Length(length));
         }
         let token = input.next()?.clone();
         match &token {
             Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("fr") => {
-                Ok(TrackSize::Fraction(*value))
+                Ok(Breadth::Fraction(*value))
             }
-            Token::Ident(ident) if ident.eq_ignore_ascii_case("auto") => Ok(TrackSize::Auto),
+            Token::Ident(ident) if ident.eq_ignore_ascii_case("auto") => Ok(Breadth::Auto),
             Token::Ident(ident) if ident.eq_ignore_ascii_case("min-content") => {
-                Ok(TrackSize::MinContent)
+                Ok(Breadth::MinContent)
             }
             Token::Ident(ident) if ident.eq_ignore_ascii_case("max-content") => {
-                Ok(TrackSize::MaxContent)
+                Ok(Breadth::MaxContent)
             }
             _ => Err(ParseError::unexpected_token()),
         }
     }
 }
 
+/// A track size of `grid-template-columns`, `grid-template-rows`, `grid-auto-columns` and
+/// `grid-auto-rows`: a breadth, `minmax(<min>, <max>)` or `fit-content(<limit>)`.
+/// https://www.w3.org/TR/css-grid-1/#track-sizing
+#[derive(Debug, Copy, Clone)]
+pub enum TrackSize {
+    Breadth(Breadth),
+    MinMax(Breadth, Breadth),
+    FitContent(QuantityOrPercentage),
+}
+
+impl<'i> PropertyValue<'i> for TrackSize {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if input.try_parse(|i| i.expect_function_matching("minmax")).is_ok() {
+            return input.parse_nested_block(|input| {
+                let min = Breadth::from_css_property_value(input)?;
+                input.expect_comma()?;
+                let max = Breadth::from_css_property_value(input)?;
+                input.expect_exhausted()?;
+                // A flexible minimum is not allowed
+                if matches!(min, Breadth::Fraction(_)) {
+                    return Err(ParseError::custom(StyleParseError::InvalidValue));
+                }
+                Ok(TrackSize::MinMax(min, max))
+            });
+        }
+        if input.try_parse(|i| i.expect_function_matching("fit-content")).is_ok() {
+            return input.parse_nested_block(|input| {
+                let limit = QuantityOrPercentage::from_css_property_value(input)?;
+                input.expect_exhausted()?;
+                Ok(TrackSize::FitContent(limit))
+            });
+        }
+        Breadth::from_css_property_value(input).map(TrackSize::Breadth)
+    }
+}
+
+/// An entry of a list of tracks: a track size, or `repeat(auto-fill | auto-fit, <tracks>)`.
+/// `repeat(<integer>, <tracks>)` is expanded when it is parsed.
+#[derive(Debug, Clone)]
+pub enum TrackEntry {
+    Size(TrackSize),
+    AutoRepeat { fit: bool, tracks: Vec<TrackSize> },
+}
+
+/// The most tracks one `repeat(<integer>, ...)` may expand to.
+const MAX_REPEATED_TRACKS: usize = 1000;
+
 /// A list of track sizes. `none` is the empty list.
 #[derive(Debug, Clone, Default)]
-pub struct TrackList(pub Vec<TrackSize>);
+pub struct TrackList(pub Vec<TrackEntry>);
 
 impl<'i> PropertyValue<'i> for TrackList {
     type Error = StyleParseError;
@@ -1549,7 +1600,57 @@ impl<'i> PropertyValue<'i> for TrackList {
         if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
             return Ok(TrackList(vec![]));
         }
-        Vec::<TrackSize>::from_css_property_value(input).map(TrackList)
+        input.parse_entirely(|input| {
+            let mut entries = vec![];
+            let mut auto_repeats = 0;
+            while !input.is_exhausted() {
+                if input.try_parse(|i| i.expect_function_matching("repeat")).is_ok() {
+                    input.parse_nested_block(|input| {
+                        let count = input.try_parse(|i| i.expect_integer());
+                        let fit = match count {
+                            Ok(_) => false,
+                            Err(_) => {
+                                let ident = input.expect_ident()?.clone();
+                                if ident.eq_ignore_ascii_case("auto-fill") {
+                                    false
+                                } else if ident.eq_ignore_ascii_case("auto-fit") {
+                                    true
+                                } else {
+                                    return Err(ParseError::unexpected_token());
+                                }
+                            }
+                        };
+                        input.expect_comma()?;
+                        let tracks = Vec::<TrackSize>::from_css_property_value(input)?;
+                        if tracks.is_empty() {
+                            return Err(ParseError::custom(StyleParseError::InvalidValue));
+                        }
+                        match count {
+                            Ok(count) => {
+                                if count < 1 || count as usize * tracks.len() > MAX_REPEATED_TRACKS {
+                                    return Err(ParseError::custom(StyleParseError::InvalidValue));
+                                }
+                                for _ in 0..count {
+                                    entries.extend(tracks.iter().copied().map(TrackEntry::Size));
+                                }
+                            }
+                            Err(_) => {
+                                auto_repeats += 1;
+                                entries.push(TrackEntry::AutoRepeat { fit, tracks });
+                            }
+                        }
+                        Ok(())
+                    })?;
+                } else {
+                    entries.push(TrackEntry::Size(TrackSize::from_css_property_value(input)?));
+                }
+            }
+            // Only one auto repeat is allowed, and an empty list is not a list
+            if auto_repeats > 1 || entries.is_empty() {
+                return Err(ParseError::custom(StyleParseError::InvalidValue));
+            }
+            Ok(TrackList(entries))
+        })
     }
 }
 
@@ -2345,14 +2446,38 @@ impl Default for BorderStyle {
     }
 }
 
+/// A colour, or a `color-mix()` of colours (which is computed here: see
+/// [`super::color_mix`]).
+fn parse_css_color<'i>(input: &mut Parser<'i>) -> Result<Color, ()> {
+    let state = input.state();
+    match Color::parse(input) {
+        Ok(color) => Ok(color),
+        Err(_) => {
+            input.reset(&state);
+            super::color_mix::parse(input, &mut parse_css_color)
+        }
+    }
+}
+
 impl<'i> PropertyValue<'i> for Color {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
-        Color::parse(input).map_err(|error| match error.kind {
-            cssparser::ParseErrorKind::Basic(kind) => ParseError::from_basic_kind(kind),
-            cssparser::ParseErrorKind::Custom(()) => ParseError::unexpected_token(),
-        })
+        let state = input.state();
+        match Color::parse(input) {
+            Ok(color) => Ok(color),
+            Err(error) => {
+                input.reset(&state);
+                if let Ok(mixed) = super::color_mix::parse(input, &mut parse_css_color) {
+                    return Ok(mixed);
+                }
+                input.reset(&state);
+                Err(match error.kind {
+                    cssparser::ParseErrorKind::Basic(kind) => ParseError::from_basic_kind(kind),
+                    cssparser::ParseErrorKind::Custom(()) => ParseError::unexpected_token(),
+                })
+            }
+        }
     }
 }
 
@@ -2368,6 +2493,92 @@ impl<'i> PropertyValue<'i> for f32 {
                 Err(ParseError::unexpected_token())
             }
         }
+    }
+}
+
+/// One shadow of `box-shadow`.
+#[derive(Debug, Clone)]
+pub struct Shadow {
+    pub x: Quantity,
+    pub y: Quantity,
+    pub blur: Quantity,
+    pub spread: Quantity,
+    /// `None` is `currentcolor`.
+    pub color: Option<Color>,
+    pub inset: bool,
+}
+
+/// The value of `box-shadow`: `none` or a list of shadows, the first of which is on top.
+#[derive(Debug, Clone, Default)]
+pub struct ShadowList(pub Vec<Shadow>);
+
+impl<'i> PropertyValue<'i> for ShadowList {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() {
+            return Ok(ShadowList(vec![]));
+        }
+        let shadows = input.parse_comma_separated(|input| {
+            let (mut color, mut inset) = (None, false);
+            let mut lengths: Vec<Quantity> = vec![];
+            // the color and `inset` may come before, after or between the lengths
+            loop {
+                if !inset && input.try_parse(|input| input.expect_ident_matching("inset")).is_ok() {
+                    inset = true;
+                    continue;
+                }
+                if color.is_none() {
+                    if let Ok(parsed) = input.try_parse(|input| Color::from_css_property_value(input).map_err(|_| ())) {
+                        color = Some(parsed);
+                        continue;
+                    }
+                }
+                if lengths.len() < 4 {
+                    if let Ok(length) = input.try_parse(Quantity::from_css_property_value) {
+                        lengths.push(length);
+                        continue;
+                    }
+                }
+                break;
+            }
+            let zero = Quantity { value: 0.0, unit: Unit::Px };
+            if lengths.len() < 2 {
+                return Err(ParseError::custom(StyleParseError::InvalidValue));
+            }
+            // a negative blur radius is an error
+            if lengths.get(2).is_some_and(|blur| blur.value < 0.0) {
+                return Err(ParseError::custom(StyleParseError::InvalidValue));
+            }
+            Ok(Shadow {
+                x: lengths[0],
+                y: lengths[1],
+                blur: lengths.get(2).copied().unwrap_or(zero),
+                spread: lengths.get(3).copied().unwrap_or(zero),
+                color,
+                inset,
+            })
+        })?;
+        Ok(ShadowList(shadows))
+    }
+}
+
+impl ComputedValue<ShadowList> for Vec<super::computed::BoxShadow> {
+    fn from_specified(list: &ShadowList, style: &super::computed::ComputedValues) -> Self {
+        let px = |quantity: Quantity| {
+            PixelLength::from_val_unit(quantity.value, quantity.unit, super::computed::FontSizes::of(style)).0
+        };
+        list.0
+            .iter()
+            .map(|shadow| super::computed::BoxShadow {
+                x: px(shadow.x),
+                y: px(shadow.y),
+                blur: px(shadow.blur).max(0.0),
+                spread: px(shadow.spread),
+                color: shadow.color.unwrap_or(Color::CurrentColor),
+                inset: shadow.inset,
+            })
+            .collect()
     }
 }
 
@@ -3132,6 +3343,11 @@ pub enum PositionSpec {
     Static,
     Relative,
     Absolute,
+    /// Computes to `absolute`: the box is on the first page only; it is not repeated on the
+    /// others.
+    Fixed,
+    /// Computes to `relative`: on a page there is nothing to stick to.
+    Sticky,
 }
 
 impl Default for PositionSpec {
@@ -3241,6 +3457,44 @@ mod function_syntax_tests {
         parser
             .parse_entirely(|p| T::from_css_property_value(p))
             .ok()
+    }
+
+    #[test]
+    fn box_shadow() {
+        let list: ShadowList = parse("0 2px 8px rgb(0 0 0 / .2), inset 1px 1px red").unwrap();
+        assert_eq!(list.0.len(), 2);
+        let first = &list.0[0];
+        assert_eq!((first.x.value, first.y.value, first.blur.value, first.spread.value), (0.0, 2.0, 8.0, 0.0));
+        assert!(first.color.is_some() && !first.inset);
+        assert!(list.0[1].inset);
+        // the color may come first or last; no color is `currentcolor`
+        assert!(parse::<ShadowList>("red 1px 2px 3px 4px").unwrap().0[0].color.is_some());
+        let plain = parse::<ShadowList>("1px 2px").unwrap();
+        assert!(plain.0[0].color.is_none());
+        assert_eq!(parse::<ShadowList>("none").unwrap().0.len(), 0);
+        // two lengths at least, and no negative blur
+        assert!(parse::<ShadowList>("1px").is_none());
+        assert!(parse::<ShadowList>("1px 1px -2px").is_none());
+        assert!(parse::<ShadowList>("1px 1px 1px 1px 1px").is_none());
+    }
+
+    #[test]
+    fn grid_track_lists() {
+        let list: TrackList = parse("repeat(3, minmax(10px, 1fr)) auto fit-content(5px)").unwrap();
+        assert_eq!(list.0.len(), 5);
+        assert!(matches!(list.0[0], TrackEntry::Size(TrackSize::MinMax(Breadth::Length(_), Breadth::Fraction(_)))));
+        assert!(matches!(list.0[3], TrackEntry::Size(TrackSize::Breadth(Breadth::Auto))));
+        assert!(matches!(list.0[4], TrackEntry::Size(TrackSize::FitContent(_))));
+        let auto: TrackList = parse("100px repeat(auto-fit, 50px 1fr)").unwrap();
+        assert!(matches!(&auto.0[1], TrackEntry::AutoRepeat { fit: true, tracks } if tracks.len() == 2));
+        assert_eq!(parse::<TrackList>("none").unwrap().0.len(), 0);
+        // no repeat of nothing, no flexible minimum, one automatic repeat at most, and no
+        // unreasonably large grid
+        assert!(parse::<TrackList>("repeat(0, 1fr)").is_none());
+        assert!(parse::<TrackList>("repeat(2)").is_none());
+        assert!(parse::<TrackList>("minmax(1fr, 2fr)").is_none());
+        assert!(parse::<TrackList>("repeat(auto-fill, 1fr) repeat(auto-fill, 1fr)").is_none());
+        assert!(parse::<TrackList>("repeat(100000, 1fr)").is_none());
     }
 
     #[test]

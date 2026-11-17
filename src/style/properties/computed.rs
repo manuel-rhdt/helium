@@ -648,6 +648,13 @@ impl ComputedValues {
         if !self.box_.column_rule_style.is_visible() && self.box_.column_rule_width != PixelLength(0.0) {
             Arc::make_mut(&mut self.box_).column_rule_width = PixelLength(0.0);
         }
+        // A fixed box is an absolutely positioned box (of the first page), and a sticky one is
+        // not moved by scrolling, which a page has none of.
+        match self.box_.position {
+            PositionSpec::Fixed => Arc::make_mut(&mut self.box_).position = PositionSpec::Absolute,
+            PositionSpec::Sticky => Arc::make_mut(&mut self.box_).position = PositionSpec::Relative,
+            _ => {}
+        }
         // https://www.w3.org/TR/CSS22/visuren.html#dis-pos-flo
         // An absolutely positioned box is always blockified.
         if self.box_.position == PositionSpec::Absolute {
@@ -969,6 +976,8 @@ pub struct Box {
     pub transform_origin: super::transform::TransformOrigin,
     /// 1 is opaque, 0 is invisible. Not inherited.
     pub opacity: f32,
+    /// The shadows of the box, the first on top. Not inherited.
+    pub box_shadow: Vec<BoxShadow>,
     pub grid_column_start: GridPlacement,
     pub grid_column_end: GridPlacement,
     pub grid_row_start: GridPlacement,
@@ -1018,6 +1027,7 @@ impl Default for Box {
             transform: Default::default(),
             transform_origin: Default::default(),
             opacity: 1.0,
+            box_shadow: Vec::new(),
             grid_column_start: Default::default(),
             grid_column_end: Default::default(),
             grid_row_start: Default::default(),
@@ -1026,9 +1036,9 @@ impl Default for Box {
     }
 }
 
-/// A computed track size of a grid.
+/// A computed track breadth of a grid.
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum TrackSize {
+pub enum Breadth {
     Auto,
     MinContent,
     MaxContent,
@@ -1036,23 +1046,68 @@ pub enum TrackSize {
     Length(LengthPercentage),
 }
 
+impl Breadth {
+    fn from_specified(spec: &specified::Breadth, style: &ComputedValues) -> Self {
+        match spec {
+            specified::Breadth::Auto => Breadth::Auto,
+            specified::Breadth::MinContent => Breadth::MinContent,
+            specified::Breadth::MaxContent => Breadth::MaxContent,
+            specified::Breadth::Fraction(fr) => Breadth::Fraction(*fr),
+            specified::Breadth::Length(length) => {
+                Breadth::Length(LengthPercentage::from_specified(length, style))
+            }
+        }
+    }
+}
+
+/// A computed track size of a grid.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum TrackSize {
+    Breadth(Breadth),
+    MinMax(Breadth, Breadth),
+    FitContent(LengthPercentage),
+}
+
+impl TrackSize {
+    fn from_specified(spec: &specified::TrackSize, style: &ComputedValues) -> Self {
+        match spec {
+            specified::TrackSize::Breadth(b) => TrackSize::Breadth(Breadth::from_specified(b, style)),
+            specified::TrackSize::MinMax(min, max) => TrackSize::MinMax(
+                Breadth::from_specified(min, style),
+                Breadth::from_specified(max, style),
+            ),
+            specified::TrackSize::FitContent(limit) => {
+                TrackSize::FitContent(LengthPercentage::from_specified(limit, style))
+            }
+        }
+    }
+}
+
+/// An entry of a computed list of track sizes of a grid.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TrackEntry {
+    Size(TrackSize),
+    /// `repeat(auto-fill | auto-fit, ...)`
+    AutoRepeat { fit: bool, tracks: Vec<TrackSize> },
+}
+
 /// A computed list of track sizes of a grid.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct TrackList(pub Vec<TrackSize>);
+pub struct TrackList(pub Vec<TrackEntry>);
 
 impl super::ComputedValue<specified::TrackList> for TrackList {
     fn from_specified(spec: &specified::TrackList, style: &ComputedValues) -> Self {
         TrackList(
             spec.0
                 .iter()
-                .map(|size| match size {
-                    specified::TrackSize::Auto => TrackSize::Auto,
-                    specified::TrackSize::MinContent => TrackSize::MinContent,
-                    specified::TrackSize::MaxContent => TrackSize::MaxContent,
-                    specified::TrackSize::Fraction(fr) => TrackSize::Fraction(*fr),
-                    specified::TrackSize::Length(length) => {
-                        TrackSize::Length(LengthPercentage::from_specified(length, style))
+                .map(|entry| match entry {
+                    specified::TrackEntry::Size(size) => {
+                        TrackEntry::Size(TrackSize::from_specified(size, style))
                     }
+                    specified::TrackEntry::AutoRepeat { fit, tracks } => TrackEntry::AutoRepeat {
+                        fit: *fit,
+                        tracks: tracks.iter().map(|t| TrackSize::from_specified(t, style)).collect(),
+                    },
                 })
                 .collect(),
         )
@@ -1233,6 +1288,17 @@ impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
             vertical: length(spec.vertical),
         }
     }
+}
+
+/// One shadow of `box-shadow`, in pixels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoxShadow {
+    pub x: f32,
+    pub y: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub color: Color,
+    pub inset: bool,
 }
 
 #[derive(Debug, Clone)]

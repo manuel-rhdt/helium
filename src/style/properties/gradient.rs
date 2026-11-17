@@ -17,6 +17,8 @@
 use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 use cssparser_color::Color;
 
+pub use super::color_mix::Interpolation;
+use super::color_mix::parse_interpolation;
 use super::background::{parse_position_and_size, LayerStyle, Repeat, SpecifiedPosition, SpecifiedSize};
 use super::computed::{ComputedValues, LengthPercentage, PixelLength, RGBA};
 use super::specified::{CommaSeparated, ComputedValue, PropertyValue, QuantityOrPercentage};
@@ -94,6 +96,8 @@ impl std::fmt::Debug for UrlImage {
 pub struct Gradient<L, C> {
     pub kind: GradientKind<L>,
     pub repeating: bool,
+    /// The colour space the colours between the stops are interpolated in (`in oklab`).
+    pub interpolation: Interpolation,
     /// At least two stops.
     pub stops: Vec<Stop<L, C>>,
 }
@@ -228,32 +232,49 @@ fn parse_gradient<'i>(
     repeating: bool,
     input: &mut Parser<'i>,
 ) -> ParseResult<Gradient<QuantityOrPercentage, Color>> {
-    // the optional first argument, which configures the shape, is followed by a comma
+    // The optional first argument, which configures the shape and the colour space of the
+    // interpolation (in either order, each of them optional), is followed by a comma.
     fn leading<'i, T>(
         input: &mut Parser<'i>,
-        parse: impl FnOnce(&mut Parser<'i>) -> ParseResult<T>,
-    ) -> Option<T> {
+        parse: impl Fn(&mut Parser<'i>) -> ParseResult<T>,
+    ) -> (Option<T>, Option<Interpolation>) {
         input
             .try_parse(|input| {
-                let value = parse(input)?;
+                let mut how = input.try_parse(|input| parse_interpolation(input).map_err(|()| input.new_error_for_next_token::<StyleParseError>())).ok();
+                let value = input.try_parse(&parse).ok();
+                if how.is_none() {
+                    how = input.try_parse(|input| parse_interpolation(input).map_err(|()| input.new_error_for_next_token::<StyleParseError>())).ok();
+                }
+                if value.is_none() && how.is_none() {
+                    return Err(input.new_error_for_next_token::<StyleParseError>());
+                }
                 input.expect_comma()?;
-                Ok::<_, ParseError<StyleParseError>>(value)
+                Ok::<_, ParseError<StyleParseError>>((value, how))
             })
-            .ok()
+            .unwrap_or((None, None))
     }
 
-    let kind = match function {
-        Function::Linear => GradientKind::Linear(leading(input, parse_linear_direction).unwrap_or_default()),
-        Function::Radial => GradientKind::Radial(leading(input, parse_radial).unwrap_or_else(|| Radial {
-            circle: false,
-            size: RadialSize::Extent(Extent::FarthestCorner),
-            position: Position::center(),
-        })),
-        Function::Conic => GradientKind::Conic(leading(input, parse_conic).unwrap_or_else(|| Conic {
-            from: 0.0,
-            position: Position::center(),
-        })),
+    let (kind, interpolation) = match function {
+        Function::Linear => {
+            let (value, how) = leading(input, parse_linear_direction);
+            (GradientKind::Linear(value.unwrap_or_default()), how)
+        }
+        Function::Radial => {
+            let (value, how) = leading(input, parse_radial);
+            let radial = value.unwrap_or_else(|| Radial {
+                circle: false,
+                size: RadialSize::Extent(Extent::FarthestCorner),
+                position: Position::center(),
+            });
+            (GradientKind::Radial(radial), how)
+        }
+        Function::Conic => {
+            let (value, how) = leading(input, parse_conic);
+            let conic = value.unwrap_or_else(|| Conic { from: 0.0, position: Position::center() });
+            (GradientKind::Conic(conic), how)
+        }
     };
+    let interpolation = interpolation.unwrap_or_default();
     let conic = matches!(kind, GradientKind::Conic(_));
 
     let mut stops = vec![];
@@ -266,7 +287,7 @@ fn parse_gradient<'i>(
     if !input.is_exhausted() || stops.len() < 2 {
         return Err(input.new_error_for_next_token());
     }
-    Ok(Gradient { kind, repeating, stops })
+    Ok(Gradient { kind, repeating, interpolation, stops })
 }
 
 fn parse_angle<'i>(input: &mut Parser<'i>) -> ParseResult<f32> {
@@ -686,7 +707,7 @@ impl Gradient<QuantityOrPercentage, Color> {
                     .collect(),
             })
             .collect();
-        Gradient { kind, repeating: self.repeating, stops }
+        Gradient { kind, repeating: self.repeating, interpolation: self.interpolation, stops }
     }
 }
 
@@ -697,6 +718,7 @@ impl Gradient<LengthPercentage, Color> {
         Gradient {
             kind: self.kind.clone(),
             repeating: self.repeating,
+            interpolation: self.interpolation,
             stops: self
                 .stops
                 .iter()
@@ -888,7 +910,7 @@ impl ResolvedGradient {
             stops
         };
         let stops = clip_stops(stops);
-        Some(Resolved { paint, geometry, stops: with_premultiplied_steps(&stops), clip: false, tiling: None })
+        Some(Resolved { paint, geometry, stops: with_steps(&stops, self.interpolation), clip: false, tiling: None })
     }
 }
 
@@ -1058,6 +1080,42 @@ fn clip_stops(stops: Vec<(f32, RGBA)>) -> Vec<ResolvedStop> {
     result
 }
 
+/// The most stops that the transitions of a gradient are cut into, for the colour spaces that
+/// are not sRGB.
+const SPACE_STOPS: usize = 4096;
+
+/// Adds stops so that linear interpolation between the stops of straight sRGB colours gives (nearly)
+/// the colours that the gradient has in its colour space: in sRGB only the transitions between
+/// opacities need them (premultiplied interpolation), in another space every transition does.
+fn with_steps(stops: &[ResolvedStop], how: Interpolation) -> Vec<ResolvedStop> {
+    if how.space == super::color_mix::Space::Srgb {
+        return with_premultiplied_steps(stops);
+    }
+    let transitions = stops
+        .windows(2)
+        .filter(|pair| pair[1].offset > pair[0].offset && pair[0].color != pair[1].color)
+        .count()
+        .max(1);
+    // (more steps for the spaces where the path of the colours is further from a straight line)
+    let steps = (SPACE_STOPS / transitions).clamp(1, 24);
+    let mut result = Vec::with_capacity(stops.len() + transitions * steps);
+    for (index, &stop) in stops.iter().enumerate() {
+        result.push(stop);
+        if let Some(&next) = stops.get(index + 1) {
+            if next.offset > stop.offset && stop.color != next.color {
+                for step in 1..steps {
+                    let t = step as f32 / steps as f32;
+                    result.push(ResolvedStop {
+                        offset: stop.offset + (next.offset - stop.offset) * t,
+                        color: super::color_mix::interpolate(how, stop.color, next.color, t),
+                    });
+                }
+            }
+        }
+    }
+    result
+}
+
 /// Adds stops in transitions between different opacities, so that linear interpolation between
 /// the stops of straight colours gives (nearly) the colours of premultiplied interpolation.
 fn with_premultiplied_steps(stops: &[ResolvedStop]) -> Vec<ResolvedStop> {
@@ -1094,6 +1152,51 @@ mod tests {
             Some(Image::Gradient(gradient)) => gradient,
             other => panic!("{css:?} parsed as {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_color_space_of_the_interpolation_comes_before_or_after_the_shape() {
+        use super::super::color_mix::{HueMethod, Space};
+        let space = |css| gradient(css).interpolation;
+        assert_eq!(space("linear-gradient(red, blue)"), Interpolation::default());
+        let oklab = Interpolation { space: Space::Oklab, method: HueMethod::Shorter };
+        assert_eq!(space("linear-gradient(in oklab, red, blue)"), oklab);
+        assert_eq!(space("linear-gradient(in oklab to right, red, blue)"), oklab);
+        assert_eq!(space("linear-gradient(to right in oklab, red, blue)"), oklab);
+        assert_eq!(space("radial-gradient(circle at 10% 20% in oklab, red, blue)"), oklab);
+        assert_eq!(space("conic-gradient(from 90deg in oklab, red, blue)"), oklab);
+        assert_eq!(
+            space("linear-gradient(in hsl longer hue, red, blue)"),
+            Interpolation { space: Space::Hsl, method: HueMethod::Longer }
+        );
+        assert_eq!(
+            gradient("linear-gradient(in oklab to right, red, blue)").kind,
+            GradientKind::Linear(LinearDirection::Side(Side::Right))
+        );
+        // a hue method is for the polar spaces only, and the space has to be one that is known
+        assert!(parse("linear-gradient(in oklab longer hue, red, blue)").is_none());
+        assert!(parse("linear-gradient(in bogus, red, blue)").is_none());
+    }
+
+    #[test]
+    fn a_space_that_is_not_srgb_adds_stops_that_follow_it() {
+        use super::super::color_mix::Space;
+        let stops = |space| {
+            let how = Interpolation { space, method: Default::default() };
+            let red = ResolvedStop { offset: 0.0, color: [1.0, 0.0, 0.0, 1.0] };
+            let blue = ResolvedStop { offset: 1.0, color: [0.0, 0.0, 1.0, 1.0] };
+            with_steps(&[red, blue], how)
+        };
+        assert_eq!(stops(Space::Srgb).len(), 2);
+        let oklab = stops(Space::Oklab);
+        assert!(oklab.len() > 8);
+        // the offsets increase, and the middle is not the mean in sRGB
+        assert!(oklab.windows(2).all(|pair| pair[0].offset < pair[1].offset));
+        let middle = oklab.iter().min_by(|a, b| (a.offset - 0.5).abs().total_cmp(&(b.offset - 0.5).abs())).unwrap();
+        assert!((middle.color[0] - 0.5).abs() > 0.05 || (middle.color[2] - 0.5).abs() > 0.05, "{middle:?}");
+        // the ends are the colours of the stops
+        assert_eq!(oklab.first().unwrap().color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(oklab.last().unwrap().color, [0.0, 0.0, 1.0, 1.0]);
     }
 
     #[test]
@@ -1214,7 +1317,7 @@ mod tests {
     }
 
     fn linear(direction: LinearDirection, stops: Vec<Stop<LengthPercentage, RGBA>>) -> ResolvedGradient {
-        Gradient { kind: GradientKind::Linear(direction), repeating: false, stops }
+        Gradient { kind: GradientKind::Linear(direction), repeating: false, interpolation: Default::default(), stops }
     }
 
     fn close(a: f32, b: f32) -> bool {
@@ -1374,6 +1477,7 @@ mod tests {
         Gradient {
             kind: GradientKind::Radial(radial),
             repeating: false,
+            interpolation: Default::default(),
             stops: vec![stop(RED, &[]), stop(BLUE, &[])],
         }
     }
@@ -1431,6 +1535,7 @@ mod tests {
         let g = Gradient {
             kind: GradientKind::Conic(Conic { from: 30.0, position: center() }),
             repeating: false,
+            interpolation: Default::default(),
             stops: vec![
                 Stop { color: RED, positions: vec![StopPosition::Angle(90.0)] },
                 Stop { color: BLUE, positions: vec![StopPosition::Length(pct(0.75))] },

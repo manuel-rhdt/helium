@@ -133,6 +133,24 @@ impl Slots {
 }
 
 impl HeliumTree<'_, '_> {
+    /// The row group of a table that is repeated at the top of every page that goes on inside of
+    /// the table: the first `table-header-group`, if only captions are in front of it. (A header
+    /// that comes behind the rows is laid out at the top of the table, but it is not repeated.)
+    pub(super) fn repeated_header(&self, table: NodeId) -> Option<NodeId> {
+        let span = self.node(table).span.as_ref()?;
+        for &kid in &span.kids {
+            match self.display(kid) {
+                Display::TableCaption => continue,
+                Display::TableHeaderGroup => {
+                    let has_rows = self.node(kid).span.as_ref().is_some_and(|span| !span.kids.is_empty());
+                    return has_rows.then_some(kid);
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
     fn display(&self, id: NodeId) -> Display {
         self.computed_values
             .get(self.node(id).entity)

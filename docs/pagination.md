@@ -83,6 +83,14 @@ Limits of this, in order of importance:
   so, but the columns of a table follow the width of each page instead of staying the ones of
   the page where it starts. Pinning the columns is step 6 of "Order of work" (the test
   `the_columns_of_a_table_stay_the_ones_of_the_page_where_it_starts` is ignored until then).
+  The header rows of a table (the first `thead`, if only captions are in front of it) are
+  repeated at the top of every page that goes on inside of the table. The kernel reserves their
+  height there (`Problem::repeats`, `PageFill::repeated`, the page starts behind the break that
+  follows the header), and the writer paints the rows again, as parts of the boxes
+  (`Writer::repeating`), with no element of their own in the structure tree: their text belongs to the cells of the
+  header (the content of a tagged element may be on several pages). The gap between the header and
+  the first row (`border-spacing`) is not repeated, and a header that comes after the rows in
+  the source is laid out first but not repeated.
   A box with a `height` is not split either (a minimum height is dropped for a box that is
   cut).
 - **Multi-column containers.** A container with columns whose height is the one of its content
