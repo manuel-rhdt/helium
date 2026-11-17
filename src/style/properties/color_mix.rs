@@ -14,8 +14,9 @@ use cssparser::{Parser, Token};
 use cssparser_color::{Color, RgbaLegacy, hsl_to_rgb, hwb_to_rgb};
 
 /// The colour spaces that colours can be mixed in.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum Space {
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum Space {
+    #[default]
     Srgb,
     SrgbLinear,
     Hsl,
@@ -55,8 +56,9 @@ impl Space {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum HueMethod {
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum HueMethod {
+    #[default]
     Shorter,
     Longer,
     Increasing,
@@ -82,12 +84,15 @@ fn weights(first: Option<f32>, second: Option<f32>) -> Option<(f32, f32, f32)> {
     Some((p1 / sum, p2 / sum, sum.min(1.0)))
 }
 
-/// Parses what follows `color-mix(` up to the closing parenthesis, with `parse_color` for the
-/// colours (so that a mix can be one of them).
-fn parse_arguments<'i>(
-    input: &mut Parser<'i>,
-    parse_color: &mut dyn FnMut(&mut Parser<'i>) -> Result<Color, ()>,
-) -> Result<Color, ()> {
+/// How colours are interpolated: in a colour space, and for a polar one along an arc of hues.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct Interpolation {
+    pub space: Space,
+    pub method: HueMethod,
+}
+
+/// Parses `in <space> [<method> hue]?`, the colour interpolation method of CSS Color 4.
+pub fn parse_interpolation<'i>(input: &mut Parser<'i>) -> Result<Interpolation, ()> {
     input.expect_ident_matching("in").map_err(|_| ())?;
     let space = Space::parse(input.expect_ident().map_err(|_| ())?).ok_or(())?;
     let mut method = HueMethod::Shorter;
@@ -109,6 +114,16 @@ fn parse_arguments<'i>(
         }
         method = found;
     }
+    Ok(Interpolation { space, method })
+}
+
+/// Parses what follows `color-mix(` up to the closing parenthesis, with `parse_color` for the
+/// colours (so that a mix can be one of them).
+fn parse_arguments<'i>(
+    input: &mut Parser<'i>,
+    parse_color: &mut dyn FnMut(&mut Parser<'i>) -> Result<Color, ()>,
+) -> Result<Color, ()> {
+    let Interpolation { space, method } = parse_interpolation(input)?;
     input.expect_comma().map_err(|_| ())?;
     let mut item = |input: &mut Parser<'i>| -> Result<(Color, Option<f32>), ()> {
         let percentage = |input: &mut Parser<'i>| -> Result<f32, ()> {
@@ -310,12 +325,24 @@ fn mix(space: Space, method: HueMethod, first: Color, second: Color, w1: f32, w2
     if matches!(first, Color::CurrentColor) || matches!(second, Color::CurrentColor) {
         return Err(());
     }
-    let (c1, c2) = (color_to_rgba(first), color_to_rgba(second));
-    let alpha = |c: super::computed::RGBA| f32::from(c.alpha) / 255.0;
-    let (a1, a2) = (alpha(c1), alpha(c2));
-    let rgb = |c: super::computed::RGBA| [f32::from(c.red) / 255.0, f32::from(c.green) / 255.0, f32::from(c.blue) / 255.0];
-    let (mut v1, mut h1) = to_space(space, rgb(c1));
-    let (mut v2, mut h2) = to_space(space, rgb(c2));
+    let components = |c: super::computed::RGBA| {
+        [f32::from(c.red) / 255.0, f32::from(c.green) / 255.0, f32::from(c.blue) / 255.0, f32::from(c.alpha) / 255.0]
+    };
+    let [r, g, b, alpha] = blend(space, method, components(color_to_rgba(first)), components(color_to_rgba(second)), w1, w2);
+    Ok(Color::Rgba(RgbaLegacy::new(to_u8(r), to_u8(g), to_u8(b), (alpha * alpha_scale).clamp(0.0, 1.0))))
+}
+
+/// The point at `t` (0 to 1) on the way from `first` to `second` (sRGB, 0 to 1, with alpha as the
+/// fourth component) when the colours are interpolated as `how` says.
+pub fn interpolate(how: Interpolation, first: [f32; 4], second: [f32; 4], t: f32) -> [f32; 4] {
+    blend(how.space, how.method, first, second, 1.0 - t, t)
+}
+
+/// The weighted mean of two colours (sRGB with alpha) in a colour space, with premultiplied alpha.
+fn blend(space: Space, method: HueMethod, first: [f32; 4], second: [f32; 4], w1: f32, w2: f32) -> [f32; 4] {
+    let (a1, a2) = (first[3], second[3]);
+    let (mut v1, mut h1) = to_space(space, [first[0], first[1], first[2]]);
+    let (mut v2, mut h2) = to_space(space, [second[0], second[1], second[2]]);
     let hue_index = space.hue();
     // a hue that is powerless is the one of the other colour
     if hue_index.is_some() {
@@ -325,7 +352,7 @@ fn mix(space: Space, method: HueMethod, first: Color, second: Color, w1: f32, w2
             _ => {}
         }
     }
-    let result_alpha = a1 * w1 + a2 * w2;
+    let alpha = a1 * w1 + a2 * w2;
     let mut out = [0.0_f32; 3];
     for index in 0..3 {
         if Some(index) == hue_index {
@@ -335,11 +362,11 @@ fn mix(space: Space, method: HueMethod, first: Color, second: Color, w1: f32, w2
             v1[index] *= a1;
             v2[index] *= a2;
             let mixed = v1[index] * w1 + v2[index] * w2;
-            out[index] = if result_alpha > 0.0 { mixed / result_alpha } else { mixed };
+            out[index] = if alpha > 0.0 { mixed / alpha } else { mixed };
         }
     }
     let [r, g, b] = from_space(space, out);
-    Ok(Color::Rgba(RgbaLegacy::new(to_u8(r), to_u8(g), to_u8(b), (result_alpha * alpha_scale).clamp(0.0, 1.0))))
+    [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0), alpha.clamp(0.0, 1.0)]
 }
 
 #[cfg(test)]

@@ -146,7 +146,9 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   painted for backgrounds, borders, text, text decorations and gradients. `color-mix()` mixes
   two colours (also nested, and with `var()`) in `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`,
   `lch`, `oklab`, `oklch`, `xyz`, `xyz-d50` and `xyz-d65`, with percentages, alpha premultiplied
-  and the hue methods. It is computed when the style sheet is read, so `currentcolor` cannot be
+  and the hue methods; gradients take `in <space>` (also with a hue method, before or after the
+  direction): the colours between the stops are interpolated in that space, by cutting every
+  transition into up to 24 stops of sRGB. `color-mix()` is computed when the style sheet is read, so `currentcolor` cannot be
   mixed (the declaration is dropped), nor the RGB spaces with a wide gamut, nor `none`.
 - **Opacity:** `opacity` (a number or a percentage; not inherited). A box with an opacity below 1
   and everything inside of it are painted as a transparency group, which is made translucent as a
