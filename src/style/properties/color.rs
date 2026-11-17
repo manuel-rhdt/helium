@@ -172,6 +172,14 @@ fn from_linear(linear: Rgb, alpha: Option<f32>) -> RGBA {
     )
 }
 
+/// `color` made more transparent: its alpha is multiplied by `opacity` (0 to 1).
+pub fn with_opacity(color: RGBA, opacity: f32) -> RGBA {
+    if opacity >= 1.0 {
+        return color;
+    }
+    RGBA { alpha: (f32::from(color.alpha) * opacity.max(0.0)).round() as u8, ..color }
+}
+
 /// The sRGB colour a CSS colour is painted with.  Colors that have no sRGB representation
 /// (`currentcolor` outside a cascade) resolve to transparent.
 pub fn color_to_rgba(color: Color) -> RGBA {

@@ -121,7 +121,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   blended. Text in an SVG image that is a background is set in the system and built-in fonts, not
   in the `@font-face` fonts of the document.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
-  `color()`. The alpha channel is parsed but not painted.
+  `color()`, with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
+  painted for backgrounds, borders, text, text decorations and gradients.
+- **Opacity:** `opacity` (a number or a percentage; not inherited). A box with an opacity below 1
+  and everything inside of it are painted as a transparency group, which is made translucent as a
+  whole. The content of such a group is not tagged in the structure tree, and a box that is
+  split over pages is translucent on its first page only (like `transform`). The opacity of a
+  non-replaced inline box is multiplied into the alpha of the colors of its text and its
+  decorations instead, so overlapping parts of it show through each other.
 - **Generated content:** the `::before` and `::after` pseudo-elements (also written with one
   colon) with `content` (strings, `counter()`, `counters()`, `attr()` with an optional string
   fallback, `url()` images, and `open-quote`, `close-quote`, `no-open-quote`, `no-close-quote`;
@@ -239,13 +246,14 @@ PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from
 (headings, paragraphs, lists, tables, links, figures, formulas) and the PDF/UA identifier;
 document title and language; XMP metadata; link annotations; `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
-rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds.
+rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
+groups for `opacity`.
 
 ## Not supported
 
 Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`,
 `@supports`, `@import`, `calc()`, `overflow`, `float`, `position:
-fixed`/`sticky`, `z-index`, `opacity` and color alpha, `box-shadow`,
+fixed`/`sticky`, `z-index`, `box-shadow`,
 `outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form
 interaction.

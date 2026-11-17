@@ -703,6 +703,9 @@ pub enum Box {
     Transform(super::transform::Transform),
     #[property]
     TransformOrigin(super::transform::TransformOrigin),
+    /// https://www.w3.org/TR/css-color-4/#transparency
+    #[property]
+    Opacity(Opacity),
     #[property]
     GridColumnStart(GridPlacement),
     #[property]
@@ -2355,6 +2358,30 @@ impl<'i> PropertyValue<'i> for f32 {
                 Err(ParseError::unexpected_token())
             }
         }
+    }
+}
+
+/// The value of `opacity`: a number or a percentage, clamped to the range from 0 to 1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Opacity(pub f32);
+
+impl From<Opacity> for f32 {
+    fn from(opacity: Opacity) -> f32 {
+        opacity.0
+    }
+}
+
+impl<'i> PropertyValue<'i> for Opacity {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let value = match input.next()? {
+            Token::Number { value, .. } => *value,
+            Token::Percentage { unit_value, .. } => *unit_value,
+            _ => return Err(ParseError::unexpected_token()),
+        };
+        // `NaN` cannot be written in CSS, but a huge number overflows to infinity
+        Ok(Opacity(if value.is_nan() { 1.0 } else { value.clamp(0.0, 1.0) }))
     }
 }
 
