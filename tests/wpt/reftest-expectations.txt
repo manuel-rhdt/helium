@@ -2,6 +2,13 @@
 # tests/wpt). A test listed here must keep failing: once helium passes it, the runner asks for its
 # removal. Run `cargo test --test wpt_reftest` to see why a test fails.
 
+# Fails on purpose: it expects a counter that a previous sibling made to stay in scope for the next
+# sibling even when the parent has a counter of that name (the older scope rule). The published CSS
+# Lists 3 (Working Draft of 17 November 2020, 4.4.1) took that out (issue 5477,
+# https://github.com/w3c/csswg-drafts/issues/5477), and counters-001 to -003 test the new rule: no
+# single rule passes both. Revisit if the published text changes.
+css/css-lists/counter-list-item-2.html
+
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-001.xht
 css/CSS2/borders/border-003.xht
@@ -418,7 +425,6 @@ css/css-color/tagged-images-001.html
 css/css-color/tagged-images-003.html
 css/css-color/tagged-images-004.html
 css/css-color/untagged-images-001.html
-css/css-lists/counter-list-item-2.html
 css/css-lists/counter-order-display-contents.html
 css/css-lists/counter-reset-increment-set-display-contents.html
 css/css-lists/counter-reset-reversed-display-none.html
