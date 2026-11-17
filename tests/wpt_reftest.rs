@@ -135,13 +135,6 @@ fn find_reference(test: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Tests that paint red on purpose: red is what the tests of the WPT show when they fail, but these are
-/// gradients that start with red.
-const RED_IS_NO_FAILURE: [&str; 2] = [
-    "css/css-images/gradient/legacy-color-gradient.html",
-    "css/css-images/gradient/css-color-4-colors-default-to-oklab-gradient.html",
-];
-
 fn paints_red(pages: &[Page]) -> bool {
     pages
         .iter()
@@ -177,7 +170,9 @@ fn run_reftest(test: &Path, expected: &Result<Vec<Page>, String>) -> Result<(), 
     let actual = render(test)?;
     let expected = expected.as_ref().map_err(|why| format!("the reference: {}", why))?;
 
-    if paints_red(&actual) && !RED_IS_NO_FAILURE.contains(&test_name(test).as_str()) {
+    // (red is what the tests of the WPT show when they fail, unless the reference has it too, like the
+    // gradients that start with red: then the pixels decide)
+    if paints_red(&actual) && !paints_red(expected) {
         return Err("paints red".into());
     }
     if is_blank(&actual) && is_blank(expected) {
