@@ -284,7 +284,8 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 
 PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from the HTML
 (headings, paragraphs, lists, tables, links, figures, formulas) and the PDF/UA identifier;
-document title and language; XMP metadata; link annotations; `ToUnicode` maps and
+document title and language; XMP metadata; link annotations; a document outline (bookmarks)
+from the headings `h1` to `h6` (nested by level, headings that are not displayed are left out); `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
 groups for `opacity`.

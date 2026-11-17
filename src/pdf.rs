@@ -670,6 +670,13 @@ pub fn write_pdf(
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
     let structure = std::mem::take(&mut print_pages.structure);
+    let outline = std::mem::take(&mut print_pages.outline);
+    // what `write_outline` needs of the pages, which are consumed below
+    let page_sizes: Vec<(crate::display_list::Rect, crate::style::properties::computed::PixelLength)> = print_pages
+        .pages
+        .iter()
+        .map(|page| (page.content_rect.clone(), page.height))
+        .collect();
     let mut recorder = tagged.then(|| TagRecorder::new(&structure, print_pages.pages.len()));
     if let Some(title) = &structure.title {
         context
@@ -885,11 +892,61 @@ pub fn write_pdf(
 
         context.add_reserved_page(page_references[page_index], page)?;
     }
+    write_outline(&mut context, &outline, &page_references, &page_sizes, crop)?;
     if let Some(recorder) = recorder {
         recorder.finish(&mut context, &page_references)?;
     }
     context.finish()?;
 
+    Ok(())
+}
+
+/// Writes the outline (bookmarks) of the PDF from the headings of the document: a heading of
+/// level n becomes a child of the closest preceding heading of a lower level. Levels may be
+/// skipped (an `h3` right after an `h1` is a child of the `h1`).
+fn write_outline(
+    context: &mut DocumentContext<'_>,
+    entries: &[crate::layout::components::OutlineEntry],
+    page_references: &[IndirectReference<Page>],
+    page_sizes: &[(crate::display_list::Rect, crate::style::properties::computed::PixelLength)],
+    crop: bool,
+) -> Result<(), Error> {
+    use lemon_pdf::annotation::Destination;
+    use lemon_pdf::outline::OutlineItem;
+
+
+
+    let mut roots: Vec<OutlineItem> = Vec::new();
+    let mut open: Vec<(u8, OutlineItem)> = Vec::new();
+    fn close_to(roots: &mut Vec<OutlineItem>, open: &mut Vec<(u8, OutlineItem)>, level: u8) {
+        while open.last().is_some_and(|(open_level, _)| *open_level >= level) {
+            let (_, item) = open.pop().unwrap();
+            match open.last_mut() {
+                Some((_, parent)) => parent.children.push(item),
+                None => roots.push(item),
+            }
+        }
+    }
+    for entry in entries {
+        let destination = &entry.destination;
+        let (Some(&page), Some((content_rect, page_height))) =
+            (page_references.get(destination.page), page_sizes.get(destination.page))
+        else {
+            continue;
+        };
+        let (offset_x, offset_y) = if crop { (content_rect.x, content_rect.y) } else { Default::default() };
+        let item = OutlineItem::new(
+            entry.title.clone(),
+            Destination {
+                page,
+                point: (Pt::from(destination.x - offset_x), Pt::from(*page_height - (destination.y - offset_y))),
+            },
+        );
+        close_to(&mut roots, &mut open, entry.level);
+        open.push((entry.level, item));
+    }
+    close_to(&mut roots, &mut open, 0);
+    context.set_outlines(&roots)?;
     Ok(())
 }
 

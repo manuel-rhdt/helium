@@ -56,6 +56,21 @@ pub struct Hyperlink {
     pub node: Option<crate::tagging::StructNodeId>,
 }
 
+/// An entry of the document outline (the bookmarks of the PDF): a heading of the document.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutlineEntry {
+    /// The heading level, 1 (`h1`) to 6 (`h6`).
+    pub level: u8,
+    /// The text of the heading.
+    pub title: String,
+    /// The start of the heading.
+    pub destination: GoToDestination,
+}
+
+/// The headings of the document in document order, filled once the positions are final.
+#[derive(Debug, Clone, Default)]
+pub struct Outline(pub Vec<OutlineEntry>);
+
 /// All hyperlinks found in the document, collected while the line boxes are created.
 #[derive(Debug, Clone, Default)]
 pub struct Hyperlinks(pub Vec<Hyperlink>);

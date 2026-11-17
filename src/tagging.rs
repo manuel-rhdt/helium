@@ -326,7 +326,7 @@ fn header_scope(node: &DomRef, element: &ElementData) -> &'static str {
 }
 
 /// The text content of a DOM subtree.
-fn text_content(node: &DomRef, out: &mut String) {
+pub(crate) fn text_content(node: &DomRef, out: &mut String) {
     if let ParsedData::Text(text) = &node.html_data {
         out.push_str(&text.borrow());
     }
@@ -335,7 +335,7 @@ fn text_content(node: &DomRef, out: &mut String) {
     }
 }
 
-fn collapse_whitespace(text: &str) -> String {
+pub(crate) fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

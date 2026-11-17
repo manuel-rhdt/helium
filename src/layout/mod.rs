@@ -19,7 +19,7 @@ pub mod writing_mode;
 
 use crate::PixelLength;
 use crate::layout::components::{
-    EntityHrefs, GoToDestination, Hyperlinks, LayoutContext, Position, RootNode,
+    EntityHrefs, GoToDestination, Hyperlinks, Outline, OutlineEntry, LayoutContext, Position, RootNode,
 };
 use crate::style::{
     device::Device,
@@ -161,6 +161,53 @@ pub fn resolve_hyperlink_destinations(world: &mut World, dom: &DomRef) {
         };
         link.destination = Some(GoToDestination { page, x, y });
     }
+}
+
+/// Collects the headings (`h1` to `h6`) of the document for the outline of the PDF.
+///
+/// A heading that is not laid out (`display: none`) or has no text is left out, as are the
+/// contents of SVG images. Must run after pagination, like [`resolve_hyperlink_destinations`].
+pub fn collect_outline(world: &mut World, dom: &DomRef) {
+    use html5ever::{local_name, ns};
+
+    fn walk(node: &DomRef, positions: &specs::ReadStorage<Position>, out: &mut Vec<OutlineEntry>) {
+        if let Some(element) = node.clone().into_element_ref() {
+            if element.name.ns == ns!(html) {
+                let level = match element.name.local {
+                    local_name!("h1") => 1,
+                    local_name!("h2") => 2,
+                    local_name!("h3") => 3,
+                    local_name!("h4") => 4,
+                    local_name!("h5") => 5,
+                    local_name!("h6") => 6,
+                    _ => 0,
+                };
+                if level > 0 {
+                    let position = node.layout_entity.get().and_then(|entity| positions.get(entity.0));
+                    if let Some(&Position { x, y, page, .. }) = position {
+                        let mut text = String::new();
+                        crate::tagging::text_content(node, &mut text);
+                        let title = crate::tagging::collapse_whitespace(&text);
+                        if !title.is_empty() {
+                            out.push(OutlineEntry { level, title, destination: GoToDestination { page, x, y } });
+                        }
+                    }
+                }
+            } else if element.name.ns != ns!(html) && element.name.local == local_name!("svg") {
+                return;
+            }
+        }
+        for child in crate::tree::TreeLinked::children(node) {
+            walk(&child, positions, out);
+        }
+    }
+
+    let mut entries = Vec::new();
+    {
+        let positions = world.read_storage::<Position>();
+        walk(dom, &positions, &mut entries);
+    }
+    world.write_resource::<Outline>().0 = entries;
 }
 
 /// The style of the page: what the `@page` rules without a selector set.
@@ -344,6 +391,7 @@ pub fn layout(
     // tagged with the nodes of this tree.
     layout_context.insert(crate::tagging::StructureTree::build(&dom));
     layout_context.insert(Hyperlinks::default());
+    layout_context.insert(Outline::default());
 
     layout_context.register::<components::IntrinsicSize>();
     layout_context.register::<components::ContainingBlock>();
@@ -429,6 +477,7 @@ pub fn layout(
     // are final. Only possible here because the page of every element is only known after
     // pagination.
     resolve_hyperlink_destinations(&mut layout_context, &dom);
+    collect_outline(&mut layout_context, &dom);
 
     layout_islands(&mut layout_context, shared_styles, islands, stylesheet_base_dir)?;
 
