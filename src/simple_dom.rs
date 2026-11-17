@@ -167,6 +167,10 @@ impl<'a> IterChildren<'a> for &'a Node {
         self.contents.iter()
     }
 
+    fn layout_children(&'a self) -> Vec<Self> {
+        self.contents.iter().collect()
+    }
+
     fn next_sibling(&self) -> Option<Self> {
         None
     }

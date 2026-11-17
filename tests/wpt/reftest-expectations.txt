@@ -36,6 +36,10 @@ css/css-lists/foo-counter-reversed-008b.html
 # needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
 css/css-lists/foo-counter-reversed-009b.html
 
+# needs block-in-inline layout (a block inside of an inline box ends the line, as in the CSS2
+# block-in-inline tests); it passed while the inside marker was drawn outside
+css/css-lists/inside-marker-with-block-in-inline.html
+
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-001.xht
 css/CSS2/borders/border-003.xht
@@ -452,8 +456,6 @@ css/css-color/tagged-images-001.html
 css/css-color/tagged-images-003.html
 css/css-color/tagged-images-004.html
 css/css-color/untagged-images-001.html
-css/css-lists/counter-order-display-contents.html
-css/css-lists/counter-reset-increment-set-display-contents.html
 css/css-lists/counter-reset-reversed-display-none.html
 css/css-lists/counter-reset-reversed-list-item-start.html
 css/css-lists/counter-reset-reversed-list-item.html
@@ -504,16 +506,9 @@ css/css-lists/li-value-reversed-027.html
 css/css-lists/li-value-reversed-028.html
 css/css-lists/list-marker-alignment.html
 css/css-lists/list-marker-paint-order.html
-css/css-lists/list-marker-rtl-string-width.html
-css/css-lists/list-style-type-decimal-vertical-lr.html
-css/css-lists/list-style-type-decimal-vertical-rl.html
-css/css-lists/list-style-type-string-001a.html
-css/css-lists/list-style-type-string-001b.html
-css/css-lists/list-style-type-string-002.html
 css/css-lists/list-style-type-string-003.html
 css/css-lists/list-type-none-style-image.html
 css/css-lists/marker-webkit-text-fill-color.html
-css/css-lists/nested-marker-styling.html
 css/css-lists/outside-marker-alignment-with-block-content.html
 css/css-lists/outside-marker-taller-than-content.html
 css/css-lists/outside-marker-with-align-content.html

@@ -141,6 +141,8 @@ struct Frame {
     last_child_set: Option<Rc<Vec<Counter>>>,
     /// The element or an ancestor has no box, so that counters do not change.
     inert: bool,
+    /// An element with `display: contents`: its children are like children of its parent.
+    contents: bool,
 }
 
 /// The state of the counters and quotation marks while the document is walked in tree order.
@@ -258,6 +260,16 @@ impl CounterState {
     /// is the style of the element.
     pub fn enter(&mut self, parent: usize, style: &ComputedValues, hints: ListHints) {
         let parent_frame = self.frames.last().cloned().unwrap_or_default();
+        if style.box_.display == Display::Contents && !parent_frame.inert {
+            // an element without a box of its own does not set, reset or increment a counter,
+            // but its children do
+            let set = match &parent_frame.last_child_set {
+                Some(sibling) => (**sibling).clone(),
+                None => (*parent_frame.set).clone(),
+            };
+            self.frames.push(Frame { set: Rc::new(set), last_child_set: None, inert: false, contents: true });
+            return;
+        }
         if parent_frame.inert || style.box_.display == Display::None {
             // an element without a box does not count, and neither do its descendants
             self.frames.push(Frame { inert: true, ..parent_frame });
@@ -276,7 +288,7 @@ impl CounterState {
 
         self.apply_properties(&mut set, parent, style, hints);
 
-        self.frames.push(Frame { set: Rc::new(set), last_child_set: None, inert: false });
+        self.frames.push(Frame { set: Rc::new(set), last_child_set: None, inert: false, contents: false });
     }
 
     /// Leaves the element that was entered last: its counters stay in scope for its following
@@ -287,7 +299,11 @@ impl CounterState {
             return;
         }
         if let Some(parent) = self.frames.last_mut() {
-            parent.last_child_set = Some(frame.set);
+            // (what follows an element without a box follows its last child)
+            parent.last_child_set = Some(match frame.last_child_set {
+                Some(last) if frame.contents => last,
+                _ => frame.set,
+            });
         }
     }
 

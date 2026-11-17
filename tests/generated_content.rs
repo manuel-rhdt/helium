@@ -208,3 +208,92 @@ fn marker_rules_do_not_reach_generated_list_items() {
         ["m;", "•", "b", "a"]
     );
 }
+
+#[test]
+fn list_style_type_can_be_a_string() {
+    check!(
+        "string_marker",
+        r#"<style>.a { list-style-type: "→ " } .b { list-style: "b: " } .c { list-style-type: "" }</style>
+        <ul><li class="a">a</li><li class="b">b</li><li class="c">c</li><li>d</li></ul>"#,
+        ["→ ", "a", "b: ", "b", "c", "•", "d"]
+    );
+}
+
+#[test]
+fn inside_markers_are_inline_content_of_the_item() {
+    check!(
+        "inside",
+        r#"<style>ul { list-style-position: inside } .s { list-style: "→ " inside } .c::marker { content: "<" counter(list-item) "> " }
+        .o { list-style-position: outside }</style>
+        <ul><li>a</li><li class="s">b</li><li class="c">c</li><li class="o">d</li></ul>
+        <ol style="list-style: lower-roman inside"><li>e</li></ol>"#,
+        ["• ", "a", "→ ", "b", "<3> ", "c", "•", "d", "i. ", "e"]
+    );
+}
+
+#[test]
+fn markers_of_generated_list_items_have_their_own_selectors() {
+    check!(
+        "marker_nested",
+        r#"<style>
+        div::before, div::after { display: list-item; list-style-position: inside }
+        div::before { content: "before" } div::after { content: "after" }
+        div::before::marker { content: "B: " } div::after::marker { content: "A: " }
+        ::marker { content: "plain " }
+        </style><div></div>"#,
+        ["B: ", "before", "A: ", "after"]
+    );
+}
+
+/// The size of the images that the layout dump lists, in document order.
+fn image_sizes(name: &str, html: &str) -> Vec<(f64, f64)> {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join(format!("generated_{name}.html"));
+    std::fs::write(&input, html).unwrap();
+    let result = common::helium()
+        .unwrap()
+        .arg("--dump-layout")
+        .arg("-")
+        .arg(&input)
+        .arg(dir.join(format!("generated_{name}.pdf")))
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let dump: Value = serde_json::from_slice(&result.stdout).unwrap();
+    fn walk(node: &Value, out: &mut Vec<(f64, f64)>) {
+        if node["tag"] == "img" {
+            let b = &node["border_box"];
+            out.push((b["width"].as_f64().unwrap(), b["height"].as_f64().unwrap()));
+        }
+        for child in node["children"].as_array().into_iter().flatten() {
+            walk(child, out);
+        }
+    }
+    let mut out = vec![];
+    walk(&dump["document"], &mut out);
+    out
+}
+
+#[test]
+fn content_can_hold_images() {
+    let svg = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIxMCI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjEwIiBmaWxsPSJyZWQiLz48L3N2Zz4=";
+    let html = format!(
+        r#"<style>p::before {{ content: "a" url("{svg}") "b" }} p::after {{ content: url({svg}) }}
+        img {{ width: 100px }}</style><p>x</p>"#
+    );
+    // the image is its natural size (the rules for `img` elements are not for it), and the
+    // text around it is in its place
+    assert_eq!(image_sizes("content_image", &html), [(20.0, 10.0), (20.0, 10.0)]);
+    assert_eq!(runs("content_image_text", &html), ["a", "b", "x"]);
+}
+
+#[test]
+fn counters_go_on_across_elements_without_a_box() {
+    check!(
+        "contents",
+        r#"<style>.n { counter-increment: c } .n::before { content: counter(c) } .c { display: contents }
+        .z { counter-increment: c 100 }</style>
+        <div class="c z"><div class="n">a</div></div><div class="c"><div class="n">b</div></div><div class="n">d</div>"#,
+        ["1", "a", "2", "b", "3", "d"]
+    );
+}

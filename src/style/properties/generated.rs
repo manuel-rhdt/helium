@@ -12,9 +12,11 @@ fn invalid<T>() -> Result<T, ParseError<StyleParseError>> {
 }
 
 /// One component of the value of `content`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ContentItem {
     String(String),
+    /// `url()`: an image, which is a replaced inline box.
+    Url(super::gradient::UrlImage),
     /// `counter(name, style)`
     Counter(String, CounterStyle),
     /// `counters(name, separator, style)`
@@ -30,7 +32,7 @@ pub enum ContentItem {
 }
 
 /// The value of `content`.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum Content {
     /// The initial value. A pseudo-element with `normal` content has no box.
     #[default]
@@ -76,6 +78,10 @@ impl<'i> PropertyValue<'i> for Content {
         }
         let mut items = vec![];
         while !input.is_exhausted() {
+            if let Ok(url) = input.try_parse(|input| input.expect_url()) {
+                items.push(ContentItem::Url(super::gradient::UrlImage::new(&url)));
+                continue;
+            }
             let token = input.next()?.clone();
             let item = match token {
                 Token::QuotedString(string) => ContentItem::String(string.to_string()),

@@ -358,23 +358,38 @@ impl QualifiedRule {
     /// if the rule does not match. Used to order the cascade: rules with higher specificity are
     /// applied later and win over earlier declarations of the same property.
     pub fn matching_specificity(&self, elem: &ElementRef) -> Option<u32> {
-        self.matching_specificity_of(elem, None)
+        self.matching_specificity_of(elem, &[])
     }
 
     /// Like [`matching_specificity`](Self::matching_specificity) for the pseudo-element `pseudo`
     /// of `elem`: only the selectors that end in that pseudo-element are tried, and they are
     /// matched against the originating element `elem`.
     pub fn matching_pseudo_specificity(&self, elem: &ElementRef, pseudo: PseudoElement) -> Option<u32> {
-        self.matching_specificity_of(elem, Some(pseudo))
+        self.matching_specificity_of(elem, &[pseudo])
     }
 
-    fn matching_specificity_of(&self, elem: &ElementRef, pseudo: Option<PseudoElement>) -> Option<u32> {
+    /// Like [`matching_pseudo_specificity`](Self::matching_pseudo_specificity) for a pseudo-element
+    /// of a pseudo-element: the `::marker` of the `::before` of `elem`, for `outer` `Before` and
+    /// `inner` `Marker`.
+    pub fn matching_nested_pseudo_specificity(
+        &self,
+        elem: &ElementRef,
+        outer: PseudoElement,
+        inner: PseudoElement,
+    ) -> Option<u32> {
+        // (the pseudo-elements of a selector are listed from the right)
+        self.matching_specificity_of(elem, &[inner, outer])
+    }
+
+    /// The specificity for the pseudo-elements `pseudos` (the rightmost first), none for the
+    /// element itself.
+    fn matching_specificity_of(&self, elem: &ElementRef, pseudos: &[PseudoElement]) -> Option<u32> {
         let GeneralizedSelector::Selectors(list) = &self.selectors else {
             return None;
         };
         let mut caches = SelectorCaches::default();
         let mut context = matching::MatchingContext::new(
-            if pseudo.is_some() {
+            if !pseudos.is_empty() {
                 matching::MatchingMode::ForStatelessPseudoElement
             } else {
                 matching::MatchingMode::Normal
@@ -387,10 +402,9 @@ impl QualifiedRule {
         );
         list.slice()
             .iter()
-            // (a selector with more pseudo-elements, `::before::marker`, is not for the one)
+            // (a selector with other pseudo-elements, `::before::marker`, is not for the one)
             .filter(|selector| {
-                pseudo.is_none()
-                    || (selector.pseudo_element() == pseudo.as_ref() && selector.pseudo_elements().len() == 1)
+                pseudos.is_empty() || selector.pseudo_elements().iter().copied().eq(pseudos.iter())
             })
             .filter(|selector| matching::matches_selector(selector, 0, None, elem, &mut context))
             .map(|selector| selector.specificity())
@@ -989,6 +1003,11 @@ impl selectors::parser::PseudoElement for PseudoElement {
     /// `::before::marker` and `::after::marker` are valid selectors.
     fn valid_after_before_or_after(&self) -> bool {
         matches!(self, PseudoElement::Marker)
+    }
+
+    /// `::before` and `::after` are the ones that `::marker` can follow.
+    fn is_before_or_after(&self) -> bool {
+        matches!(self, PseudoElement::Before | PseudoElement::After)
     }
 }
 

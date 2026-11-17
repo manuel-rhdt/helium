@@ -53,7 +53,7 @@ pub trait CssWideProperties {
 fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
-        "list-style-type", "white-space", "text-indent", "text-align", "hyphens", "direction",
+        "list-style-type", "list-style-position", "white-space", "text-indent", "text-align", "hyphens", "direction",
         "border-spacing", "border-collapse", "quotes", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
         "math-depth",
     ];
@@ -536,10 +536,14 @@ pub enum Font {
     /// Inherited, so it lives here as well.
     #[property]
     ListStyleType(ListStyleType),
+    /// Inherited too.
+    #[property]
+    ListStylePosition(ListStylePosition),
     /// The marker type and position in one declaration. Markers are always outside of their
     /// item, so the position is accepted and not used.
     #[property]
     #[shorthand("list-style-type", method = "style_type")]
+    #[shorthand("list-style-position", method = "position")]
     ListStyle(ListStyleShorthand),
     /// Inherited instead of propagated to the inline boxes of the descendants, which has the same
     /// effect for everything that is supported.
@@ -891,6 +895,8 @@ pub enum Display {
     Block,
     /// A block box that counts in the `list-item` counter and has a marker.
     ListItem,
+    /// The element has no box of its own: its children (and its pseudo-elements) take its place.
+    Contents,
     Inline,
     InlineBlock,
     Flex,
@@ -2031,7 +2037,22 @@ impl<'i> PropertyValue<'i> for TextDecoration {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+/// A quoted string, as the marker of `list-style-type: "→ "`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkerString(pub std::sync::Arc<str>);
+
+impl<'i> PropertyValue<'i> for MarkerString {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        match input.next()? {
+            Token::QuotedString(string) => Ok(MarkerString(string.as_ref().into())),
+            _ => Err(ParseError::unexpected_token()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PropertyValue)]
 pub enum ListStyleType {
     Disc,
     Circle,
@@ -2042,25 +2063,34 @@ pub enum ListStyleType {
     LowerRoman,
     UpperRoman,
     None,
+    /// The marker is this text, without anything added.
+    String(MarkerString),
 }
 
-/// `inside` or `outside`, in the `list-style` shorthand.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PropertyValue)]
+/// `inside` or `outside`: whether the marker of a list item is in the first line of the item
+/// or outside of it.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
 pub enum ListStylePosition {
+    #[default]
     Outside,
     Inside,
 }
 
 /// The value of the `list-style` shorthand: the marker type and the position, in any order. What
 /// is left out has its initial value. `<image>` markers are not supported.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct ListStyleShorthand {
     style_type: ListStyleType,
+    position: ListStylePosition,
 }
 
 impl ListStyleShorthand {
     pub fn style_type(&self) -> ListStyleType {
-        self.style_type
+        self.style_type.clone()
+    }
+
+    pub fn position(&self) -> ListStylePosition {
+        self.position
     }
 }
 
@@ -2086,7 +2116,10 @@ impl<'i> PropertyValue<'i> for ListStyleShorthand {
         if style_type.is_none() && position.is_none() {
             return Err(input.new_error_for_next_token());
         }
-        Ok(ListStyleShorthand { style_type: style_type.unwrap_or_default() })
+        Ok(ListStyleShorthand {
+            style_type: style_type.unwrap_or_default(),
+            position: position.unwrap_or_default(),
+        })
     }
 }
 
@@ -2099,7 +2132,7 @@ impl Default for ListStyleType {
 impl ListStyleType {
     /// The text of the marker of the `ordinal`th (1-based) list item, without any spacing.
     /// The ordinal can be zero or negative when `<li value>` or a negative `<ol start>` says so.
-    pub fn marker_text(self, ordinal: i64) -> Option<String> {
+    pub fn marker_text(&self, ordinal: i64) -> Option<String> {
         fn alpha(mut n: usize, first: u8) -> String {
             let mut letters = vec![];
             while n > 0 {
@@ -2140,6 +2173,7 @@ impl ListStyleType {
             ListStyleType::Circle => "\u{25E6}".to_string(),
             ListStyleType::Square => "\u{25AA}".to_string(),
             ListStyleType::None => return None,
+            ListStyleType::String(MarkerString(text)) => text.to_string(),
             // roman numerals and letters are only defined for positive numbers
             ListStyleType::Decimal => format!("{}.", ordinal),
             _ if ordinal <= 0 => format!("{}.", ordinal),
