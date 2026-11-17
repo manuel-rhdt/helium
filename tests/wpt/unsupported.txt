@@ -32,17 +32,6 @@ word-break:
 overflow-wrap:
 word-wrap:
 
-# generated content and counters
-::before
-::after
-:before
-:after
-counter-reset:
-counter-increment:
-counter-set:
-counters(
-counter(
-
 # at-rules, functions and units
 @supports
 @import

@@ -2,6 +2,44 @@
 # tests/wpt). A test listed here must keep failing: once helium passes it, the runner asks for its
 # removal. Run `cargo test --test wpt_reftest` to see why a test fails.
 
+# Fails on purpose: it expects a counter that a previous sibling made to stay in scope for the next
+# sibling even when the parent has a counter of that name (the older scope rule). The published CSS
+# Lists 3 (Working Draft of 17 November 2020, 4.4.1) took that out (issue 5477,
+# https://github.com/w3c/csswg-drafts/issues/5477), and counters-001 to -003 test the new rule: no
+# single rule passes both. Revisit if the published text changes.
+css/css-lists/counter-list-item-2.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006a.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006b.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006c.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006d.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006e.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-007b.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-008a.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-008b.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-009b.html
+
+# needs block-in-inline layout (a block inside of an inline box ends the line, as in the CSS2
+# block-in-inline tests); it passed while the inside marker was drawn outside
+css/css-lists/inside-marker-with-block-in-inline.html
+
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-001.xht
 css/CSS2/borders/border-003.xht
@@ -84,6 +122,7 @@ css/CSS2/box-display/display-014.xht
 css/CSS2/box-display/inline-text-after-block-in-inline-margin.html
 css/CSS2/box-display/multiple-block-in-inlines-margins-collapse.html
 css/CSS2/box-display/nested-spans-with-block-in-inline-margin.html
+css/CSS2/box-display/root-box-002.xht
 css/CSS2/box-display/root-box-003.xht
 css/CSS2/box-display/root-canvas-001.xht
 css/CSS2/box-display/three-block-in-inlines-cascading-margins.html
@@ -119,7 +158,6 @@ css/CSS2/margin-padding-clear/margin-collapse-137.xht
 css/CSS2/margin-padding-clear/margin-collapse-138.xht
 css/CSS2/margin-padding-clear/margin-collapse-156.xht
 css/CSS2/margin-padding-clear/margin-collapse-159.xht
-css/CSS2/margin-padding-clear/margin-collapse-min-height-002.xht
 css/CSS2/margin-padding-clear/margin-em-inherit-001.xht
 css/CSS2/margin-padding-clear/margin-inline-001.xht
 css/CSS2/margin-padding-clear/margin-left-113.xht
@@ -209,7 +247,6 @@ css/CSS2/normal-flow/replaced-intrinsic-005.xht
 css/CSS2/normal-flow/resizable-iframe-paint-order.html
 css/CSS2/normal-flow/root-box-001.xht
 css/CSS2/normal-flow/table-in-inline-001.xht
-css/CSS2/normal-flow/video-controls-paint-order.html
 css/CSS2/normal-flow/width-applies-to-006.xht
 css/CSS2/normal-flow/width-inherit-001.xht
 css/CSS2/visudet/height-computed-002.xht
@@ -236,6 +273,7 @@ css/css-backgrounds/background-clip-padding-box-with-border-radius.html
 css/css-backgrounds/background-clip/clip-border-area-background-geometry.html
 css/css-backgrounds/background-clip/clip-border-area-border-image.html
 css/css-backgrounds/background-clip/clip-border-area-border-on-top.html
+css/css-backgrounds/background-clip/clip-border-area-border-shape-background-position.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape-overflow.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape.html
 css/css-backgrounds/background-clip/clip-border-area-complex-color.html
@@ -276,6 +314,7 @@ css/css-backgrounds/background-color-body-propagation-007.html
 css/css-backgrounds/background-color-body-propagation-008.html
 css/css-backgrounds/background-color-body-propagation-009.html
 css/css-backgrounds/background-color-root-propagation-001.html
+css/css-backgrounds/background-color-root-propagation-003.html
 css/css-backgrounds/background-image-003.html
 css/css-backgrounds/background-image-004.html
 css/css-backgrounds/background-image-005.html
@@ -344,6 +383,7 @@ css/css-cascade/revert-layer-009.html
 css/css-cascade/revert-layer-010.html
 css/css-cascade/revert-layer-012.html
 css/css-cascade/scope-implicit-003-print.html
+css/css-cascade/scope-pseudo-element.html
 css/css-cascade/scope-ua-shadow-host.html
 css/css-color/at-color-profile-001.html
 css/css-color/color-003.html
@@ -416,22 +456,67 @@ css/css-color/tagged-images-001.html
 css/css-color/tagged-images-003.html
 css/css-color/tagged-images-004.html
 css/css-color/untagged-images-001.html
+css/css-lists/counter-reset-reversed-display-none.html
+css/css-lists/counter-reset-reversed-list-item-start.html
+css/css-lists/counter-reset-reversed-list-item.html
+css/css-lists/counter-reset-reversed-multiple.html
+css/css-lists/counter-reset-reversed-nested.html
+css/css-lists/counter-reset-reversed-not-list-item-start.html
+css/css-lists/counter-reset-reversed-not-list-item.html
+css/css-lists/counter-reset-reversed-pseudo-001.html
+css/css-lists/counter-reset-reversed-pseudo-002.html
+css/css-lists/counter-reset-reversed-pseudo-003.html
+css/css-lists/counter-reset-reversed-siblings-001a.html
+css/css-lists/counter-reset-reversed-siblings-001b.html
+css/css-lists/counter-reset-reversed-siblings-002.html
+css/css-lists/counter-reset-reversed-siblings-003.html
+css/css-lists/counter-reset-reversed-with-regular.html
+css/css-lists/counters-scope-002.html
+css/css-lists/counters-scope-003.html
+css/css-lists/foo-counter-reversed-007a.html
+css/css-lists/foo-counter-reversed-009a.html
+css/css-lists/inline-block-list-marker.html
 css/css-lists/inline-block-list.html
+css/css-lists/inline-list-marker.html
 css/css-lists/inline-list-with-table-child.html
 css/css-lists/inline-list.html
 css/css-lists/li-value-reversed-001.html
 css/css-lists/li-value-reversed-002.html
+css/css-lists/li-value-reversed-003.html
+css/css-lists/li-value-reversed-004.html
+css/css-lists/li-value-reversed-005.html
+css/css-lists/li-value-reversed-007a.html
+css/css-lists/li-value-reversed-007b.html
+css/css-lists/li-value-reversed-009a.html
+css/css-lists/li-value-reversed-010.html
 css/css-lists/li-value-reversed-011.html
+css/css-lists/li-value-reversed-012.html
+css/css-lists/li-value-reversed-013.html
+css/css-lists/li-value-reversed-014.html
+css/css-lists/li-value-reversed-015.html
+css/css-lists/li-value-reversed-016.html
+css/css-lists/li-value-reversed-018.html
+css/css-lists/li-value-reversed-019.html
+css/css-lists/li-value-reversed-020.html
+css/css-lists/li-value-reversed-021.html
+css/css-lists/li-value-reversed-022.html
+css/css-lists/li-value-reversed-023.html
+css/css-lists/li-value-reversed-026.html
+css/css-lists/li-value-reversed-027.html
+css/css-lists/li-value-reversed-028.html
 css/css-lists/list-marker-alignment.html
 css/css-lists/list-marker-paint-order.html
-css/css-lists/list-marker-rtl-string-width.html
-css/css-lists/list-style-type-decimal-vertical-lr.html
-css/css-lists/list-style-type-decimal-vertical-rl.html
+css/css-lists/list-style-type-string-003.html
 css/css-lists/list-type-none-style-image.html
+css/css-lists/marker-webkit-text-fill-color.html
 css/css-lists/outside-marker-alignment-with-block-content.html
+css/css-lists/outside-marker-taller-than-content.html
 css/css-lists/outside-marker-with-align-content.html
+css/css-values/attr-namespace-case-sensitivity.xhtml
 css/css-values/attr-namespace-non-existing.html
 css/css-values/attr-namespace-valid.xhtml
+css/css-values/attr-notype-fallback.html
+css/css-values/attr-style-sharing-4.html
 css/css-values/calc-size/calc-size-flex-008.html
 css/css-values/calc-size/calc-size-flex-009.html
 css/css-values/ch-unit-002.html
@@ -440,7 +525,6 @@ css/css-values/ch-unit-004.html
 css/css-values/ch-unit-017.html
 css/css-values/ex-unit-002.html
 css/css-values/ex-unit-003.html
-css/css-values/ex-unit-004.html
 css/css-values/html-attr-case-insensitivity.html
 css/css-values/ic-unit-002.html
 css/css-values/ic-unit-003.html

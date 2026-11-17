@@ -73,7 +73,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   sheets are read again when the size they set differs from the one assumed); `(hover)`, `(pointer)` and
   similar features say that there is no pointer. `rem` is relative to the root element (in
   `@page` and its margin boxes, to the initial font size).
-- **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`,
+- **Layout:** `display` (`block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`, `contents` (no box: the children and the pseudo-elements take the place of the element, which sets no counters),
   `table` and the table
   parts, `list-item`, `none`), `order` of flex and grid items, `inset` and the logical properties (`margin-inline-start`,
   `padding-block`, `inset-inline`, `inline-size`, ... without the logical `border-*`; they follow the
@@ -87,8 +87,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
   `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space` (`normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`), `hyphens`,
-  `direction`, `unicode-bidi`, `list-style-type` and the `list-style` shorthand (the position, `inside` or
-  `outside`, is accepted and not used: markers are always outside; `<image>` markers are not supported).
+  `direction`, `unicode-bidi`, `list-style-type`, `list-style-position` and the `list-style` shorthand (`<image>`
+  markers are not supported; see generated content below).
 - **OpenType features:** `font-feature-settings`, `font-kerning`, and `font-variant` with
   `font-variant-ligatures`, `-caps`, `-numeric`, `-east-asian` and `-position`; the `font`
   shorthand resets them and takes `small-caps`. They are handed to the shaper in the order of the
@@ -122,6 +122,40 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   in the `@font-face` fonts of the document.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color()`. The alpha channel is parsed but not painted.
+- **Generated content:** the `::before` and `::after` pseudo-elements (also written with one
+  colon) with `content` (strings, `counter()`, `counters()`, `attr()` with an optional string
+  fallback, `url()` images, and `open-quote`, `close-quote`, `no-open-quote`, `no-close-quote`;
+  `none` and `normal` generate nothing), `counter-reset`, `counter-increment`, `counter-set`
+  (scoped as in CSS Lists 3; elements without a box do not count) and `quotes` (`auto` picks the
+  marks of the language of the text for the common languages). A pseudo-element is a box of its
+  own, so `display`, `position`, borders, backgrounds and the like apply to it. A `url()` in
+  `content` is an inline image of its natural size (SVG, PNG and JPEG, and in the same places
+  as the images of `<img>`; a relative URL is relative to the style sheet) that the rules of the
+  document for `img` do not reach. No pseudo-elements are generated for replaced elements and
+  other elements without content (`img`, `input`, `br`, `hr`, `video`, `canvas`, `iframe`, ...):
+  CSS 2.1 leaves their interaction with `:before` and `:after` undefined, and browsers do not
+  make them.
+  `::marker` styles the marker of a list item (`color` and the font properties, and `content`,
+  which replaces the marker text: `none` removes the marker and a text is the whole marker, with
+  no space added after it; the `counter-*` properties work on the counters of the item, so
+  `content` can use them); `::before::marker` and `::after::marker` do the same for a `::before`
+  or `::after` that is a list item. An outside marker is drawn next to the first line and is not
+  a box of its own: it takes no `display`, `position` or the like. `list-style-position:
+  inside` puts the marker in front of the content of the item as an inline box. The
+  `list-style-type` is a keyword (`disc`, `circle`, `square`, `decimal`, `lower-alpha`,
+  `upper-alpha`, `lower-roman`, `upper-roman`, `none`) or a string, which is the whole marker.
+  The counter styles of `counter()` are the ones of the `@page` margin boxes (which share the
+  code) plus `lower-greek`, `georgian`, `disc`, `circle`, `square` and `none`. `display:
+  list-item` (the default of `<li>`) counts in the `list-item` counter, which `<ol>`, `<ul>` and
+  `<menu>` start and `<ol start>` and `<li value>` set; the number of the marker is the value of
+  that counter, so `counter-increment: list-item` and the like change it. Not supported: `content`
+  on elements (e.g. `content: url()` on an `<a>`), `::first-line` and `::first-letter`,
+  `target-counter()`, and `list-style-image`. Counters in `@page` margin boxes are only `page`
+  and `pages`. A counter value stays within a 32 bit integer (an increment that would leave the
+  range is not made), and a name that is repeated in one `counter-*` property counts every time.
+  The behaviour is the one of the published CSS Lists 3 (a counter of the previous sibling is only
+  inherited when the parent has none of that name); `counter-reset: reversed()` and `<ol
+  reversed>`, which are only in the editor's draft, are not supported.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
 - **Cascade:** selectors (`selectors` crate, with `:is()` and `:where()`), `inherit`, `initial`,
   `unset`.

@@ -5,7 +5,7 @@ use super::pages::{self, PageContext};
 use super::normal_formatting::BlockFormattingContext;
 use super::{FontMap, text::Font};
 use crate::parser::{ElementData, ParsedData};
-use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, Styles};
+use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, PseudoElement, Styles};
 use crate::style::properties::computed::{
     ComputedValues, Display, GenericSize, LineHeight, PixelLength as Px, PositionSpec, StyleBuilder,
     TextAlign, color_to_rgba,
@@ -34,6 +34,40 @@ pub struct IslandSpec {
     pub height: f32,
 }
 
+/// What the `content` of a pseudo-element is made of.
+enum ContentPiece {
+    Text(String),
+    Image(crate::style::properties::gradient::UrlImage),
+}
+
+/// The attribute that marks the `<img>` that the `content: url()` of a pseudo-element makes.
+const GENERATED_IMAGE: &str = "data-helium-generated";
+
+/// Whether the node is the image of a `content: url()`.
+fn is_generated_image(node: &DomRef) -> bool {
+    node.clone().into_element_ref().is_some_and(|element| {
+        element.attributes.borrow().contains_key(&QualName::new(None, ns!(), html5ever::LocalName::from(GENERATED_IMAGE)))
+    })
+}
+
+/// What the `content` of a `::marker` makes of the text of a marker.
+#[derive(Debug, Clone)]
+enum MarkerText {
+    /// `normal`: the marker of the `list-style-type`.
+    Default,
+    /// `none`: no marker.
+    Hidden,
+    /// Text of `content`: the marker is this text and nothing else.
+    Explicit(String),
+}
+
+/// The style and the text that the rules for the `::marker` of a list item give its marker.
+#[derive(Debug, Clone)]
+struct MarkerOverride {
+    style: ComputedValues,
+    text: MarkerText,
+}
+
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
 pub struct FlowConstructor {
@@ -48,6 +82,8 @@ pub struct FlowConstructor {
     pub islands: Vec<IslandSpec>,
     /// The `foreignObject` element that is laid out as the root of the document, with its size.
     island_root: Option<(DomRef, f32, f32)>,
+    /// The counters and quotation marks, which follow the traversal of the tree.
+    counters: super::counters::CounterState,
 }
 
 impl FlowConstructor {
@@ -96,6 +132,7 @@ impl FlowConstructor {
             svg_roots: None,
             islands: vec![],
             island_root: None,
+            counters: Default::default(),
         }
     }
 
@@ -189,7 +226,23 @@ impl FlowConstructor {
                     .as_node()
                     .parent()
                     .and_then(|parent| NodeData::style(&parent));
-                let parent_is_flex_or_grid = parent_style
+                // (the box that the element is a child of is the one of the closest ancestor
+                // that has a box)
+                let box_parent_style = {
+                    let mut ancestor = element_ref.as_node().parent();
+                    let mut found = parent_style.clone();
+                    while let Some(current) = ancestor {
+                        match NodeData::style(&current) {
+                            Some(style) if style.box_.display == Display::Contents => {
+                                ancestor = current.parent();
+                                found = ancestor.as_ref().and_then(|parent| NodeData::style(parent));
+                            }
+                            _ => break,
+                        }
+                    }
+                    found
+                };
+                let parent_is_flex_or_grid = box_parent_style
                     .as_ref()
                     .is_some_and(|style| style.box_.display.is_flex_or_grid());
                 let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
@@ -224,40 +277,10 @@ impl FlowConstructor {
                         let dir = &self.stylesheet_base_dir;
                         crate::style::url_context::with(dir, dir, || PropertyDeclarationBlock::parse_inline(&attr.value))
                     });
-                let mut cascade = vec![];
-                for (user_agent, _, rule) in &matched_rules {
-                    if *user_agent {
-                        cascade.extend(rule.properties.normal_declarations());
-                    }
-                }
                 // the `width` and `height` attributes of an image are presentational hints: they
                 // rank below all the rules of the author
                 let size_hint = image_size_hint(element_ref).or_else(|| table_hint(node, element_ref));
-                if let Some(block) = &size_hint {
-                    cascade.extend(block.normal_declarations());
-                }
-                for (user_agent, _, rule) in &matched_rules {
-                    if !*user_agent {
-                        cascade.extend(rule.properties.normal_declarations());
-                    }
-                }
-                // declarations in the `style` attribute override all matched rules
-                if let Some(block) = &inline_style {
-                    cascade.extend(block.normal_declarations());
-                }
-                for (user_agent, _, rule) in &matched_rules {
-                    if !*user_agent {
-                        cascade.extend(rule.properties.important_declarations());
-                    }
-                }
-                if let Some(block) = &inline_style {
-                    cascade.extend(block.important_declarations());
-                }
-                for (user_agent, _, rule) in &matched_rules {
-                    if *user_agent {
-                        cascade.extend(rule.properties.important_declarations());
-                    }
-                }
+                let cascade = cascade_declarations(&matched_rules, size_hint.as_ref(), inline_style.as_ref());
                 style_builder.apply_cascade(cascade.iter().copied());
                 let mut style = style_builder.build();
                 if parent_is_flex_or_grid {
@@ -293,6 +316,309 @@ impl FlowConstructor {
             }
         }
 
+    }
+
+    /// The style of the `::before` or `::after` of an element, if it has a box: the rules that
+    /// match the pseudo-element are cascaded on top of the style of the element, and `content`
+    /// has to be a value other than `normal` and `none`.
+    fn pseudo_style(
+        &self,
+        element: &crate::tree::ElementRef,
+        element_style: &ComputedValues,
+        pseudo: PseudoElement,
+    ) -> Option<ComputedValues> {
+        let mut matched_rules: Vec<_> = self
+            .styles
+            .rules_iter()
+            .enumerate()
+            .filter_map(|(index, rule)| {
+                rule.matching_pseudo_specificity(element, pseudo)
+                    .map(|specificity| (self.styles.is_user_agent_rule(index), specificity, rule))
+            })
+            .collect();
+        if matched_rules.is_empty() {
+            return None;
+        }
+        matched_rules.sort_by_key(|&(user_agent, specificity, _)| (!user_agent, specificity));
+        let cascade = cascade_declarations(&matched_rules, None, None);
+        let mut style_builder = StyleBuilder::new(element_style.clone());
+        style_builder.apply_cascade(cascade.iter().copied());
+        let mut style = style_builder.build();
+        if style.box_.display == Display::None
+            || !matches!(style.box_.content, crate::style::properties::generated::Content::Items(_))
+        {
+            return None;
+        }
+        if element_style.box_.display.is_flex_or_grid() {
+            style.blockify();
+        }
+        Some(style)
+    }
+
+    /// Adds the nodes of the `::before` and `::after` of an element to the tree, as its first and
+    /// last child. Their text is put together when they are reached, because it can depend on
+    /// counters that the content before them changes.
+    fn generate_pseudo_elements(&mut self, node: &DomRef) {
+        let Some(element) = node.clone().into_element_ref() else { return };
+        let Some(style) = NodeData::style(node) else { return };
+        // no box, no generated content; and replaced elements and the elements of other
+        // languages than HTML have no children to put it before or after
+        const REPLACED: &[&str] = &[
+            "img", "input", "br", "hr", "canvas", "iframe", "object", "embed", "video", "audio",
+            "textarea", "select", "meter", "progress", "wbr",
+        ];
+        if element.pseudo_element().is_some()
+            || style.box_.display == Display::None
+            || element.name.ns != ns!(html)
+            || REPLACED.contains(&&*element.name.local)
+        {
+            return;
+        }
+        for pseudo in [PseudoElement::Before, PseudoElement::After] {
+            let Some(pseudo_style) = self.pseudo_style(&element, &style, pseudo) else { continue };
+            let pseudo_node = DomRef::new(NodeData::from_html_data(ParsedData::Element(ElementData::pseudo(pseudo))));
+            pseudo_node.set_style(pseudo_style);
+            match (pseudo, TreeLinked::first_child(node)) {
+                (PseudoElement::Before, Some(first)) => first.insert_before(pseudo_node),
+                _ => node.append(pseudo_node),
+            }
+        }
+    }
+
+    /// The pieces that the `content` of a pseudo-element with the style `style` of the element
+    /// `origin` is made of, at the place that the counters have reached.
+    fn content_pieces(&mut self, origin: Option<&crate::tree::ElementRef>, style: &ComputedValues) -> Vec<ContentPiece> {
+        use crate::style::properties::generated::{Content, ContentItem};
+        let Content::Items(items) = &style.box_.content else { return vec![] };
+        let lang = style.font.lang.tag().unwrap_or("").to_owned();
+        let mut pieces = vec![];
+        let mut text = String::new();
+        for item in items {
+            match item {
+                ContentItem::String(string) => text.push_str(string),
+                ContentItem::Url(image) => {
+                    if !text.is_empty() {
+                        pieces.push(ContentPiece::Text(std::mem::take(&mut text)));
+                    }
+                    pieces.push(ContentPiece::Image(image.clone()));
+                }
+                ContentItem::Counter(name, counter_style) => {
+                    text.push_str(&super::counters::format_counter(self.counters.value(name), *counter_style))
+                }
+                ContentItem::Counters(name, separator, counter_style) => {
+                    let values: Vec<String> = self
+                        .counters
+                        .values(name)
+                        .into_iter()
+                        .map(|value| super::counters::format_counter(value, *counter_style))
+                        .collect();
+                    text.push_str(&values.join(separator));
+                }
+                ContentItem::Attr(name, fallback) => {
+                    let key = QualName::new(None, ns!(), html5ever::LocalName::from(name.to_ascii_lowercase()));
+                    let attributes = origin.map(|element| element.attributes.borrow());
+                    match attributes.as_ref().and_then(|attributes| attributes.get(&key)) {
+                        Some(attribute) => text.push_str(&attribute.value),
+                        None => text.push_str(fallback.as_deref().unwrap_or("")),
+                    }
+                }
+                ContentItem::OpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, true)),
+                ContentItem::NoOpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, false)),
+                ContentItem::CloseQuote => text.push_str(&self.counters.close_quote(&style.text.quotes, &lang, true)),
+                ContentItem::NoCloseQuote => text.push_str(&self.counters.close_quote(&style.text.quotes, &lang, false)),
+            }
+        }
+        if !text.is_empty() {
+            pieces.push(ContentPiece::Text(text));
+        }
+        pieces
+    }
+
+    /// The text of the `content` (the images do not count), as the text of a marker.
+    fn content_text(&mut self, origin: Option<&crate::tree::ElementRef>, style: &ComputedValues) -> String {
+        self.content_pieces(origin, style)
+            .into_iter()
+            .filter_map(|piece| match piece {
+                ContentPiece::Text(text) => Some(text),
+                ContentPiece::Image(_) => None,
+            })
+            .collect()
+    }
+
+    /// Puts the `content` of a pseudo-element together and adds it as its children: text, and
+    /// the images as replaced inline boxes.
+    fn fill_pseudo_element(&mut self, node: &DomRef, style: &ComputedValues) {
+        let origin = node.parent().and_then(|parent| parent.into_element_ref());
+        for piece in self.content_pieces(origin.as_ref(), style) {
+            match piece {
+                ContentPiece::Text(text) => {
+                    node.append(DomRef::new(NodeData::from_html_data(ParsedData::Text(std::cell::RefCell::new(text)))));
+                }
+                ContentPiece::Image(url) => {
+                    let Some(image) = url.load().cloned() else { continue };
+                    // the image is handed over under a name that no `src` can have
+                    let src = format!("helium-content-image:{}", self.entity_constructor.images.len());
+                    self.entity_constructor.images.insert(src.clone(), Some(image));
+                    let attribute = |name: &str, value: &str| {
+                        let name = QualName::new(None, ns!(), html5ever::LocalName::from(name));
+                        (name.clone(), Attribute { name, value: value.into() })
+                    };
+                    let img = DomRef::new(NodeData::from_html_data(ParsedData::Element(ElementData {
+                        name: QualName::new(None, ns!(html), local_name!("img")),
+                        attributes: std::cell::RefCell::new([attribute("src", &src), attribute(GENERATED_IMAGE, "")].into_iter().collect()),
+                        template_contents: None,
+                    })));
+                    // (not an element of the document: the rules of the document are not for it)
+                    let mut img_style = StyleBuilder::new(style.clone()).build();
+                    std::sync::Arc::make_mut(&mut img_style.box_).display = Display::Inline;
+                    img.set_style(img_style);
+                    node.append(img);
+                }
+            }
+        }
+    }
+
+    /// The style of the `::marker` of a list item, if a rule is about it: the rules that match
+    /// are cascaded on top of the style of the item.
+    /// For the marker of a `::before` or `::after` that is a list item, `element` is the element
+    /// that has it and `outer` tells which one it is.
+    fn marker_style(
+        &self,
+        element: &crate::tree::ElementRef,
+        outer: Option<PseudoElement>,
+        item_style: &ComputedValues,
+    ) -> Option<ComputedValues> {
+        let mut matched_rules: Vec<_> = self
+            .styles
+            .rules_iter()
+            .enumerate()
+            .filter_map(|(index, rule)| {
+                match outer {
+                    None => rule.matching_pseudo_specificity(element, PseudoElement::Marker),
+                    Some(outer) => rule.matching_nested_pseudo_specificity(element, outer, PseudoElement::Marker),
+                }
+                .map(|specificity| (self.styles.is_user_agent_rule(index), specificity, rule))
+            })
+            .collect();
+        if matched_rules.is_empty() {
+            return None;
+        }
+        matched_rules.sort_by_key(|&(user_agent, specificity, _)| (!user_agent, specificity));
+        let cascade = cascade_declarations(&matched_rules, None, None);
+        let mut style_builder = StyleBuilder::new(item_style.clone());
+        style_builder.apply_cascade(cascade.iter().copied());
+        Some(style_builder.build())
+    }
+
+    /// Prepares the marker of a list item that is reached: the `::marker` can change the
+    /// counters of the item and its `content` can use them. What it says about the text and the
+    /// style of an outside marker is handed to the entity of the item; an inside marker is
+    /// inline content at the start of the item, a node of the tree.
+    fn prepare_marker(&mut self, node: &DomRef, style: &ComputedValues) {
+        use crate::style::properties::specified::{ListStylePosition, ListStyleType};
+        self.entity_constructor.marker = None;
+        let Some(element) = node.clone().into_element_ref() else { return };
+        if style.box_.display != Display::ListItem {
+            return;
+        }
+        // The marker of a `::before` or `::after` that is a list item is not addressed by the
+        // `::marker` rules of the document, only by `::before::marker` and `::after::marker`
+        // (`origin` is the element that has the pseudo-element, which `attr()` reads).
+        let (origin, outer) = match element.pseudo_element() {
+            Some(outer) => (node.parent().and_then(|parent| parent.into_element_ref()), Some(outer)),
+            None => (Some(element.clone()), None),
+        };
+        let marker_style = origin.as_ref().and_then(|origin| self.marker_style(origin, outer, style));
+        let element = origin.unwrap_or(element);
+        let mut text = MarkerText::Default;
+        if let Some(marker_style) = &marker_style {
+            // (the counters that the marker makes are the ones of the item, whose parent is the
+            // parent of the counters' creator)
+            let parent = node.parent().map_or(0, |parent| crate::tree::GetOpaqueNode::get_opaque(&parent).0);
+            self.counters.apply_to_current(parent, marker_style);
+            text = match &marker_style.box_.content {
+                crate::style::properties::generated::Content::Normal => MarkerText::Default,
+                crate::style::properties::generated::Content::None => MarkerText::Hidden,
+                crate::style::properties::generated::Content::Items(_) => {
+                    MarkerText::Explicit(self.content_text(Some(&element), marker_style))
+                }
+            };
+        }
+
+        if style.font.list_style_position == ListStylePosition::Inside {
+            let is_string = matches!(style.font.list_style_type, ListStyleType::String(_));
+            let marker_text = match &text {
+                MarkerText::Explicit(text) => Some(text.clone()),
+                MarkerText::Hidden => None,
+                // the marker of the type, and a space after it unless it is a text
+                MarkerText::Default => style
+                    .font
+                    .list_style_type
+                    .marker_text(self.counters.value("list-item"))
+                    .map(|text| if is_string { text } else { text + " " }),
+            };
+            if let Some(text) = marker_text.filter(|text| !text.is_empty()) {
+                self.insert_inside_marker(node, style, marker_style, text);
+            }
+            // (nothing is drawn outside of the item)
+            self.entity_constructor.marker = Some(MarkerOverride { style: style.clone(), text: MarkerText::Hidden });
+        } else if let Some(style) = marker_style {
+            self.entity_constructor.marker = Some(MarkerOverride { style, text });
+        }
+    }
+
+    /// Adds the marker of a list item that is inside as an inline box at its start.
+    fn insert_inside_marker(
+        &mut self,
+        node: &DomRef,
+        item_style: &ComputedValues,
+        marker_style: Option<ComputedValues>,
+        text: String,
+    ) {
+        let mut style = marker_style.unwrap_or_else(|| StyleBuilder::new(item_style.clone()).build());
+        {
+            // the content is the text of the node, and the counters were counted already
+            let box_ = std::sync::Arc::make_mut(&mut style.box_);
+            box_.display = Display::Inline;
+            box_.content = Default::default();
+            box_.counter_reset = Default::default();
+            box_.counter_increment = Default::default();
+            box_.counter_set = Default::default();
+        }
+        let marker = DomRef::new(NodeData::from_html_data(ParsedData::Element(ElementData::pseudo(PseudoElement::Marker))));
+        marker.set_style(style);
+        marker.append(DomRef::new(NodeData::from_html_data(ParsedData::Text(std::cell::RefCell::new(text)))));
+        match TreeLinked::first_child(node) {
+            Some(first) => first.insert_before(marker),
+            None => node.append(marker),
+        }
+    }
+
+    /// Counts the counters of an element that is reached.
+    fn enter_counters(&mut self, node: &DomRef, style: &ComputedValues) {
+        let parent = node.parent().map_or(0, |parent| crate::tree::GetOpaqueNode::get_opaque(&parent).0);
+        let mut hints = super::counters::ListHints::default();
+        if let ParsedData::Element(data) = &node.html_data {
+            if data.name.ns == ns!(html) {
+                let integer = |name| {
+                    data.attributes
+                        .borrow()
+                        .get(&QualName::new(None, ns!(), name))
+                        .and_then(|attribute| attribute.value.trim().parse::<i64>().ok())
+                };
+                match &*data.name.local {
+                    "ol" | "ul" | "menu" => {
+                        hints.resets_list_item = true;
+                        hints.start = integer(local_name!("start"));
+                    }
+                    "li" => {
+                        hints.value = integer(local_name!("value"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.counters.enter(parent, style, hints);
     }
 
     /// Computes the style of the node, and before that the one of its ancestors, if they do not
@@ -493,7 +819,25 @@ impl Traversal<DomRef> for FlowConstructor {
             // the elements of an `<svg>` are drawn by the SVG code, not laid out
             return;
         }
-        self.compute_style(&node);
+        // the style of generated content was computed together with the one of its element
+        let is_generated = node
+            .clone()
+            .into_element_ref()
+            .is_some_and(|element| element.pseudo_element().is_some())
+            || is_generated_image(&node);
+        if !is_generated {
+            self.compute_style(&node);
+        }
+        if matches!(node.html_data, ParsedData::Element(_)) {
+            if let Some(style) = NodeData::style(&node) {
+                self.enter_counters(&node, &style);
+                if is_generated {
+                    self.fill_pseudo_element(&node, &style);
+                } else {
+                    self.generate_pseudo_elements(&node);
+                }
+            }
+        }
 
         if crate::svg_dom::is_outermost_svg(&node) {
             if let Some(style) = NodeData::style(&node) {
@@ -504,6 +848,10 @@ impl Traversal<DomRef> for FlowConstructor {
             self.inside_svg = Some(node.clone());
         }
         let scoped = node.clone();
+        self.entity_constructor.list_item_value = self.counters.value("list-item");
+        if let Some(style) = NodeData::style(&scoped) {
+            self.prepare_marker(&scoped, &style);
+        }
         self.entity_constructor.build_entity(node);
         self.entity_constructor.record_transform_scope(&scoped);
         self.record_vertical_align(&scoped);
@@ -515,6 +863,9 @@ impl Traversal<DomRef> for FlowConstructor {
                 return;
             }
             self.inside_svg = None;
+        }
+        if matches!(node.html_data, ParsedData::Element(_)) {
+            self.counters.leave();
         }
         match node.html_data() {
             ParsedData::Element(_) => self.entity_constructor.build_formatting_context(&node),
@@ -541,54 +892,46 @@ impl Traversal<DomRef> for FlowConstructor {
     }
 }
 
-/// The number shown next to a list item: `<ol start>` sets the first number and `<li value>`
-/// restarts the count at that item.
-/// https://html.spec.whatwg.org/multipage/grouping-content.html#the-ol-element
-fn list_item_ordinal<'a, N: AbstractNode<'a>>(node: &N) -> i64 {
-    /// The value of an attribute, if it is a valid HTML integer.
-    fn integer(element_data: &ElementData, name: html5ever::LocalName) -> Option<i64> {
-        let attributes = element_data.attributes.borrow();
-        let attribute = attributes.get(&QualName::new(None, ns!(), name))?;
-        attribute.value.trim().parse::<i64>().ok()
-    }
-    fn is_li(data: &ElementData) -> bool {
-        data.name == QualName::new(None, ns!(html), local_name!("li"))
-    }
-
-    // An `<ol>` numbers from its `start` attribute; a list item that is not in an ordered list
-    // gets no number of its own (its marker does not use one).
-    let start = match node.parent_node() {
-        Some(parent) => match parent.html_data() {
-            ParsedData::Element(data)
-                if data.name == QualName::new(None, ns!(html), local_name!("ol")) =>
-            {
-                integer(data, local_name!("start")).unwrap_or(1)
-            }
-            _ => 1,
-        },
-        None => 1,
-    };
-
-    // Run the count over the preceding list items in document order.
-    let mut preceding = vec![];
-    let mut previous = node.previous_sibling();
-    while let Some(sibling) = previous {
-        previous = sibling.previous_sibling();
-        preceding.push(sibling);
-    }
-    let mut ordinal = start;
-    for sibling in preceding.into_iter().rev() {
-        if let ParsedData::Element(data) = sibling.html_data() {
-            if is_li(data) {
-                ordinal = integer(data, local_name!("value")).unwrap_or(ordinal) + 1;
-            }
+/// The declarations of the matched rules in the order of the cascade: the declarations of the
+/// user agent, the presentational hints, the author's rules, the `style` attribute, then the
+/// `!important` ones of the author and finally the ones of the user agent.
+fn cascade_declarations<'a>(
+    matched_rules: &[(bool, u32, &'a crate::style::parse::QualifiedRule)],
+    hint: Option<&'a PropertyDeclarationBlock>,
+    inline_style: Option<&'a PropertyDeclarationBlock>,
+) -> Vec<&'a PropertyDeclaration<'a>> {
+    let mut cascade = vec![];
+    for (user_agent, _, rule) in matched_rules {
+        if *user_agent {
+            cascade.extend(rule.properties.normal_declarations());
         }
     }
-
-    match node.html_data() {
-        ParsedData::Element(data) => integer(data, local_name!("value")).unwrap_or(ordinal),
-        _ => ordinal,
+    if let Some(block) = hint {
+        cascade.extend(block.normal_declarations());
     }
+    for (user_agent, _, rule) in matched_rules {
+        if !*user_agent {
+            cascade.extend(rule.properties.normal_declarations());
+        }
+    }
+    // declarations in the `style` attribute override all matched rules
+    if let Some(block) = inline_style {
+        cascade.extend(block.normal_declarations());
+    }
+    for (user_agent, _, rule) in matched_rules {
+        if !*user_agent {
+            cascade.extend(rule.properties.important_declarations());
+        }
+    }
+    if let Some(block) = inline_style {
+        cascade.extend(block.important_declarations());
+    }
+    for (user_agent, _, rule) in matched_rules {
+        if *user_agent {
+            cascade.extend(rule.properties.important_declarations());
+        }
+    }
+    cascade
 }
 
 /// The `colspan` and `rowspan` attributes of a table cell, if it has any.
@@ -746,6 +1089,10 @@ pub trait IterChildren<'a>: Sized {
     type ChildrenIter: 'a + Iterator<Item = Self>;
     fn children(&'a self) -> Self::ChildrenIter;
 
+    /// The children that the boxes of the node are made of: an element with `display: contents`
+    /// has no box, so its own children are there in its place.
+    fn layout_children(&'a self) -> Vec<Self>;
+
     fn next_sibling(&self) -> Option<Self>;
     fn previous_sibling(&self) -> Option<Self>;
     fn parent_node(&self) -> Option<Self>;
@@ -755,6 +1102,23 @@ impl<'a> IterChildren<'a> for DomRef {
     type ChildrenIter = crate::tree::SiblingIter<DomRef>;
     fn children(&'a self) -> Self::ChildrenIter {
         TreeLinked::children(&self)
+    }
+
+    fn layout_children(&'a self) -> Vec<Self> {
+        fn flatten(node: &DomRef, out: &mut Vec<DomRef>) {
+            for child in TreeLinked::children(node) {
+                let contents = matches!(child.html_data, ParsedData::Element(_))
+                    && NodeData::style(&child).is_some_and(|style| style.box_.display == Display::Contents);
+                if contents {
+                    flatten(&child, out);
+                } else {
+                    out.push(child);
+                }
+            }
+        }
+        let mut out = vec![];
+        flatten(self, &mut out);
+        out
     }
 
     fn next_sibling(&self) -> Option<Self> {
@@ -792,6 +1156,10 @@ impl FontSelector {
 }
 
 pub struct EntityConstructor {
+    /// The value of the `list-item` counter of the element that is built.
+    list_item_value: i64,
+    /// What a `::marker` rule says about the marker of the list item that is built.
+    marker: Option<MarkerOverride>,
     font_match_cache: HashMap<FontSelector, String>,
     /// The fonts that the document can use, with its `@font-face` rules.
     fonts: Arc<super::text::font::FontContext>,
@@ -853,6 +1221,8 @@ impl EntityConstructor {
         world.insert(components::CanvasEntities::default());
         world.insert(components::TransformScopes::default());
         EntityConstructor {
+            list_item_value: 0,
+            marker: None,
             world,
             font_match_cache: Default::default(),
             fonts: super::text::font::FontContext::system(),
@@ -978,8 +1348,8 @@ impl EntityConstructor {
     pub fn build_entity<'a>(&mut self, mut node: impl AbstractNode<'a>) {
         let style = node.style();
 
-        // Columns do not generate boxes.
-        if style.box_.display == Display::None || style.box_.display.is_table_column() {
+        // Columns do not generate boxes, and neither do elements with `display: contents`.
+        if matches!(style.box_.display, Display::None | Display::Contents) || style.box_.display.is_table_column() {
             return;
         }
 
@@ -998,21 +1368,30 @@ impl EntityConstructor {
                     self.in_word = false;
                 }
 
-                let is_list_item =
-                    element_data.name == QualName::new(None, ns!(html), local_name!("li"));
+                let is_list_item = style.box_.display == Display::ListItem;
+                // the number of the item is the value of its `list-item` counter, which counts
+                // the items and follows `<ol start>` and `<li value>`
                 let ordinal = if is_list_item {
-                    list_item_ordinal(&node)
+                    self.list_item_value
                 } else {
                     0
                 };
-                let marker_text = style
-                    .font
-                    .list_style_type
-                    .marker_text(ordinal)
-                    .filter(|_| is_list_item);
-                let marker = marker_text.map(|text| {
-                    let (_, face) = self.text_face(&style, &text);
-                    components::ListMarker { text, face }
+                let marker_override = self.marker.take().filter(|_| is_list_item);
+                let default_text = || style.font.list_style_type.marker_text(ordinal).filter(|_| is_list_item);
+                // an explicit text is the whole marker: it brings its own spacing
+                let (marker_text, explicit) = match marker_override.as_ref().map(|marker| &marker.text) {
+                    Some(MarkerText::Explicit(text)) => (Some(text.clone()), true),
+                    Some(MarkerText::Hidden) => (None, false),
+                    // a text as the `list-style-type` is the whole marker too
+                    _ => (
+                        default_text(),
+                        matches!(style.font.list_style_type, crate::style::properties::specified::ListStyleType::String(_)),
+                    ),
+                };
+                let marker = marker_text.filter(|text| !text.is_empty()).map(|text| {
+                    let marker_style = marker_override.as_ref().map_or(&style, |marker| &marker.style);
+                    let (_, face) = self.text_face(marker_style, &text);
+                    components::ListMarker { text, face, explicit }
                 });
 
                 if style.box_.display.is_atomic_inline() {
@@ -1116,11 +1495,18 @@ impl EntityConstructor {
                             if matches!(
                                 node.style().box_.display,
                                 Display::Inline
+                                    | Display::Contents
                                     | Display::InlineBlock
                                     | Display::InlineTable
                                     | Display::InlineFlex
                                     | Display::InlineGrid
                             ) => {}
+                        // the text of an inline pseudo-element continues the line of the text
+                        // before it: the state of the white space stays as it is
+                        None if node.parent_node().is_some_and(|parent| {
+                            matches!(parent.style().box_.display, Display::Inline)
+                                && matches!(parent.html_data(), ParsedData::Element(data) if data.pseudo_element().is_some())
+                        }) => {}
                         _ => self.trim_next_inline_whitespace = true,
                     };
 
@@ -1137,7 +1523,10 @@ impl EntityConstructor {
                         );
                     }
 
-                    if &*text != text.trim_end() {
+                    // (white space that collapsed away leaves the state as it was: the line
+                    // still has no content)
+                    if text.is_empty() {
+                    } else if &*text != text.trim_end() {
                         // this text node ends with whitespace
                         self.trim_next_inline_whitespace = true
                     } else {
@@ -1479,7 +1868,8 @@ impl EntityConstructor {
         let mut inline_level_elements = vec![];
 
         let entity_iter = node
-            .children()
+            .layout_children()
+            .into_iter()
             .filter_map(|child| child.layout_entity().map(|LayoutEntity(ent)| ent));
 
         Self::build_blocks(
@@ -1566,7 +1956,7 @@ impl EntityConstructor {
         let strut = self.strut(&node.style());
         let mut inline_formatting_context =
             InlineFormattingContext::new(vec![], vec![], &node.style(), strut);
-        for child in node.children() {
+        for child in node.layout_children() {
             let child_entity = match child.layout_entity() {
                 Some(LayoutEntity(entity)) => entity,
                 None => continue,

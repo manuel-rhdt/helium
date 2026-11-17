@@ -157,9 +157,11 @@ dl,
 dt,
 menu,
 ol,
-ul,
-li {
+ul {
   display: block;
+}
+li {
+  display: list-item;
 }
 dir,
 menu,

@@ -68,7 +68,7 @@ impl UrlImage {
                 match crate::image::load_relative(&self.href, sheet, document, &fonts) {
                     Ok(image) => Some(std::sync::Arc::new(image)),
                     Err(error) => {
-                        log::warn!("Cannot load the background image `{}`: {}", self.href, error);
+                        log::warn!("Cannot load the image `{}`: {}", self.href, error);
                         None
                     }
                 }

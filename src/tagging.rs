@@ -287,7 +287,7 @@ fn map_element(element: &ElementData, style: &ComputedValues) -> Mapping {
     Mapping::Role(role)
 }
 
-fn list_numbering(list_style_type: ListStyleType) -> &'static str {
+fn list_numbering(list_style_type: &ListStyleType) -> &'static str {
     match list_style_type {
         ListStyleType::Disc => "Disc",
         ListStyleType::Circle => "Circle",
@@ -297,7 +297,8 @@ fn list_numbering(list_style_type: ListStyleType) -> &'static str {
         ListStyleType::UpperAlpha => "UpperAlpha",
         ListStyleType::LowerRoman => "LowerRoman",
         ListStyleType::UpperRoman => "UpperRoman",
-        ListStyleType::None => "None",
+        // (a text is not a numbering)
+        ListStyleType::None | ListStyleType::String(_) => "None",
     }
 }
 
@@ -512,7 +513,7 @@ impl Builder {
             "L" => struct_node.attributes.push((
                 "List",
                 "ListNumbering",
-                AttributeValue::Name(Name::from(list_numbering(style.font.list_style_type))),
+                AttributeValue::Name(Name::from(list_numbering(&style.font.list_style_type))),
             )),
             "TH" | "TD" => {
                 if struct_node.role == "TH" {

@@ -64,6 +64,41 @@ pub struct ElementData {
     pub template_contents: Option<NodeRef<NodeData>>,
 }
 
+impl ElementData {
+    /// The element that stands for the generated content of `::before` or `::after`, which the
+    /// layout adds to the tree (it has no namespace and a name that no element can have).
+    pub fn pseudo(pseudo: crate::style::parse::PseudoElement) -> Self {
+        use crate::style::parse::PseudoElement;
+        ElementData {
+            name: QualName::new(
+                None,
+                html5ever::ns!(),
+                html5ever::LocalName::from(match pseudo {
+                    PseudoElement::Before => "::before",
+                    PseudoElement::After => "::after",
+                    PseudoElement::Marker => "::marker",
+                }),
+            ),
+            attributes: Default::default(),
+            template_contents: None,
+        }
+    }
+
+    /// Which pseudo-element this is, if it is not an element of the document.
+    pub fn pseudo_element(&self) -> Option<crate::style::parse::PseudoElement> {
+        use crate::style::parse::PseudoElement;
+        if self.name.ns != html5ever::ns!() {
+            return None;
+        }
+        match &*self.name.local {
+            "::before" => Some(PseudoElement::Before),
+            "::after" => Some(PseudoElement::After),
+            "::marker" => Some(PseudoElement::Marker),
+            _ => None,
+        }
+    }
+}
+
 /// Data specific to document nodes.
 #[derive(Debug, PartialEq, Clone)]
 pub struct DocumentData {

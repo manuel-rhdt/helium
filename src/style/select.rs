@@ -41,7 +41,7 @@ impl selectors::Element for ElementRef {
             // the iterator starts with the node itself
             .skip(1)
             .filter_map(DomRef::into_element_ref)
-            .next()
+            .find(|element| element.pseudo_element().is_none())
     }
     #[inline]
     fn next_sibling_element(&self) -> Option<Self> {
@@ -50,14 +50,15 @@ impl selectors::Element for ElementRef {
             // the iterator starts with the node itself
             .skip(1)
             .filter_map(DomRef::into_element_ref)
-            .next()
+            .find(|element| element.pseudo_element().is_none())
     }
     #[inline]
     fn is_empty(&self) -> bool {
         self.as_node()
             .children()
             .all(|child| match child.html_data {
-                crate::parser::ParsedData::Element(_) => false,
+                // the generated content is not content of the document
+                crate::parser::ParsedData::Element(ref element) => element.pseudo_element().is_some(),
                 crate::parser::ParsedData::Text(ref text) => text.borrow().is_empty(),
                 _ => true,
             })
@@ -143,9 +144,15 @@ impl selectors::Element for ElementRef {
     fn match_pseudo_element(
         &self,
         pseudo: &parse::PseudoElement,
-        _context: &mut MatchingContext<parse::Selectors>,
+        context: &mut MatchingContext<parse::Selectors>,
     ) -> bool {
-        match *pseudo {}
+        // An element is never a pseudo-element. The last pseudo-element of a selector is skipped
+        // when the pseudo-elements of an element are matched
+        // (`MatchingMode::ForStatelessPseudoElement`); the one before it, the `::before` of
+        // `::before::marker`, is reached here, and the caller has chosen the selectors that have
+        // the right ones.
+        matches!(pseudo, parse::PseudoElement::Before | parse::PseudoElement::After)
+            && context.matching_mode() == selectors::matching::MatchingMode::ForStatelessPseudoElement
     }
 
     fn match_non_ts_pseudo_class(
@@ -174,6 +181,11 @@ impl selectors::Element for ElementRef {
     fn is_pseudo_element(&self) -> bool {
         false
     }
+    /// The pseudo-elements of an element are matched with the element itself in their place,
+    /// so a nested pseudo-element (`::before::marker`) steps out of it to the same element.
+    fn pseudo_element_originating_element(&self) -> Option<Self> {
+        Some(self.clone())
+    }
     fn has_local_name(&self, local_name: &LocalName) -> bool {
         &self.name.local == local_name
     }
@@ -184,7 +196,10 @@ impl selectors::Element for ElementRef {
         self.name.ns == other.name.ns && self.name.local == other.name.local
     }
     fn first_element_child(&self) -> Option<Self> {
-        self.as_node().children().find_map(DomRef::into_element_ref)
+        self.as_node()
+            .children()
+            .filter_map(DomRef::into_element_ref)
+            .find(|element| element.pseudo_element().is_none())
     }
     fn apply_selector_flags(&self, _flags: ElementSelectorFlags) {}
     fn has_custom_state(&self, _name: &CssIdent) -> bool {

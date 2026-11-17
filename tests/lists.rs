@@ -157,8 +157,8 @@ fn list_item_value_restarts_the_numbering() {
     );
 }
 
-/// The `list-style` shorthand sets the marker type like `list-style-type`; the position is
-/// accepted and does not matter (markers are always outside).
+/// The `list-style` shorthand sets the marker type like `list-style-type`, with a position that
+/// is the initial one. (The inside markers are tested with the generated content.)
 #[test]
 fn the_list_style_shorthand_sets_the_marker_type() {
     let items = r#"<li>a</li><li>b</li><li>c</li>"#;
@@ -169,7 +169,7 @@ fn the_list_style_shorthand_sets_the_marker_type() {
     let with = dump("shorthand_disc", &format!(r#"<ul style="list-style: disc">{items}</ul>"#));
     assert_eq!(runs(&with), runs(&none) + 3);
     // in any order, with a position
-    let decimal = dump("shorthand_decimal", &format!(r#"<ol id="l" style="list-style: inside decimal">{items}</ol>"#));
+    let decimal = dump("shorthand_decimal", &format!(r#"<ol id="l" style="list-style: outside decimal">{items}</ol>"#));
     let longhand = dump("shorthand_decimal_longhand", &format!(r#"<ol id="l" style="list-style-type: decimal">{items}</ol>"#));
     assert_eq!(markers(&decimal), markers(&longhand));
     assert_eq!(markers(&decimal).len(), 3);
