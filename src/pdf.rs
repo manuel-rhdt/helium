@@ -671,6 +671,7 @@ pub fn write_pdf(
 
     let structure = std::mem::take(&mut print_pages.structure);
     let outline = std::mem::take(&mut print_pages.outline);
+    let named_destinations = std::mem::take(&mut print_pages.named_destinations);
     // what `write_outline` needs of the pages, which are consumed below
     let page_sizes: Vec<(crate::display_list::Rect, crate::style::properties::computed::PixelLength)> = print_pages
         .pages
@@ -919,6 +920,9 @@ pub fn write_pdf(
 
         context.add_reserved_page(page_references[page_index], page)?;
     }
+    context.set_named_destinations(named_destinations.iter().filter_map(|(id, destination)| {
+        Some((id.as_bytes().to_vec(), pdf_destination(destination, &page_references, &page_sizes, crop)?))
+    }));
     write_outline(&mut context, &outline, &page_references, &page_sizes, crop)?;
     if !outline.is_empty() {
         // viewers open the panel of the bookmarks
@@ -932,6 +936,23 @@ pub fn write_pdf(
     Ok(())
 }
 
+/// The destination in the PDF of a position of the layout: the page and the point on it (which
+/// is measured from the bottom left corner of the page, and from the content of a cropped page).
+fn pdf_destination(
+    destination: &crate::layout::components::GoToDestination,
+    page_references: &[IndirectReference<Page>],
+    page_sizes: &[(crate::display_list::Rect, crate::style::properties::computed::PixelLength)],
+    crop: bool,
+) -> Option<lemon_pdf::annotation::Destination> {
+    let (&page, (content_rect, page_height)) =
+        (page_references.get(destination.page)?, page_sizes.get(destination.page)?);
+    let (offset_x, offset_y) = if crop { (content_rect.x, content_rect.y) } else { Default::default() };
+    Some(lemon_pdf::annotation::Destination {
+        page,
+        point: (Pt::from(destination.x - offset_x), Pt::from(*page_height - (destination.y - offset_y))),
+    })
+}
+
 /// Writes the outline (bookmarks) of the PDF from the headings of the document: a heading of
 /// level n becomes a child of the closest preceding heading of a lower level. Levels may be
 /// skipped (an `h3` right after an `h1` is a child of the `h1`).
@@ -942,10 +963,7 @@ fn write_outline(
     page_sizes: &[(crate::display_list::Rect, crate::style::properties::computed::PixelLength)],
     crop: bool,
 ) -> Result<(), Error> {
-    use lemon_pdf::annotation::Destination;
     use lemon_pdf::outline::OutlineItem;
-
-
 
     let mut roots: Vec<OutlineItem> = Vec::new();
     let mut open: Vec<(u8, OutlineItem)> = Vec::new();
@@ -959,20 +977,10 @@ fn write_outline(
         }
     }
     for entry in entries {
-        let destination = &entry.destination;
-        let (Some(&page), Some((content_rect, page_height))) =
-            (page_references.get(destination.page), page_sizes.get(destination.page))
-        else {
+        let Some(destination) = pdf_destination(&entry.destination, page_references, page_sizes, crop) else {
             continue;
         };
-        let (offset_x, offset_y) = if crop { (content_rect.x, content_rect.y) } else { Default::default() };
-        let mut item = OutlineItem::new(
-            entry.title.clone(),
-            Destination {
-                page,
-                point: (Pt::from(destination.x - offset_x), Pt::from(*page_height - (destination.y - offset_y))),
-            },
-        );
+        let mut item = OutlineItem::new(entry.title.clone(), destination);
         item.open = !entry.closed;
         close_to(&mut roots, &mut open, entry.level);
         open.push((entry.level, item));

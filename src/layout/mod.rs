@@ -19,7 +19,7 @@ pub mod writing_mode;
 
 use crate::PixelLength;
 use crate::layout::components::{
-    EntityHrefs, GoToDestination, Hyperlinks, Outline, OutlineEntry, LayoutContext, Position, RootNode,
+    EntityHrefs, GoToDestination, Hyperlinks, NamedDestinations, Outline, OutlineEntry, LayoutContext, Position, RootNode,
 };
 use crate::style::{
     device::Device,
@@ -161,6 +161,25 @@ pub fn resolve_hyperlink_destinations(world: &mut World, dom: &DomRef) {
         };
         link.destination = Some(GoToDestination { page, x, y });
     }
+}
+
+/// Collects the position of every element with an `id` for the named destinations of the PDF: the
+/// element that a link `#id` of the document jumps to (the first with that `id`). Must run after
+/// pagination, like [`resolve_hyperlink_destinations`].
+pub fn collect_named_destinations(world: &mut World, dom: &DomRef) {
+    let targets = collect_id_targets(dom);
+    let destinations: std::collections::BTreeMap<String, GoToDestination> = {
+        let positions = world.read_storage::<Position>();
+        targets
+            .into_iter()
+            .filter(|(id, _)| !id.is_empty())
+            .filter_map(|(id, entity)| {
+                let &Position { x, y, page, .. } = positions.get(entity)?;
+                Some((id, GoToDestination { page, x, y }))
+            })
+            .collect()
+    };
+    world.write_resource::<NamedDestinations>().0 = destinations;
 }
 
 /// Collects the elements with a `bookmark-level` (by default `h1` to `h6`) for the outline of the
@@ -403,6 +422,7 @@ pub fn layout(
     layout_context.insert(crate::tagging::StructureTree::build(&dom));
     layout_context.insert(Hyperlinks::default());
     layout_context.insert(Outline::default());
+    layout_context.insert(NamedDestinations::default());
 
     layout_context.register::<components::IntrinsicSize>();
     layout_context.register::<components::ContainingBlock>();
@@ -489,6 +509,7 @@ pub fn layout(
     // pagination.
     resolve_hyperlink_destinations(&mut layout_context, &dom);
     collect_outline(&mut layout_context, &dom);
+    collect_named_destinations(&mut layout_context, &dom);
 
     layout_islands(&mut layout_context, shared_styles, islands, stylesheet_base_dir)?;
 

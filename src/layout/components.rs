@@ -74,6 +74,11 @@ pub struct OutlineEntry {
 #[derive(Debug, Clone, Default)]
 pub struct Outline(pub Vec<OutlineEntry>);
 
+/// The named destinations of the document: where the element with every `id` starts. A PDF viewer
+/// that opens `document.pdf#id` jumps there.
+#[derive(Debug, Clone, Default)]
+pub struct NamedDestinations(pub std::collections::BTreeMap<String, GoToDestination>);
+
 /// All hyperlinks found in the document, collected while the line boxes are created.
 #[derive(Debug, Clone, Default)]
 pub struct Hyperlinks(pub Vec<Hyperlink>);
