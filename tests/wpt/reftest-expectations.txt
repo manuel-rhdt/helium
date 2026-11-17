@@ -387,12 +387,8 @@ css/css-color/composited-filters-under-opacity.html
 css/css-color/currentcolor-004.html
 css/css-color/hsl-009.html
 css/css-color/hsl-010.html
-css/css-color/lab-l-over-100-1.html
-css/css-color/lab-l-over-100-2.html
 css/css-color/lch-009.html
 css/css-color/lch-010.html
-css/css-color/lch-l-over-100-1.html
-css/css-color/lch-l-over-100-2.html
 css/css-color/oklab-l-over-1-1.html
 css/css-color/oklab-l-over-1-2.html
 css/css-color/oklch-009.html

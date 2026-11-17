@@ -755,12 +755,7 @@ impl SvgWriter {
         span: &usvg::layout::Span,
         color: usvg::Color,
     ) -> Result<()> {
-        let color = crate::style::properties::computed::RGBA {
-            red: color.red,
-            green: color.green,
-            blue: color.blue,
-            alpha: 255,
-        };
+        let color = crate::style::properties::computed::SrgbColor { red: color.red, green: color.green, blue: color.blue, alpha: 255 };
         for glyph in &span.positioned_glyphs {
             let Some(name) = self.font_names.get(&glyph.font) else { continue };
             // the matrix of an outline: font units with y up to the coordinates of the text

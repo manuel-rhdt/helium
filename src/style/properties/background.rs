@@ -483,7 +483,7 @@ pub fn resolve_layer(
 mod tests {
     use super::*;
     use crate::style::properties::gradient::{Gradient, GradientKind, LinearDirection, Stop};
-    use crate::style::properties::computed::RGBA;
+    use crate::style::properties::computed::PaintColor;
 
     fn parse<T: for<'i> PropertyValue<'i, Error = StyleParseError>>(css: &str) -> Option<T> {
         let mut parser = Parser::new(css);
@@ -552,8 +552,8 @@ mod tests {
             repeating: false,
             interpolation: Default::default(),
             stops: vec![
-                Stop { color: RGBA { red: 255, green: 0, blue: 0, alpha: 255 }, positions: vec![] },
-                Stop { color: RGBA { red: 0, green: 0, blue: 255, alpha: 255 }, positions: vec![] },
+                Stop { color: PaintColor::srgb(255, 0, 0, 255), positions: vec![] },
+                Stop { color: PaintColor::srgb(0, 0, 255, 255), positions: vec![] },
             ],
         }
     }

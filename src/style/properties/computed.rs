@@ -13,29 +13,91 @@ pub use super::specified::{
 pub use cssparser_color::Color;
 
 /// The sRGB colour a CSS colour is painted with, see [`super::color`].
-pub use super::color::color_to_rgba;
+pub use super::color::color_to_paint;
 
-/// An sRGB color with 8 bits per channel.
+/// An sRGB colour with 8 bits per channel and an alpha channel.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
-pub struct RGBA {
+pub struct SrgbColor {
     pub red: u8,
     pub green: u8,
     pub blue: u8,
     pub alpha: u8,
 }
 
-impl RGBA {
-    pub const fn new(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
-        RGBA {
-            red,
-            green,
-            blue,
-            alpha,
-        }
+/// A colour in CIELAB with the D50 white, which every colour that CSS can write has a value in,
+/// with an alpha channel. The components are kept as their bits, so that colours can be compared
+/// and hashed.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct LabColor {
+    lightness: u32,
+    a: u32,
+    b: u32,
+    pub alpha: u8,
+}
+
+impl LabColor {
+    pub fn new(lightness: f32, a: f32, b: f32, alpha: u8) -> Self {
+        LabColor { lightness: lightness.to_bits(), a: a.to_bits(), b: b.to_bits(), alpha }
+    }
+
+    /// L*, a* and b*.
+    pub fn components(self) -> [f32; 3] {
+        [f32::from_bits(self.lightness), f32::from_bits(self.a), f32::from_bits(self.b)]
+    }
+}
+
+/// A colour that is painted.
+///
+/// It is sRGB if sRGB can hold it, and else (a colour of a wide gamut, like `color(display-p3 1 0
+/// 0)`) CIELAB, which holds every colour exactly. The colour has no channels to read: a consumer
+/// that can paint both matches on the cases, and one that only has sRGB has to call
+/// [`PaintColor::clip_to_srgb`], which says what it does to the colours that sRGB cannot hold.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum PaintColor {
+    Srgb(SrgbColor),
+    Lab(LabColor),
+}
+
+impl Default for PaintColor {
+    fn default() -> Self {
+        PaintColor::transparent()
+    }
+}
+
+impl PaintColor {
+    pub const fn srgb(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
+        PaintColor::Srgb(SrgbColor { red, green, blue, alpha })
     }
 
     pub const fn transparent() -> Self {
-        RGBA::new(0, 0, 0, 0)
+        PaintColor::srgb(0, 0, 0, 0)
+    }
+
+    /// The opacity of the colour, from 0 to 255.
+    pub const fn alpha(self) -> u8 {
+        match self {
+            PaintColor::Srgb(color) => color.alpha,
+            PaintColor::Lab(color) => color.alpha,
+        }
+    }
+
+    /// The same colour with another alpha channel.
+    pub fn with_alpha(self, alpha: u8) -> Self {
+        match self {
+            PaintColor::Srgb(color) => PaintColor::Srgb(SrgbColor { alpha, ..color }),
+            PaintColor::Lab(color) => PaintColor::Lab(LabColor { alpha, ..color }),
+        }
+    }
+
+    /// The colour in sRGB, the nearest one that fits if it has none: the channels of a colour
+    /// outside of the gamut are clipped to the range. This loses the colour; use it only where
+    /// nothing but sRGB can be painted, and where the colour is painted by the PDF writer match
+    /// on the cases instead.
+    pub fn clip_to_srgb(self) -> SrgbColor {
+        match self {
+            PaintColor::Srgb(color) => color,
+            PaintColor::Lab(color) => super::color::lab_to_srgb_clipped(color),
+        }
     }
 }
 

@@ -583,7 +583,7 @@ impl TaffyBlockLayout {
             }
             let first = &parts[0];
             let deco = first.decoration;
-            let visible = deco.background_color.alpha > 0
+            let visible = deco.background_color.alpha() > 0
                 || deco.has_background_image
                 || deco.border.top > PixelLength(0.0)
                 || deco.border.bottom > PixelLength(0.0)
@@ -677,7 +677,7 @@ struct Writer<'a, 'w> {
 /// A rule between two columns: a filled rectangle.
 struct Rule {
     position: Position,
-    color: crate::style::properties::computed::RGBA,
+    color: crate::style::properties::computed::PaintColor,
 }
 
 impl<'a> Writer<'a, '_> {
@@ -1114,10 +1114,10 @@ impl<'a> Writer<'a, '_> {
         if !style.box_.column_rule_style.is_visible() || width <= 0.0 {
             return Ok(());
         }
-        use crate::style::properties::computed::{Color, color_to_rgba};
+        use crate::style::properties::computed::{Color, color_to_paint};
         let color = match style.box_.column_rule_color {
-            Color::CurrentColor => color_to_rgba(style.font.color),
-            color => color_to_rgba(color),
+            Color::CurrentColor => color_to_paint(style.font.color),
+            color => color_to_paint(color),
         };
         for index in 1..plan.columns.len() {
             let (before, after) = (column_x(index - 1), column_x(index));

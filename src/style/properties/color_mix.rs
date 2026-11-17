@@ -7,7 +7,7 @@
 //! supported either. A colour outside of the sRGB gamut is clipped per channel after the mix.
 
 use super::color::{
-    D50_WHITE, Rgb, apply, color_to_rgba, d50_to_d65, lab_to_xyz, oklab_to_srgb, srgb_decode, srgb_encode, to_u8,
+    D50_WHITE, Rgb, apply, color_to_paint, d50_to_d65, lab_to_xyz, oklab_to_srgb, srgb_decode, srgb_encode, to_u8,
     xyz_to_srgb,
 };
 use cssparser::{Parser, Token};
@@ -325,10 +325,13 @@ fn mix(space: Space, method: HueMethod, first: Color, second: Color, w1: f32, w2
     if matches!(first, Color::CurrentColor) || matches!(second, Color::CurrentColor) {
         return Err(());
     }
-    let components = |c: super::computed::RGBA| {
+    // (the colours are mixed in sRGB, whatever their gamut: a colour outside of it is clipped to
+    // it first, which the README says of `color-mix()` and the spaces with a wide gamut)
+    let components = |c: super::computed::PaintColor| {
+        let c = c.clip_to_srgb();
         [f32::from(c.red) / 255.0, f32::from(c.green) / 255.0, f32::from(c.blue) / 255.0, f32::from(c.alpha) / 255.0]
     };
-    let [r, g, b, alpha] = blend(space, method, components(color_to_rgba(first)), components(color_to_rgba(second)), w1, w2);
+    let [r, g, b, alpha] = blend(space, method, components(color_to_paint(first)), components(color_to_paint(second)), w1, w2);
     Ok(Color::Rgba(RgbaLegacy::new(to_u8(r), to_u8(g), to_u8(b), (alpha * alpha_scale).clamp(0.0, 1.0))))
 }
 
@@ -386,7 +389,7 @@ mod tests {
             }
         }
         let color = parse(&mut parser, &mut color).ok()?;
-        let rgba = color_to_rgba(color);
+        let rgba = color_to_paint(color).clip_to_srgb();
         Some([rgba.red, rgba.green, rgba.blue, rgba.alpha])
     }
 

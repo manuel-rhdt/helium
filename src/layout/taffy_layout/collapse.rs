@@ -25,7 +25,7 @@ use taffy::tree::NodeId;
 
 use crate::layout::components::{CollapsedEdge, EdgeValues};
 use crate::layout::inline_size::decoration_colors;
-use crate::style::properties::computed::{PixelLength as Px, RGBA};
+use crate::style::properties::computed::{PixelLength as Px, PaintColor};
 use crate::style::properties::specified::{BorderCollapse, BorderStyle, Direction};
 
 use super::tree::HeliumTree;
@@ -53,7 +53,7 @@ enum Origin {
 #[derive(Clone, Copy, Default)]
 struct Border {
     width: f32,
-    color: Option<RGBA>,
+    color: Option<PaintColor>,
     style: BorderStyle,
 }
 
@@ -63,12 +63,12 @@ struct Border {
 #[derive(Default)]
 struct Candidates {
     /// The width, the rank of the style, the origin, the color and the style of the best one.
-    best: Option<(f32, u8, Origin, RGBA, BorderStyle)>,
+    best: Option<(f32, u8, Origin, PaintColor, BorderStyle)>,
     hidden: bool,
 }
 
 impl Candidates {
-    fn add(&mut self, (width, color, style): (f32, RGBA, BorderStyle), origin: Origin) {
+    fn add(&mut self, (width, color, style): (f32, PaintColor, BorderStyle), origin: Origin) {
         self.hidden |= style == BorderStyle::Hidden;
         let rank = style.collapse_rank();
         let better = match self.best {
@@ -111,9 +111,9 @@ impl HeliumTree<'_, '_> {
     }
 
     /// The width and color of the border of a box on one side.
-    fn border_of(&self, id: NodeId, side: Side) -> (f32, RGBA, BorderStyle) {
+    fn border_of(&self, id: NodeId, side: Side) -> (f32, PaintColor, BorderStyle) {
         let Some(style) = self.computed_values.get(self.node(id).entity) else {
-            return (0.0, RGBA::transparent(), BorderStyle::None);
+            return (0.0, PaintColor::transparent(), BorderStyle::None);
         };
         let colors = decoration_colors(style).border_color;
         let position = &style.position;
@@ -281,7 +281,7 @@ impl HeliumTree<'_, '_> {
         };
         let edge = |border: Border, paint: bool, extend_start: f32, extend_end: f32| CollapsedEdge {
             width: Px(border.width),
-            color: border.color.unwrap_or(RGBA::transparent()),
+            color: border.color.unwrap_or(PaintColor::transparent()),
             style: border.style,
             paint: paint && border.width > 0.0,
             extend_start: Px(extend_start),

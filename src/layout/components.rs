@@ -427,7 +427,7 @@ impl Component for TableColumns {
 pub struct TextFace {
     pub font_name: String,
     pub font_size: PixelLength,
-    pub color: crate::style::properties::computed::RGBA,
+    pub color: crate::style::properties::computed::PaintColor,
     pub fallback: crate::layout::text::fallback::TextFonts,
 }
 
@@ -456,7 +456,7 @@ pub struct TextRun {
     pub decoration: crate::style::properties::specified::TextDecoration,
     /// The background color of the inline box that the text is in (the nearest ancestor that has
     /// one, up to the block): painted behind the text, over the em box of its font.
-    pub background: Option<crate::style::properties::computed::RGBA>,
+    pub background: Option<crate::style::properties::computed::PaintColor>,
     pub hyphens: crate::style::properties::specified::Hyphens,
     pub manual_hyphen_points: Vec<usize>,
     /// The language of the text, for shaping, fallback fonts and hyphenation.
@@ -529,10 +529,10 @@ impl Component for ColumnRule {
 pub struct Decoration {
     pub padding: EdgeValues<PixelLength>,
     pub border: EdgeValues<PixelLength>,
-    pub border_color: EdgeValues<crate::style::properties::computed::RGBA>,
+    pub border_color: EdgeValues<crate::style::properties::computed::PaintColor>,
     pub border_style: EdgeValues<crate::style::properties::specified::BorderStyle>,
     pub margin: EdgeValues<PixelLength>,
-    pub background_color: crate::style::properties::computed::RGBA,
+    pub background_color: crate::style::properties::computed::PaintColor,
     /// The borders of a cell of a table with `border-collapse: collapse`, which are painted
     /// instead of `border` (see [`CollapsedEdge`]). The table itself and its rows have them too,
     /// with nothing to paint, because the cells paint all borders.
@@ -574,7 +574,7 @@ impl CornerRadii {
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 pub struct CollapsedEdge {
     pub width: PixelLength,
-    pub color: crate::style::properties::computed::RGBA,
+    pub color: crate::style::properties::computed::PaintColor,
     pub style: crate::style::properties::specified::BorderStyle,
     /// Whether this box paints the border.
     pub paint: bool,
@@ -586,14 +586,14 @@ pub struct CollapsedEdge {
 
 impl Default for Decoration {
     fn default() -> Self {
-        use crate::style::properties::computed::RGBA;
+        use crate::style::properties::computed::PaintColor;
         Decoration {
             padding: Default::default(),
             border: Default::default(),
             margin: Default::default(),
-            border_color: EdgeValues::all(RGBA::transparent()),
+            border_color: EdgeValues::all(PaintColor::transparent()),
             border_style: EdgeValues::all(Default::default()),
-            background_color: RGBA::transparent(),
+            background_color: PaintColor::transparent(),
             collapsed: None,
             radius: Default::default(),
             has_background_image: false,
@@ -875,7 +875,7 @@ impl TransformMatrix {
 #[derive(Debug, Clone)]
 pub enum TextOperator {
     SetFont(String, PixelLength),
-    SetColor(crate::style::properties::computed::RGBA),
+    SetColor(crate::style::properties::computed::PaintColor),
     /// A `TJ` operator: glyphs, with kerns between some of them (see [`TextOps`]).
     KernedGlyphs(GlyphRange),
     SetWordSpacing(PixelLength),
@@ -1042,7 +1042,7 @@ pub struct PlacedColorGlyph {
     pub x: PixelLength,
     pub baseline: PixelLength,
     /// The colour of the text, for the layers of the glyph that use it.
-    pub color: crate::style::properties::computed::RGBA,
+    pub color: crate::style::properties::computed::PaintColor,
 }
 
 /// Takes the [`TextOperator::ColorGlyph`] operators that were appended to `ops` from index `from`
@@ -1053,7 +1053,7 @@ pub fn take_color_glyphs(
     ops: &mut TextOps,
     from: usize,
     origin: (PixelLength, PixelLength),
-    color: crate::style::properties::computed::RGBA,
+    color: crate::style::properties::computed::PaintColor,
 ) -> Vec<PlacedColorGlyph> {
     let mut placed = Vec::new();
     let mut index = from;
@@ -1081,7 +1081,7 @@ pub fn take_color_glyphs(
 pub struct VectorGraphics {
     pub ops: Vec<GraphicsOp>,
     /// The stroke color, or `None` to keep whatever color is current.
-    pub color: Option<crate::style::properties::computed::RGBA>,
+    pub color: Option<crate::style::properties::computed::PaintColor>,
 }
 
 impl Component for VectorGraphics {

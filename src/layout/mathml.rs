@@ -23,7 +23,7 @@ use formel::{
 use specs::{Entities, Entity, Join, Read, ReadStorage, System, WriteStorage};
 
 use crate::style::properties::computed::{
-    self, ComputedValues, MathStyle, PixelLength, color_to_rgba,
+    self, ComputedValues, MathStyle, PixelLength, color_to_paint,
 };
 use crate::style::properties::specified::AutoBool;
 use std::borrow::Cow;
@@ -289,7 +289,7 @@ impl LayoutMathGlyphs {
                     if !color_set {
                         if let Some(style) = style {
                             para.ops
-                                .push(TextOperator::SetColor(color_to_rgba(style.font.color)));
+                                .push(TextOperator::SetColor(color_to_paint(style.font.color)));
                         }
                         color_set = true;
                     }
@@ -400,7 +400,7 @@ impl<'world> System<'world> for LayoutMathGlyphs {
             let mut vg = VectorGraphics {
                 color: computed_values
                     .get(entity)
-                    .map(|style| color_to_rgba(style.font.color)),
+                    .map(|style| color_to_paint(style.font.color)),
                 ..Default::default()
             };
             for (node_entity, x, y, layout) in &math_box.nodes {

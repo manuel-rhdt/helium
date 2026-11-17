@@ -1,7 +1,7 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::font_usage::FontUsage;
 use crate::layout::components::TextOperator;
-use crate::style::properties::computed::PixelLength;
+use crate::style::properties::computed::{PixelLength, PaintColor};
 use crate::tagging::TagRecorder;
 use std::path::PathBuf;
 
@@ -148,6 +148,43 @@ impl Alpha {
 /// Paints the items of a display list. The coordinates of the items are in pixels from the top
 /// left corner of a page that is `page_height` high.
 #[allow(clippy::too_many_arguments)]
+/// The components of a colour in a PDF, with the precision that is worth writing.
+fn component(value: f32) -> f64 {
+    (f64::from(value) * 1000.0).round() / 1000.0
+}
+
+/// Makes the fills of the page use `color`: device RGB (sRGB, which is what the colours of
+/// a PDF are without a profile, and with the output intent of a PDF/A file) or, if sRGB cannot
+/// hold it, the exact colour as CIELAB. The alpha is not set.
+pub(crate) fn set_fill_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor) -> Result<(), Error> {
+    match color {
+        PaintColor::Srgb(color) => {
+            let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
+            context.device_rgb_fill_color(channel(color.red), channel(color.green), channel(color.blue))
+        }
+        PaintColor::Lab(color) => {
+            let [l, a, b] = color.components();
+            let space = context.add_lab_color_space(lemon_pdf::color_space::LabColorSpace::d50());
+            context.lab_fill_color(&space, component(l), component(a), component(b))
+        }
+    }
+}
+
+/// Like [`set_fill_color`] for the strokes.
+pub(crate) fn set_stroke_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor) -> Result<(), Error> {
+    match color {
+        PaintColor::Srgb(color) => {
+            let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
+            context.device_rgb_stroke_color(channel(color.red), channel(color.green), channel(color.blue))
+        }
+        PaintColor::Lab(color) => {
+            let [l, a, b] = color.components();
+            let space = context.add_lab_color_space(lemon_pdf::color_space::LabColorSpace::d50());
+            context.lab_stroke_color(&space, component(l), component(a), component(b))
+        }
+    }
+}
+
 fn paint_items(
     page_context: &mut PageContext<'_, '_, '_>,
     display_list: &mut display_list::DisplayList,
@@ -337,20 +374,12 @@ fn paint_item(
                 page_context.concatenate_matrix(1.0, 0.0, 0.0, 1.0, x.into(), y.into())?;
             }
             &DisplayItem::Color(color) => {
-                let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
-                let red = floatize(color.red);
-                let green = floatize(color.green);
-                let blue = floatize(color.blue);
-                page_context.device_rgb_fill_color(red, green, blue)?;
-                alpha.set_fill(page_context, color.alpha)?;
+                set_fill_color(page_context, color)?;
+                alpha.set_fill(page_context, color.alpha())?;
             }
             &DisplayItem::StrokeColor(color) => {
-                let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
-                let red = floatize(color.red);
-                let green = floatize(color.green);
-                let blue = floatize(color.blue);
-                page_context.device_rgb_stroke_color(red, green, blue)?;
-                alpha.set_stroke(page_context, color.alpha)?;
+                set_stroke_color(page_context, color)?;
+                alpha.set_stroke(page_context, color.alpha())?;
             }
             &DisplayItem::LineString {
                 ref points,
@@ -521,14 +550,8 @@ fn paint_item(
                             }
                         }
                         &TextOperator::SetColor(color) => {
-                            let floatize =
-                                |val: u8| f64::from(val) / f64::from(u8::MAX);
-                            page_context.device_rgb_fill_color(
-                                floatize(color.red),
-                                floatize(color.green),
-                                floatize(color.blue),
-                            )?;
-                            alpha.set_fill(page_context, color.alpha)?;
+                            set_fill_color(page_context, color)?;
+                            alpha.set_fill(page_context, color.alpha())?;
                         }
                         &TextOperator::KernedGlyphs(range) => {
                             marked.before_content(page_context, tagged)?;

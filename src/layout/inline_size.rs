@@ -44,13 +44,13 @@ pub fn decoration_colors(
         ..
     }: &ComputedValues,
 ) -> Decoration {
-    use crate::style::properties::computed::{Color, color_to_rgba};
+    use crate::style::properties::computed::{Color, color_to_paint};
     // (the opacity of the inline boxes cannot be a group, see `Font::inline_opacity`)
     let get_color = |color: Color| {
         crate::style::properties::color::with_opacity(
             match color {
-                Color::CurrentColor => color_to_rgba(font.color),
-                color => color_to_rgba(color),
+                Color::CurrentColor => color_to_paint(font.color),
+                color => color_to_paint(color),
             },
             font.inline_opacity,
         )

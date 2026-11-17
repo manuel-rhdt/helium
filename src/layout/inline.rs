@@ -4,7 +4,7 @@ use super::{
     FontMap,
     text::{Font, font::GlyphIndex},
 };
-use crate::style::properties::computed::{ComputedValues, PixelLength as Px, RGBA, TextAlign};
+use crate::style::properties::computed::{ComputedValues, PixelLength as Px, PaintColor, TextAlign};
 use crate::style::properties::specified::{Direction, UnicodeBidi};
 
 use crate::display_list::Rect;
@@ -1875,7 +1875,7 @@ impl<'a> System<'a> for LineBoxCreator {
             let mut ops = TextOps::default();
             let mut color_glyphs: Vec<components::PlacedColorGlyph> = vec![];
             let mut previous_font: Option<(String, Px)> = None;
-            let mut previous_color: Option<RGBA> = None;
+            let mut previous_color: Option<PaintColor> = None;
             let mut paragraph_pos: Option<components::Position> = None;
 
             // position of the first baseline of the paragraph
