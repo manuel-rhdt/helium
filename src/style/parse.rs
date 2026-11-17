@@ -275,10 +275,39 @@ pub enum CounterStyle {
     UpperRoman,
     LowerAlpha,
     UpperAlpha,
+    LowerGreek,
     /// ٠ ١ ٢ ٣ …
     ArabicIndic,
     /// The extended Arabic-Indic digits of Persian and Urdu: ۰ ۱ ۲ ۳ …
     Persian,
+    /// The symbols of unordered lists, the same for every value.
+    Disc,
+    Circle,
+    Square,
+    /// No text at all.
+    None,
+}
+
+impl CounterStyle {
+    /// The style that a keyword (`decimal`, `lower-roman`, ...) names.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match_ignore_ascii_case! { name,
+            "decimal" => CounterStyle::Decimal,
+            "decimal-leading-zero" => CounterStyle::DecimalLeadingZero,
+            "lower-roman" => CounterStyle::LowerRoman,
+            "upper-roman" => CounterStyle::UpperRoman,
+            "lower-alpha" | "lower-latin" => CounterStyle::LowerAlpha,
+            "upper-alpha" | "upper-latin" => CounterStyle::UpperAlpha,
+            "lower-greek" => CounterStyle::LowerGreek,
+            "arabic-indic" => CounterStyle::ArabicIndic,
+            "persian" => CounterStyle::Persian,
+            "disc" => CounterStyle::Disc,
+            "circle" => CounterStyle::Circle,
+            "square" => CounterStyle::Square,
+            "none" => CounterStyle::None,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -326,12 +355,27 @@ impl QualifiedRule {
     /// if the rule does not match. Used to order the cascade: rules with higher specificity are
     /// applied later and win over earlier declarations of the same property.
     pub fn matching_specificity(&self, elem: &ElementRef) -> Option<u32> {
+        self.matching_specificity_of(elem, None)
+    }
+
+    /// Like [`matching_specificity`](Self::matching_specificity) for the pseudo-element `pseudo`
+    /// of `elem`: only the selectors that end in that pseudo-element are tried, and they are
+    /// matched against the originating element `elem`.
+    pub fn matching_pseudo_specificity(&self, elem: &ElementRef, pseudo: PseudoElement) -> Option<u32> {
+        self.matching_specificity_of(elem, Some(pseudo))
+    }
+
+    fn matching_specificity_of(&self, elem: &ElementRef, pseudo: Option<PseudoElement>) -> Option<u32> {
         let GeneralizedSelector::Selectors(list) = &self.selectors else {
             return None;
         };
         let mut caches = SelectorCaches::default();
         let mut context = matching::MatchingContext::new(
-            matching::MatchingMode::Normal,
+            if pseudo.is_some() {
+                matching::MatchingMode::ForStatelessPseudoElement
+            } else {
+                matching::MatchingMode::Normal
+            },
             None,
             &mut caches,
             QuirksMode::NoQuirks,
@@ -340,6 +384,7 @@ impl QualifiedRule {
         );
         list.slice()
             .iter()
+            .filter(|selector| pseudo.is_none() || selector.pseudo_element() == pseudo.as_ref())
             .filter(|selector| matching::matches_selector(selector, 0, None, elem, &mut context))
             .map(|selector| selector.specificity())
             .max()
@@ -648,29 +693,7 @@ fn parse_content<'i>(
                         "pages" => CounterName::Pages,
                         _ => return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) }),
                     };
-                    let style = if input.try_parse(|input| input.expect_comma()).is_ok() {
-                        let style = input.expect_ident()?.clone();
-                        match_ignore_ascii_case! { &style,
-                            "decimal" => CounterStyle::Decimal,
-                            "decimal-leading-zero" => CounterStyle::DecimalLeadingZero,
-                            "lower-roman" => CounterStyle::LowerRoman,
-                            "upper-roman" => CounterStyle::UpperRoman,
-                            "lower-alpha" => CounterStyle::LowerAlpha,
-                            "lower-latin" => CounterStyle::LowerAlpha,
-                            "upper-alpha" => CounterStyle::UpperAlpha,
-                            "upper-latin" => CounterStyle::UpperAlpha,
-                            "arabic-indic" => CounterStyle::ArabicIndic,
-                            "persian" => CounterStyle::Persian,
-                            // an unsupported style must not remove the whole margin box: fall
-                            // back to decimal, which is what the CSS spec prescribes
-                            _ => {
-                                warn!("Unsupported counter style {:?}, using decimal instead", &*style);
-                                CounterStyle::Decimal
-                            }
-                        }
-                    } else {
-                        CounterStyle::Decimal
-                    };
+                    let style = super::properties::generated::counter_style(input)?;
                     Ok(ContentItem::Counter(counter, style))
                 })?;
                 items.push(item);
@@ -932,15 +955,23 @@ impl ToCss for PseudoClass {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum PseudoElement {}
+/// The pseudo-elements that generate content: `::before` and `::after`.
+/// https://www.w3.org/TR/css-pseudo-4/#generated-content
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+pub enum PseudoElement {
+    Before,
+    After,
+}
 
 impl ToCss for PseudoElement {
-    fn to_css<W>(&self, _dest: &mut W) -> std::fmt::Result
+    fn to_css<W>(&self, dest: &mut W) -> std::fmt::Result
     where
         W: std::fmt::Write,
     {
-        match *self {}
+        dest.write_str(match *self {
+            PseudoElement::Before => "::before",
+            PseudoElement::After => "::after",
+        })
     }
 }
 
@@ -955,6 +986,22 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
 
     fn parse_is_and_where(&self) -> bool {
         true
+    }
+
+    fn parse_pseudo_element(
+        &self,
+        name: CowRcStr<'i>,
+    ) -> Result<PseudoElement, ParseError<SelectorParseErrorKind>> {
+        // (`:before` and `:after` with a single colon are recognized by the selector parser)
+        if name.eq_ignore_ascii_case("before") {
+            Ok(PseudoElement::Before)
+        } else if name.eq_ignore_ascii_case("after") {
+            Ok(PseudoElement::After)
+        } else {
+            Err(ParseError::custom(
+                SelectorParseErrorKind::UnsupportedPseudoClassOrElement,
+            ))
+        }
     }
 
     fn parse_non_ts_pseudo_class(

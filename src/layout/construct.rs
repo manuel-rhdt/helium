@@ -5,7 +5,7 @@ use super::pages::{self, PageContext};
 use super::normal_formatting::BlockFormattingContext;
 use super::{FontMap, text::Font};
 use crate::parser::{ElementData, ParsedData};
-use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, Styles};
+use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, PseudoElement, Styles};
 use crate::style::properties::computed::{
     ComputedValues, Display, GenericSize, LineHeight, PixelLength as Px, PositionSpec, StyleBuilder,
     TextAlign, color_to_rgba,
@@ -48,6 +48,8 @@ pub struct FlowConstructor {
     pub islands: Vec<IslandSpec>,
     /// The `foreignObject` element that is laid out as the root of the document, with its size.
     island_root: Option<(DomRef, f32, f32)>,
+    /// The counters and quotation marks, which follow the traversal of the tree.
+    counters: super::counters::CounterState,
 }
 
 impl FlowConstructor {
@@ -96,6 +98,7 @@ impl FlowConstructor {
             svg_roots: None,
             islands: vec![],
             island_root: None,
+            counters: Default::default(),
         }
     }
 
@@ -224,40 +227,10 @@ impl FlowConstructor {
                         let dir = &self.stylesheet_base_dir;
                         crate::style::url_context::with(dir, dir, || PropertyDeclarationBlock::parse_inline(&attr.value))
                     });
-                let mut cascade = vec![];
-                for (user_agent, _, rule) in &matched_rules {
-                    if *user_agent {
-                        cascade.extend(rule.properties.normal_declarations());
-                    }
-                }
                 // the `width` and `height` attributes of an image are presentational hints: they
                 // rank below all the rules of the author
                 let size_hint = image_size_hint(element_ref).or_else(|| table_hint(node, element_ref));
-                if let Some(block) = &size_hint {
-                    cascade.extend(block.normal_declarations());
-                }
-                for (user_agent, _, rule) in &matched_rules {
-                    if !*user_agent {
-                        cascade.extend(rule.properties.normal_declarations());
-                    }
-                }
-                // declarations in the `style` attribute override all matched rules
-                if let Some(block) = &inline_style {
-                    cascade.extend(block.normal_declarations());
-                }
-                for (user_agent, _, rule) in &matched_rules {
-                    if !*user_agent {
-                        cascade.extend(rule.properties.important_declarations());
-                    }
-                }
-                if let Some(block) = &inline_style {
-                    cascade.extend(block.important_declarations());
-                }
-                for (user_agent, _, rule) in &matched_rules {
-                    if *user_agent {
-                        cascade.extend(rule.properties.important_declarations());
-                    }
-                }
+                let cascade = cascade_declarations(&matched_rules, size_hint.as_ref(), inline_style.as_ref());
                 style_builder.apply_cascade(cascade.iter().copied());
                 let mut style = style_builder.build();
                 if parent_is_flex_or_grid {
@@ -293,6 +266,142 @@ impl FlowConstructor {
             }
         }
 
+    }
+
+    /// The style of the `::before` or `::after` of an element, if it has a box: the rules that
+    /// match the pseudo-element are cascaded on top of the style of the element, and `content`
+    /// has to be a value other than `normal` and `none`.
+    fn pseudo_style(
+        &self,
+        element: &crate::tree::ElementRef,
+        element_style: &ComputedValues,
+        pseudo: PseudoElement,
+    ) -> Option<ComputedValues> {
+        let mut matched_rules: Vec<_> = self
+            .styles
+            .rules_iter()
+            .enumerate()
+            .filter_map(|(index, rule)| {
+                rule.matching_pseudo_specificity(element, pseudo)
+                    .map(|specificity| (self.styles.is_user_agent_rule(index), specificity, rule))
+            })
+            .collect();
+        if matched_rules.is_empty() {
+            return None;
+        }
+        matched_rules.sort_by_key(|&(user_agent, specificity, _)| (!user_agent, specificity));
+        let cascade = cascade_declarations(&matched_rules, None, None);
+        let mut style_builder = StyleBuilder::new(element_style.clone());
+        style_builder.apply_cascade(cascade.iter().copied());
+        let mut style = style_builder.build();
+        if style.box_.display == Display::None
+            || !matches!(style.box_.content, crate::style::properties::generated::Content::Items(_))
+        {
+            return None;
+        }
+        if element_style.box_.display.is_flex_or_grid() {
+            style.blockify();
+        }
+        Some(style)
+    }
+
+    /// Adds the nodes of the `::before` and `::after` of an element to the tree, as its first and
+    /// last child. Their text is put together when they are reached, because it can depend on
+    /// counters that the content before them changes.
+    fn generate_pseudo_elements(&mut self, node: &DomRef) {
+        let Some(element) = node.clone().into_element_ref() else { return };
+        let Some(style) = NodeData::style(node) else { return };
+        // no box, no generated content; and replaced elements and the elements of other
+        // languages than HTML have no children to put it before or after
+        const REPLACED: &[&str] = &[
+            "img", "input", "br", "hr", "canvas", "iframe", "object", "embed", "video", "audio",
+            "textarea", "select", "meter", "progress", "wbr",
+        ];
+        if element.pseudo_element().is_some()
+            || style.box_.display == Display::None
+            || element.name.ns != ns!(html)
+            || REPLACED.contains(&&*element.name.local)
+        {
+            return;
+        }
+        for pseudo in [PseudoElement::Before, PseudoElement::After] {
+            let Some(pseudo_style) = self.pseudo_style(&element, &style, pseudo) else { continue };
+            let pseudo_node = DomRef::new(NodeData::from_html_data(ParsedData::Element(ElementData::pseudo(pseudo))));
+            pseudo_node.set_style(pseudo_style);
+            match (pseudo, TreeLinked::first_child(node)) {
+                (PseudoElement::Before, Some(first)) => first.insert_before(pseudo_node),
+                _ => node.append(pseudo_node),
+            }
+        }
+    }
+
+    /// Puts the text of the `content` of a pseudo-element together and adds it as its child.
+    fn fill_pseudo_element(&mut self, node: &DomRef, style: &ComputedValues) {
+        use crate::style::properties::generated::{Content, ContentItem};
+        let Content::Items(items) = &style.box_.content else { return };
+        let origin = node.parent().and_then(|parent| parent.into_element_ref());
+        let lang = style.font.lang.tag().unwrap_or("").to_owned();
+        let mut text = String::new();
+        for item in items {
+            match item {
+                ContentItem::String(string) => text.push_str(string),
+                ContentItem::Counter(name, counter_style) => {
+                    text.push_str(&super::counters::format_counter(self.counters.value(name), *counter_style))
+                }
+                ContentItem::Counters(name, separator, counter_style) => {
+                    let values: Vec<String> = self
+                        .counters
+                        .values(name)
+                        .into_iter()
+                        .map(|value| super::counters::format_counter(value, *counter_style))
+                        .collect();
+                    text.push_str(&values.join(separator));
+                }
+                ContentItem::Attr(name) => {
+                    if let Some(element) = &origin {
+                        let key = QualName::new(None, ns!(), html5ever::LocalName::from(name.to_ascii_lowercase()));
+                        if let Some(attribute) = element.attributes.borrow().get(&key) {
+                            text.push_str(&attribute.value);
+                        }
+                    }
+                }
+                ContentItem::OpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, true)),
+                ContentItem::NoOpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, false)),
+                ContentItem::CloseQuote => text.push_str(&self.counters.close_quote(&style.text.quotes, &lang, true)),
+                ContentItem::NoCloseQuote => text.push_str(&self.counters.close_quote(&style.text.quotes, &lang, false)),
+            }
+        }
+        if !text.is_empty() {
+            node.append(DomRef::new(NodeData::from_html_data(ParsedData::Text(std::cell::RefCell::new(text)))));
+        }
+    }
+
+    /// Counts the counters of an element that is reached.
+    fn enter_counters(&mut self, node: &DomRef, style: &ComputedValues) {
+        let parent = node.parent().map_or(0, |parent| crate::tree::GetOpaqueNode::get_opaque(&parent).0);
+        let mut hints = super::counters::ListHints::default();
+        if let ParsedData::Element(data) = &node.html_data {
+            if data.name.ns == ns!(html) {
+                let integer = |name| {
+                    data.attributes
+                        .borrow()
+                        .get(&QualName::new(None, ns!(), name))
+                        .and_then(|attribute| attribute.value.trim().parse::<i64>().ok())
+                };
+                match &*data.name.local {
+                    "ol" | "ul" | "menu" => {
+                        hints.resets_list_item = true;
+                        hints.start = integer(local_name!("start"));
+                    }
+                    "li" => {
+                        hints.is_item = true;
+                        hints.value = integer(local_name!("value"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.counters.enter(parent, style, hints);
     }
 
     /// Computes the style of the node, and before that the one of its ancestors, if they do not
@@ -493,7 +602,24 @@ impl Traversal<DomRef> for FlowConstructor {
             // the elements of an `<svg>` are drawn by the SVG code, not laid out
             return;
         }
-        self.compute_style(&node);
+        // the style of generated content was computed together with the one of its element
+        let is_generated = node
+            .clone()
+            .into_element_ref()
+            .is_some_and(|element| element.pseudo_element().is_some());
+        if !is_generated {
+            self.compute_style(&node);
+        }
+        if matches!(node.html_data, ParsedData::Element(_)) {
+            if let Some(style) = NodeData::style(&node) {
+                self.enter_counters(&node, &style);
+                if is_generated {
+                    self.fill_pseudo_element(&node, &style);
+                } else {
+                    self.generate_pseudo_elements(&node);
+                }
+            }
+        }
 
         if crate::svg_dom::is_outermost_svg(&node) {
             if let Some(style) = NodeData::style(&node) {
@@ -515,6 +641,9 @@ impl Traversal<DomRef> for FlowConstructor {
                 return;
             }
             self.inside_svg = None;
+        }
+        if matches!(node.html_data, ParsedData::Element(_)) {
+            self.counters.leave();
         }
         match node.html_data() {
             ParsedData::Element(_) => self.entity_constructor.build_formatting_context(&node),
@@ -539,6 +668,48 @@ impl Traversal<DomRef> for FlowConstructor {
             }
         }
     }
+}
+
+/// The declarations of the matched rules in the order of the cascade: the declarations of the
+/// user agent, the presentational hints, the author's rules, the `style` attribute, then the
+/// `!important` ones of the author and finally the ones of the user agent.
+fn cascade_declarations<'a>(
+    matched_rules: &[(bool, u32, &'a crate::style::parse::QualifiedRule)],
+    hint: Option<&'a PropertyDeclarationBlock>,
+    inline_style: Option<&'a PropertyDeclarationBlock>,
+) -> Vec<&'a PropertyDeclaration<'a>> {
+    let mut cascade = vec![];
+    for (user_agent, _, rule) in matched_rules {
+        if *user_agent {
+            cascade.extend(rule.properties.normal_declarations());
+        }
+    }
+    if let Some(block) = hint {
+        cascade.extend(block.normal_declarations());
+    }
+    for (user_agent, _, rule) in matched_rules {
+        if !*user_agent {
+            cascade.extend(rule.properties.normal_declarations());
+        }
+    }
+    // declarations in the `style` attribute override all matched rules
+    if let Some(block) = inline_style {
+        cascade.extend(block.normal_declarations());
+    }
+    for (user_agent, _, rule) in matched_rules {
+        if !*user_agent {
+            cascade.extend(rule.properties.important_declarations());
+        }
+    }
+    if let Some(block) = inline_style {
+        cascade.extend(block.important_declarations());
+    }
+    for (user_agent, _, rule) in matched_rules {
+        if *user_agent {
+            cascade.extend(rule.properties.important_declarations());
+        }
+    }
+    cascade
 }
 
 /// The number shown next to a list item: `<ol start>` sets the first number and `<li value>`
@@ -1121,6 +1292,12 @@ impl EntityConstructor {
                                     | Display::InlineFlex
                                     | Display::InlineGrid
                             ) => {}
+                        // the text of an inline pseudo-element continues the line of the text
+                        // before it: the state of the white space stays as it is
+                        None if node.parent_node().is_some_and(|parent| {
+                            matches!(parent.style().box_.display, Display::Inline)
+                                && matches!(parent.html_data(), ParsedData::Element(data) if data.pseudo_element().is_some())
+                        }) => {}
                         _ => self.trim_next_inline_whitespace = true,
                     };
 

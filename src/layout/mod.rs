@@ -3,6 +3,7 @@ pub mod bidi;
 pub mod check;
 pub mod components;
 pub mod construct;
+pub mod counters;
 pub mod dump;
 pub mod inline;
 pub mod inline_size;

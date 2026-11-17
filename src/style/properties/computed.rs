@@ -706,6 +706,7 @@ impl StyleBuilder {
                 text_orientation: inherited_values.text.text_orientation,
                 border_spacing: inherited_values.text.border_spacing,
                 border_collapse: inherited_values.text.border_collapse,
+                quotes: inherited_values.text.quotes.clone(),
                 ..Default::default()
             }),
             // widows and orphans and the used value of `page` are inherited, the page break
@@ -923,6 +924,12 @@ pub struct Box {
     pub aspect_ratio: specified::AspectRatio,
     pub box_sizing: BoxSizing,
 
+    /// What replaces the content of a `::before` or `::after` pseudo-element.
+    pub content: super::generated::Content,
+    pub counter_reset: super::generated::CounterList,
+    pub counter_increment: super::generated::CounterList,
+    pub counter_set: super::generated::CounterList,
+
     pub flex_direction: FlexDirection,
     pub flex_wrap: FlexWrap,
     pub flex_grow: f32,
@@ -971,6 +978,10 @@ impl Default for Box {
             vertical_align: Default::default(),
             aspect_ratio: Default::default(),
             box_sizing: Default::default(),
+            content: Default::default(),
+            counter_reset: Default::default(),
+            counter_increment: Default::default(),
+            counter_set: Default::default(),
             flex_direction: Default::default(),
             flex_wrap: Default::default(),
             flex_grow: 0.0,
@@ -1176,6 +1187,7 @@ pub struct Text {
     pub line_break: specified::LineBreak,
     pub border_spacing: BorderSpacing,
     pub border_collapse: specified::BorderCollapse,
+    pub quotes: super::generated::Quotes,
 }
 
 impl ComputedValue<specified::NormalOrQuantity> for PixelLength {

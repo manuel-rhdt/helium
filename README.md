@@ -122,6 +122,20 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   in the `@font-face` fonts of the document.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color()`. The alpha channel is parsed but not painted.
+- **Generated content:** the `::before` and `::after` pseudo-elements (also written with one
+  colon) with `content` (strings, `counter()`, `counters()`, `attr()` and `open-quote`,
+  `close-quote`, `no-open-quote`, `no-close-quote`; `none` and `normal` generate nothing),
+  `counter-reset`, `counter-increment`, `counter-set` (scoped as in CSS Lists 3; elements
+  without a box do not count) and `quotes` (`auto` picks the marks of the language of the text
+  for the common languages). A pseudo-element is a box of its own, so `display`, `position`,
+  borders, backgrounds and the like apply to it. The counter styles are the ones of the
+  `@page` margin boxes (which share the code) plus `lower-greek`, `disc`, `circle`, `square` and
+  `none`. `<ol>`, `<ul>`, `<menu>` and `<li>` use the `list-item` counter, with `<ol start>`
+  and `<li value>`, but the markers of the items are still numbered by the element, not by
+  that counter. Not supported: `content` on elements (e.g. `content: url()`), images and
+  `url()` in `content`, `::marker`, `::first-line` and `::first-letter`, `counter-reset:
+  reversed()`, `target-counter()`, and pseudo-elements of replaced elements (`img`, `input`,
+  `br`, ...). Counters in `@page` margin boxes are only `page` and `pages`.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
 - **Cascade:** selectors (`selectors` crate, with `:is()` and `:where()`), `inherit`, `initial`,
   `unset`.

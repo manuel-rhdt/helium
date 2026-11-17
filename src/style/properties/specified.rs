@@ -54,7 +54,7 @@ fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
         "list-style-type", "white-space", "text-indent", "text-align", "hyphens", "direction",
-        "border-spacing", "border-collapse", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
+        "border-spacing", "border-collapse", "quotes", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
         "math-depth",
     ];
     INHERITED.iter().any(|inherited| name.eq_ignore_ascii_case(inherited))
@@ -567,6 +567,17 @@ pub enum Box {
     #[property]
     BoxSizing(BoxSizing),
 
+    // Generated content: https://www.w3.org/TR/css-content-3/ and
+    // https://www.w3.org/TR/css-lists-3/#auto-numbering
+    #[property]
+    Content(super::generated::Content),
+    #[property]
+    CounterReset(super::generated::CounterList),
+    #[property]
+    CounterIncrement(super::generated::CounterList),
+    #[property]
+    CounterSet(super::generated::CounterList),
+
     // Flexbox: https://www.w3.org/TR/css-flexbox-1/
     #[property]
     FlexDirection(FlexDirection),
@@ -743,6 +754,10 @@ pub enum Text {
     /// https://www.w3.org/TR/CSS22/tables.html#borders
     #[property]
     BorderCollapse(BorderCollapse),
+    /// Inherited, for the quotation marks of `open-quote` and `close-quote`.
+    /// https://www.w3.org/TR/css-content-3/#quotes
+    #[property]
+    Quotes(super::generated::Quotes),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]

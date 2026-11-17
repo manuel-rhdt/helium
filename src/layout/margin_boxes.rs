@@ -11,7 +11,8 @@ use super::FontMap;
 use super::components::{PageGeometry, Paragraph, PlacedColorGlyph, Position, TextFace, TextOperator, ZIndex};
 use super::inline::{ShapedLine, shape_line};
 use super::pages::{PageContext, PageMargins, Pages, normalize};
-use crate::style::parse::{ContentItem, CounterName, CounterStyle, MarginBoxKind};
+use super::counters::format_counter;
+use crate::style::parse::{ContentItem, CounterName, MarginBoxKind};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use crate::style::properties::computed::{Language, PixelLength as Px, TextAlign};
@@ -51,81 +52,13 @@ impl MarginBoxes {
     }
 }
 
-fn roman(mut n: usize) -> String {
-    const NUMERALS: [(usize, &str); 13] = [
-        (1000, "m"),
-        (900, "cm"),
-        (500, "d"),
-        (400, "cd"),
-        (100, "c"),
-        (90, "xc"),
-        (50, "l"),
-        (40, "xl"),
-        (10, "x"),
-        (9, "ix"),
-        (5, "v"),
-        (4, "iv"),
-        (1, "i"),
-    ];
-    let mut result = String::new();
-    for &(value, numeral) in &NUMERALS {
-        while n >= value {
-            result.push_str(numeral);
-            n -= value;
-        }
-    }
-    result
-}
-
-/// `a`, `b`, … `z`, `aa`, `ab`, … — the `lower-alpha` counter style.
-fn alphabetic(mut n: usize) -> String {
-    const LETTERS: &[u8; 26] = b"abcdefghijklmnopqrstuvwxyz";
-    let mut result = Vec::new();
-    while n > 0 {
-        n -= 1;
-        result.push(LETTERS[n % 26]);
-        n /= 26;
-    }
-    result.reverse();
-    String::from_utf8(result).expect("the alphabet is valid UTF-8")
-}
-
-fn format_counter(value: usize, style: CounterStyle) -> String {
-    match style {
-        CounterStyle::Decimal => value.to_string(),
-        // `decimal-leading-zero` pads to at least two digits: 01, 02, … 10
-        CounterStyle::DecimalLeadingZero => format!("{value:02}"),
-        // roman numerals cannot represent 0, and the alphabetic styles start at 1; both fall
-        // back to decimal for smaller values
-        CounterStyle::LowerRoman if value > 0 => roman(value),
-        CounterStyle::UpperRoman if value > 0 => roman(value).to_uppercase(),
-        CounterStyle::LowerAlpha if value > 0 => alphabetic(value),
-        CounterStyle::UpperAlpha if value > 0 => alphabetic(value).to_uppercase(),
-        CounterStyle::ArabicIndic => digits(value, '\u{660}'),
-        CounterStyle::Persian => digits(value, '\u{6f0}'),
-        CounterStyle::LowerRoman
-        | CounterStyle::UpperRoman
-        | CounterStyle::LowerAlpha
-        | CounterStyle::UpperAlpha => value.to_string(),
-    }
-}
-
-/// The decimal digits of `value` in a script whose zero is `zero`.
-fn digits(value: usize, zero: char) -> String {
-    value
-        .to_string()
-        .chars()
-        .map(|digit| char::from_u32(zero as u32 + digit as u32 - '0' as u32).unwrap_or(digit))
-        .collect()
-}
-
 fn content_text(content: &[ContentItem], page: usize, pages: usize) -> String {
     content
         .iter()
         .map(|item| match item {
             ContentItem::String(string) => string.clone(),
-            ContentItem::Counter(CounterName::Page, style) => format_counter(page, *style),
-            ContentItem::Counter(CounterName::Pages, style) => format_counter(pages, *style),
+            ContentItem::Counter(CounterName::Page, style) => format_counter(page as i64, *style),
+            ContentItem::Counter(CounterName::Pages, style) => format_counter(pages as i64, *style),
         })
         .collect()
 }
@@ -258,7 +191,7 @@ impl<'a> System<'a> for MarginBoxPaint {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::style::parse::{PagePseudo, PageSelector, Styles};
+    use crate::style::parse::{CounterStyle, PagePseudo, PageSelector, Styles};
 
     #[test]
     fn counters_are_formatted() {
@@ -298,7 +231,7 @@ mod test {
     fn unsupported_counter_styles_fall_back_to_decimal() {
         let mut styles = Styles::default();
         styles.parse_css(
-            "@page { @bottom-center { content: counter(page, lower-greek) \" / \" counter(pages) } }",
+            "@page { @bottom-center { content: counter(page, cjk-ideographic) \" / \" counter(pages) } }",
         );
         let rule = styles.rules_iter().last().unwrap();
         assert_eq!(

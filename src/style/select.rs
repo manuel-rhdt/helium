@@ -41,7 +41,7 @@ impl selectors::Element for ElementRef {
             // the iterator starts with the node itself
             .skip(1)
             .filter_map(DomRef::into_element_ref)
-            .next()
+            .find(|element| element.pseudo_element().is_none())
     }
     #[inline]
     fn next_sibling_element(&self) -> Option<Self> {
@@ -50,14 +50,15 @@ impl selectors::Element for ElementRef {
             // the iterator starts with the node itself
             .skip(1)
             .filter_map(DomRef::into_element_ref)
-            .next()
+            .find(|element| element.pseudo_element().is_none())
     }
     #[inline]
     fn is_empty(&self) -> bool {
         self.as_node()
             .children()
             .all(|child| match child.html_data {
-                crate::parser::ParsedData::Element(_) => false,
+                // the generated content is not content of the document
+                crate::parser::ParsedData::Element(ref element) => element.pseudo_element().is_some(),
                 crate::parser::ParsedData::Text(ref text) => text.borrow().is_empty(),
                 _ => true,
             })
@@ -145,7 +146,10 @@ impl selectors::Element for ElementRef {
         pseudo: &parse::PseudoElement,
         _context: &mut MatchingContext<parse::Selectors>,
     ) -> bool {
-        match *pseudo {}
+        // an element is never a pseudo-element; the pseudo-elements of an element are matched
+        // with `MatchingMode::ForStatelessPseudoElement`, which skips the pseudo-element
+        let _ = pseudo;
+        false
     }
 
     fn match_non_ts_pseudo_class(
@@ -184,7 +188,10 @@ impl selectors::Element for ElementRef {
         self.name.ns == other.name.ns && self.name.local == other.name.local
     }
     fn first_element_child(&self) -> Option<Self> {
-        self.as_node().children().find_map(DomRef::into_element_ref)
+        self.as_node()
+            .children()
+            .filter_map(DomRef::into_element_ref)
+            .find(|element| element.pseudo_element().is_none())
     }
     fn apply_selector_flags(&self, _flags: ElementSelectorFlags) {}
     fn has_custom_state(&self, _name: &CssIdent) -> bool {
