@@ -775,7 +775,7 @@ impl<'a> Kernel<'a> {
                     labels = vec![best];
                     let used = labels[0].used;
                     let from = container_from.take();
-                    let available = f64::from(spec.block_size) - used - pending;
+                    let available = f64::from(spec.block_size) - used - labels[0].float_space - pending;
                     let fragments = self.service.fragment(node, from, spec.inline_size, available);
                     let mut ended = None;
                     for fragment in fragments.iter() {

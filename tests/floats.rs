@@ -220,3 +220,18 @@ fn a_float_is_a_block_where_the_document_is_one_page_that_is_as_tall_as_its_cont
     assert_eq!(rects(&dump, GREEN)[0].2, 40.0);
     assert_eq!(rects(&dump, BLUE)[0].2, 80.0);
 }
+
+#[test]
+fn a_container_with_columns_below_a_float_starts_on_the_page_of_the_float() {
+    // the room that the columns have is what the float leaves of the page
+    let lines = vec!["line"; 60].join("<br>");
+    let body = format!(
+        r#"{}<div style="column-count: 2; column-gap: 0; background-color: {BLUE_CSS}">{lines}</div>"#,
+        float("top", GREEN_CSS, 60, "")
+    );
+    let dump = dump("columns", &body);
+    assert_eq!(rects(&dump, GREEN), [(0, 0.0, 0.0, 300.0, 60.0)]);
+    // 60 lines in two columns are 30 lines, 600px, over 140px of the first page
+    let first = rects(&dump, BLUE)[0];
+    assert_eq!((first.0, first.2, first.4), (0, 60.0, 140.0));
+}
