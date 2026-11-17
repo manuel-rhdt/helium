@@ -88,6 +88,15 @@ pub trait LayoutService {
         }
     }
 
+    /// The extent that a float takes on a page that is `page_inline` wide: its margin box, laid
+    /// out on its own at the width of the page. Margins are not collapsed with anything.
+    ///
+    /// A service that has no floats is not asked.
+    fn float_extent(&mut self, float: BoxRef, page_inline: f32) -> f64 {
+        let _ = (float, page_inline);
+        panic!("the layout service has no floats")
+    }
+
     // The questions about a subtree. They are for a box whose content is laid out at a width that
     // is not the width of any box around it: the columns of a multi-column container, or the
     // table that continues on a page of another width. The box `root` is laid out on its own, as
@@ -158,6 +167,8 @@ pub struct GalleyService {
     /// The extent of the content of every box that can be a subtree root.
     boxes: Vec<f64>,
     containers: Vec<GalleyContainer>,
+    /// The extent of every float.
+    floats: Vec<f64>,
 }
 
 /// A container of a galley: a multi-column container with a flow of its own.
@@ -189,6 +200,12 @@ impl GalleyService {
         BoxRef(self.containers.len() as u32 - 1)
     }
 
+    /// A float with the extent that it takes on a page.
+    pub fn add_float(&mut self, extent: f64) -> BoxRef {
+        self.floats.push(extent);
+        BoxRef(self.floats.len() as u32 - 1)
+    }
+
     pub fn add_paragraph(&mut self, line_extents: Vec<f64>) -> ParId {
         self.paragraphs.push(line_extents);
         ParId(self.paragraphs.len() as u32 - 1)
@@ -213,6 +230,10 @@ impl LayoutService for GalleyService {
                 end: Cut(line as u32 + 1),
             })
             .collect()
+    }
+
+    fn float_extent(&mut self, float: BoxRef, _page_inline: f32) -> f64 {
+        self.floats[float.0 as usize]
     }
 
     fn content_extent(&mut self, root: BoxRef, _inline: f32) -> f64 {
@@ -312,6 +333,13 @@ impl GalleyFlow {
         self
     }
 
+    /// A float: it takes `extent` on the page that has the place where it is called for.
+    pub fn float(&mut self, extent: f64, side: crate::FloatSide) -> &mut Self {
+        let node = self.service.add_float(extent);
+        self.items.push(Item::Float { node, side });
+        self
+    }
+
     /// A container with `columns` columns. Its content is the flow `inner`, which has its own
     /// numbers of boxes and paragraphs. The breaks in it are the ones of its columns, and a break
     /// of the level `Page` in it ends a fragment. `edges` are the padding and the border at the
@@ -332,6 +360,7 @@ impl GalleyFlow {
                 }
                 Item::Break { .. } => item,
                 Item::Container { .. } => panic!("a container is not in a container"),
+                Item::Float { .. } => panic!("a float is not in a container"),
             })
             .collect();
         let node = self.service.add_container(items, columns, fill, edges);

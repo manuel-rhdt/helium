@@ -25,7 +25,8 @@ use super::tree::{Content, HeliumTree, node_is_out_of_flow};
 use super::window::Span;
 use crate::style::properties::computed::Break;
 use crate::style::properties::specified::Display;
-use helium_paginate::{BoxRef, BreakKind, BreakLevel, Item, NodeRef, ParId};
+use crate::style::properties::computed::Float;
+use helium_paginate::{BoxRef, BreakKind, BreakLevel, FloatSide, Item, NodeRef, ParId};
 use std::rc::Rc;
 use taffy::tree::NodeId;
 
@@ -268,14 +269,35 @@ impl Extractor<'_, '_, '_> {
         !node_is_out_of_flow(self.tree, id) && self.tree.node(id).style.display != taffy::Display::None
     }
 
+    /// The children of a box that are part of the text: the floats are not (see `float_side`).
     fn in_flow_children(&self, id: NodeId) -> Vec<NodeId> {
         self.tree
             .node(id)
             .children
             .iter()
             .copied()
-            .filter(|&child| self.in_flow(child))
+            .filter(|&child| self.in_flow(child) && self.float_side(child).is_none())
             .collect()
+    }
+
+    /// Where a box is placed on its page if it is a float: `float: top` or `float: bottom` takes a
+    /// box that is between the blocks of a block container out of the text, and the paginator
+    /// places it on a page like TeX does. A float is not one where the document has no pages or
+    /// has one page that has the size of the content, and in the content of a container with
+    /// columns. There it is a block like the ones around it.
+    fn float_side(&self, id: NodeId) -> Option<FloatSide> {
+        if !self.paged || self.single_page || self.level != BreakLevel::Page || !self.in_flow(id) {
+            return None;
+        }
+        let node = self.tree.node(id);
+        if node.orthogonal || node.flow.is_vertical() {
+            return None;
+        }
+        match self.tree.computed_values.get(node.entity)?.page.float {
+            Float::None => None,
+            Float::Top => Some(FloatSide::Top),
+            Float::Bottom => Some(FloatSide::Bottom),
+        }
     }
 
     fn display(&self, id: NodeId) -> Option<Display> {
@@ -515,6 +537,14 @@ impl Extractor<'_, '_, '_> {
     fn emit_blocks(&mut self, id: NodeId, avoid: Avoid, end: &mut Anchor, kids: &mut Vec<NodeId>) {
         let mut previous: Option<NodeId> = None;
         for &child in &self.tree.node(id).children.clone() {
+            if let Some(side) = self.float_side(child) {
+                // A float is called for here: the item says where, and the box is not part of the
+                // box tree of the text any more (the paginator places it on a page, which is
+                // laid out on its own).
+                self.tree.node_mut(id).children.retain(|&other| other != child);
+                self.push(Item::Float { node: BoxRef(usize::from(child) as u32), side });
+                continue;
+            }
             if !self.in_flow(child) {
                 // out of the flow: shown on the page of the item in front of it
                 let anchor = (self.flow.items.len() as u32).saturating_sub(1);

@@ -22,11 +22,14 @@ after it are the design, with notes where the code differs.
 
 ## Non-goals
 
-- Floats and footnotes. `float` is not supported by helium today. The design
-  leaves room for them (see "Open questions") but does not cover them.
+- Footnotes, and floats beyond the basics: `float: left` and `right`, floats in the middle of a
+  paragraph, floats in columns, floats that are split over pages. The basic floats (`top` and
+  `bottom`) have a section of their own, "Floats".
 - Multi-column layout is not part of steps 1 to 7. It has a section of its own, "Multi-column
   layout", and its own order of work.
 - Forking Taffy to make it fragmentation-aware.
+
+Floats (`float: top` and `bottom`) are done in the basic form that the section "Floats" describes.
 
 ## Where the code stands
 
@@ -877,6 +880,83 @@ the first page.
 Steps 1 to 3 are the base for iterating on solvers. Steps 5 to 7 are
 independent of each other.
 
+## Floats
+
+The basic features of TeX's float placement (`[t]` and `[b]`), done for a box that is between
+the blocks of a block container: `float: top` and `float: bottom` (CSS GCPM's names for them; the
+other values of `float` are not supported and a document that has one keeps what it does today,
+which is nothing). A float is a block that is taken out of the text. It is *called for* at the
+place where it is in the text, and the paginator decides which page it is on and shows it at the
+top or at the bottom of that page's content area, at the width of the page.
+
+**The flow.** `Item::Float { node, side }` is the place where a float is called for. The extractor
+(`flow.rs`) emits it for a child of a block container in the flow of the page (not in a
+column, a table, a flex or grid container or a box with a height, and not in a document that
+has no pages or has one page as tall as its content), and takes the box out of the children of its
+parent. The float is not part of the box tree of the text any more: it has no span, no items,
+and no break or gap around it. The boxes around it collapse their margins as if it were not there.
+
+**The layout service.** `float_extent(box, page_inline)` is the extent of the margin box of the
+float when it is laid out on its own at the width of the page (`layout_float` in `subtree.rs`,
+which uses Taffy's root layout: `width` and the margins apply, and percentages refer to the width
+of the page). Margins are never collapsed or discarded; they are part of what a float takes. It is
+cached by the box and the width, like the other answers.
+
+**The kernel.** A page keeps the room that its floats take (`floats_used`), and everything that
+decides whether a page is full counts it. When the walk of a page comes to a `Float` item, the
+float goes on the page if
+
+- none of the floats in front of it waits (floats keep their order, as they do in TeX: a float
+  never passes another one),
+- the floats on the page, with this one, take at most `Problem::float_fraction` of it (0.7, as
+  LaTeX's `\topfraction`; one number for both sides), and
+- the text so far and the floats, with this one, fit on the page.
+
+If it does not, it waits. The floats that wait are what the next page starts with:
+`PageFill::carry` is a `FloatList` (the numbers of their items, interned like the choices of the
+paragraphs), and `PageStart::carry` is the carry of the page before. It is part of the state of
+a search: `Kernel::slot` has it, so the exact solver tells apart two ways to the same place that
+leave other floats waiting, and everything is still exact. At the top of a page the waiting
+floats are placed in order as long as they take at most that part of the page.
+
+A float that cannot share a page with text (it takes more than the fraction), and any float that
+waits when the text is at its end, get *a page of floats*: a page that has no text, which ends
+where it starts (the token of its end is the one of its start, and the carry that the next page
+has is shorter). `Kernel::candidates` lists such a page whenever floats wait, so the solver can also
+choose it where text would fit next to the floats, which it does when that is cheaper (the room
+that a page has is part of its cost, and floats count as used). The rank of a page in the search
+puts the number of floats that wait in front of the kind of the page, so that the pages of floats
+at one place go in one direction. The last page of the document is not the end while floats
+wait: `is_final` and `next_page` know.
+
+**The pages.** The floats of a page are laid out on their own before the page is (`mod.rs`): the
+floats at the top are stacked from the top of the content area, the window of the text (which
+is laid out for what is left of the page) is shown below them, and the floats at the bottom
+are stacked so that the last one ends at the bottom of the content area. The text of a page is
+`used - floats_used` high, and the check of the paginator against the layout compares that.
+
+**Divergences from TeX.** What is not done, and what is different.
+
+- No `[h]` (here), no `[p]` as a placement (the pages of floats are the way that LaTeX's
+  `p` floats are made, but a float does not ask for them), no `!`, and no `\floatpagefraction`.
+- Floats are placed greedily in the walk of a page, like in TeX's page builder, but the *pages*
+  are chosen by the solver, which can break in front of the place where a float is called for
+  so that the float is on the next page. LaTeX never does that, and the result can be a better
+  page.
+- One fraction for the top and the bottom (LaTeX has `\topfraction` and `\bottomfraction`), and
+  none for the least text of a page (`\textfraction`): the text only has to fit.
+- The floats of a page of floats are stacked from its top; LaTeX centres them with stretchable
+  glue between them. The gap between a float and the text is the margin of the float.
+- A float is laid out at the width of the page, whatever box it is in the text. Its
+  `inline-block` boxes are sized for the first page width that it was laid out for, like the ones of
+  every other box.
+- A float that is taller than a page overflows it, and the part below the page is not printed
+  (the program says so), like any other box that does not fit.
+- A float is not part of the pages of a container with columns, and a float in a paragraph (an
+  inline box) is not a float.
+- The order of the floats in the structure tree is the order of reading of the page: the floats
+  at the top, the text, the floats at the bottom.
+
 ## Multi-column layout
 
 Status: steps 1 to 3 of "Order of work" below are implemented: a container with `column-count` or
@@ -1208,7 +1288,7 @@ a defect of the first versions: the container was one box balanced over all its 
 was below the page was laid out and not printed. The section above is what fixes it; the
 tests in `tests/multicol.rs` (`the_columns_of_every_page_are_filled_in_turn_with_column_fill_auto`
 and the ones next to it) describe the arithmetic. What is still missing for an article is not part
-of this document: floats for figures in a column, footnotes, and spanning figures. Text in
+of this document: floats for figures in a column (the floats of "Floats" are not in columns), footnotes, and spanning figures. Text in
 columns works; `column-span: all` is step 4.
 
 What the specifications say (CSS Multi-column Level 1, CSS Fragmentation Level 3, read on
@@ -1523,8 +1603,10 @@ been explained: the same machinery gives 100% for the pages of the book.
   optimisation) paginates `gallery/book` (368 pages) in about 230 ms including the galley
   that gives its extents; the old paginator needed about 195 ms for the galley and the
   paginator together (release build).
-- **Floats and footnotes** take space on a page out of the order of the flow. They would be a
-  new kind of item, and `candidates` would no longer be a walk in one direction.
+- **Footnotes** take space on a page out of the order of the flow, like floats, but they are
+  tied to a line of the text (it must be on the same page as its footnote) and the rest of the
+  text flows around them. The carry of floats (see "Floats") is the part of the design that they
+  can use; what is new is the tie to a line.
 - **A table that spans pages of different widths** is laid out for the width of each page: its
   columns are found again on every page, where the design asks for the columns of the page it
   starts on (step 6).

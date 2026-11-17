@@ -87,6 +87,15 @@ pub struct TaffyBlockLayout {
     pub shrink_wrap: bool,
 }
 
+/// A float on a page, laid out.
+struct PlacedFloat {
+    id: NodeId,
+    side: helium_paginate::FloatSide,
+    /// The margins of the float, and the extent of its margin box.
+    margin: taffy::geometry::Rect<f32>,
+    outer: f32,
+}
+
 /// The part of a box on one page.
 struct Fragment {
     position: Position,
@@ -248,6 +257,8 @@ impl TaffyBlockLayout {
             Vec<helium_paginate::PageFragment>,
             // the ways to break the paragraphs of the page that are not the first
             Vec<helium_paginate::Choice>,
+            // the floats on the page: their items in the flow
+            Vec<usize>,
         )> = vec![];
         {
             use helium_paginate::Solver;
@@ -265,7 +276,8 @@ impl TaffyBlockLayout {
                 let finish = kernel.position(fill.end);
                 let fragments = kernel.fragments(&start, fill.end);
                 let choices = kernel.choices(fill.choices).to_vec();
-                planned.push((start, kernel.position(start.at), finish, *fill, fragments, choices));
+                let floats = kernel.floats(fill.placed).to_vec();
+                planned.push((start, kernel.position(start.at), finish, *fill, fragments, choices, floats));
             }
             if fills.is_empty() {
                 planned.push((
@@ -284,7 +296,11 @@ impl TaffyBlockLayout {
                         line_demerits: 0.0,
                         line_extent: 0.0,
                         choices: helium_paginate::ChoiceId::NONE,
+                        floats_used: 0.0,
+                        placed: helium_paginate::FloatList::NONE,
+                        carry: helium_paginate::FloatList::NONE,
                     },
+                    vec![],
                     vec![],
                     vec![],
                 ));
@@ -306,7 +322,7 @@ impl TaffyBlockLayout {
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
-        for (number, (start, from, to, fill, on_page, choices)) in planned.iter().enumerate() {
+        for (number, (start, from, to, fill, on_page, choices, floats)) in planned.iter().enumerate() {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
                 let index = page_contexts.len();
@@ -342,6 +358,22 @@ impl TaffyBlockLayout {
                 },
             );
             let tree = &mut *service.tree;
+            // The floats of the page are laid out on their own for the width of the page. They
+            // are in the order of the flow, the ones that waited first.
+            let mut placed_floats: Vec<PlacedFloat> = vec![];
+            for &item in floats {
+                let helium_paginate::Item::Float { node, side } = flow.items[item] else {
+                    continue;
+                };
+                let id = NodeId::from(node.0 as usize);
+                let laid_out = tree.layout_float(id, spec.inline_size, tree.icb_height);
+                placed_floats.push(PlacedFloat { id, side, margin: laid_out.margin, outer: laid_out.outer_height() });
+            }
+            let floats_height = |side| -> f32 {
+                placed_floats.iter().filter(|placed| placed.side == side).map(|placed| placed.outer).sum()
+            };
+            let (top_floats, bottom_floats) =
+                (floats_height(helium_paginate::FloatSide::Top), floats_height(helium_paginate::FloatSide::Bottom));
             tree.page_fragments = on_page
                 .iter()
                 .map(|fragment| {
@@ -366,11 +398,12 @@ impl TaffyBlockLayout {
                 },
             );
             let height = tree.node(root).layout.size.height;
-            if !fill.overflow && (height - fill.used).abs() > 0.5 {
+            // (the text of the page is what is left of it next to the floats)
+            let text_used = fill.used - fill.floats_used;
+            if !fill.overflow && (height - text_used).abs() > 0.5 {
                 log::warn!(
-                    "page {} is {height} high, but the paginator counted {}",
+                    "page {} has {height} of text, but the paginator counted {text_used}",
                     start.index + 1,
-                    fill.used
                 );
             }
             // A box that does not fit on a page and has no break in it is not split: what is
@@ -409,23 +442,42 @@ impl TaffyBlockLayout {
                 last_flow_entity: None,
                 window: window.as_ref().expect("the window is set"),
                 page: start.index,
-                page_bottom: edges.top.0 + spec.block_size,
+                // (the text ends above the floats at the bottom of the page)
+                page_bottom: edges.top.0 + spec.block_size - bottom_floats,
                 fragments: &mut fragments,
                 overlay: None,
                 rules: &mut rules,
                 line_stats: &mut line_stats,
                 paragraphs_log: report.as_ref().map(|_| &mut paragraphs_log),
             };
-            // The root is placed at the top left corner of the content area of the page.
+            // The floats at the top of the page, in order, then the text below them, then the floats
+            // at the bottom, which end at the bottom of the content area of the page (the order
+            // is the one of reading).
+            let mut write_floats = |writer: &mut Writer, side, mut y: f32| -> Result<(), String> {
+                for placed in placed_floats.iter().filter(|placed| placed.side == side) {
+                    let origin = Point { x: edges.left.0 + placed.margin.left, y: y + placed.margin.top };
+                    writer.write_box(placed.id, origin, Flow::HorizontalTb, 1, 0)?;
+                    y += placed.outer;
+                }
+                Ok(())
+            };
+            write_floats(&mut writer, helium_paginate::FloatSide::Top, edges.top.0)?;
+            // The root is placed at the top left corner of the content area of the page, below
+            // the floats at its top.
             writer.write_box(
                 root,
                 Point {
                     x: edges.left.0,
-                    y: edges.top.0,
+                    y: edges.top.0 + top_floats,
                 },
                 Flow::HorizontalTb,
                 1,
                 0,
+            )?;
+            write_floats(
+                &mut writer,
+                helium_paginate::FloatSide::Bottom,
+                edges.top.0 + spec.block_size - bottom_floats,
             )?;
             if reporting {
                 let containers: Vec<serde_json::Value> = on_page

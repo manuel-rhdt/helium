@@ -55,7 +55,51 @@ struct Kept {
     lines: Vec<((u32, Option<super::tree::LineCut>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>)>,
 }
 
+/// A float laid out on its own at the width of a page ([`HeliumTree::layout_float`]).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FloatBox {
+    /// The margins of the float, with the percentages resolved against the width of the page.
+    pub margin: taffy::geometry::Rect<f32>,
+    /// The size of the border box.
+    pub size: Size<f32>,
+}
+
+impl FloatBox {
+    /// The extent of the margin box in the block direction, which is what the float takes on a
+    /// page: the margins are not collapsed with anything.
+    pub fn outer_height(&self) -> f32 {
+        self.margin.top + self.size.height + self.margin.bottom
+    }
+}
+
 impl HeliumTree<'_, '_> {
+    /// Lays out a float, which is not part of the flow, as the root of a layout of its own on a
+    /// page whose content area is `page_inline` wide: like a block that fills the width of the page
+    /// (`width` and the margins apply as usual). The layout of the nodes of the float is the one
+    /// for this width afterwards.
+    ///
+    /// The float is laid out from nothing, so the paragraphs in it have fresh `measured` widths
+    /// where a page has another width than the one before. (The `inline-block` boxes in its lines
+    /// are sized once, for the first width, like the ones of every other box.)
+    pub(super) fn layout_float(&mut self, id: NodeId, page_inline: f32, icb_height: f32) -> FloatBox {
+        self.clear_window();
+        let nodes = self.nodes_below(id);
+        self.clear_caches(&nodes);
+        for &below in &nodes {
+            self.node_mut(below).measured = None;
+        }
+        taffy::compute_root_layout(
+            self,
+            id,
+            Size {
+                width: AvailableSpace::Definite(page_inline),
+                height: AvailableSpace::Definite(icb_height),
+            },
+        );
+        let layout = &self.node(id).layout;
+        FloatBox { margin: layout.margin, size: layout.size }
+    }
+
     /// The nodes of the subtree of a box, the box included: its children and the `inline-block`
     /// boxes in its lines, recursively.
     fn nodes_below(&self, root: NodeId) -> Vec<NodeId> {

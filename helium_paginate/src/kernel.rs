@@ -10,6 +10,9 @@ pub struct PageStart {
     pub at: BreakToken,
     /// The page number, starting at 0. It gives the kind of the page.
     pub index: usize,
+    /// The floats that were called for on the pages before and have not been placed yet
+    /// ([`PageFill::carry`] of the page in front of this one).
+    pub carry: FloatList,
 }
 
 /// A page from its start to one of the places where it can end.
@@ -38,6 +41,14 @@ pub struct PageFill {
     /// The ways to break the paragraphs on the page that are not the first
     /// ([`Kernel::choices`]).
     pub choices: ChoiceId,
+    /// The room that the floats on the page take; `used` has it, too.
+    pub floats_used: f32,
+    /// The floats on the page, in the order of the flow: the ones that were waiting for it first
+    /// ([`Kernel::floats`]).
+    pub placed: FloatList,
+    /// The floats that wait for a later page. A page has no text if it ends where it starts: it
+    /// is a page of floats.
+    pub carry: FloatList,
 }
 
 /// The way that a paragraph on a page is broken, if it is not the first of the ways that the
@@ -57,6 +68,20 @@ pub struct ChoiceId(pub u32);
 
 impl ChoiceId {
     pub const NONE: ChoiceId = ChoiceId(0);
+}
+
+/// A list of floats, by the numbers of their items in the flow, which the kernel keeps. The empty
+/// list is [`FloatList::NONE`].
+///
+/// A page has two of them: the floats that it shows ([`PageFill::placed`]), and the floats that
+/// are called for on it or before it and wait for a later page ([`PageFill::carry`]). As in TeX,
+/// the second list is what the next page starts with, so it is part of what a search tells apart
+/// about a page ([`Kernel::slot`]).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
+pub struct FloatList(pub u32);
+
+impl FloatList {
+    pub const NONE: FloatList = FloatList(0);
 }
 
 impl PageFill {
@@ -142,6 +167,9 @@ pub struct Kernel<'a> {
     /// The lists of choices that pages have, by their number; the first is the empty one.
     choices: Vec<Rc<[Choice]>>,
     choice_ids: HashMap<Vec<Choice>, ChoiceId>,
+    /// The lists of floats that pages have, by their number; the first is the empty one.
+    float_lists: Vec<Rc<[usize]>>,
+    float_list_ids: HashMap<Vec<usize>, FloatList>,
 }
 
 /// How an end of a page is treated.
@@ -203,6 +231,11 @@ struct Label {
     /// The number of the lines from the start of the page to the end of the paragraph that the
     /// page starts in, known when the walk is behind the paragraph.
     tail: Option<u32>,
+    /// The room that the floats on the page take, and the floats (items of the flow) that are on
+    /// the page and that wait for a later page.
+    float_space: f64,
+    placed: Vec<usize>,
+    deferred: Vec<usize>,
 }
 
 impl Label {
@@ -227,7 +260,9 @@ fn prune(labels: Vec<Label>) -> Vec<Label> {
     if labels.len() <= 1 {
         return labels;
     }
-    let key = |label: &Label| ((label.used * 64.0).round() as i64, label.tail);
+    let key = |label: &Label| {
+        ((label.used * 64.0).round() as i64, label.tail, (label.float_space * 64.0).round() as i64, label.deferred.clone())
+    };
     let mut kept: Vec<Label> = vec![];
     for label in labels {
         match kept.iter_mut().find(|other| key(other) == key(&label)) {
@@ -272,6 +307,8 @@ impl<'a> Kernel<'a> {
             force_end: None,
             choices: vec![Rc::from(vec![])],
             choice_ids: HashMap::from([(vec![], ChoiceId::NONE)]),
+            float_lists: vec![Rc::from(vec![])],
+            float_list_ids: HashMap::from([(vec![], FloatList::NONE)]),
         }
     }
 
@@ -304,6 +341,7 @@ impl<'a> Kernel<'a> {
         PageStart {
             at: self.first,
             index: 0,
+            carry: FloatList::NONE,
         }
     }
 
@@ -321,8 +359,9 @@ impl<'a> Kernel<'a> {
     /// problem of a fragment of a container the end of the last page that there can be, or a
     /// forced break of the page level.
     pub fn is_final(&self, start: &PageStart) -> bool {
+        // (floats that still wait at the end of the document get pages of their own)
         if self.is_end(start.at) {
-            return true;
+            return start.carry == FloatList::NONE;
         }
         let problem = self.problem;
         if !problem.fragment || start.index == 0 {
@@ -359,11 +398,34 @@ impl<'a> Kernel<'a> {
     /// What else a search has to tell apart about a page: its number, if the number of pages is
     /// limited (the pages that are left depend on it), else nothing.
     pub fn slot(&self, start: &PageStart) -> usize {
-        if self.problem.max_pages.is_some() {
-            start.index
-        } else {
-            0
+        let number = if self.problem.max_pages.is_some() { start.index } else { 0 };
+        // (the floats that wait are what the pages that follow depend on)
+        (number << 32) | start.carry.0 as usize
+    }
+
+    /// The number of floats that wait at the start of a page, from its [`slot`](Self::slot): the
+    /// pages of floats that follow each other at one place have fewer of them each, which makes a
+    /// search go in one direction.
+    pub fn waiting_in(&self, slot: usize) -> usize {
+        self.float_lists[slot & 0xffff_ffff].len()
+    }
+
+    /// The floats of a list: the numbers of their items in the flow.
+    pub fn floats(&self, list: FloatList) -> Rc<[usize]> {
+        self.float_lists[list.0 as usize].clone()
+    }
+
+    fn float_list(&mut self, items: &[usize]) -> FloatList {
+        if items.is_empty() {
+            return FloatList::NONE;
         }
+        if let Some(&id) = self.float_list_ids.get(items) {
+            return id;
+        }
+        let id = FloatList(self.float_lists.len() as u32);
+        self.float_lists.push(Rc::from(items));
+        self.float_list_ids.insert(items.to_vec(), id);
+        id
     }
 
     /// The page after `fill`, or `None` at the end of the document.
@@ -372,7 +434,7 @@ impl<'a> Kernel<'a> {
     /// other kind: the number of the next page is one higher then.
     /// https://www.w3.org/TR/css-break-3/#forced-breaks
     pub fn next_page(&self, start: &PageStart, fill: &PageFill) -> Option<PageStart> {
-        if self.is_end(fill.end) {
+        if self.is_end(fill.end) && fill.carry == FloatList::NONE {
             return None;
         }
         let mut index = start.index + 1;
@@ -387,6 +449,7 @@ impl<'a> Kernel<'a> {
         Some(PageStart {
             at: fill.end,
             index,
+            carry: fill.carry,
         })
     }
 
@@ -483,7 +546,24 @@ impl<'a> Kernel<'a> {
         // The content of the page up to the last box or line, for every way to break the
         // paragraphs on it, and the gaps after it, which are only part of the page if more content
         // follows. `leading` is whether gaps are still discarded.
-        let mut labels = vec![Label::default()];
+        // The floats that wait for a page are shown at the top of this one, as far as they leave
+        // room for text. A page of floats (which has no text, and ends where it starts) is a way
+        // to go on, too; where nothing fits next to them, and at the end of the document, it is the
+        // only one.
+        let mut first_label = Label::default();
+        if start.carry != FloatList::NONE {
+            let carried = self.floats(start.carry);
+            let at_end = item >= items.len();
+            let fraction = if at_end { 0.0 } else { f64::from(problem.float_fraction) };
+            self.place_carried(&carried, spec, fraction, &mut first_label);
+            if self.force_end.is_none() {
+                self.float_page(&carried, spec, page_kind, start.at, record, &mut fills);
+            }
+            if at_end || first_label.placed.is_empty() {
+                return fills;
+            }
+        }
+        let mut labels = vec![first_label];
         let mut pending = 0.0;
         let mut leading = !keep_gaps;
         let mut first = true;
@@ -530,6 +610,27 @@ impl<'a> Kernel<'a> {
                             return fills;
                         }
                     }
+                }
+                Item::Float { node, .. } => {
+                    // The float goes on this page if it fits next to the text that the page has
+                    // so far, in the part of the page that floats may take, and if no float that
+                    // came before it waits (floats keep their order). Else it waits for a later
+                    // page.
+                    let extent = self.service.float_extent(node, spec.inline_size);
+                    let room = f64::from(spec.block_size);
+                    let cap = room * f64::from(problem.float_fraction);
+                    for label in &mut labels {
+                        let fits = label.deferred.is_empty()
+                            && label.float_space + extent <= cap
+                            && label.used + label.float_space + extent <= room;
+                        if fits {
+                            label.float_space += extent;
+                            label.placed.push(item);
+                        } else {
+                            label.deferred.push(item);
+                        }
+                    }
+                    item += 1;
                 }
                 Item::Paragraph {
                     id,
@@ -749,6 +850,76 @@ impl<'a> Kernel<'a> {
         fills
     }
 
+    /// The extent of the float that is the item `item` of the flow.
+    fn float_extent_of(&mut self, item: usize, page_inline: f32) -> f64 {
+        match self.problem.items[item] {
+            Item::Float { node, .. } => self.service.float_extent(node, page_inline),
+            other => panic!("the item {item} is no float: {other:?}"),
+        }
+    }
+
+    /// Places the floats that wait at the start of a page, in order, while they take at most
+    /// `fraction` of the page. The first float that does not fit and all that follow it wait on.
+    fn place_carried(&mut self, carried: &[usize], spec: PageSpec, fraction: f64, label: &mut Label) {
+        let cap = f64::from(spec.block_size) * fraction;
+        for &item in carried {
+            let extent = self.float_extent_of(item, spec.inline_size);
+            if label.deferred.is_empty() && label.float_space + extent <= cap {
+                label.float_space += extent;
+                label.placed.push(item);
+            } else {
+                label.deferred.push(item);
+            }
+        }
+    }
+
+    /// Lists the page of floats that can start at the place `at` with the floats that wait: it
+    /// takes as many as fit on a page (and at least the first, which overflows if it is taller
+    /// than the page), and it ends where it starts.
+    fn float_page(
+        &mut self,
+        carried: &[usize],
+        spec: PageSpec,
+        kind: PageKind,
+        at: BreakToken,
+        record: bool,
+        fills: &mut Fills,
+    ) {
+        let room = f64::from(spec.block_size);
+        let mut label = Label::default();
+        for &item in carried {
+            let extent = self.float_extent_of(item, spec.inline_size);
+            if label.deferred.is_empty() && (label.placed.is_empty() || label.float_space + extent <= room) {
+                label.float_space += extent;
+                label.placed.push(item);
+            } else {
+                label.deferred.push(item);
+            }
+        }
+        let used = label.float_space as f32;
+        let placed = self.float_list(&label.placed);
+        let carry = self.float_list(&label.deferred);
+        fills.0.push(PageFill {
+            end: at,
+            spec,
+            kind,
+            used,
+            end_kind: BreakKind::Allowed,
+            orphan_violation: false,
+            widow_violation: false,
+            overflow: used > spec.block_size,
+            line_demerits: 0.0,
+            line_extent: 0.0,
+            choices: ChoiceId::NONE,
+            floats_used: used,
+            placed,
+            carry,
+        });
+        if record {
+            fills.1.push(vec![]);
+        }
+    }
+
     /// Adds the fill of the page that ends at the token, with the way to break its paragraphs that
     /// the label is, and `add` more room used. `on_this_page` is the number of lines of the
     /// paragraph that the page starts in that it has, if it ends in it.
@@ -766,7 +937,7 @@ impl<'a> Kernel<'a> {
         fills: &mut Fills,
     ) -> Emit {
         let Found { token: end, legal, widows, spec, kind } = *found;
-        let used = (label.used + add) as f32;
+        let used = (label.used + add + label.float_space) as f32;
         let overflow = used > spec.block_size;
         // A page that is too full does not take the break after it, unless there is no break
         // in between: its content then gets a page of its own.
@@ -780,6 +951,8 @@ impl<'a> Kernel<'a> {
                 .is_some_and(|(on_page, orphans)| on_page < orphans);
         let widows = widows || widow_violation(start_paragraph, label.tail, on_this_page);
         let choices = self.choice_id(&label.choices);
+        let placed = self.float_list(&label.placed);
+        let carry = self.float_list(&label.deferred);
         fills.0.push(PageFill {
             end,
             spec,
@@ -792,6 +965,9 @@ impl<'a> Kernel<'a> {
             line_demerits: label.excess(),
             line_extent: if label.lines > 0 { (label.line_extent / f64::from(label.lines)) as f32 } else { 0.0 },
             choices,
+            floats_used: label.float_space as f32,
+            placed,
+            carry,
         });
         // (the fragments are only recorded if there are some to ask for)
         if record {
@@ -845,9 +1021,10 @@ impl<'a> Kernel<'a> {
             let next = starts.get(page + 1).or(last_end.as_ref());
             let expected = next.map_or(end, |next| next.at);
             let wanted = solution.choices.get(page).copied();
-            let found = fills
-                .into_iter()
-                .find(|fill| fill.end == expected && wanted.is_none_or(|choices| fill.choices == choices));
+            let carry = next.map_or(FloatList::NONE, |next| next.carry);
+            let found = fills.into_iter().find(|fill| {
+                fill.end == expected && fill.carry == carry && wanted.is_none_or(|choices| fill.choices == choices)
+            });
             let fill = match found {
                 Some(fill) => fill,
                 // A page can end at any cut of a paragraph, not only where a line ends when the

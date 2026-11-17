@@ -27,6 +27,7 @@ fn fills(flow: GalleyFlow, block_size: f32, at: Position) -> Vec<PageFill> {
     let start = PageStart {
         at: kernel.intern(at),
         index: usize::from(at != START),
+        carry: FloatList::NONE,
     };
     kernel.candidates(&start)
 }
@@ -121,13 +122,13 @@ fn orphans_and_widows_of_other_paragraphs_do_not_interact() {
     let mut kernel = Kernel::new(&problem, &mut service);
     // the page that starts in front of the second paragraph (item 2)
     let at = kernel.intern(Position::Item(2));
-    let fills = kernel.candidates(&PageStart { at, index: 1 });
+    let fills = kernel.candidates(&PageStart { at, index: 1, carry: FloatList::NONE });
     assert_eq!(fills.len(), 5);
     assert!(fills[0].orphan_violation);
     assert!(!fills[1].orphan_violation && !fills[1].widow_violation);
     // from the fourth cut of the first paragraph: the lines on this page are the last one
     let at = kernel.intern(cut(0, 4));
-    let fills = kernel.candidates(&PageStart { at, index: 1 });
+    let fills = kernel.candidates(&PageStart { at, index: 1, carry: FloatList::NONE });
     assert!(fills[0].widow_violation);
     assert!(!fills[0].orphan_violation);
 }
@@ -204,6 +205,9 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         line_demerits: 0.0,
         line_extent: 0.0,
         choices: ChoiceId::NONE,
+        floats_used: 0.0,
+        placed: FloatList::NONE,
+        carry: FloatList::NONE,
     };
     let css = CssObjective::default();
     // 10 px are left on the page
@@ -383,6 +387,7 @@ fn realize_rejects_what_is_not_a_page_sequence() {
             .map(|(index, &item)| PageStart {
                 at: kernel.intern(Position::Item(item)),
                 index,
+                carry: FloatList::NONE,
             })
             .collect(),
     };
@@ -1674,4 +1679,107 @@ fn a_page_pays_only_for_the_lines_that_are_worse_than_those_of_the_first_way() {
     let first_way = fills.iter().filter(|fill| fill.choices == ChoiceId::NONE).collect::<Vec<_>>();
     assert!(!first_way.is_empty());
     assert!(first_way.iter().all(|fill| fill.line_demerits == 0.0), "{first_way:?}");
+}
+
+/// The pages of a flow with floats: the items of the floats that every page shows, and how much
+/// of the page the floats take, and the number of items of the flow that the page ends in front of.
+fn solve_floats(flow: GalleyFlow, block_size: f32) -> Vec<(Vec<usize>, f32, usize)> {
+    let (problem, mut service) = flow.finish(page(block_size));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
+    let fills = kernel.realize(&solution).expect("the solution of the exact solver is valid");
+    fills
+        .iter()
+        .map(|fill| {
+            let placed = kernel.floats(fill.placed).to_vec();
+            let end = kernel.position(fill.end).item();
+            (placed, fill.floats_used, end)
+        })
+        .collect()
+}
+
+#[test]
+fn a_float_that_fits_takes_room_on_the_page_where_it_is_called_for() {
+    let mut flow = GalleyFlow::new();
+    flow.content(30.0).float(20.0, FloatSide::Top).content(30.0);
+    let (problem, mut service) = flow.finish(page(100.0));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let fills = kernel.candidates(&start);
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].used, 80.0);
+    assert_eq!(fills[0].floats_used, 20.0);
+    assert_eq!(&*kernel.floats(fills[0].placed), &[1]);
+    assert_eq!(fills[0].carry, FloatList::NONE);
+    assert!(!fills[0].overflow);
+}
+
+#[test]
+fn the_text_that_follows_a_float_has_the_room_that_the_float_leaves() {
+    // the float takes room from the second box, too: it does not fit next to it
+    let mut flow = GalleyFlow::new();
+    flow.content(30.0).float(40.0, FloatSide::Bottom).break_(ALLOWED).content(40.0).break_(ALLOWED).content(40.0);
+    let (problem, mut service) = flow.finish(page(100.0));
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let used: Vec<f32> = kernel.candidates(&start).iter().map(|fill| fill.used).collect();
+    // (the page can end at both breaks, and it is full with the second box and the float)
+    assert_eq!(used, [70.0, 110.0].iter().copied().take_while(|&used| used <= 100.0).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_float_that_does_not_fit_waits_for_the_next_page_and_the_text_goes_on() {
+    let mut flow = GalleyFlow::new();
+    // items: 0 box, 1 float, 2 break, 3 box, 4 break, 5 box
+    flow.content(60.0)
+        .float(50.0, FloatSide::Top)
+        .break_(BreakKind::Forced)
+        .content(40.0)
+        .break_(BreakKind::Forced)
+        .content(30.0);
+    let pages = solve_floats(flow, 100.0);
+    // the float is on the second page, in front of the text that is there
+    assert_eq!(pages, [(vec![], 0.0, 3), (vec![1], 50.0, 5), (vec![], 0.0, 6)]);
+}
+
+#[test]
+fn floats_keep_their_order() {
+    let mut flow = GalleyFlow::new();
+    // the second float would fit on the first page, but the first one waits
+    flow.content(60.0)
+        .float(50.0, FloatSide::Top)
+        .float(10.0, FloatSide::Top)
+        .break_(BreakKind::Forced)
+        .content(10.0);
+    let pages = solve_floats(flow, 100.0);
+    assert_eq!(pages, [(vec![], 0.0, 4), (vec![1, 2], 60.0, 5)]);
+}
+
+#[test]
+fn a_float_that_is_too_big_to_share_a_page_with_text_gets_a_page_of_its_own() {
+    let mut flow = GalleyFlow::new();
+    // 90 is more than the part of the page that floats take next to text
+    flow.content(10.0).float(90.0, FloatSide::Top).break_(BreakKind::Forced).content(10.0);
+    let pages = solve_floats(flow, 100.0);
+    // the page of floats ends where it starts: in front of the second box
+    assert_eq!(pages, [(vec![], 0.0, 3), (vec![1], 90.0, 3), (vec![], 0.0, 4)]);
+}
+
+#[test]
+fn floats_that_wait_at_the_end_of_the_document_get_pages() {
+    let mut flow = GalleyFlow::new();
+    flow.content(60.0).float(50.0, FloatSide::Top).float(50.0, FloatSide::Bottom);
+    let pages = solve_floats(flow, 100.0);
+    // (both are too big for the page with the text, and together they fill one page)
+    assert_eq!(pages, [(vec![], 0.0, 3), (vec![1, 2], 100.0, 3)]);
+}
+
+#[test]
+fn a_float_is_placed_on_the_page_where_the_solver_ends_the_page_before_it() {
+    // with a break in front of the float the page that has it is the next one, and the text
+    // that comes before it need not leave room for it
+    let mut flow = GalleyFlow::new();
+    flow.content(80.0).break_(ALLOWED).float(30.0, FloatSide::Top).content(60.0);
+    let pages = solve_floats(flow, 100.0);
+    assert_eq!(pages, [(vec![], 0.0, 2), (vec![2], 30.0, 4)]);
 }

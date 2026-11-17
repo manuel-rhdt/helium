@@ -86,6 +86,25 @@ pub enum Item {
         /// Whether the breaks inside the container are `BreakKind::Avoid`.
         avoid_inside: bool,
     },
+    /// A float, in the manner of TeX: the place in the flow where it is *called for*. The box of
+    /// the float is not part of the flow. If it fits, it takes room at the top or the bottom of
+    /// the page that has this place, and otherwise it waits for a later page (see
+    /// [`FloatList`](crate::FloatList)). Floats keep their order.
+    Float {
+        /// The box of the float. The layout service knows its extent on a page
+        /// ([`LayoutService::float_extent`](crate::LayoutService::float_extent)).
+        node: BoxRef,
+        side: FloatSide,
+    },
+}
+
+/// Where a float is on its page.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum FloatSide {
+    /// At the top of the page, above its text.
+    Top,
+    /// At the bottom of the page, below its text.
+    Bottom,
 }
 
 /// The kinds of page that differ in their geometry.
@@ -189,6 +208,10 @@ pub struct Problem {
     pub page_breaks: bool,
     /// How many ways to break a paragraph a page chooses among.
     pub variants: Variants,
+    /// The part of a page that floats can take together, where text goes on the page
+    /// ([`FLOAT_FRACTION`](Problem::FLOAT_FRACTION)). A float that does not fit under it waits
+    /// for a page of floats.
+    pub float_fraction: f32,
 }
 
 /// The ways to break a paragraph that a page can choose among (see
@@ -234,7 +257,19 @@ impl Problem {
             fragment: false,
             page_breaks: false,
             variants: Variants::default(),
+            float_fraction: Self::FLOAT_FRACTION,
         }
+    }
+
+    /// The part of a page that floats take at the most, where there is text on the page: LaTeX's
+    /// `\topfraction` (0.7) for the floats at the top and its `\bottomfraction` (0.3) for the
+    /// ones at the bottom, which are not told apart here.
+    pub const FLOAT_FRACTION: f32 = 0.7;
+
+    /// Floats take at most this part of a page that has text on it.
+    pub fn with_float_fraction(mut self, fraction: f32) -> Self {
+        self.float_fraction = fraction;
+        self
     }
 
     /// A page chooses among the ways to break a paragraph that have up to `extra` lines more or

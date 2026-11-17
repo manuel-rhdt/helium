@@ -842,6 +842,11 @@ pub enum Page {
     #[property]
     #[shorthand("break-inside", method = "to_break_inside")]
     PageBreakInside(LegacyBreakInside),
+    /// Float placement in the manner of TeX: `top` and `bottom` of CSS GCPM, for a block-level box
+    /// between the blocks of a block container.
+    /// https://www.w3.org/TR/css-gcpm-3/#float-positions
+    #[property]
+    Float(Float),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -3008,6 +3013,19 @@ impl BreakInside {
     pub fn avoids_column(self) -> bool {
         matches!(self, BreakInside::Avoid | BreakInside::AvoidColumn)
     }
+}
+
+/// `float`: where a box is on the page that the place in the text where it is called for is on.
+/// `top` and `bottom` are the placements of TeX's `[t]` and `[b]`: the box is taken out of the
+/// text, and it is placed at the top or at the bottom of the page if it fits there, and else on a
+/// later page. The other values of `float` are not supported.
+/// https://www.w3.org/TR/css-gcpm-3/#float-positions
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PropertyValue)]
+pub enum Float {
+    #[default]
+    None,
+    Top,
+    Bottom,
 }
 
 /// The values of `page-break-before` and `page-break-after`.
