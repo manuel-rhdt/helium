@@ -58,8 +58,11 @@ fn the_page_has_the_size_of_the_drawing() {
     // without a width and height, the view box is the size
     let r = render("view_box", &format!("<svg {NS} viewBox=\"0 0 400 200\"><rect width=\"10\" height=\"10\"/></svg>"));
     assert_eq!(r.page, (300.0, 150.0), "{}", r.log);
+    // points are points and pixels are 3/4 point, as in HTML
+    let r = render("pt", &format!("<svg {NS} width=\"200pt\" height=\"100pt\"><rect width=\"10\" height=\"10\"/></svg>"));
+    assert_eq!(r.page, (200.0, 100.0), "{}", r.log);
     // physical units
-    let r = render("units", &format!("<svg {NS} width=\"100mm\" height=\"50mm\"><rect width=\"10\" height=\"10\"/></svg>"));
+    let r = render("units",&format!("<svg {NS} width=\"100mm\" height=\"50mm\"><rect width=\"10\" height=\"10\"/></svg>"));
     assert_eq!(r.page, (283.5, 141.7), "{}", r.log);
 }
 
@@ -77,13 +80,66 @@ fn the_prolog_does_not_matter() {
     assert_eq!(r.pdf.matches("/Type /Page\n").count().max(1), 1);
 }
 
+fn run(name: &str, extension: &str, text: &str, extra: &[&str]) -> std::process::Output {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join(format!("svg_input__{}.{}", name, extension));
+    let output = dir.join(format!("svg_input__{}.pdf", name));
+    std::fs::write(&input, text).unwrap();
+    common::helium().unwrap().args(extra).arg(&input).arg(&output).output().unwrap()
+}
+
 #[test]
-fn it_is_recognized_by_the_content_and_can_be_forced() {
+fn the_parser_follows_the_extension() {
     let svg = format!("<svg {NS} width=\"40\" height=\"20\"><rect width=\"10\" height=\"10\"/></svg>");
-    // an unusual extension: found by the first element
-    assert_eq!(render_with("sniff", "xml", &svg, &[]).page, (30.0, 15.0));
-    // `--html` reads it as an HTML document: A4
-    assert_eq!(render_with("html", "svg", &svg, &["--html"]).page, (595.3, 841.9));
+    // `.svg`, `.xml` and `.xhtml` are read as XML: the drawing is the page
+    for extension in ["svg", "xml", "SVG"] {
+        assert_eq!(render_with(&format!("ext_{extension}"), extension, &svg, &[]).page, (30.0, 15.0), "{extension}");
+    }
+    // any other extension is read by the HTML parser: a document with an `<svg>` in it
+    const A4: (f64, f64) = (595.3, 841.9);
+    assert_eq!(render_with("ext_txt", "txt", &svg, &[]).page, A4);
+    assert_eq!(render_with("ext_html", "html", &svg, &[]).page, A4);
+    // the options decide against the extension
+    assert_eq!(render_with("flag_xml", "txt", &svg, &["--xml"]).page, (30.0, 15.0));
+    assert_eq!(render_with("flag_html", "svg", &svg, &["--html"]).page, A4);
+}
+
+#[test]
+fn xml_is_strict_and_html_is_not() {
+    // an element that is never closed
+    let bad = format!("<svg {NS} width=\"40\" height=\"20\"><rect width=\"10\" height=\"10\"></svg>");
+    let out = run("bad", "svg", &bad, &[]);
+    assert!(!out.status.success());
+    let message = String::from_utf8_lossy(&out.stderr);
+    assert!(message.contains("bad.svg") && message.contains("not well-formed XML"), "{message}");
+    // the HTML parser repairs it
+    assert!(run("bad_html", "svg", &bad, &["--html"]).status.success());
+    // an XML document that is neither SVG nor XHTML
+    let out = run("other", "xml", "<doc/>", &[]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("neither SVG nor XHTML"));
+}
+
+#[test]
+fn namespace_prefixes_are_resolved() {
+    // what the HTML parser cannot read: prefixes for SVG, XHTML and MathML
+    let svg = "<s:svg xmlns:s=\"http://www.w3.org/2000/svg\" xmlns:x=\"http://www.w3.org/1999/xhtml\" \
+               xmlns:m=\"http://www.w3.org/1998/Math/MathML\" width=\"100\" height=\"40\">\
+               <s:style>.a { fill: #f00 }</s:style><s:rect class=\"a\" width=\"10\" height=\"10\"/>\
+               <s:foreignObject width=\"100\" height=\"40\"><x:div><m:math><m:mi>x</m:mi></m:math></x:div>\
+               </s:foreignObject></s:svg>";
+    let r = render("prefixed", svg);
+    assert_eq!(r.page, (75.0, 30.0), "{}", r.log);
+    assert!(r.pdf.contains("1 0 0 rg"), "{}", r.pdf);
+    assert!(r.pdf.contains("STIXTwoMath"), "{}", r.pdf);
+    assert_eq!(r.pdf.matches("/Subtype /Form").count(), 2, "{}", r.log);
+}
+
+#[test]
+fn an_xhtml_document_is_laid_out_as_it_is() {
+    let xhtml = "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><style>@page { size: 200pt 100pt }</style></head>\
+                 <body><p>Hello</p></body></html>";
+    assert_eq!(render_with("xhtml", "xhtml", xhtml, &[]).page, (200.0, 100.0));
 }
 
 #[test]
@@ -134,16 +190,16 @@ fn style_elements_of_the_svg_apply() {
 fn an_empty_html_element_does_not_hold_what_follows() {
     // `<div/>` is empty in XML. The HTML parser would take it for a start tag, and the yellow
     // background would be behind the paragraph.
-    let r = render(
-        "empty",
-        &format!(
-            "<svg {NS} width=\"200\" height=\"50\"><foreignObject width=\"200\" height=\"50\">\
-               <div {XHTML}><div style=\"background:#fc0\"/><p style=\"margin:4px 0\">second</p></div>\
-             </foreignObject></svg>"
-        ),
+    let svg = format!(
+        "<svg {NS} width=\"200\" height=\"50\"><foreignObject width=\"200\" height=\"50\">\
+           <div {XHTML}><div style=\"background:#fc0\"/><p style=\"margin:4px 0\">second</p></div>\
+         </foreignObject></svg>"
     );
+    let r = render("empty", &svg);
     // the empty div has no height: whatever is painted with its color has none either
-    for line in r.pdf.lines().filter(|line| line.contains("1 0.8 0 rg")) {
+    let filled: Vec<_> = r.pdf.lines().filter(|line| line.contains("1 0.8 0 rg")).collect();
+    assert!(!filled.is_empty(), "the background is not painted at all");
+    for line in filled {
         assert!(line.contains(" 0 re f"), "the background is not empty: {}", line);
     }
 }

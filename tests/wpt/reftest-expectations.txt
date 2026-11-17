@@ -205,7 +205,6 @@ css/CSS2/normal-flow/inline-block-replaced-height-002.xht
 css/CSS2/normal-flow/inline-block-replaced-height-006.xht
 css/CSS2/normal-flow/inline-block-replaced-height-009.xht
 css/CSS2/normal-flow/inline-block-replaced-width-002.xht
-css/CSS2/normal-flow/inline-block-replaced-width-003.xht
 css/CSS2/normal-flow/inline-block-replaced-width-007.xht
 css/CSS2/normal-flow/inline-block-replaced-width-008.xht
 css/CSS2/normal-flow/inline-block-valign-001.xht
@@ -219,13 +218,16 @@ css/CSS2/normal-flow/inline-replaced-height-002.xht
 css/CSS2/normal-flow/inline-replaced-height-006.xht
 css/CSS2/normal-flow/inline-replaced-height-009.xht
 css/CSS2/normal-flow/inline-replaced-width-002.xht
-css/CSS2/normal-flow/inline-replaced-width-003.xht
 css/CSS2/normal-flow/inline-replaced-width-008.xht
 css/CSS2/normal-flow/inline-replaced-width-009.xht
 css/CSS2/normal-flow/inline-replaced-width-014.xht
 css/CSS2/normal-flow/inline-table-002a.xht
 css/CSS2/normal-flow/inline-table-002b.xht
 css/CSS2/normal-flow/inline-table-valign-001.xht
+# An inline-table without a width does not shrink-wrap to the width of its block child. It passed
+# while .xht files were read by the HTML parser, which left `&gt;` in the style sheet (an invalid
+# selector) and so ignored every rule; as XML the rules apply.
+css/CSS2/normal-flow/inline-table-width-002a.xht
 css/CSS2/normal-flow/inline-table-zorder-003.xht
 css/CSS2/normal-flow/inline-table-zorder-004.xht
 css/CSS2/normal-flow/inline-table-zorder-005.xht
@@ -435,7 +437,6 @@ css/css-color/t424-hsl-values-b-1.html
 css/css-color/t424-hsl-values-b-10.html
 css/css-color/t424-hsl-values-b-3.html
 css/css-color/t424-hsl-values-b-4.html
-css/css-color/t425-hsla-basic-a.xht
 css/css-color/t425-hsla-h-rotating-b.xht
 css/css-color/t425-hsla-values-b.xht
 css/css-color/t43-svg-keywords-a.xht

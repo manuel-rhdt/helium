@@ -591,6 +591,7 @@ dependencies = [
  "unicode-segmentation",
  "unicode-vo",
  "usvg",
+ "xml5ever",
  "yeslogic-fontconfig-sys",
 ]
 
@@ -2057,6 +2058,16 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "xml5ever"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73290529dc9bc6c6155bf77fdd70ce0061f98ad387586aa3104cddab29206961"
+dependencies = [
+ "log",
+ "markup5ever",
+]
 
 [[package]]
 name = "yeslogic-fontconfig-sys"

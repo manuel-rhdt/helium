@@ -9,7 +9,7 @@ helium [options] input.html output.pdf
 
 | Option | Effect |
 | --- | --- |
-| `--svg` / `--html` | read the input as a standalone SVG file / as HTML (by default: SVG if the extension is `.svg` or the first element is `<svg`) |
+| `--xml` / `--html` | read the input with the XML parser / the HTML parser (by default: XML for the extensions `.svg`, `.xhtml`, `.xht` and `.xml`, HTML for all others) |
 | `--no-compression` | write uncompressed content streams (for inspecting the PDF) |
 | `--crop` | size the page to its content instead of A4 |
 | `--no-tags` | write an untagged PDF |
@@ -55,14 +55,16 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   elements (it does not win over one in a style sheet), a
   `foreignObject` in an SVG file (`<img src="x.svg">`: the content needs the document),
   hyperlinks and tags (accessibility structure) inside of a `foreignObject`.
-- **SVG as the input:** `helium drawing.svg out.pdf` makes one page of the size of the drawing
-  (`width` and `height`, else the `viewBox`, else 300 by 150 pixels; no margin),
-  with `<foreignObject>` content (HTML, MathML) and `<style>` elements as in an inline `<svg>`.
-  The file is read by the HTML parser, not an XML parser: empty elements (`<div/>`) are expanded
-  first, and the XML declaration and the document type are dropped, but names with a namespace
-  prefix (`<svg:rect>`, `<xhtml:div>`) and entities of an internal DTD are not understood.
-  Percentages as `width`/`height` are not a size (the `viewBox` is used). The structure tree does
-  not reach into a `foreignObject` (no `Formula` tags there).
+- **SVG and XHTML as the input:** a file with the extension `.svg`, `.xhtml`, `.xht` or `.xml` is
+  read as XML (`xml5ever`): namespaces and prefixes are resolved (`<s:svg>`, `<x:div>`, `<m:math>`),
+  empty elements (`<div/>`) are empty, and a file that is not well-formed is an error instead of
+  being repaired. Entities of an internal DTD are not expanded. The root is an XHTML `html`
+  element, laid out as an HTML document, or an `svg` element: `helium drawing.svg out.pdf` makes one
+  page of the size of the drawing (`width` and `height`, else the `viewBox`, else 300 by 150
+  pixels; no margin), with `<foreignObject>` content (HTML, MathML) and `<style>` elements as in
+  an inline `<svg>`. Lengths mean the same in the SVG and in the HTML in it (a user unit is a CSS
+  pixel, `pt` is 4/3 pixel). Percentages as `width`/`height` are not a size (the `viewBox` is
+  used). The structure tree does not reach into a `foreignObject` (no `Formula` tags there).
 - **Attributes that change the output:** `href` (external links and `#id` links inside the
   document), `style`, `colspan`, `rowspan`, `<ol start>`, `<li value>`, `<col>` widths.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.
