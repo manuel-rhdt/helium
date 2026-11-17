@@ -935,13 +935,14 @@ fn write_outline(
             continue;
         };
         let (offset_x, offset_y) = if crop { (content_rect.x, content_rect.y) } else { Default::default() };
-        let item = OutlineItem::new(
+        let mut item = OutlineItem::new(
             entry.title.clone(),
             Destination {
                 page,
                 point: (Pt::from(destination.x - offset_x), Pt::from(*page_height - (destination.y - offset_y))),
             },
         );
+        item.open = !entry.closed;
         close_to(&mut roots, &mut open, entry.level);
         open.push((entry.level, item));
     }

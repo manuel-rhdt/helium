@@ -56,18 +56,21 @@ pub struct Hyperlink {
     pub node: Option<crate::tagging::StructNodeId>,
 }
 
-/// An entry of the document outline (the bookmarks of the PDF): a heading of the document.
+/// An entry of the document outline (the bookmarks of the PDF): an element with a `bookmark-level`
+/// (by default the headings).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutlineEntry {
-    /// The heading level, 1 (`h1`) to 6 (`h6`).
+    /// The level of the entry (`bookmark-level`): 1 for `h1`, up to 6 for `h6`.
     pub level: u8,
+    /// Whether the entries below this one are hidden when the PDF is opened (`bookmark-state`).
+    pub closed: bool,
     /// The text of the heading.
     pub title: String,
     /// The start of the heading.
     pub destination: GoToDestination,
 }
 
-/// The headings of the document in document order, filled once the positions are final.
+/// The entries of the outline in document order, filled once the positions are final.
 #[derive(Debug, Clone, Default)]
 pub struct Outline(pub Vec<OutlineEntry>);
 

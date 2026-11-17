@@ -37,3 +37,44 @@ fn a_document_without_headings_has_no_outline() {
     let pdf = render("none", "<p>text</p>");
     assert_eq!(count(&pdf, "/Outlines"), 0);
 }
+
+#[test]
+fn bookmark_level_none_removes_a_heading() {
+    let pdf = render(
+        "none_level",
+        "<style>.skip { bookmark-level: none }</style><h1>Kept</h1><h1 class=skip>Dropped</h1>",
+    );
+    assert_eq!(count(&pdf, "/Title (Kept)"), 1);
+    assert_eq!(count(&pdf, "/Title (Dropped)"), 0);
+}
+
+#[test]
+fn any_element_can_have_a_level_and_a_label() {
+    let pdf = render(
+        "custom",
+        "<style>.part { bookmark-level: 1 } .sub { bookmark-level: 2; bookmark-label: \"Sub: \" attr(data-name) }</style>\
+         <div class=part>Part I</div><div class=sub data-name=\"x\">ignored text</div>\
+         <div class=sub>no attribute</div>",
+    );
+    assert_eq!(count(&pdf, "/Title (Part I)"), 1);
+    assert_eq!(count(&pdf, "/Title (Sub: x)"), 1);
+    assert_eq!(count(&pdf, "/Title (ignored text)"), 0);
+    // `attr()` of a missing attribute is empty, so the third label is "Sub:" (whitespace is collapsed and trimmed)
+    assert_eq!(count(&pdf, "/Title (Sub:)"), 1);
+    assert_eq!(count(&pdf, "/Dest ["), 3);
+}
+
+#[test]
+fn aria_headings_are_in_the_outline() {
+    let pdf = render("aria", "<div role=heading aria-level=2>Aria</div>");
+    assert_eq!(count(&pdf, "/Title (Aria)"), 1);
+}
+
+#[test]
+fn closed_state_gives_a_negative_count() {
+    let pdf = render(
+        "closed",
+        "<style>.c { bookmark-state: closed }</style><h1 class=c>Top</h1><h2>Child</h2><h2>Child 2</h2>",
+    );
+    assert_eq!(count(&pdf, "/Count -2"), 1);
+}

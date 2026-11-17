@@ -163,49 +163,60 @@ pub fn resolve_hyperlink_destinations(world: &mut World, dom: &DomRef) {
     }
 }
 
-/// Collects the headings (`h1` to `h6`) of the document for the outline of the PDF.
+/// Collects the elements with a `bookmark-level` (by default `h1` to `h6`) for the outline of the
+/// PDF.
 ///
-/// A heading that is not laid out (`display: none`) or has no text is left out, as are the
+/// An element that is not laid out (`display: none`) or has no label is left out, as are the
 /// contents of SVG images. Must run after pagination, like [`resolve_hyperlink_destinations`].
 pub fn collect_outline(world: &mut World, dom: &DomRef) {
+    use crate::style::properties::computed::ComputedValues;
+    use crate::style::properties::specified::BookmarkLevel;
     use html5ever::{local_name, ns};
 
-    fn walk(node: &DomRef, positions: &specs::ReadStorage<Position>, out: &mut Vec<OutlineEntry>) {
+    fn walk(
+        node: &DomRef,
+        positions: &specs::ReadStorage<Position>,
+        styles: &specs::ReadStorage<ComputedValues>,
+        out: &mut Vec<OutlineEntry>,
+    ) {
         if let Some(element) = node.clone().into_element_ref() {
-            if element.name.ns == ns!(html) {
-                let level = match element.name.local {
-                    local_name!("h1") => 1,
-                    local_name!("h2") => 2,
-                    local_name!("h3") => 3,
-                    local_name!("h4") => 4,
-                    local_name!("h5") => 5,
-                    local_name!("h6") => 6,
-                    _ => 0,
-                };
-                if level > 0 {
-                    let position = node.layout_entity.get().and_then(|entity| positions.get(entity.0));
-                    if let Some(&Position { x, y, page, .. }) = position {
+            if element.name.ns != ns!(html) && element.name.local == local_name!("svg") {
+                return;
+            }
+            let layout = node.layout_entity.get().map(|entity| entity.0);
+            if let Some(entity) = layout {
+                if let (Some(style), Some(&Position { x, y, page, .. })) = (styles.get(entity), positions.get(entity)) {
+                    if let BookmarkLevel::Level(level) = style.page.bookmark_level {
                         let mut text = String::new();
                         crate::tagging::text_content(node, &mut text);
-                        let title = crate::tagging::collapse_whitespace(&text);
+                        let text = crate::tagging::collapse_whitespace(&text);
+                        let title = style
+                            .page
+                            .bookmark_label
+                            .resolve(&text, |name| crate::tagging::attribute(&element, name));
+                        let title = crate::tagging::collapse_whitespace(&title);
                         if !title.is_empty() {
-                            out.push(OutlineEntry { level, title, destination: GoToDestination { page, x, y } });
+                            out.push(OutlineEntry {
+                                level,
+                                closed: style.page.bookmark_state == crate::style::properties::specified::BookmarkState::Closed,
+                                title,
+                                destination: GoToDestination { page, x, y },
+                            });
                         }
                     }
                 }
-            } else if element.name.ns != ns!(html) && element.name.local == local_name!("svg") {
-                return;
             }
         }
         for child in crate::tree::TreeLinked::children(node) {
-            walk(&child, positions, out);
+            walk(&child, positions, styles, out);
         }
     }
 
     let mut entries = Vec::new();
     {
         let positions = world.read_storage::<Position>();
-        walk(dom, &positions, &mut entries);
+        let styles = world.read_storage::<ComputedValues>();
+        walk(dom, &positions, &styles, &mut entries);
     }
     world.write_resource::<Outline>().0 = entries;
 }

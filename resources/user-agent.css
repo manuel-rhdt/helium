@@ -345,6 +345,20 @@ section {
   display: block;
 }
 
+/* the outline (bookmarks) of the PDF: the headings, with their ARIA levels */
+h1 { bookmark-level: 1; }
+h2 { bookmark-level: 2; }
+h3 { bookmark-level: 3; }
+h4 { bookmark-level: 4; }
+h5 { bookmark-level: 5; }
+h6 { bookmark-level: 6; }
+[role="heading"][aria-level="1"] { bookmark-level: 1; }
+[role="heading"][aria-level="2"] { bookmark-level: 2; }
+[role="heading"][aria-level="3"] { bookmark-level: 3; }
+[role="heading"][aria-level="4"] { bookmark-level: 4; }
+[role="heading"][aria-level="5"] { bookmark-level: 5; }
+[role="heading"][aria-level="6"] { bookmark-level: 6; }
+
 h1 {
   margin-top: 0.67em;
   margin-bottom: 0.67em;

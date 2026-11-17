@@ -173,7 +173,7 @@ fn struct_type(role: &'static str) -> StructType {
     }
 }
 
-fn attribute(element: &ElementData, name: &str) -> Option<String> {
+pub(crate) fn attribute(element: &ElementData, name: &str) -> Option<String> {
     element
         .attributes
         .borrow()
