@@ -7,7 +7,7 @@ pub mod counters;
 pub mod dump;
 pub mod inline;
 pub mod inline_size;
-mod margin_boxes;
+pub mod margin_boxes;
 mod mathml;
 pub mod normal_formatting;
 pub mod pages;
@@ -510,6 +510,8 @@ pub fn layout(
     resolve_hyperlink_destinations(&mut layout_context, &dom);
     collect_outline(&mut layout_context, &dom);
     collect_named_destinations(&mut layout_context, &dom);
+    let labels = margin_boxes::page_label_ranges(&layout_context);
+    layout_context.insert(margin_boxes::PageLabels(labels));
 
     layout_islands(&mut layout_context, shared_styles, islands, stylesheet_base_dir)?;
 

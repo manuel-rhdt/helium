@@ -672,6 +672,7 @@ pub fn write_pdf(
     let structure = std::mem::take(&mut print_pages.structure);
     let outline = std::mem::take(&mut print_pages.outline);
     let named_destinations = std::mem::take(&mut print_pages.named_destinations);
+    let page_labels = std::mem::take(&mut print_pages.page_labels);
     // what `write_outline` needs of the pages, which are consumed below
     let page_sizes: Vec<(crate::display_list::Rect, crate::style::properties::computed::PixelLength)> = print_pages
         .pages
@@ -919,6 +920,23 @@ pub fn write_pdf(
         }
 
         context.add_reserved_page(page_references[page_index], page)?;
+    }
+    {
+        use crate::layout::margin_boxes::LabelStyle;
+        use lemon_pdf::page_labels::{PageLabel, PageLabelStyle};
+        context.set_page_labels(page_labels.iter().map(|range| {
+            let style = match range.style {
+                LabelStyle::Decimal => PageLabelStyle::Decimal,
+                LabelStyle::LowerRoman => PageLabelStyle::LowerRoman,
+                LabelStyle::UpperRoman => PageLabelStyle::UpperRoman,
+                LabelStyle::LowerLetters => PageLabelStyle::LowerLetters,
+                LabelStyle::UpperLetters => PageLabelStyle::UpperLetters,
+            };
+            // the number of a page is its index plus 1, like `counter(page)`
+            let label = PageLabel::numbered(style, range.first_page as u32 + 1);
+            let label = if range.prefix.is_empty() { label } else { label.with_prefix(range.prefix.clone()) };
+            (range.first_page, label)
+        }));
     }
     context.set_named_destinations(named_destinations.iter().filter_map(|(id, destination)| {
         Some((id.as_bytes().to_vec(), pdf_destination(destination, &page_references, &page_sizes, crop)?))

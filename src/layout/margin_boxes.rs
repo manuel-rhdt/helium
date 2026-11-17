@@ -63,6 +63,112 @@ fn content_text(content: &[ContentItem], page: usize, pages: usize) -> String {
         .collect()
 }
 
+/// How the number of a page is written in its label in the PDF.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelStyle {
+    Decimal,
+    LowerRoman,
+    UpperRoman,
+    LowerLetters,
+    UpperLetters,
+}
+
+/// A range of pages with the same kind of label: from `first_page` (counted from 0) to the page
+/// before the start of the next range. The number of a page is its index plus 1, like
+/// `counter(page)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageLabelRange {
+    pub first_page: usize,
+    pub style: LabelStyle,
+    pub prefix: String,
+}
+
+/// The ranges of the labels of the pages, a resource of the world of the document.
+#[derive(Debug, Clone, Default)]
+pub struct PageLabels(pub Vec<PageLabelRange>);
+
+/// The margin boxes that can hold the number of the page, in the order in which the first one
+/// that does decides the label: the footer before the header, and the middle before the sides.
+const FOLIO_ORDER: [MarginBoxKind; 6] = [
+    MarginBoxKind::BottomCenter,
+    MarginBoxKind::BottomRight,
+    MarginBoxKind::BottomLeft,
+    MarginBoxKind::TopCenter,
+    MarginBoxKind::TopRight,
+    MarginBoxKind::TopLeft,
+];
+
+/// The label of a page, from the number that its margin boxes print: the literal text before
+/// `counter(page)` is the prefix and the style of the counter is the style of the number. `None`
+/// if no margin box of the page prints the number. A box that prints `counter(pages)` before the
+/// number of the page, or text after it, is not described by a prefix and a number; the text
+/// after the number is left out.
+fn folio(boxes: &[ResolvedMarginBox]) -> Option<(LabelStyle, String)> {
+    use crate::style::parse::CounterStyle;
+
+    FOLIO_ORDER.iter().find_map(|kind| {
+        let margin_box = boxes.iter().find(|margin_box| margin_box.kind == *kind)?;
+        let mut prefix = String::new();
+        for item in &margin_box.content {
+            match item {
+                ContentItem::String(string) => prefix.push_str(string),
+                ContentItem::Counter(CounterName::Pages, _) => return None,
+                ContentItem::Counter(CounterName::Page, style) => {
+                    // the other styles (leading zeros, scripts, symbols) are numbers in decimal
+                    let style = match style {
+                        CounterStyle::LowerRoman => LabelStyle::LowerRoman,
+                        CounterStyle::UpperRoman => LabelStyle::UpperRoman,
+                        CounterStyle::LowerAlpha => LabelStyle::LowerLetters,
+                        CounterStyle::UpperAlpha => LabelStyle::UpperLetters,
+                        _ => LabelStyle::Decimal,
+                    };
+                    return Some((style, prefix));
+                }
+            }
+        }
+        None
+    })
+}
+
+/// The ranges of the labels of the pages: the label of a page is the number that it prints in
+/// its margin boxes (see [`folio`]), so that the page box of a viewer says what the page does. A
+/// page that prints no number has the number of the page in decimal. Empty if all labels are the
+/// numbers of the pages in decimal, which the PDF needs no `/PageLabels` for.
+///
+/// Must run after the margin boxes are known, like [`MarginBoxPaint`].
+pub fn page_label_ranges(world: &specs::World) -> Vec<PageLabelRange> {
+    use specs::{Join, WorldExt};
+
+    let margin_boxes = world.read_resource::<MarginBoxes>();
+    if margin_boxes.is_empty() {
+        return vec![];
+    }
+    let pages = world.read_resource::<Pages>();
+    let page_margins = world.read_resource::<PageMargins>();
+    let positions = world.read_storage::<Position>();
+    let num_pages = (&positions).join().map(|pos| pos.page + 1).max().unwrap_or(0);
+
+    let mut ranges: Vec<PageLabelRange> = Vec::new();
+    for page in 0..num_pages {
+        let context = pages.0.get(page).cloned().unwrap_or(PageContext {
+            index: page,
+            name: None,
+            first_in_group: false,
+            rtl: page_margins.rtl,
+        });
+        let (style, prefix) = folio(margin_boxes.for_page(&context)).unwrap_or((LabelStyle::Decimal, String::new()));
+        if ranges.last().is_none_or(|last| last.style != style || last.prefix != prefix) {
+            ranges.push(PageLabelRange { first_page: page, style, prefix });
+        }
+    }
+    if let [only] = ranges.as_slice() {
+        if only.style == LabelStyle::Decimal && only.prefix.is_empty() {
+            return vec![];
+        }
+    }
+    ranges
+}
+
 /// Creates the paragraphs of the margin boxes of every page.
 pub struct MarginBoxPaint;
 
@@ -192,6 +298,51 @@ impl<'a> System<'a> for MarginBoxPaint {
 mod test {
     use super::*;
     use crate::style::parse::{CounterStyle, PagePseudo, PageSelector, Styles};
+
+    fn margin_box(kind: MarginBoxKind, content: Vec<ContentItem>) -> ResolvedMarginBox {
+        ResolvedMarginBox {
+            kind,
+            content,
+            face: Default::default(),
+            text_transform: Default::default(),
+            lang: Default::default(),
+            text_align: TextAlign::Center,
+        }
+    }
+
+    #[test]
+    fn the_label_of_a_page_is_the_number_that_it_prints() {
+        use crate::style::parse::CounterStyle;
+
+        let number = |style| ContentItem::Counter(CounterName::Page, style);
+        let text = |text: &str| ContentItem::String(text.into());
+        // no number
+        assert_eq!(folio(&[]), None);
+        assert_eq!(folio(&[margin_box(MarginBoxKind::TopLeft, vec![text("Title")])]), None);
+        // the style and the text before the number
+        assert_eq!(
+            folio(&[margin_box(MarginBoxKind::BottomCenter, vec![text("A-"), number(CounterStyle::UpperRoman), text(" of")])]),
+            Some((LabelStyle::UpperRoman, "A-".to_string()))
+        );
+        // styles that the PDF has no label for are decimal
+        assert_eq!(
+            folio(&[margin_box(MarginBoxKind::BottomCenter, vec![number(CounterStyle::DecimalLeadingZero)])]),
+            Some((LabelStyle::Decimal, String::new()))
+        );
+        // the footer before the header, and the middle before the sides
+        let boxes = [
+            margin_box(MarginBoxKind::TopCenter, vec![number(CounterStyle::LowerAlpha)]),
+            margin_box(MarginBoxKind::BottomRight, vec![number(CounterStyle::LowerRoman)]),
+            margin_box(MarginBoxKind::BottomLeft, vec![number(CounterStyle::UpperRoman)]),
+        ];
+        assert_eq!(folio(&boxes), Some((LabelStyle::LowerRoman, String::new())));
+        // a total of pages before the number is not a prefix
+        let boxes = [margin_box(
+            MarginBoxKind::BottomCenter,
+            vec![ContentItem::Counter(CounterName::Pages, CounterStyle::Decimal), number(CounterStyle::Decimal)],
+        )];
+        assert_eq!(folio(&boxes), None);
+    }
 
     #[test]
     fn counters_are_formatted() {
