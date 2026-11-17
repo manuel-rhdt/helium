@@ -5,7 +5,7 @@
 
 use crate::style::parse::CounterStyle;
 use crate::style::properties::computed::ComputedValues;
-use crate::style::properties::generated::{CounterList, Quotes};
+use crate::style::properties::generated::{CounterEntry, Quotes};
 use crate::style::properties::specified::Display;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -102,6 +102,28 @@ pub fn format_counter(value: i64, style: CounterStyle) -> String {
     }
 }
 
+/// The starting value of a reversed counter that is reset without one: the counter goes down to
+/// a value that makes the last of the increments in its scope come out at its own step. `steps`
+/// holds, in tree order, what the elements and pseudo-elements of the scope do to the counter:
+/// the increment and the value that `counter-set` gives it, if either.
+/// https://www.w3.org/TR/css-lists-3/#instantiating-counters
+pub fn reversed_initial(steps: impl IntoIterator<Item = (Option<i64>, Option<i64>)>) -> i64 {
+    let mut num = 0;
+    let mut last_non_zero_negated = 0;
+    for (increment, set) in steps {
+        let negated = -increment.unwrap_or(0);
+        if negated != 0 {
+            last_non_zero_negated = negated;
+        }
+        if let Some(value) = set {
+            num += value;
+            break;
+        }
+        num += negated;
+    }
+    num + last_non_zero_negated
+}
+
 /// One counter: its identity, which distinguishes counters that have the same name.
 #[derive(Debug, Clone)]
 struct Counter {
@@ -110,6 +132,8 @@ struct Counter {
     /// The parent of the element that created the counter. A `counter-reset` of a sibling
     /// replaces the counter, one of a child nests a new one inside of it.
     creator_parent: usize,
+    /// Made with `reversed()`: it counts down.
+    reversed: bool,
 }
 
 /// The counters in scope at the children of an element.
@@ -144,88 +168,116 @@ pub struct ListHints {
     pub resets_list_item: bool,
     /// The number the list starts at, if `<ol start>` gives one.
     pub start: Option<i64>,
+    /// `<ol reversed>`: the items are numbered downwards.
+    pub reversed: bool,
     /// The `value` of a `<li>`.
     pub value: Option<i64>,
 }
 
 impl CounterState {
-    fn instantiate(&mut self, set: &mut Vec<Counter>, name: &str, value: i64, parent: usize) {
-        // a counter of a sibling with the same name goes out of scope
-        set.retain(|counter| !(counter.name == name && counter.creator_parent == parent));
+    /// Instantiates a counter on the element whose parent is `parent`: a counter of the same
+    /// name that the element or one of its previous siblings made goes out of scope; one of an
+    /// ancestor stays, and the new counter nests inside of it.
+    fn instantiate(&mut self, set: &mut Vec<Counter>, name: &str, value: i64, reversed: bool, parent: usize) {
+        if let Some(position) = set.iter().rposition(|counter| counter.name == name) {
+            if set[position].creator_parent == parent {
+                set.remove(position);
+            }
+        }
         let id = self.next_id;
         self.next_id += 1;
         self.values.insert(id, value);
-        set.push(Counter { id, name: name.to_owned(), creator_parent: parent });
+        set.push(Counter { id, name: name.to_owned(), creator_parent: parent, reversed });
     }
 
     /// The counter of that name that is innermost, if any.
     fn innermost(set: &[Counter], name: &str) -> Option<usize> {
-        set.iter().rev().find(|counter| counter.name == name).map(|counter| counter.id)
+        set.iter().rposition(|counter| counter.name == name)
+    }
+
+    /// The index of the innermost counter of that name in `set`, instantiating a counter that
+    /// starts at 0 if there is none.
+    fn innermost_or_new(&mut self, set: &mut Vec<Counter>, name: &str, parent: usize) -> usize {
+        match Self::innermost(set, name) {
+            Some(index) => index,
+            None => {
+                self.instantiate(set, name, 0, false, parent);
+                set.len() - 1
+            }
+        }
     }
 
     /// Counts for an element that is reached: the counters it inherits, then `counter-reset`,
-    /// `counter-increment` and `counter-set`. `parent` identifies the parent element, `style`
-    /// is the style of the element.
-    pub fn enter(&mut self, parent: usize, style: &ComputedValues, hints: ListHints) {
+    /// `counter-increment` and `counter-set`. `parent` identifies the parent element and
+    /// `style` is the style of the element. `initials` holds the starting values of the
+    /// reversed counters that the element resets without one (see [`reversed_initial`]).
+    pub fn enter(
+        &mut self,
+        parent: usize,
+        style: &ComputedValues,
+        hints: ListHints,
+        initials: &HashMap<String, i64>,
+    ) {
         let parent_frame = self.frames.last().cloned().unwrap_or_default();
         if parent_frame.inert || style.box_.display == Display::None {
             // an element without a box does not count, and neither do its descendants
             self.frames.push(Frame { inert: true, ..parent_frame });
             return;
         }
-        let mut set: Vec<Counter> = (*parent_frame.set).clone();
-        if let Some(sibling) = &parent_frame.last_child_set {
-            for counter in sibling.iter() {
-                // CSS Lists 3, "Inheriting counters": a counter of the previous sibling is only
-                // inherited when no counter of that name is in scope from the parent
-                if !set.iter().any(|existing| existing.name == counter.name) {
-                    set.push(counter.clone());
-                }
-            }
-        }
+        // the counters of the previous sibling (which has the ones of the parent as well), or
+        // else the ones of the parent: https://www.w3.org/TR/css-lists-3/#inheriting-counters
+        let mut set: Vec<Counter> = match &parent_frame.last_child_set {
+            Some(sibling) => (**sibling).clone(),
+            None => (*parent_frame.set).clone(),
+        };
 
-        let mentions = |list: &CounterList, name: &str| list.0.iter().any(|(entry, _)| entry == name);
         let is_item = style.box_.display == Display::ListItem;
+        let clamp = |value: i64| value.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
 
         // `counter-reset`; a list starts a new `list-item` counter at one before its first item
+        // (a reversed one at the number of its items, or after its `start`)
         let mut resets = style.box_.counter_reset.0.clone();
-        if hints.resets_list_item && !mentions(&style.box_.counter_reset, "list-item") {
-            resets.push(("list-item".to_owned(), Some(hints.start.map_or(0, |start| (start - 1).clamp(i32::MIN as i64, i32::MAX as i64) as i32))));
+        if hints.resets_list_item && style.box_.counter_reset.get("list-item").is_none() {
+            resets.push(CounterEntry {
+                name: "list-item".to_owned(),
+                value: match (hints.reversed, hints.start) {
+                    (true, start) => start.map(|start| clamp(start + 1)),
+                    (false, start) => Some(start.map_or(0, |start| clamp(start - 1))),
+                },
+                reversed: hints.reversed,
+            });
         }
-        for (name, value) in &resets {
-            self.instantiate(&mut set, name, i64::from(value.unwrap_or(0)), parent);
+        for entry in &resets {
+            let value = entry.value.map(i64::from).or_else(|| initials.get(&entry.name).copied()).unwrap_or(0);
+            self.instantiate(&mut set, &entry.name, value, entry.reversed, parent);
         }
 
-        // `counter-increment`; a list item counts in `list-item`
-        let mut increments = style.box_.counter_increment.0.clone();
-        if is_item && !mentions(&style.box_.counter_increment, "list-item") {
-            increments.push(("list-item".to_owned(), Some(1)));
+        // `counter-increment`; a list item counts in `list-item`, down if the counter is
+        // reversed
+        // (the flag marks the increment that the list item makes by itself)
+        let mut increments: Vec<(CounterEntry, bool)> =
+            style.box_.counter_increment.0.iter().map(|entry| (entry.clone(), false)).collect();
+        if is_item && style.box_.counter_increment.get("list-item").is_none() {
+            increments.push((CounterEntry { name: "list-item".to_owned(), value: None, reversed: false }, true));
         }
-        for (name, by) in &increments {
-            let id = match Self::innermost(&set, name) {
-                Some(id) => id,
-                None => {
-                    self.instantiate(&mut set, name, 0, parent);
-                    set.last().expect("the counter was just added").id
-                }
+        for (entry, implicit) in &increments {
+            let index = self.innermost_or_new(&mut set, &entry.name, parent);
+            let step = match entry.value {
+                Some(value) => i64::from(value),
+                None if *implicit && set[index].reversed => -1,
+                None => 1,
             };
-            *self.values.entry(id).or_insert(0) += i64::from(by.unwrap_or(1));
+            *self.values.entry(set[index].id).or_insert(0) += step;
         }
 
         // `counter-set`; `<li value>` sets the `list-item` counter
         let mut sets = style.box_.counter_set.0.clone();
-        if let Some(value) = hints.value.filter(|_| is_item && !mentions(&style.box_.counter_set, "list-item")) {
-            sets.push(("list-item".to_owned(), i32::try_from(value).ok()));
+        if let Some(value) = hints.value.filter(|_| is_item && style.box_.counter_set.get("list-item").is_none()) {
+            sets.push(CounterEntry { name: "list-item".to_owned(), value: i32::try_from(value).ok(), reversed: false });
         }
-        for (name, to) in &sets {
-            let id = match Self::innermost(&set, name) {
-                Some(id) => id,
-                None => {
-                    self.instantiate(&mut set, name, 0, parent);
-                    set.last().expect("the counter was just added").id
-                }
-            };
-            self.values.insert(id, i64::from(to.unwrap_or(0)));
+        for entry in &sets {
+            let index = self.innermost_or_new(&mut set, &entry.name, parent);
+            self.values.insert(set[index].id, i64::from(entry.value.unwrap_or(0)));
         }
 
         self.frames.push(Frame { set: Rc::new(set), last_child_set: None, inert: false });
@@ -248,7 +300,7 @@ impl CounterState {
     pub fn value(&self, name: &str) -> i64 {
         self.frames
             .last()
-            .and_then(|frame| Self::innermost(&frame.set, name))
+            .and_then(|frame| Self::innermost(&frame.set, name).map(|index| frame.set[index].id))
             .and_then(|id| self.values.get(&id))
             .copied()
             .unwrap_or(0)

@@ -133,7 +133,11 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `none`. `display: list-item` (the default of `<li>`) counts in the `list-item` counter, which
   `<ol>`, `<ul>` and `<menu>` start and `<ol start>` and `<li value>` set; the number of
   the marker is the value of that counter, so `counter-increment: list-item` and the like
-  change it (not supported: `<ol reversed>`). Not supported: `content` on elements (e.g. `content: url()`), images and
+  change it. `<ol reversed>` and `counter-reset: reversed(name)` count down; a reversed counter
+  without a value starts from what its scope does to it (CSS Lists 3, "Instantiating
+  counters"). A counter of the previous sibling stays in scope for the next one (as in the
+  specification; some older web-platform-tests such as `counters-001` expect otherwise), and a
+  name that is repeated in one `counter-*` property counts every time. Not supported: `content` on elements (e.g. `content: url()`), images and
   `url()` in `content`, `::marker`, `::first-line` and `::first-letter`, `counter-reset:
   reversed()`, `target-counter()`, and pseudo-elements of replaced elements (`img`, `input`,
   `br`, ...). Counters in `@page` margin boxes are only `page` and `pages`.

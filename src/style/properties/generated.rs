@@ -118,10 +118,31 @@ impl<'i> PropertyValue<'i> for Content {
     }
 }
 
-/// The counters of `counter-reset`, `counter-increment` and `counter-set`, with the integer that
-/// was written (the default depends on the property: 0, 1 and 0).
+/// A counter named in `counter-reset`, `counter-increment` or `counter-set`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CounterEntry {
+    pub name: String,
+    /// The integer that was written. The default depends on the property: 0, 1 and 0; a
+    /// reversed counter that is reset without one starts at a value found from its scope.
+    pub value: Option<i32>,
+    /// `reversed(name)`, which counts down.
+    pub reversed: bool,
+}
+
+/// The counters of `counter-reset`, `counter-increment` and `counter-set`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct CounterList(pub Vec<(String, Option<i32>)>);
+pub struct CounterList(pub Vec<CounterEntry>);
+
+impl CounterList {
+    pub fn get(&self, name: &str) -> Option<&CounterEntry> {
+        self.0.iter().find(|entry| entry.name == name)
+    }
+
+    /// The entries of that name.
+    pub fn all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a CounterEntry> {
+        self.0.iter().filter(move |entry| entry.name == name)
+    }
+}
 
 impl<'i> PropertyValue<'i> for CounterList {
     type Error = StyleParseError;
@@ -131,16 +152,30 @@ impl<'i> PropertyValue<'i> for CounterList {
             input.expect_exhausted()?;
             return Ok(CounterList::default());
         }
-        let mut counters = vec![];
+        let mut counters: Vec<CounterEntry> = vec![];
         while !input.is_exhausted() {
-            let name = counter_name(input)?;
+            let (name, reversed) = if input
+                .try_parse(|input| input.expect_function_matching("reversed"))
+                .is_ok()
+            {
+                let name = input.parse_nested_block(|input| {
+                    let name = counter_name(input)?;
+                    input.expect_exhausted()?;
+                    Ok(name)
+                })?;
+                (name, true)
+            } else {
+                (counter_name(input)?, false)
+            };
             let value = input
                 .try_parse(|input| match input.next()? {
                     Token::Number { int_value: Some(value), .. } => Ok(*value),
                     _ => invalid(),
                 })
                 .ok();
-            counters.push((name, value));
+            // (a name that is repeated counts every time, as in browsers, although the
+            // specification says that only the last one does)
+            counters.push(CounterEntry { name, value, reversed });
         }
         if counters.is_empty() {
             return invalid();
