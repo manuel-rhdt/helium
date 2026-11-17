@@ -115,18 +115,18 @@ def figure_potential():
     xs = np.linspace(-1.6, 1.6, 200)
     curve = polyline([(px(x), py(U(x))) for x in xs], stroke="#000", stroke_width="1.6")
     marks = "".join(f'<circle cx="{px(x):.1f}" cy="{py(U(x)):.1f}" r="3.2" fill="#000"/>' for x in (-1.0, 1.0))
-    arrow = (f'<line x1="{px(0):.1f}" y1="{py(0.25):.1f}" x2="{px(0):.1f}" y2="{py(-0.25) - 3:.1f}" stroke="#555" stroke-width="1" stroke-dasharray="3 2"/>'
-             f'<line x1="{px(-1):.1f}" y1="{py(-0.25):.1f}" x2="{px(0.5):.1f}" y2="{py(-0.25):.1f}" stroke="#555" stroke-width="0.8" stroke-dasharray="3 2"/>'
-             f'<line x1="{px(0):.1f}" y1="{py(0):.1f}" x2="{px(0):.1f}" y2="{py(0.25) :.1f}" stroke="#000" stroke-width="0"/>')
-    # the barrier height: U(0) - U(-1) = 1/4, drawn as a double arrow beside the barrier
-    bx = px(0.42)
+    # the barrier height: U(0) - U(-1) = 1/4, a double arrow under the top of the barrier, where nothing
+    # else is, with a dashed line that carries the level of the minimum over to it
+    level = f'<line x1="{px(-1):.1f}" y1="{py(-0.25):.1f}" x2="{px(0):.1f}" y2="{py(-0.25):.1f}" stroke="#555" stroke-width="0.8" stroke-dasharray="3 2"/>'
+    bx = px(0)
     height = (f'<line x1="{bx:.1f}" y1="{py(-0.25):.1f}" x2="{bx:.1f}" y2="{py(0.0):.1f}" stroke="#000" stroke-width="1"/>'
               f'<polygon points="{bx:.1f},{py(0.0):.1f} {bx - 2.5:.1f},{py(0.0) + 6:.1f} {bx + 2.5:.1f},{py(0.0) + 6:.1f}" fill="#000"/>'
               f'<polygon points="{bx:.1f},{py(-0.25):.1f} {bx - 2.5:.1f},{py(-0.25) - 6:.1f} {bx + 2.5:.1f},{py(-0.25) - 6:.1f}" fill="#000"/>'
-              f'<text x="{bx + 6:.1f}" y="{(py(0) + py(-0.25)) / 2 + 4:.1f}" font-size="11" {FONT}>ΔU = 1/4</text>')
-    labels = (f'<text x="{px(-1) - 7:.1f}" y="{py(-0.25) - 6:.1f}" font-size="11" text-anchor="end" font-style="italic" {FONT}>x<tspan font-size="8" dy="2">a</tspan></text>'
+              f'<text x="{bx + 7:.1f}" y="{py(-0.17) + 4:.1f}" font-size="10" {FONT}>ΔU = 1/4</text>')
+    # x_a is above its minimum, inside the well; x_b above the top of the barrier
+    labels = (f'<text x="{px(-1):.1f}" y="{py(-0.25) - 11:.1f}" font-size="11" text-anchor="middle" font-style="italic" {FONT}>x<tspan font-size="8" dy="2">a</tspan></text>'
               f'<text x="{px(0):.1f}" y="{py(0) - 7:.1f}" font-size="11" text-anchor="middle" font-style="italic" {FONT}>x<tspan font-size="8" dy="2">b</tspan></text>')
-    return f'<svg viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="The double well potential">{frame}{curve}{marks}{height}{labels}</svg>'
+    return f'<svg viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="The double well potential">{frame}{level}{curve}{marks}{height}{labels}</svg>'
 
 
 def figure_rates():
