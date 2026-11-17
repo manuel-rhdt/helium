@@ -178,7 +178,9 @@ impl CounterState {
         let mut set: Vec<Counter> = (*parent_frame.set).clone();
         if let Some(sibling) = &parent_frame.last_child_set {
             for counter in sibling.iter() {
-                if !set.iter().any(|existing| existing.id == counter.id) {
+                // CSS Lists 3, "Inheriting counters": a counter of the previous sibling is only
+                // inherited when no counter of that name is in scope from the parent
+                if !set.iter().any(|existing| existing.name == counter.name) {
                     set.push(counter.clone());
                 }
             }
