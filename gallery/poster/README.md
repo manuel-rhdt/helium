@@ -7,7 +7,7 @@ specimen has only the name of its script, small and vertical, next to it.
 The tiles are laid out as a masonry: a flex container with `flex-direction: column; flex-wrap:
 wrap; justify-content: space-between` packs tiles of their natural height into six columns
 per page. Han and Japanese (`vertical-rl`) and Mongolian (`vertical-lr`) are set top to bottom
-with `writing-mode`.
+with `writing-mode`. The names of the scripts are text too: `writing-mode: vertical-lr; text-orientation: sideways` turns them a quarter clockwise, and the box takes its height from the name (they were SVG `<text>` turned with `rotate(90)` in boxes of a height that was measured by hand).
 
 ## Texts
 
