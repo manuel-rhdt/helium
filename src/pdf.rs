@@ -150,39 +150,56 @@ impl Alpha {
 #[allow(clippy::too_many_arguments)]
 /// The components of a colour in a PDF, with the precision that is worth writing.
 fn component(value: f32) -> f64 {
-    (f64::from(value) * 1000.0).round() / 1000.0
+    (f64::from(value) * 100_000.0).round() / 100_000.0
 }
 
-/// Makes the fills of the page use `color`: device RGB (sRGB, which is what the colours of
-/// a PDF are without a profile, and with the output intent of a PDF/A file) or, if sRGB cannot
-/// hold it, the exact colour as CIELAB. The alpha is not set.
+/// The white of CIE XYZ as CSS has it (D65).
+const D65_WHITE: [f64; 3] = [0.950_455_927, 1.0, 1.089_057_751];
+
+/// The factor of the matrix of the `CalRGB` space that carries CIE XYZ: the components of a colour
+/// are X, Y and Z divided by it, so that every colour (Z of a blue is above 1) is in [0, 1].
+const XYZ_CARRIER_SCALE: f64 = 1.2;
+
+/// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is device
+/// RGB, which is sRGB (what the colours of a PDF are without a profile, and with the output intent
+/// of a PDF/A file). A colour of Display P3 has an ICC profile of that space, written once for the
+/// document, and any other colour is in a `CalRGB` space whose three components are CIE XYZ
+/// (a viewer shows it as well as its screen can). Nothing is clipped here. The alpha is not set.
+fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
+    use lemon_pdf::color_space::CalRgbColorSpace;
+
+    let (space, components) = match color {
+        PaintColor::Srgb(color) => {
+            let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
+            let (r, g, b) = (channel(color.red), channel(color.green), channel(color.blue));
+            return if stroke { context.device_rgb_stroke_color(r, g, b) } else { context.device_rgb_fill_color(r, g, b) };
+        }
+        PaintColor::DisplayP3(color) => {
+            let profile = context.pdf_context.icc_color_space("display-p3", lemon_pdf::icc::display_p3_profile, 3, None)?;
+            (context.add_color_space(profile), color.components().map(component))
+        }
+        PaintColor::Xyz(color) => {
+            let space = CalRgbColorSpace {
+                white_point: D65_WHITE,
+                gamma: [1.0; 3],
+                matrix: [XYZ_CARRIER_SCALE, 0.0, 0.0, 0.0, XYZ_CARRIER_SCALE, 0.0, 0.0, 0.0, XYZ_CARRIER_SCALE],
+            };
+            let [x, y, z] = color.components();
+            let carried = [x, y, z].map(|value| (f64::from(value) / XYZ_CARRIER_SCALE * 100_000.0).round() / 100_000.0);
+            (context.add_color_space(space), carried)
+        }
+    };
+    if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) }
+}
+
+/// Makes the fills of the page use `color`, see [`set_color`].
 pub(crate) fn set_fill_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor) -> Result<(), Error> {
-    match color {
-        PaintColor::Srgb(color) => {
-            let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
-            context.device_rgb_fill_color(channel(color.red), channel(color.green), channel(color.blue))
-        }
-        PaintColor::Lab(color) => {
-            let [l, a, b] = color.components();
-            let space = context.add_lab_color_space(lemon_pdf::color_space::LabColorSpace::d50());
-            context.lab_fill_color(&space, component(l), component(a), component(b))
-        }
-    }
+    set_color(context, color, false)
 }
 
-/// Like [`set_fill_color`] for the strokes.
+/// Makes the strokes of the page use `color`, see [`set_color`].
 pub(crate) fn set_stroke_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor) -> Result<(), Error> {
-    match color {
-        PaintColor::Srgb(color) => {
-            let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
-            context.device_rgb_stroke_color(channel(color.red), channel(color.green), channel(color.blue))
-        }
-        PaintColor::Lab(color) => {
-            let [l, a, b] = color.components();
-            let space = context.add_lab_color_space(lemon_pdf::color_space::LabColorSpace::d50());
-            context.lab_stroke_color(&space, component(l), component(a), component(b))
-        }
-    }
+    set_color(context, color, true)
 }
 
 fn paint_items(

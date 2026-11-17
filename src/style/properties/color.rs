@@ -3,12 +3,13 @@
 //! Every colour space is converted to linear-light sRGB with the matrices of CSS Color 4 (§ 12,
 //! "Sample code for color conversions") and gamma encoded once at the end, so the result is what
 //! a browser would paint. A colour that sRGB cannot hold is not clipped: it is a CIELAB colour
-//! ([`PaintColor::Lab`]), which holds every colour, and only [`PaintColor::clip_to_srgb`] clips it.
+//! (`PaintColor::DisplayP3`, and else `PaintColor::Xyz`, which holds every colour), and only
+//! [`PaintColor::clip_to_srgb`] clips it.
 
 use cssparser::color::PredefinedColorSpace;
 use cssparser_color::{Color, hsl_to_rgb, hwb_to_rgb};
 
-use super::computed::{LabColor, PaintColor, SrgbColor};
+use super::computed::{DisplayP3Color, PaintColor, SrgbColor, XyzColor};
 
 /// Linear-light sRGB components.
 pub(super) type Rgb = [f32; 3];
@@ -171,54 +172,58 @@ const SRGB_TO_XYZ: [[f32; 3]; 3] = [
     [0.01933082, 0.11919478, 0.95053215],
 ];
 
-// Bradford chromatic adaptation from D65 to the D50 white of CIELAB.
+// CIE XYZ (D65) to linear-light Display P3, the inverse of `P3_TO_XYZ`.
+// https://drafts.csswg.org/css-color-4/#color-conversion-code
 #[rustfmt::skip]
-const D65_TO_D50: [[f32; 3]; 3] = [
-    [ 1.04792979,  0.02294687, -0.05019227],
-    [ 0.02962780,  0.99043442, -0.01707360],
-    [-0.00924304,  0.01505519,  0.75187428],
+const XYZ_TO_P3: [[f32; 3]; 3] = [
+    [ 2.49349691, -0.93138362, -0.40271078],
+    [-0.82948897,  1.76266406,  0.02362469],
+    [ 0.03584583, -0.07617239,  0.95688452],
 ];
 
-/// How far a channel of an sRGB colour can be from [0, 1] to count as inside of the gamut: half of a
-/// step of 8 bits. Clipping a channel that is that close changes nothing in 8 bits, so a colour
+/// How far a channel of an encoded colour can be from [0, 1] to count as inside of a gamut: half of
+/// a step of 8 bits. Clipping a channel that is that close changes nothing in 8 bits, so a colour
 /// like `color(xyz-d65 0.4124 0.2126 0.0193)`, which is a rounded sRGB red, is sRGB.
 const GAMUT_TOLERANCE: f32 = 0.5 / 255.0;
 
-/// CIE XYZ (D50) to CIELAB, https://drafts.csswg.org/css-color-4/#color-conversion-code.
-fn xyz_d50_to_lab(xyz: Rgb) -> [f32; 3] {
-    const KAPPA: f32 = 24389.0 / 27.0;
-    const EPSILON: f32 = 216.0 / 24389.0;
-    let f = |t: f32| if t > EPSILON { t.cbrt() } else { (KAPPA * t + 16.0) / 116.0 };
-    let [fx, fy, fz] = [
-        f(xyz[0] / D50_WHITE[0]),
-        f(xyz[1] / D50_WHITE[1]),
-        f(xyz[2] / D50_WHITE[2]),
-    ];
-    [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
+/// Whether the encoded channels are inside of [0, 1] (with the tolerance).
+fn inside(encoded: Rgb) -> bool {
+    encoded.iter().all(|v| (-GAMUT_TOLERANCE..=1.0 + GAMUT_TOLERANCE).contains(v))
 }
 
 /// The colour with these linear-light sRGB components (which are outside of [0, 1] for a colour that
-/// sRGB cannot hold) and alpha: sRGB if it fits, and else CIELAB.
+/// sRGB cannot hold) and alpha: sRGB if it fits; else Display P3 if it fits (a colour of a wide
+/// gamut that is common on screens); else CIE XYZ.
 fn from_linear(linear: Rgb, alpha: Option<f32>) -> PaintColor {
     let alpha = to_u8(alpha.unwrap_or(1.0));
-    let outside = linear
-        .iter()
-        .any(|v| !(-GAMUT_TOLERANCE..=1.0 + GAMUT_TOLERANCE).contains(&srgb_encode(*v)));
-    if outside && linear.iter().all(|v| v.is_finite()) {
-        let [l, a, b] = xyz_d50_to_lab(apply(&D65_TO_D50, apply(&SRGB_TO_XYZ, linear)));
-        // (L* is from 0 to 100 in CSS and in PDF)
-        return PaintColor::Lab(LabColor::new(l.clamp(0.0, 100.0), a, b, alpha));
-    }
     let encode = |v: f32| to_u8(srgb_encode(v));
-    PaintColor::srgb(encode(linear[0]), encode(linear[1]), encode(linear[2]), alpha)
+    if !linear.iter().all(|v| v.is_finite()) || inside(linear.map(srgb_encode)) {
+        return PaintColor::srgb(encode(linear[0]), encode(linear[1]), encode(linear[2]), alpha);
+    }
+    let xyz = apply(&SRGB_TO_XYZ, linear);
+    let p3 = apply(&XYZ_TO_P3, xyz).map(srgb_encode);
+    if inside(p3) {
+        let [r, g, b] = p3.map(|v| v.clamp(0.0, 1.0));
+        return PaintColor::DisplayP3(DisplayP3Color::new(r, g, b, alpha));
+    }
+    PaintColor::Xyz(XyzColor::new(xyz[0], xyz[1], xyz[2], alpha))
 }
 
-/// CIELAB (D50) to sRGB with the channels clipped: [`PaintColor::clip_to_srgb`].
-pub(super) fn lab_to_srgb_clipped(color: LabColor) -> SrgbColor {
-    let [l, a, b] = color.components();
-    let linear = xyz_to_srgb(d50_to_d65(lab_to_xyz(l, a, b)));
+/// Display P3 to sRGB with the channels clipped: [`PaintColor::clip_to_srgb`].
+pub(super) fn p3_to_srgb_clipped(color: DisplayP3Color) -> SrgbColor {
+    let [r, g, b] = color.components();
+    let linear = xyz_to_srgb(apply(&P3_TO_XYZ, [srgb_decode(r), srgb_decode(g), srgb_decode(b)]));
+    clipped(linear, color.alpha)
+}
+
+/// CIE XYZ to sRGB with the channels clipped: [`PaintColor::clip_to_srgb`].
+pub(super) fn xyz_to_srgb_clipped(color: XyzColor) -> SrgbColor {
+    clipped(xyz_to_srgb(color.components()), color.alpha)
+}
+
+fn clipped(linear: Rgb, alpha: u8) -> SrgbColor {
     let encode = |v: f32| to_u8(srgb_encode(v));
-    SrgbColor { red: encode(linear[0]), green: encode(linear[1]), blue: encode(linear[2]), alpha: color.alpha }
+    SrgbColor { red: encode(linear[0]), green: encode(linear[1]), blue: encode(linear[2]), alpha }
 }
 
 /// `color` made more transparent: its alpha is multiplied by `opacity` (0 to 1).
@@ -252,9 +257,10 @@ pub fn color_to_paint(color: Color) -> PaintColor {
             );
             PaintColor::srgb(to_u8(rgb.0), to_u8(rgb.1), to_u8(rgb.2), to_u8(c.alpha.unwrap_or(1.0)))
         }
+        // (the lightness is clamped when the colour is computed: CSS Color 4, "lab()", "oklab()")
         Color::Lab(c) => from_linear(
             xyz_to_srgb(d50_to_d65(lab_to_xyz(
-                c.lightness.unwrap_or(0.0),
+                c.lightness.unwrap_or(0.0).clamp(0.0, 100.0),
                 c.a.unwrap_or(0.0),
                 c.b.unwrap_or(0.0),
             ))),
@@ -264,7 +270,7 @@ pub fn color_to_paint(color: Color) -> PaintColor {
             let (a, b) = polar_to_rectangular(c.chroma.unwrap_or(0.0), c.hue.unwrap_or(0.0));
             from_linear(
                 xyz_to_srgb(d50_to_d65(lab_to_xyz(
-                    c.lightness.unwrap_or(0.0),
+                    c.lightness.unwrap_or(0.0).clamp(0.0, 100.0),
                     a,
                     b,
                 ))),
@@ -273,7 +279,7 @@ pub fn color_to_paint(color: Color) -> PaintColor {
         }
         Color::Oklab(c) => from_linear(
             oklab_to_srgb(
-                c.lightness.unwrap_or(0.0),
+                c.lightness.unwrap_or(0.0).clamp(0.0, 1.0),
                 c.a.unwrap_or(0.0),
                 c.b.unwrap_or(0.0),
             ),
@@ -282,7 +288,7 @@ pub fn color_to_paint(color: Color) -> PaintColor {
         Color::Oklch(c) => {
             let (a, b) = polar_to_rectangular(c.chroma.unwrap_or(0.0), c.hue.unwrap_or(0.0));
             from_linear(
-                oklab_to_srgb(c.lightness.unwrap_or(0.0), a, b),
+                oklab_to_srgb(c.lightness.unwrap_or(0.0).clamp(0.0, 1.0), a, b),
                 c.alpha,
             )
         }
@@ -339,11 +345,25 @@ mod test {
         [c.red, c.green, c.blue, c.alpha]
     }
 
-    fn lab(color: PaintColor) -> [f32; 3] {
+    fn p3(color: PaintColor) -> [f32; 3] {
         match color {
-            PaintColor::Lab(lab) => lab.components(),
-            PaintColor::Srgb(_) => panic!("{color:?} is sRGB"),
+            PaintColor::DisplayP3(p3) => p3.components(),
+            _ => panic!("{color:?} is not Display P3"),
         }
+    }
+
+    fn xyz(color: PaintColor) -> [f32; 3] {
+        match color {
+            PaintColor::Xyz(xyz) => xyz.components(),
+            _ => panic!("{color:?} is not CIE XYZ"),
+        }
+    }
+
+    fn near(found: [f32; 3], expected: [f32; 3], what: &str) {
+        assert!(
+            found.iter().zip(expected).all(|(found, expected)| (found - expected).abs() < 0.002),
+            "{what}: {found:?} is not {expected:?}"
+        );
     }
 
     #[test]
@@ -358,28 +378,65 @@ mod test {
     }
 
     #[test]
-    fn colors_outside_of_srgb_are_lab() {
-        // checked against the formulas of CSS Color 4 in float64
-        let [l, a, b] = lab(paint("color(display-p3 1 0 0)"));
-        assert!((l - 56.21).abs() < 0.05 && (a - 94.46).abs() < 0.05 && (b - 98.89).abs() < 0.05, "{l} {a} {b}");
-        let [l, a, b] = lab(paint("color(display-p3 0 1 0)"));
-        assert!((l - 86.61).abs() < 0.05 && (a + 106.54).abs() < 0.05 && (b - 102.87).abs() < 0.05, "{l} {a} {b}");
-        for css in [
-            "color(rec2020 0 1 0)", "color(prophoto-rgb 1 0 0)", "oklch(0.7 0.3 150)", "lch(60 150 40)",
-            "lab(60 120 80)", "color(srgb 1.2 0 0)", "color(xyz-d65 0.2 0.8 0.1)", "color(a98-rgb 0 1 0)",
+    fn a_color_outside_of_srgb_but_inside_of_display_p3_is_display_p3() {
+        // the expected components are from the formulas of CSS Color 4 in float64
+        for (css, expected) in [
+            ("color(display-p3 1 0 0)", [1.0, 0.0, 0.0]),
+            ("color(display-p3 0 1 0)", [0.0, 1.0, 0.0]),
+            ("color(display-p3 0.2 0.9 0.4)", [0.2, 0.9, 0.4]),
+            ("color(srgb 1.05 0 0)", [0.9636, 0.2124, 0.1477]),
         ] {
-            assert!(matches!(paint(css), PaintColor::Lab(_)), "{css}: {:?}", paint(css));
+            near(p3(paint(css)), expected, css);
         }
     }
 
     #[test]
+    fn a_color_outside_of_display_p3_is_xyz() {
+        for (css, expected) in [
+            ("color(rec2020 0 1 0)", [0.1446, 0.678, 0.0281]),
+            ("color(rec2020 1 0 0)", [0.637, 0.2627, 0.0]),
+            ("oklch(0.7 0.3 150)", [0.1413, 0.3907, 0.0607]),
+            ("lab(60 120 80)", [0.6553, 0.2647, 0.021]),
+            ("lch(60 150 40)", [0.6324, 0.2652, 0.0074]),
+            ("color(xyz-d65 0.2 0.8 0.1)", [0.2, 0.8, 0.1]),
+        ] {
+            near(xyz(paint(css)), expected, css);
+        }
+        for css in ["color(prophoto-rgb 1 0 0)", "color(a98-rgb 0 1 0)"] {
+            assert!(matches!(paint(css), PaintColor::Xyz(_)), "{css}: {:?}", paint(css));
+        }
+    }
+
+    #[test]
+    fn a_color_inside_of_srgb_with_a_wide_syntax_is_still_srgb() {
+        for css in ["oklch(0.7 0.15 150)", "color(display-p3 0.5 0.5 0.5)", "color(rec2020 0.3 0.3 0.3)"] {
+            assert!(matches!(paint(css), PaintColor::Srgb(_)), "{css}: {:?}", paint(css));
+        }
+    }
+
+    #[test]
+    fn the_lightness_is_clamped() {
+        // CSS Color 4: L of lab() and lch() is from 0 to 100, L of oklab() and oklch() from 0 to 1
+        assert_eq!(paint("lab(110 0 0)"), paint("lab(100 0 0)"));
+        assert_eq!(paint("lch(150 0 0)"), paint("lch(100 0 0)"));
+        assert_eq!(paint("oklab(1.4 0 0)"), paint("oklab(1 0 0)"));
+        assert_eq!(paint("oklch(2 0 0)"), paint("oklch(1 0 0)"));
+        assert_eq!(srgb_bytes("lab(110 0 0)"), [255, 255, 255, 255]);
+    }
+
+    #[test]
     fn a_wide_color_keeps_its_alpha() {
-        let color = paint("color(display-p3 1 0 0 / 50%)");
-        assert!(matches!(color, PaintColor::Lab(_)));
-        assert_eq!(color.alpha(), 128);
-        assert_eq!(color.with_alpha(10).alpha(), 10);
-        assert_eq!(with_opacity(color, 0.5).alpha(), 64);
-        assert!(matches!(with_opacity(color, 0.5), PaintColor::Lab(_)));
+        for (css, kind) in [("color(display-p3 1 0 0 / 50%)", "p3"), ("color(rec2020 0 1 0 / 50%)", "xyz")] {
+            let color = paint(css);
+            assert!(
+                matches!((kind, color), ("p3", PaintColor::DisplayP3(_)) | ("xyz", PaintColor::Xyz(_))),
+                "{css}: {color:?}"
+            );
+            assert_eq!(color.alpha(), 128);
+            assert_eq!(color.with_alpha(10).alpha(), 10);
+            assert_eq!(with_opacity(color, 0.5).alpha(), 64);
+            assert_eq!(std::mem::discriminant(&with_opacity(color, 0.5)), std::mem::discriminant(&color));
+        }
     }
 
     #[test]

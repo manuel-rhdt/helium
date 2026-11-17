@@ -136,10 +136,14 @@ fn write_boxes(out: &mut String, pos: Position, deco: Decoration) {
 fn color(c: PaintColor) -> String {
     match c {
         PaintColor::Srgb(c) => format!("[{}, {}, {}, {}]", c.red, c.green, c.blue, c.alpha),
-        // a colour that sRGB cannot hold: CIELAB (D50) and alpha
-        PaintColor::Lab(c) => {
-            let [l, a, b] = c.components();
-            format!("[\"lab\", {}, {}, {}, {}]", number(l), number(a), number(b), c.alpha)
+        // the colours that sRGB cannot hold: Display P3 (encoded) or CIE XYZ (D65), and alpha
+        PaintColor::DisplayP3(c) => {
+            let [r, g, b] = c.components();
+            format!("[\"display-p3\", {}, {}, {}, {}]", number(r), number(g), number(b), c.alpha)
+        }
+        PaintColor::Xyz(c) => {
+            let [x, y, z] = c.components();
+            format!("[\"xyz\", {}, {}, {}, {}]", number(x), number(y), number(z), c.alpha)
         }
     }
 }

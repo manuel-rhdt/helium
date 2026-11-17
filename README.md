@@ -145,9 +145,10 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   for boxes that are not split over pages (a fragment of a split box has none). `inset` shadows
   are not drawn, and `text-shadow` is not supported.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
-  `color()` (a colour that sRGB cannot hold, like `color(display-p3 1 0 0)`, is not clipped: it is written
-  to the PDF as an exact CIELAB colour for fills, strokes, text, backgrounds and borders, and the
-  other colours as sRGB; gradients, `color-mix()`, SVG images and the layers of colour glyphs are still
+  `color()` (a colour that sRGB cannot hold, like `color(display-p3 1 0 0)`, is not clipped, in fills,
+  strokes, text, backgrounds and borders: one that Display P3 holds is written with an ICC profile of that space (about
+  500 bytes, written once), and one outside of it in a `CalRGB` space whose components are CIE XYZ; the
+  others are device RGB, which is sRGB. Gradients, `color-mix()`, SVG images and the layers of colour glyphs are still
   sRGB, and a wide colour is clipped there), with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
   painted for backgrounds, borders, text, text decorations and gradients. `color-mix()` mixes
   two colours (also nested, and with `var()`) in `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`,
