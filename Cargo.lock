@@ -807,7 +807,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 [[package]]
 name = "lemon_pdf"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=claude%2Fdreamy-fermat-pmarbc#ba72a013eb693dde7b05a652693180a53fac3af5"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=claude%2Fdreamy-fermat-pmarbc#c8d8a23d4262d9badd1bc0257c4dc9b913d75c4e"
 dependencies = [
  "Inflector",
  "bitflags 2.13.2",
@@ -825,7 +825,7 @@ dependencies = [
 [[package]]
 name = "lemon_pdf_derive"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=claude%2Fdreamy-fermat-pmarbc#ba72a013eb693dde7b05a652693180a53fac3af5"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=claude%2Fdreamy-fermat-pmarbc#c8d8a23d4262d9badd1bc0257c4dc9b913d75c4e"
 dependencies = [
  "Inflector",
  "proc-macro2 0.4.30",

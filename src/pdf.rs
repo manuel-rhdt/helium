@@ -145,56 +145,53 @@ impl Alpha {
     }
 }
 
-/// Paints the items of a display list. The coordinates of the items are in pixels from the top
-/// left corner of a page that is `page_height` high.
-#[allow(clippy::too_many_arguments)]
-/// The components of a colour in a PDF, with the precision that is worth writing.
-fn component(value: f32) -> f64 {
-    (f64::from(value) * 100_000.0).round() / 100_000.0
-}
-
-/// The Bradford adaptation from the white of D65 (the XYZ of the colours of CSS) to the white of D50
-/// (CSS Color 4, 10.3).
+/// Linear-light Display P3 to CIE XYZ (D65), and CIE XYZ (D65) to linear-light Rec. 2020 (CSS Color 4).
 #[rustfmt::skip]
-const D65_TO_D50: [[f64; 3]; 3] = [
-    [ 1.047_929_792_5,  0.022_946_870_6, -0.050_192_266_3],
-    [ 0.029_627_808_8,  0.990_434_426_8, -0.017_073_799_1],
-    [-0.009_243_040_6,  0.015_055_191_5,  0.751_874_281_4],
+const P3_TO_XYZ: [[f64; 3]; 3] = [
+    [0.486_570_948_6, 0.265_667_693_2, 0.198_217_285_2],
+    [0.228_974_564_1, 0.691_738_521_8, 0.079_286_914_1],
+    [0.0,             0.045_113_381_9, 1.043_944_368_9],
+];
+#[rustfmt::skip]
+const XYZ_TO_REC2020: [[f64; 3]; 3] = [
+    [ 1.716_651_187_97, -0.355_670_783_78, -0.253_366_281_37],
+    [-0.666_684_351_83,  1.616_481_236_63,  0.015_768_545_81],
+    [ 0.017_639_857_45, -0.042_770_613_26,  0.942_103_121_24],
 ];
 
-/// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is device
-/// RGB, which is sRGB (what the colours of a PDF are without a profile, and with the output intent
-/// of a PDF/A file). A colour of Display P3 has an ICC profile of that space, written once for the
-/// document, and any other colour is in a `CalRGB` space whose three components are CIE XYZ, adapted to
-/// D50 and divided by the white point of D50, so that (1, 1, 1) is the white (a viewer shows it as well
-/// as its screen can). That space is the one that was exact on an iPhone: a matrix that is not the
-/// white point at (1, 1, 1) is renormalised there. Nothing is clipped here. The alpha is not set.
-fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
-    use lemon_pdf::color_space::CalRgbColorSpace;
+fn multiply(matrix: &[[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
+    matrix.map(|row| row.iter().zip(vector).map(|(m, v)| m * v).sum())
+}
 
-    let (space, components) = match color {
+/// The coordinates of a colour (CIE XYZ, D65) in the Rec. 2020 profile with the gamma 2.4: the linear
+/// ones to the power of 1/2.4. A colour that Rec. 2020 cannot hold is clipped, the only clipping here.
+fn rec2020_gamma24_components(xyz: [f64; 3]) -> [f64; 3] {
+    multiply(&XYZ_TO_REC2020, xyz).map(|linear| linear.clamp(0.0, 1.0).powf(1.0 / 2.4))
+}
+
+/// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is device
+/// RGB, which is sRGB (what `DefaultRGB` says, and the output intent of a PDF/A file). Any other
+/// colour is in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4, written once for the
+/// document: matrix/TRC profiles are the best supported wide-gamut encoding of PDF viewers, and this one
+/// holds Display P3 and nearly all that CSS can write. (It has a pure gamma and not the curve of
+/// Rec. 2020 because an iPhone decodes every Rec. 2020 profile with a gamma of 2.4.) Only a colour that
+/// Rec. 2020 cannot hold is clipped, to it. The alpha is not set.
+fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
+    let xyz = match color {
         PaintColor::Srgb(color) => {
             let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
             let (r, g, b) = (channel(color.red), channel(color.green), channel(color.blue));
             return if stroke { context.device_rgb_stroke_color(r, g, b) } else { context.device_rgb_fill_color(r, g, b) };
         }
         PaintColor::DisplayP3(color) => {
-            let profile = context.pdf_context.icc_color_space("display-p3", lemon_pdf::icc::display_p3_profile, 3, None)?;
-            (context.add_color_space(profile), color.components().map(component))
+            let decode = |value: f64| if value <= 0.040_45 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) };
+            multiply(&P3_TO_XYZ, color.components().map(|c| decode(f64::from(c))))
         }
-        PaintColor::Xyz(color) => {
-            let space = CalRgbColorSpace::xyz_carrier(lemon_pdf::color_space::D50_WHITE_POINT);
-            let xyz = color.components().map(f64::from);
-            let components: Vec<f64> = (0..3)
-                .map(|row| {
-                    let adapted: f64 = (0..3).map(|column| D65_TO_D50[row][column] * xyz[column]).sum();
-                    // the component of a colour that exists is from 0 to 1; one that is not is clamped
-                    (adapted / lemon_pdf::color_space::D50_WHITE_POINT[row]).clamp(0.0, 1.0)
-                })
-                .collect();
-            (context.add_color_space(space), [components[0], components[1], components[2]])
-        }
+        PaintColor::Xyz(color) => color.components().map(f64::from),
     };
+    let space = context.pdf_context.icc_color_space("rec2020-gamma24", lemon_pdf::icc::rec2020_gamma24_profile, 3, Some(StreamFilter::Deflate))?;
+    let space = context.add_color_space(space);
+    let components = rec2020_gamma24_components(xyz).map(|value| (value * 100_000.0).round() / 100_000.0);
     if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) }
 }
 
@@ -208,6 +205,9 @@ pub(crate) fn set_stroke_color(context: &mut lemon_pdf::content::PageContext<'_,
     set_color(context, color, true)
 }
 
+/// Paints the items of a display list. The coordinates of the items are in pixels from the top
+/// left corner of a page that is `page_height` high.
+#[allow(clippy::too_many_arguments)]
 fn paint_items(
     page_context: &mut PageContext<'_, '_, '_>,
     display_list: &mut display_list::DisplayList,
@@ -956,6 +956,12 @@ pub fn write_pdf(
         };
 
         page.add_content(&mut context, filter, |page_context| {
+            // device colours (and images and shadings, which have only those) are sRGB, in every
+            // viewer, instead of whatever the viewer takes the device to be
+            let srgb = page_context
+                .pdf_context
+                .icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
+            page_context.set_default_color_space(lemon_pdf::color_space::DefaultColorSpace::Rgb, srgb);
             paint_items(
                 page_context,
                 &mut print_page.display_list,

@@ -1,6 +1,7 @@
-//! Colours that sRGB cannot hold are not clipped: a colour of Display P3 is written with an ICC
-//! profile of that space, and a colour outside of Display P3 in a CalRGB space that carries CIE
-//! XYZ.
+//! Colours that sRGB cannot hold are not clipped to it: they are written in one ICC space with the
+//! primaries of Rec. 2020 and a gamma of 2.4 (the one that Display P3 and nearly all of CSS fit in, and
+//! that an iPhone shows as the profile says). Colours of sRGB stay device RGB, which `DefaultRGB`
+//! defines as sRGB. Only a colour that Rec. 2020 cannot hold is clipped, to Rec. 2020.
 
 mod common;
 
@@ -37,33 +38,39 @@ fn close(found: &[f64], expected: [f64; 3]) -> bool {
     found.iter().zip(expected).all(|(found, expected)| (found - expected).abs() < 0.0006)
 }
 
+/// Profiles in the file: the ones that `DefaultRGB` and the colours write are streams with `/N 3`.
+fn profiles(pdf: &str) -> usize {
+    pdf.matches("/N 3").count()
+}
+
 #[test]
-fn a_color_of_display_p3_has_an_icc_profile() {
+fn a_color_of_display_p3_is_in_the_rec2020_profile() {
     let pdf = render("p3", "<p style=\"background: color(display-p3 1 0 0)\">x</p>");
     let fills = space_colors(&pdf, true);
     assert_eq!(fills.len(), 1, "{fills:?}");
-    // the colour is the one that was written: the components of Display P3
-    assert!(close(&fills[0].1, [1.0, 0.0, 0.0]), "{:?}", fills[0]);
+    // Display P3 red in Rec. 2020: the linear coordinates to the power of 1 / 2.4
+    assert!(close(&fills[0].1, [0.88892, 0.27657, 0.0]), "{:?}", fills[0]);
     assert!(pdf.contains("/ICCBased"), "{pdf}");
-    // the profile is in the file (its signature `acsp`), once
-    assert_eq!(pdf.matches("acsp").count(), 1);
+    // the profile of the colours and the sRGB profile of DefaultRGB
+    assert_eq!(profiles(&pdf), 2);
     assert!(!pdf.contains("/CalRGB") && !pdf.contains("/Lab"));
 }
 
 #[test]
-fn a_color_outside_of_display_p3_is_xyz_in_a_calrgb_space() {
-    let pdf = render("xyz", "<p style=\"background: color(rec2020 0 1 0)\">x</p>");
+fn rec2020_green_is_its_own_primary() {
+    let pdf = render("rec2020", "<p style=\"background: color(rec2020 0 1 0)\">x</p>");
     let fills = space_colors(&pdf, true);
     assert_eq!(fills.len(), 1, "{fills:?}");
-    // X, Y and Z of Rec. 2020 green adapted to D50 (Bradford) and divided by the white of D50: the
-    // components of the carrier whose (1, 1, 1) is the white point (the one that is exact on an iPhone)
-    assert!(close(&fills[0].1, [0.17183, 0.67532, 0.03633]), "{:?}", fills[0]);
-    assert!(pdf.contains("/CalRGB"), "{pdf}");
-    assert!(pdf.contains("/Gamma"));
-    assert!(pdf.contains("/WhitePoint"));
-    // the matrix is the white point on its diagonal: (1, 1, 1) is the white
-    assert!(pdf.contains("0.964296") && pdf.contains("0.825105"), "{pdf}");
-    assert!(!pdf.contains("/ICCBased"), "an ICC profile is only written for a colour that needs it");
+    assert!(close(&fills[0].1, [0.0, 1.0, 0.0]), "{:?}", fills[0]);
+}
+
+#[test]
+fn a_color_that_rec2020_cannot_hold_is_clipped_to_it() {
+    let pdf = render("prophoto", "<p style=\"background: color(prophoto-rgb 0 1 0)\">x</p>");
+    let fills = space_colors(&pdf, true);
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!(fills[0].1.iter().all(|v| (0.0..=1.0).contains(v)), "{:?}", fills[0]);
+    assert!(!pdf.contains("/CalRGB"));
 }
 
 #[test]
@@ -74,7 +81,7 @@ fn text_borders_and_backgrounds_keep_their_colors() {
     );
     // the background and the text are fills, and the border too
     assert!(space_colors(&pdf, true).len() >= 2, "{:?}", space_colors(&pdf, true));
-    assert!(pdf.contains("/CalRGB"));
+    assert!(pdf.contains("/ICCBased") && !pdf.contains("/CalRGB"));
 }
 
 #[test]
@@ -85,7 +92,7 @@ fn the_profile_is_written_once_for_the_whole_document() {
          <p style=\"break-before: page; color: color(display-p3 0 0.5 1)\">y</p>",
     );
     assert!(space_colors(&pdf, true).len() >= 3);
-    assert_eq!(pdf.matches("acsp").count(), 1, "one profile for two pages");
+    assert_eq!(profiles(&pdf), 2, "the colour profile and the sRGB one, for two pages");
 }
 
 #[test]
@@ -96,7 +103,9 @@ fn a_color_inside_of_srgb_stays_device_rgb() {
     );
     assert!(space_colors(&pdf, true).is_empty() && space_colors(&pdf, false).is_empty());
     assert!(rgb_count(&pdf) >= 2);
-    assert!(!pdf.contains("/ICCBased") && !pdf.contains("/CalRGB"), "no colour outside of sRGB, so no colour space");
+    assert!(!pdf.contains("/CalRGB"), "no colour outside of sRGB, so no colour space of it");
+    assert_eq!(profiles(&pdf), 1, "only the sRGB profile of DefaultRGB");
+    assert!(pdf.contains("/DefaultRGB"));
 }
 
 #[test]
@@ -120,5 +129,5 @@ fn the_layout_dump_names_the_space_of_a_wide_color() {
     let output = common::helium().unwrap().arg("--dump-layout").arg("-").arg(&input).arg(dir.join("wide_dump.pdf")).output().unwrap();
     let dump = String::from_utf8_lossy(&output.stdout);
     assert!(dump.contains("\"display-p3\""), "{dump}");
-    assert!(dump.contains("\"xyz\""), "{dump}");
+    assert!(dump.contains("\"rec2020\"") || dump.contains("\"xyz\""), "{dump}");
 }
