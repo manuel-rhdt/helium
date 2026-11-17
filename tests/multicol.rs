@@ -1406,8 +1406,8 @@ fn a_forced_break_to_a_side_in_a_container_leaves_a_page_empty_if_it_has_to() {
 
 #[test]
 fn a_container_in_a_document_that_is_cropped_is_one_box() {
-    // there are no pages that have a size: every box has a page of its own, and the columns of
-    // a container are balanced as always
+    // the document is one page as high as the content, and the columns of a container are
+    // balanced as always
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join("multicol__crop.html");
     let output = dir.join("multicol__crop.pdf");

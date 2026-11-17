@@ -16,8 +16,7 @@
 //!
 //! A multi-column container is one item of the flow of its page, `Item::Container`: the kernel asks
 //! the layout service for the fragment of it that fits on a page, and the page can end inside it.
-//! (In a document without page sizes (`--crop`), and where it has a height of its own or is inside
-//! another container, it is one box.) Its content is a flow of its own ([`Inner`]), which the
+//! (Where it has a height of its own or is inside another container, it is one box.) Its content is a flow of its own ([`Inner`]), which the
 //! columns are chosen from. The items of both are numbered from 0 (the spans of the boxes in the
 //! content of the container are in the numbers of its flow), the extents and the paragraphs have
 //! one numbering for all of them.
@@ -176,7 +175,9 @@ fn pin_to_first_page(tree: &mut HeliumTree, root: NodeId) {
     *children = pinned;
 }
 
-pub(super) fn extract(tree: &mut HeliumTree, root: NodeId, rtl: bool, paged: bool) -> Flow {
+/// `single_page`: the document is one page whatever it says (a document that is cropped), so
+/// there are no forced page breaks.
+pub(super) fn extract(tree: &mut HeliumTree, root: NodeId, rtl: bool, paged: bool, single_page: bool) -> Flow {
     pin_to_first_page(tree, root);
     let nodes = tree.nodes.len();
     let mut extractor = Extractor {
@@ -193,6 +194,7 @@ pub(super) fn extract(tree: &mut HeliumTree, root: NodeId, rtl: bool, paged: boo
         },
         level: BreakLevel::Page,
         paged,
+        single_page,
     };
     extractor.emit(root, None, Avoid::default());
     extractor.flow.page_extents = extractor.flow.extents.len();
@@ -225,8 +227,10 @@ struct Extractor<'t, 'a, 'w> {
     /// of a multi-column container.
     level: BreakLevel,
     /// Whether the document has pages that have a size. A container with columns is split over
-    /// pages only then: in a document that is cropped every box has a page of its own.
+    /// pages only then.
     paged: bool,
+    /// Whether the document is one page, in which no page break is forced.
+    single_page: bool,
 }
 
 impl Extractor<'_, '_, '_> {
@@ -379,6 +383,11 @@ impl Extractor<'_, '_, '_> {
             if let (Some(a), Some(b)) = (self.page_name(before), self.page_name(after)) {
                 breaks.forced_page |= a != b;
             }
+        }
+        if self.single_page {
+            // (also in a container with columns, where it would end the fragment on its page)
+            breaks.forced_page = false;
+            breaks.side = None;
         }
         breaks.avoid_page |= avoid.page;
         breaks.avoid_column |= avoid.column;

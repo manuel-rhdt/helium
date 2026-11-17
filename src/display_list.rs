@@ -1584,7 +1584,7 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
 
     for (page_index, page) in pages.iter().enumerate() {
         let mut display_list = DisplayList::default();
-        // the pages of a document that is cropped have no size to paint
+        // (a page that has no size has nothing to paint)
         if page.size.0.0 > 0.0 && page.size.1.0 > 0.0 {
             let rect = Rect {
                 x: PixelLength(0.0),
