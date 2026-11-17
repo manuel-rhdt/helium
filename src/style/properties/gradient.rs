@@ -4,7 +4,7 @@
 //! A gradient goes through three stages. The parsed gradient (`Gradient<QuantityOrPercentage,
 //! Color>`) keeps lengths as written. The computed gradient has its lengths in pixels
 //! (`Gradient<LengthPercentage, Color>`), and once `currentcolor` is known also real colours
-//! (`Gradient<LengthPercentage, RGBA>`). Percentages need the size of the box, so the last step
+//! (`Gradient<LengthPercentage, PaintColor>`). Percentages need the size of the box, so the last step
 //! is [`Gradient::resolve`], which produces the geometry and the colour stops in the space of
 //! the page.
 //!
@@ -20,7 +20,7 @@ use cssparser_color::Color;
 pub use super::color_mix::Interpolation;
 use super::color_mix::parse_interpolation;
 use super::background::{parse_position_and_size, LayerStyle, Repeat, SpecifiedPosition, SpecifiedSize};
-use super::computed::{ComputedValues, LengthPercentage, PixelLength, RGBA};
+use super::computed::{ComputedValues, LengthPercentage, PaintColor, PixelLength, SrgbColor};
 use super::specified::{CommaSeparated, ComputedValue, PropertyValue, QuantityOrPercentage};
 use crate::style::parse::StyleParseError;
 
@@ -190,7 +190,7 @@ pub type SpecifiedImage = Image<QuantityOrPercentage, Color>;
 /// With lengths in pixels. The colour may still be `currentcolor`.
 pub type ComputedImage = Image<LengthPercentage, Color>;
 /// With colours resolved against `color`.
-pub type ResolvedGradient = Gradient<LengthPercentage, RGBA>;
+pub type ResolvedGradient = Gradient<LengthPercentage, PaintColor>;
 
 // ---------------------------------------------------------------------------------------------
 // parsing
@@ -713,8 +713,8 @@ impl Gradient<QuantityOrPercentage, Color> {
 
 impl Gradient<LengthPercentage, Color> {
     /// Resolves `currentcolor` to `current`.
-    pub fn with_current_color(&self, current: RGBA) -> ResolvedGradient {
-        use super::color::color_to_rgba;
+    pub fn with_current_color(&self, current: PaintColor) -> ResolvedGradient {
+        use super::color::color_to_paint;
         Gradient {
             kind: self.kind.clone(),
             repeating: self.repeating,
@@ -725,7 +725,7 @@ impl Gradient<LengthPercentage, Color> {
                 .map(|stop| Stop {
                     color: match stop.color {
                         Color::CurrentColor => current,
-                        color => color_to_rgba(color),
+                        color => color_to_paint(color),
                     },
                     positions: stop.positions.clone(),
                 })
@@ -918,10 +918,10 @@ impl ResolvedGradient {
 /// gradient line (or of the full turn for a conic gradient).
 /// https://www.w3.org/TR/css-images-3/#color-stop-fixup
 fn resolve_stop_offsets(
-    stops: &[Stop<LengthPercentage, RGBA>],
+    stops: &[Stop<LengthPercentage, PaintColor>],
     length: f32,
     conic: bool,
-) -> Vec<(f32, RGBA)> {
+) -> Vec<(f32, PaintColor)> {
     let to_offset = |position: &StopPosition<LengthPercentage>| match position {
         StopPosition::Angle(degrees) => degrees / 360.0,
         StopPosition::Length(lp) if conic => lp.absolute(PixelLength(1.0)).0,
@@ -929,7 +929,7 @@ fn resolve_stop_offsets(
     };
 
     // a stop with two positions is two stops
-    let mut list: Vec<(Option<f32>, RGBA)> = vec![];
+    let mut list: Vec<(Option<f32>, PaintColor)> = vec![];
     for stop in stops {
         match stop.positions.as_slice() {
             [] => list.push((None, stop.color)),
@@ -979,7 +979,7 @@ fn resolve_stop_offsets(
 }
 
 /// Repeats the stops over the range `0..=1`.
-fn repeat_stops(stops: Vec<(f32, RGBA)>) -> Vec<(f32, RGBA)> {
+fn repeat_stops(stops: Vec<(f32, PaintColor)>) -> Vec<(f32, PaintColor)> {
     let first = stops.first().map_or(0.0, |s| s.0);
     let last = stops.last().map_or(0.0, |s| s.0);
     let period = last - first;
@@ -988,10 +988,11 @@ fn repeat_stops(stops: Vec<(f32, RGBA)>) -> Vec<(f32, RGBA)> {
     if !(period > 0.0) || !(last_copy - first_copy < MAX_REPEATS) {
         // all stops at the same position, or too many to be told apart: the average colour
         let n = stops.len().max(1) as f32;
-        let mean = |channel: fn(&RGBA) -> u8| {
-            (stops.iter().map(|s| f32::from(channel(&s.1))).sum::<f32>() / n).round() as u8
+        // (the mean of the colours, in sRGB)
+        let mean = |channel: fn(&SrgbColor) -> u8| {
+            (stops.iter().map(|s| f32::from(channel(&s.1.clip_to_srgb()))).sum::<f32>() / n).round() as u8
         };
-        let color = RGBA::new(mean(|c| c.red), mean(|c| c.green), mean(|c| c.blue), mean(|c| c.alpha));
+        let color = PaintColor::srgb(mean(|c| c.red), mean(|c| c.green), mean(|c| c.blue), mean(|c| c.alpha));
         return vec![(0.0, color)];
     }
     let mut repeated = Vec::with_capacity(stops.len() * (last_copy - first_copy + 1.0) as usize);
@@ -1003,7 +1004,9 @@ fn repeat_stops(stops: Vec<(f32, RGBA)>) -> Vec<(f32, RGBA)> {
     repeated
 }
 
-fn rgba_components(color: RGBA) -> [f32; 4] {
+fn rgba_components(color: PaintColor) -> [f32; 4] {
+    // (the colours of a gradient are interpolated in sRGB for now)
+    let color = color.clip_to_srgb();
     let channel = |value: u8| f32::from(value) / 255.0;
     [channel(color.red), channel(color.green), channel(color.blue), channel(color.alpha)]
 }
@@ -1025,7 +1028,7 @@ fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
 
 /// Cuts the stops to the range `0..=1`, with stops at the ends if they are in the middle of a
 /// transition.
-fn clip_stops(stops: Vec<(f32, RGBA)>) -> Vec<ResolvedStop> {
+fn clip_stops(stops: Vec<(f32, PaintColor)>) -> Vec<ResolvedStop> {
     let stops: Vec<(f32, [f32; 4])> = stops.into_iter().map(|(o, c)| (o, rgba_components(c))).collect();
     let color_at = |at: f32| -> [f32; 4] {
         // the colour of a hard transition at `at` is the one after it
@@ -1308,15 +1311,15 @@ mod tests {
         LengthPercentage::Percentage(super::super::specified::Percentage(value))
     }
 
-    const RED: RGBA = RGBA { red: 255, green: 0, blue: 0, alpha: 255 };
-    const BLUE: RGBA = RGBA { red: 0, green: 0, blue: 255, alpha: 255 };
+    const RED: PaintColor = PaintColor::srgb(255, 0, 0, 255);
+    const BLUE: PaintColor = PaintColor::srgb(0, 0, 255, 255);
     const BOX: BoxSize = BoxSize { x: 10.0, y: 20.0, width: 200.0, height: 100.0 };
 
-    fn stop(color: RGBA, positions: &[LengthPercentage]) -> Stop<LengthPercentage, RGBA> {
+    fn stop(color: PaintColor, positions: &[LengthPercentage]) -> Stop<LengthPercentage, PaintColor> {
         Stop { color, positions: positions.iter().cloned().map(StopPosition::Length).collect() }
     }
 
-    fn linear(direction: LinearDirection, stops: Vec<Stop<LengthPercentage, RGBA>>) -> ResolvedGradient {
+    fn linear(direction: LinearDirection, stops: Vec<Stop<LengthPercentage, PaintColor>>) -> ResolvedGradient {
         Gradient { kind: GradientKind::Linear(direction), repeating: false, interpolation: Default::default(), stops }
     }
 
@@ -1462,7 +1465,7 @@ mod tests {
     #[test]
     fn transparent_stops_keep_the_other_colour() {
         // premultiplied interpolation: red fades out without going through black
-        let transparent = RGBA::new(0, 0, 0, 0);
+        let transparent = PaintColor::srgb(0, 0, 0, 0);
         let g = linear(LinearDirection::default(), vec![stop(RED, &[]), stop(transparent, &[])]);
         let stops = g.resolve(BOX, BOX).unwrap().stops;
         assert!(stops.len() > 2);

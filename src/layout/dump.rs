@@ -20,7 +20,7 @@ use crate::layout::components::{
 };
 use crate::layout::construct::AssignLayoutEntity;
 use crate::parser::ParsedData;
-use crate::style::properties::computed::{PixelLength, RGBA};
+use crate::style::properties::computed::{PixelLength, PaintColor};
 use crate::tree::{DomRef, TreeLinked};
 
 pub fn dump_layout(dom: &DomRef, world: &World) -> String {
@@ -128,13 +128,24 @@ fn write_boxes(out: &mut String, pos: Position, deco: Decoration) {
     write!(out, ", \"padding\": {}", Edges(pad)).unwrap();
     write!(out, ", \"border\": {}", Edges(bor)).unwrap();
     write!(out, ", \"margin\": {}", Edges(deco.margin)).unwrap();
-    if deco.background_color.alpha > 0 {
+    if deco.background_color.alpha() > 0 {
         write!(out, ", \"background\": {}", color(deco.background_color)).unwrap();
     }
 }
 
-fn color(c: RGBA) -> String {
-    format!("[{}, {}, {}, {}]", c.red, c.green, c.blue, c.alpha)
+fn color(c: PaintColor) -> String {
+    match c {
+        PaintColor::Srgb(c) => format!("[{}, {}, {}, {}]", c.red, c.green, c.blue, c.alpha),
+        // the colours that sRGB cannot hold: Display P3 (encoded) or CIE XYZ (D65), and alpha
+        PaintColor::DisplayP3(c) => {
+            let [r, g, b] = c.components();
+            format!("[\"display-p3\", {}, {}, {}, {}]", number(r), number(g), number(b), c.alpha)
+        }
+        PaintColor::Xyz(c) => {
+            let [x, y, z] = c.components();
+            format!("[\"xyz\", {}, {}, {}, {}]", number(x), number(y), number(z), c.alpha)
+        }
+    }
 }
 
 /// Collects the rectangles that are filled with a solid color for the element tree below `node`.
@@ -179,8 +190,8 @@ fn push_rects(entity: specs::Entity, world: &World, rects: &mut Vec<String>) {
         );
         let width = pos.width.0 + pad.left.0 + pad.right.0 + bor.left.0 + bor.right.0;
         let height = pos.height.0 + pad.top.0 + pad.bottom.0 + bor.top.0 + bor.bottom.0;
-        let mut push = |c: RGBA, x: f32, y: f32, width: f32, height: f32| {
-            if c.alpha > 0 && width > 0.0 && height > 0.0 {
+        let mut push = |c: PaintColor, x: f32, y: f32, width: f32, height: f32| {
+            if c.alpha() > 0 && width > 0.0 && height > 0.0 {
                 rects.push(format!(
                     "{{\"page\": {}, \"x\": {}, \"y\": {}, \"width\": {}, \"height\": {}, \"color\": {}}}",
                     pos.page, number(x), number(y), number(width), number(height), color(c)
@@ -193,7 +204,7 @@ fn push_rects(entity: specs::Entity, world: &World, rects: &mut Vec<String>) {
         if let Some(image) = world.read_storage::<crate::layout::components::ImageBox>().get(entity) {
             if let crate::image::LoadedImage::Raster(raster) = &*image.image {
                 if let Some([red, green, blue]) = raster.uniform_color() {
-                    push(RGBA::new(red, green, blue, 255), pos.x.0, pos.y.0, pos.width.0, pos.height.0);
+                    push(PaintColor::srgb(red, green, blue, 255), pos.x.0, pos.y.0, pos.width.0, pos.height.0);
                 }
             }
         }

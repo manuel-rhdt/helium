@@ -35,7 +35,7 @@ use ttf_parser::colr::{ClipBox, CompositeMode, GradientExtend, Paint, Painter};
 use ttf_parser::{GlyphId, OutlineBuilder, RgbaColor};
 
 use crate::layout::text::font::{Font, GlyphIndex};
-use crate::style::properties::computed::RGBA;
+use crate::style::properties::computed::{PaintColor, SrgbColor};
 
 /// The colour glyphs of a document: the fonts that have them and the forms that were written for
 /// their glyphs (by font, glyph and text colour; `None` for a glyph that has nothing to paint).
@@ -69,14 +69,15 @@ impl ColorGlyphs {
         context: &mut PageContext<'_, '_, '_>,
         name: &str,
         glyph: GlyphIndex,
-        color: RGBA,
+        color: PaintColor,
         (x, y): (Pt, Pt),
         size: Pt,
         filter: Option<StreamFilter>,
     ) -> Result<(), Error> {
         let Some(font) = self.fonts.get(name) else { return Ok(()) };
         let scale = size.0 / f64::from(font.upem);
-        self.paint(context, name, glyph, color, [scale, 0.0, 0.0, scale, x.0, y.0], filter)
+        // the layers of a colour glyph that take the colour of the text are painted in sRGB
+        self.paint(context, name, glyph, color.clip_to_srgb(), [scale, 0.0, 0.0, scale, x.0, y.0], filter)
     }
 
     /// Paints `glyph` of the font `name` (if it is a colour glyph) with the matrix that maps the
@@ -86,7 +87,7 @@ impl ColorGlyphs {
         context: &mut PageContext<'_, '_, '_>,
         name: &str,
         glyph: GlyphIndex,
-        color: RGBA,
+        color: SrgbColor,
         matrix: [f64; 6],
         filter: Option<StreamFilter>,
     ) -> Result<(), Error> {
@@ -115,7 +116,7 @@ fn write_glyph(
     context: &mut PageContext<'_, '_, '_>,
     font: &Font,
     glyph: GlyphIndex,
-    color: RGBA,
+    color: SrgbColor,
     filter: Option<StreamFilter>,
 ) -> Result<Option<FormReference>, Error> {
     let Ok(face) = ttf_parser::Face::parse(&font.data, font.index) else {

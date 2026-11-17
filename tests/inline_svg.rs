@@ -119,8 +119,9 @@ fn the_style_sheets_of_the_document_apply() {
              </svg>"
         ),
     );
-    // the rule with the higher specificity wins, whatever the order in the style sheet is
-    for color in ["0.07 0.07 0.07 rg", "0.8 0 0 rg", "0 0.8 0 rg", "0 0 0.8 rg"] {
+    // the rule with the higher specificity wins, whatever the order in the style sheet is (#111111
+    // is 17/255, written with the six decimals that a colour has)
+    for color in ["0.066667 0.066667 0.066667 rg", "0.8 0 0 rg", "0 0.8 0 rg", "0 0 0.8 rg"] {
         assert_eq!(count(&r.pdf, color), 1, "{}: {}\n{}", color, r.pdf, r.log);
     }
 }

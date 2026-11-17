@@ -59,8 +59,8 @@ struct Options {
     no_tags: bool,
     /// Write a file that conforms to this level of PDF/A: 2a, 2b, 2u, 3a, 3b or 3u. The level `a`
     /// needs the structure tree, so it does not go with `--no-tags`. Colours are sRGB (the output
-    /// intent is a profile that is made in code); what the document uses that PDF/A forbids is
-    /// only CMYK images are reported (as a warning).
+    /// intent is a profile that is made in code), so a CMYK image is an error. The other things
+    /// that PDF/A forbids are not checked.
     #[structopt(long = "pdfa", value_name = "LEVEL")]
     pdfa: Option<pdf::PdfALevel>,
     /// Write the computed layout as JSON to this file (use `-` for stdout)
@@ -231,14 +231,17 @@ fn main() -> Result<(), Error> {
 
     let display_list = display_list::generate_display_list(&mut layout_context);
 
-    pdf::write_pdf(
+    if let Err(error) = pdf::write_pdf(
         opt.output,
         display_list,
         opt.no_filter,
         opt.crop,
         !opt.no_tags,
         opt.pdfa,
-    )?;
+    ) {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
 
     if let Some(code) = check_exit_code {
         std::process::exit(code);

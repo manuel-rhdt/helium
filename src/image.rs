@@ -170,13 +170,132 @@ impl RasterImage {
         })
     }
 
+    /// The ICC profile that the file carries: the `ICC_PROFILE` segments of a JPEG file, the `iCCP`
+    /// chunk of a PNG file, or (a PNG file with a `cICP` chunk of Display P3 and the sRGB curve) the
+    /// profile of Display P3. Whether the profile is valid is not checked here.
+    pub fn icc_profile(&self) -> Option<Vec<u8>> {
+        if self.data.starts_with(&[0xFF, 0xD8]) {
+            jpeg_icc_profile(&self.data)
+        } else {
+            png_icc_profile(&self.data)
+        }
+    }
+
     /// The image as the PDF library embeds it.
+    /// Whether the image has CMYK colours: a JPEG file with four components (only JPEG files
+    /// can).
+    pub fn is_cmyk(&self) -> bool {
+        jpeg_components(&self.data) == Some(4)
+    }
+
     pub fn to_pdf_image(&self) -> Result<Image, String> {
         match &self.decoded {
             Some(image) => Ok(image.clone()),
             None => to_pdf_image(&self.data).map(|(image, _)| image),
         }
     }
+}
+
+/// The ICC profile of a JPEG file: the data of the APP2 segments that start with `ICC_PROFILE\0`, the
+/// sequence number and the number of segments (ICC.1, B.4), joined in the order of their numbers.
+fn jpeg_icc_profile(data: &[u8]) -> Option<Vec<u8>> {
+    const ID: &[u8; 12] = b"ICC_PROFILE\0";
+    let mut at = 2;
+    let mut parts: Vec<(u8, u8, &[u8])> = vec![];
+    while at + 4 <= data.len() {
+        if data[at] != 0xFF {
+            break;
+        }
+        let marker = data[at + 1];
+        match marker {
+            0xFF => at += 1,
+            0x01 | 0xD0..=0xD8 => at += 2,
+            0xD9 | 0xDA => break,
+            _ => {
+                let length = usize::from(u16::from_be_bytes([data[at + 2], data[at + 3]]));
+                let segment = data.get(at + 4..at + 2 + length)?;
+                if marker == 0xE2 && segment.len() > 14 && segment.starts_with(ID) {
+                    parts.push((segment[12], segment[13], &segment[14..]));
+                }
+                at += 2 + length;
+            }
+        }
+    }
+    let count = parts.first()?.1;
+    if count == 0 || parts.len() != usize::from(count) || parts.iter().any(|part| part.1 != count) {
+        return None;
+    }
+    parts.sort_by_key(|part| part.0);
+    if parts.iter().enumerate().any(|(index, part)| usize::from(part.0) != index + 1) {
+        return None;
+    }
+    Some(parts.iter().flat_map(|part| part.2.iter().copied()).collect())
+}
+
+/// The most that an `iCCP` chunk may inflate to: profiles of cameras and printers are well below it.
+const MAX_PROFILE_SIZE: u64 = 16 << 20;
+
+/// The ICC profile of a PNG file: the `iCCP` chunk (a name, a null byte, the method 0 and a zlib
+/// stream), else the profile of Display P3 for a `cICP` chunk of Display P3 with the sRGB curve.
+fn png_icc_profile(data: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut at = 8;
+    let mut cicp = None;
+    while let Some(head) = data.get(at..at + 8) {
+        let length = u32::from_be_bytes([head[0], head[1], head[2], head[3]]) as usize;
+        let body = data.get(at + 8..at + 8 + length)?;
+        match &head[4..8] {
+            b"iCCP" => {
+                let name_end = body.iter().position(|byte| *byte == 0)?;
+                if body.get(name_end + 1) != Some(&0) {
+                    return None;
+                }
+                let mut profile = vec![];
+                flate2::read::ZlibDecoder::new(&body[name_end + 2..]).take(MAX_PROFILE_SIZE).read_to_end(&mut profile).ok()?;
+                return Some(profile);
+            }
+            b"cICP" if body.len() >= 4 => cicp = Some([body[0], body[1], body[2], body[3]]),
+            b"IDAT" | b"IEND" => break,
+            _ => {}
+        }
+        at += 12 + length;
+    }
+    // primaries 12 (Display P3), transfer 13 (sRGB), matrix 0 (RGB), full range
+    match cicp {
+        Some([12, 13, 0, 1]) => Some(lemon_pdf::icc::display_p3_profile()),
+        _ => None,
+    }
+}
+
+/// The number of colour components of a JPEG file, from the header of its frame.
+fn jpeg_components(data: &[u8]) -> Option<u8> {
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut at = 2;
+    while at + 4 <= data.len() {
+        if data[at] != 0xFF {
+            return None;
+        }
+        let marker = data[at + 1];
+        match marker {
+            // fill bytes, and the markers that have no data
+            0xFF => at += 1,
+            0x01 | 0xD0..=0xD7 | 0xD8 => at += 2,
+            // the start of the data: no frame header was found
+            0xD9 | 0xDA => return None,
+            _ => {
+                let length = usize::from(u16::from_be_bytes([data[at + 2], data[at + 3]]));
+                // the frame headers (and not the tables with the markers in between)
+                if matches!(marker, 0xC0..=0xCF) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+                    // length, precision, height, width, then the number of components
+                    return data.get(at + 9).copied();
+                }
+                at += 2 + length;
+            }
+        }
+    }
+    None
 }
 
 /// The image for the PDF library, and whether its pixels were decoded (and not the file kept).
@@ -463,5 +582,47 @@ mod tests {
         assert!(load("", dir, &FontContext::system()).is_err());
         assert!(load("data:image/png,abc", dir, &FontContext::system()).unwrap_err().contains("JPEG, PNG and SVG"));
         assert!(load("../../etc/passwd", dir, &FontContext::system()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod jpeg_tests {
+    use super::*;
+
+    #[test]
+    fn the_components_of_jpeg_files_are_read() {
+        assert_eq!(jpeg_components(include_bytes!("../tests/data/cmyk.jpg")), Some(4));
+        assert_eq!(jpeg_components(include_bytes!("../tests/data/rgb.jpg")), Some(3));
+        // not a JPEG file, and a truncated one
+        assert_eq!(jpeg_components(b"\x89PNG\r\n"), None);
+        assert_eq!(jpeg_components(&include_bytes!("../tests/data/cmyk.jpg")[..30]), None);
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    fn app2(number: u8, count: u8, data: &[u8]) -> Vec<u8> {
+        let mut segment = vec![0xFF, 0xE2];
+        segment.extend(((data.len() + 16) as u16).to_be_bytes());
+        segment.extend(b"ICC_PROFILE\0");
+        segment.extend([number, count]);
+        segment.extend(data);
+        segment
+    }
+
+    #[test]
+    fn the_segments_of_a_jpeg_profile_are_joined_in_the_order_of_their_numbers() {
+        let mut jpeg = vec![0xFF, 0xD8];
+        jpeg.extend(app2(2, 2, b"world"));
+        jpeg.extend(app2(1, 2, b"hello "));
+        jpeg.extend([0xFF, 0xDA, 0, 2]);
+        assert_eq!(jpeg_icc_profile(&jpeg).unwrap(), b"hello world");
+        // a segment is missing
+        let mut incomplete = vec![0xFF, 0xD8];
+        incomplete.extend(app2(2, 3, b"world"));
+        incomplete.extend([0xFF, 0xDA, 0, 2]);
+        assert_eq!(jpeg_icc_profile(&incomplete), None);
     }
 }

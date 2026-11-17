@@ -1,7 +1,7 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::font_usage::FontUsage;
 use crate::layout::components::TextOperator;
-use crate::style::properties::computed::PixelLength;
+use crate::style::properties::computed::{PixelLength, PaintColor};
 use crate::tagging::TagRecorder;
 use std::path::PathBuf;
 
@@ -143,6 +143,69 @@ impl Alpha {
         self.set_fill(context, u8::MAX)?;
         self.set_stroke(context, u8::MAX)
     }
+}
+
+/// Linear-light Display P3 to CIE XYZ (D65), and CIE XYZ (D65) to linear-light Rec. 2020 (CSS Color 4).
+#[rustfmt::skip]
+const P3_TO_XYZ: [[f64; 3]; 3] = [
+    [0.486_570_948_6, 0.265_667_693_2, 0.198_217_285_2],
+    [0.228_974_564_1, 0.691_738_521_8, 0.079_286_914_1],
+    [0.0,             0.045_113_381_9, 1.043_944_368_9],
+];
+#[rustfmt::skip]
+const XYZ_TO_REC2020: [[f64; 3]; 3] = [
+    [ 1.716_651_187_97, -0.355_670_783_78, -0.253_366_281_37],
+    [-0.666_684_351_83,  1.616_481_236_63,  0.015_768_545_81],
+    [ 0.017_639_857_45, -0.042_770_613_26,  0.942_103_121_24],
+];
+
+fn multiply(matrix: &[[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
+    matrix.map(|row| row.iter().zip(vector).map(|(m, v)| m * v).sum())
+}
+
+/// The coordinates of a colour (CIE XYZ, D65) in the Rec. 2020 profile with the gamma 2.4: the linear
+/// ones to the power of 1/2.4. A colour that Rec. 2020 cannot hold is clipped, the only clipping here.
+fn rec2020_gamma24_components(xyz: [f64; 3]) -> [f64; 3] {
+    multiply(&XYZ_TO_REC2020, xyz).map(|linear| linear.clamp(0.0, 1.0).powf(1.0 / 2.4))
+}
+
+/// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is in an ICC
+/// space of sRGB, written once for the document: CSS chooses its colours deliberately, and the file
+/// says in which space they are, whatever a viewer takes the device to be. (Device colours, which images
+/// and shadings still have, are sRGB too: the page defines `DefaultRGB`.) Any other colour is in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4, written once for the
+/// document: matrix/TRC profiles are the best supported wide-gamut encoding of PDF viewers, and this one
+/// holds Display P3 and nearly all that CSS can write. (It has a pure gamma and not the curve of
+/// Rec. 2020 because an iPhone decodes every Rec. 2020 profile with a gamma of 2.4.) Only a colour that
+/// Rec. 2020 cannot hold is clipped, to it. The alpha is not set.
+fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
+    let xyz = match color {
+        PaintColor::Srgb(color) => {
+            let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
+            let space = context.pdf_context.icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
+            let space = context.add_color_space(space);
+            let components = [channel(color.red), channel(color.green), channel(color.blue)];
+            return if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) };
+        }
+        PaintColor::DisplayP3(color) => {
+            let decode = |value: f64| if value <= 0.040_45 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) };
+            multiply(&P3_TO_XYZ, color.components().map(|c| decode(f64::from(c))))
+        }
+        PaintColor::Xyz(color) => color.components().map(f64::from),
+    };
+    let space = context.pdf_context.icc_color_space("rec2020-gamma24", lemon_pdf::icc::rec2020_gamma24_profile, 3, Some(StreamFilter::Deflate))?;
+    let space = context.add_color_space(space);
+    let components = rec2020_gamma24_components(xyz).map(|value| (value * 100_000.0).round() / 100_000.0);
+    if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) }
+}
+
+/// Makes the fills of the page use `color`, see [`set_color`].
+pub(crate) fn set_fill_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor) -> Result<(), Error> {
+    set_color(context, color, false)
+}
+
+/// Makes the strokes of the page use `color`, see [`set_color`].
+pub(crate) fn set_stroke_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor) -> Result<(), Error> {
+    set_color(context, color, true)
 }
 
 /// Paints the items of a display list. The coordinates of the items are in pixels from the top
@@ -337,20 +400,12 @@ fn paint_item(
                 page_context.concatenate_matrix(1.0, 0.0, 0.0, 1.0, x.into(), y.into())?;
             }
             &DisplayItem::Color(color) => {
-                let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
-                let red = floatize(color.red);
-                let green = floatize(color.green);
-                let blue = floatize(color.blue);
-                page_context.device_rgb_fill_color(red, green, blue)?;
-                alpha.set_fill(page_context, color.alpha)?;
+                set_fill_color(page_context, color)?;
+                alpha.set_fill(page_context, color.alpha())?;
             }
             &DisplayItem::StrokeColor(color) => {
-                let floatize = |val: u8| f64::from(val) / f64::from(u8::MAX);
-                let red = floatize(color.red);
-                let green = floatize(color.green);
-                let blue = floatize(color.blue);
-                page_context.device_rgb_stroke_color(red, green, blue)?;
-                alpha.set_stroke(page_context, color.alpha)?;
+                set_stroke_color(page_context, color)?;
+                alpha.set_stroke(page_context, color.alpha())?;
             }
             &DisplayItem::LineString {
                 ref points,
@@ -521,14 +576,8 @@ fn paint_item(
                             }
                         }
                         &TextOperator::SetColor(color) => {
-                            let floatize =
-                                |val: u8| f64::from(val) / f64::from(u8::MAX);
-                            page_context.device_rgb_fill_color(
-                                floatize(color.red),
-                                floatize(color.green),
-                                floatize(color.blue),
-                            )?;
-                            alpha.set_fill(page_context, color.alpha)?;
+                            set_fill_color(page_context, color)?;
+                            alpha.set_fill(page_context, color.alpha())?;
                         }
                         &TextOperator::KernedGlyphs(range) => {
                             marked.before_content(page_context, tagged)?;
@@ -623,13 +672,45 @@ fn paint_item(
     Ok(())
 }
 
+/// Gives the image the ICC profile of its file, if it has one that a PDF can use for the image (its colour
+/// space and number of components are those of the image); otherwise the image keeps its device
+/// colours, which are sRGB (`DefaultRGB`), what CSS says for an image without a profile. The profile
+/// is written once, however many images have it.
+fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::RasterImage, image: lemon_pdf::image::Image) -> lemon_pdf::image::Image {
+    let Some(profile) = raster.icc_profile() else {
+        return image;
+    };
+    let components = image.color_space().components();
+    match lemon_pdf::icc::inspect_profile(&profile) {
+        Ok(info) if info.components == components => {}
+        Ok(info) => {
+            log::warn!("the ICC profile of an image has {} components and the image {}: it is ignored", info.components, components);
+            return image;
+        }
+        Err(why) => {
+            log::warn!("the ICC profile of an image is ignored: {why}");
+            return image;
+        }
+    }
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    profile.hash(&mut hasher);
+    let key = format!("image-profile-{:016x}-{}", hasher.finish(), profile.len());
+    match context.icc_color_space(&key, || profile, i64::from(components), Some(StreamFilter::Deflate)) {
+        Ok(space) => image.with_icc_profile(space),
+        Err(error) => {
+            log::warn!("the ICC profile of an image cannot be written: {error}");
+            image
+        }
+    }
+}
+
 /// Embeds the images of the items of a display list that are not embedded yet.
 fn embed_images(
     context: &mut DocumentContext<'_>,
     display_list: &mut display_list::DisplayList,
     images: &mut HashMap<*const crate::image::LoadedImage, Embedded>,
     svg_writer: &mut crate::svg::SvgWriter,
-    pdfa: Option<PdfALevel>,
 ) {
     for item in display_list.items() {
         let DisplayItem::Image { image, .. } = item else {
@@ -642,13 +723,10 @@ fn embed_images(
         let embedded = match &**image {
             crate::image::LoadedImage::Raster(raster) => raster
                 .to_pdf_image()
-                .inspect(|pdf_image| {
-                    // the output intent of a PDF/A file is RGB: CMYK needs a profile of its own
-                    if pdfa.is_some() && pdf_image.color_space() == lemon_pdf::image::ColorSpace::DeviceCMYK {
-                        log::warn!("A CMYK image does not conform to PDF/A (the output intent is sRGB).");
-                    }
+                .and_then(|pdf_image| {
+                    let pdf_image = with_icc_profile(context, raster, pdf_image);
+                    context.write_image(pdf_image).map_err(|error| error.to_string())
                 })
-                .and_then(|pdf_image| context.write_image(pdf_image).map_err(|error| error.to_string()))
                 .map(Embedded::Raster),
             crate::image::LoadedImage::Svg(svg) => svg_writer
                 .write(context, &svg.tree)
@@ -701,6 +779,29 @@ impl std::str::FromStr for PdfALevel {
     }
 }
 
+/// The output intent of a PDF/A file is RGB, and PDF/A does not allow device CMYK colours without
+/// one that is CMYK, so a CMYK image is an error. (An image has to be converted to RGB.)
+fn check_pdfa_images(print_pages: &mut PrintPages) -> Result<(), Error> {
+    let lists = print_pages
+        .pages
+        .iter_mut()
+        .map(|page| &mut page.display_list)
+        .chain(print_pages.islands.iter_mut().map(|island| &mut island.display_list));
+    for list in lists {
+        for item in list.items() {
+            if let DisplayItem::Image { image, .. } = item {
+                if matches!(&**image, crate::image::LoadedImage::Raster(raster) if raster.is_cmyk()) {
+                    return Err(Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "the document has a CMYK image, which PDF/A does not allow (the colours are sRGB): convert it to RGB",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Writes the pages as a PDF file. If `tagged`, it is a tagged PDF whose structure tree is the
 /// `structure` of the pages. With a `pdfa` level the file is written to conform to it.
 pub fn write_pdf(
@@ -711,6 +812,10 @@ pub fn write_pdf(
     tagged: bool,
     pdfa: Option<PdfALevel>,
 ) -> Result<(), Error> {
+    if pdfa.is_some() {
+        // before the file is made, so that there is none if there is an error
+        check_pdfa_images(&mut print_pages)?;
+    }
     let file = BufWriter::new(File::create(output_path)?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
@@ -827,7 +932,7 @@ pub fn write_pdf(
     // own, which come after it, so the last one is written first.
     for index in (0..print_pages.islands.len()).rev() {
         let mut island = std::mem::take(&mut print_pages.islands[index]);
-        embed_images(&mut context, &mut island.display_list, &mut images, &mut svg_writer, pdfa);
+        embed_images(&mut context, &mut island.display_list, &mut images, &mut svg_writer);
         let (width, height) = (island.width, island.height);
         let form = context.write_form(
             [Pt(0.0), Pt(0.0), Pt::from(width), Pt::from(height)],
@@ -852,7 +957,7 @@ pub fn write_pdf(
         svg_writer.add_island(index as u64, form);
     }
     for page in &mut print_pages.pages {
-        embed_images(&mut context, &mut page.display_list, &mut images, &mut svg_writer, pdfa);
+        embed_images(&mut context, &mut page.display_list, &mut images, &mut svg_writer);
     }
 
     log::info!("Write {} pages.", print_pages.pages.len());
@@ -890,6 +995,12 @@ pub fn write_pdf(
         };
 
         page.add_content(&mut context, filter, |page_context| {
+            // device colours (and images and shadings, which have only those) are sRGB, in every
+            // viewer, instead of whatever the viewer takes the device to be
+            let srgb = page_context
+                .pdf_context
+                .icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
+            page_context.set_default_color_space(lemon_pdf::color_space::DefaultColorSpace::Rgb, srgb);
             paint_items(
                 page_context,
                 &mut print_page.display_list,

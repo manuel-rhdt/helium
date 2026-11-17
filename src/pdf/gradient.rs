@@ -361,11 +361,11 @@ pub fn paint_blend_group(
             form.clip(FillRule::NonZero)?;
             form.end_path()?;
             let color = group.color;
-            if color.alpha != 0 {
+            if color.alpha() != 0 {
                 let channel = |value: u8| f64::from(value) / 255.0;
-                form.device_rgb_fill_color(channel(color.red), channel(color.green), channel(color.blue))?;
-                if color.alpha != 255 {
-                    form.set_fill_alpha(channel(color.alpha))?;
+                super::set_fill_color(form, color)?;
+                if color.alpha() != 255 {
+                    form.set_fill_alpha(channel(color.alpha()))?;
                 }
                 super::emit_path(form, &group.clip, page_height)?;
                 form.fill_path()?;

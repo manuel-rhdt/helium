@@ -1,12 +1,14 @@
 name: Gallery
 
-# Renders the documents in gallery/ to PDF on every push, and publishes them (with thumbnails)
-# to GitHub Pages when the push is to master. On other branches the rendered site is only
-# uploaded as a workflow artifact, which still catches documents that stop rendering.
+# Renders the documents in gallery/ to PDF on every push to master, and publishes them (with
+# thumbnails) to GitHub Pages. It can also be started by hand for another branch (Actions -> Gallery
+# -> Run workflow), and then the rendered site is only uploaded as a workflow artifact, which
+# still catches documents that stop rendering.
 #
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
 on:
   push:
+    branches: [ master ]
   workflow_dispatch:
 
 concurrency:

@@ -13,7 +13,7 @@ helium [options] input.html output.pdf
 | `--no-compression` | write uncompressed content streams (for inspecting the PDF) |
 | `--crop` | one page that is as large as the content, instead of A4 pages: no page breaks (also not forced ones), page margins, `@page` rules or margin boxes. The page is as wide as the content needs (what shrink-to-fit comes to with no limit, so text is not broken into lines: give the `body` a `width` to set one) and as high as the content, up to 100 000 pixels, after which it has another page |
 | `--no-tags` | write an untagged PDF |
-| `--pdfa <level>` | write a PDF/A file: level `2a`, `2b`, `2u`, `3a`, `3b` or `3u`. Adds the identification to the XMP packet and an output intent with an sRGB profile (made in code, so there is no file and no licence to care about), which is what makes the device colours that the pages use conformant. The level `a` needs the structure tree (not with `--no-tags`). Not checked: what the document uses that PDF/A forbids, except that a CMYK image is reported as a warning |
+| `--pdfa <level>` | write a PDF/A file: level `2a`, `2b`, `2u`, `3a`, `3b` or `3u`. Adds the identification to the XMP packet and an output intent with an sRGB profile (made in code, so there is no file and no licence to care about), which is what makes the device colours that the pages use conformant. The level `a` needs the structure tree (not with `--no-tags`). A CMYK image is an error (the colours are sRGB). Not checked: the other things that PDF/A forbids, like fonts that may not be embedded |
 | `--no-system-fonts` | use only the built-in fonts, so that the output does not depend on the machine |
 | `--dump-layout <file>` | write the computed layout as JSON (`-` for stdout) |
 | `--check-layout` | evaluate the `data-expected-*` attributes of the document against the layout |
@@ -35,8 +35,9 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   interlacing (gray, RGB and palette, 1 to 16 bits, also with a transparent color or a single
   transparent palette entry) are embedded without being decoded. All other PNG files (alpha
   channel, interlaced, partially transparent palettes) are decoded, with 16 bit samples reduced
-  to 8 bits and the alpha channel written as a soft mask. Gamma and color profiles of PNG files
-  are ignored. SVG files are drawn as vector graphics (see below). Sizes follow the
+  to 8 bits and the alpha channel written as a soft mask. The ICC profile of a JPEG or PNG file (`iCCP`, or a `cICP` of Display P3) is the
+  colour space of the image, written once however many images have it; one that does not fit the image (components, header) is
+  ignored with a warning, and an image without a profile is sRGB. PNG gamma and chromaticity chunks are ignored. SVG files are drawn as vector graphics (see below). Sizes follow the
   `width`/`height` attributes and properties and the proportions of the image; an image in a box
   of another shape is scaled to fit and centered.
 - **SVG** (`usvg` parses it): paths and basic shapes, fill and stroke (caps, joins, dashes), solid
@@ -145,7 +146,12 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   for boxes that are not split over pages (a fragment of a split box has none). `inset` shadows
   are not drawn, and `text-shadow` is not supported.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
-  `color()`, with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
+  `color()` (a colour that sRGB cannot hold, like `color(display-p3 1 0 0)`, is not clipped, in fills,
+  strokes, text, backgrounds and borders: it is written in one ICC space with the primaries of Rec. 2020 and a gamma of 2.4 (written once;
+  it holds Display P3 and nearly all that CSS can write, and an iPhone shows it as it says), and only a colour that
+  Rec. 2020 cannot hold is clipped, to it. The other colours are in an ICC space of sRGB (written once), and device RGB, which images and
+  shadings still use, is defined as sRGB for every page (`DefaultRGB`). Gradients, `color-mix()`, SVG images and the layers of colour glyphs are still
+  sRGB, and a wide colour is clipped there), with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
   painted for backgrounds, borders, text, text decorations and gradients. `color-mix()` mixes
   two colours (also nested, and with `var()`) in `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`,
   `lch`, `oklab`, `oklch`, `xyz`, `xyz-d50` and `xyz-d65`, with percentages, alpha premultiplied

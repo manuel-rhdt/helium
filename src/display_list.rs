@@ -4,7 +4,7 @@ use crate::layout::components::{
     TransformMatrix, VectorGraphics, ZIndex,
 };
 use crate::layout::normal_formatting::Pages;
-use crate::style::properties::computed::{ComputedValues, PixelLength, RGBA};
+use crate::style::properties::computed::{ComputedValues, PixelLength, PaintColor};
 use crate::style::properties::background::{image_tiles, resolve_layer};
 use crate::style::properties::specified::BackgroundBox;
 use crate::style::properties::gradient::{BoxSize, Image, Position as BackgroundPosition, Resolved};
@@ -146,34 +146,32 @@ impl Side {
 /// The two tones that the borders `inset`, `outset`, `groove` and `ridge` have: the light one
 /// and the dark one. A colour that is light enough is the light tone and the dark one is derived
 /// from it; for a dark colour it is the other way round, so that the tones still differ.
-fn border_tones(color: RGBA) -> (RGBA, RGBA) {
-    let value = color.red.max(color.green).max(color.blue) as f32 / 255.0;
+fn border_tones(color: PaintColor) -> (PaintColor, PaintColor) {
+    // the other tone is worked out in sRGB (from the colour clipped to it, if it is outside of
+    // the gamut), and the colour itself is kept as it is for the tone that it is
+    let srgb = color.clip_to_srgb();
+    let value = srgb.red.max(srgb.green).max(srgb.blue) as f32 / 255.0;
     let scale = |channel: u8, factor: f32| (channel as f32 * factor).round().clamp(0.0, 255.0) as u8;
     let brighten = |channel: u8| (channel as f32 + (255.0 - channel as f32) * 0.4).round() as u8;
     if value >= 0.5 {
         // the dark tone takes a third of the value off, like the borders of the browsers do
         let factor = ((value - 0.33) / value).max(0.0);
-        let dark = RGBA {
-            red: scale(color.red, factor),
-            green: scale(color.green, factor),
-            blue: scale(color.blue, factor),
-            ..color
-        };
+        let dark = PaintColor::srgb(
+            scale(srgb.red, factor),
+            scale(srgb.green, factor),
+            scale(srgb.blue, factor),
+            srgb.alpha,
+        );
         (color, dark)
     } else {
-        let light = RGBA {
-            red: brighten(color.red),
-            green: brighten(color.green),
-            blue: brighten(color.blue),
-            ..color
-        };
+        let light = PaintColor::srgb(brighten(srgb.red), brighten(srgb.green), brighten(srgb.blue), srgb.alpha);
         (light, color)
     }
 }
 
 /// The colour that a side of a border with `style` is painted in, if it has only one: `inset`
 /// and `outset` borders are light on two sides and dark on the other two.
-fn single_tone(style: BorderStyle, side: Side, color: RGBA) -> RGBA {
+fn single_tone(style: BorderStyle, side: Side, color: PaintColor) -> PaintColor {
     let (light, dark) = border_tones(color);
     match style {
         BorderStyle::Inset => if side.is_top_left() { dark } else { light },
@@ -345,8 +343,8 @@ fn rect_path(rect: Rect) -> Vec<PathSegment> {
 /// sizes the gradients, and `paint` the border box that they are painted into.
 fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect, content: Rect) -> Vec<Layer> {
     use crate::style::properties::specified::BackgroundBox;
-    use crate::style::properties::color::color_to_rgba;
-    let current = color_to_rgba(style.font.color);
+    use crate::style::properties::color::color_to_paint;
+    let current = color_to_paint(style.font.color);
     let size = |rect: Rect| BoxSize {
         x: rect.x.0,
         y: rect.y.0,
@@ -462,7 +460,7 @@ pub struct BlendGroup {
     /// The (rounded) border box.
     pub clip: Vec<PathSegment>,
     pub bbox: Rect,
-    pub color: RGBA,
+    pub color: PaintColor,
     /// From bottom to top.
     pub layers: Vec<GradientLayer>,
 }
@@ -473,7 +471,7 @@ pub struct ColorGlyphItem {
     pub size: PixelLength,
     pub font: String,
     pub glyph: crate::layout::text::font::GlyphIndex,
-    pub color: RGBA,
+    pub color: PaintColor,
 }
 
 #[derive(Debug, Clone)]
@@ -502,8 +500,8 @@ pub enum DisplayItem {
         rect: Rect,
         image: std::sync::Arc<crate::image::LoadedImage>,
     },
-    Color(RGBA),
-    StrokeColor(RGBA),
+    Color(PaintColor),
+    StrokeColor(PaintColor),
     /// A colour glyph (an emoji) painted from the `COLR` table of its font, whose origin is on
     /// the baseline at the point.
     ColorGlyph(Box<ColorGlyphItem>),
@@ -698,7 +696,7 @@ impl DisplayList {
         start: Point,
         end: Point,
         width: PixelLength,
-        color: RGBA,
+        color: PaintColor,
         entity: Entity,
         z: ZIndex,
     ) {
@@ -728,7 +726,7 @@ impl DisplayList {
         side: Side,
         edges: (PixelLength, PixelLength, PixelLength, PixelLength),
         widths: (PixelLength, PixelLength, PixelLength, PixelLength),
-        bands: &[(f32, f32, RGBA)],
+        bands: &[(f32, f32, PaintColor)],
         entity: Entity,
         z: ZIndex,
     ) {
@@ -763,7 +761,7 @@ impl DisplayList {
     /// The bands of the border of one side of a box with the styles that have several (`double`,
     /// `groove`, `ridge`) or two tones (`inset`, `outset`), as `border_bands` takes them, if the
     /// style is one of these.
-    fn toned_bands(side: Side, width: PixelLength, color: RGBA, style: BorderStyle) -> Option<Vec<(f32, f32, RGBA)>> {
+    fn toned_bands(side: Side, width: PixelLength, color: PaintColor, style: BorderStyle) -> Option<Vec<(f32, f32, PaintColor)>> {
         let (light, dark) = border_tones(color);
         Some(match style {
             BorderStyle::Double if width.0 >= 3.0 => vec![(0.0, 1.0 / 3.0, color), (2.0 / 3.0, 1.0, color)],
@@ -786,19 +784,19 @@ impl DisplayList {
         start: Point,
         end: Point,
         width: PixelLength,
-        color: RGBA,
+        color: PaintColor,
         style: BorderStyle,
         entity: Entity,
         z: ZIndex,
     ) {
         let w = width.0;
         // (a fully transparent border is not painted; the box has the space for it)
-        if w <= 0.0 || !style.is_visible() || color.alpha == 0 {
+        if w <= 0.0 || !style.is_visible() || color.alpha() == 0 {
             return;
         }
         let (nx, ny) = side.outward();
         // a line moved by `offset` away from the box
-        let stroke = |this: &mut Self, offset: f32, thickness: f32, color: RGBA| {
+        let stroke = |this: &mut Self, offset: f32, thickness: f32, color: PaintColor| {
             let shift = |p: Point| Point::new(p.x + PixelLength(nx * offset), p.y + PixelLength(ny * offset));
             this.stroked_line(shift(start), shift(end), PixelLength(thickness), color, entity, z);
         };
@@ -852,7 +850,7 @@ impl DisplayList {
     fn blended_background(
         &mut self,
         bbox: Rect,
-        color: RGBA,
+        color: PaintColor,
         layers: &[Layer],
         clip: &[PathSegment],
         entity: Entity,
@@ -887,16 +885,16 @@ impl DisplayList {
         rect: Rect,
         radii: [(PixelLength, PixelLength); 4],
         shadow: &crate::style::properties::computed::BoxShadow,
-        color: RGBA,
+        color: PaintColor,
         entity: Entity,
         z: ZIndex,
     ) {
-        if color.alpha == 0 {
+        if color.alpha() == 0 {
             return;
         }
         let blur = shadow.blur.max(0.0);
         let layers = if blur > 0.0 { ((blur * 2.0).ceil() as usize).clamp(4, 32) } else { 1 };
-        let source = f32::from(color.alpha) / 255.0;
+        let source = f32::from(color.alpha()) / 255.0;
         // the area the shadow can reach, outside of which the clip is a hole around the box
         let reach = blur + shadow.spread.max(0.0) + shadow.x.abs().max(shadow.y.abs()) + 1.0;
         let outer = Rect {
@@ -951,7 +949,7 @@ impl DisplayList {
             };
             let grown = [grow(radii[0]), grow(radii[1]), grow(radii[2]), grow(radii[3])];
             let fitted = fit_radii(grown, layer_rect.width, layer_rect.height);
-            let color = RGBA { alpha, ..color };
+            let color = color.with_alpha(alpha);
             self.append(DisplayItem::Push, entity, z);
             self.append(DisplayItem::Color(color), entity, z);
             self.append(
@@ -967,13 +965,13 @@ impl DisplayList {
     /// Paints the background of a style over a rectangle, behind everything else.
     fn page_background(&mut self, style: &ComputedValues, rect: Rect, entity: Entity) {
         let z = ZIndex(i64::MIN);
-        let color = crate::style::properties::color::color_to_rgba(style.background.background_color);
+        let color = crate::style::properties::color::color_to_paint(style.background.background_color);
         let gradients = background_gradients(style, rect, rect, rect);
         if gradients.iter().any(|layer| layer.blend() != BlendMode::Normal) {
             self.blended_background(rect, color, &gradients, &rect_path(rect), entity, z);
             return;
         }
-        if color != RGBA::transparent() {
+        if color != PaintColor::transparent() {
             self.append(DisplayItem::Push, entity, z);
             self.append(DisplayItem::Color(color), entity, z);
             self.append(DisplayItem::FilledRect(rect), entity, z);
@@ -1019,8 +1017,8 @@ impl DisplayList {
         rect: Rect,
         outer: [(PixelLength, PixelLength); 4],
         border: EdgeValues<PixelLength>,
-        border_color: EdgeValues<RGBA>,
-        background_color: RGBA,
+        border_color: EdgeValues<PaintColor>,
+        background_color: PaintColor,
         gradients: &[Layer],
         entity: Entity,
         z: ZIndex,
@@ -1031,7 +1029,7 @@ impl DisplayList {
         let blended = gradients.iter().any(|layer| layer.blend() != BlendMode::Normal);
         if blended {
             self.blended_background(rect, background_color, gradients, &outer_path, entity, z);
-        } else if background_color != RGBA::transparent() {
+        } else if background_color != PaintColor::transparent() {
             self.append(DisplayItem::Push, entity, z);
             self.append(DisplayItem::Color(background_color), entity, z);
             self.append(
@@ -1251,7 +1249,7 @@ impl<'a> System<'a> for DisplayDecoration {
             let style_entity = fragments.get(entity).map_or(entity, |fragment| fragment.0);
             let propagated = self.canvas_source == Some(style_entity);
             let background_color = if propagated {
-                RGBA::transparent()
+                PaintColor::transparent()
             } else {
                 background_color
             };
@@ -1275,8 +1273,8 @@ impl<'a> System<'a> for DisplayDecoration {
                 for shadow in style.box_.box_shadow.iter().rev().filter(|shadow| !shadow.inset) {
                     use crate::style::properties::computed::Color;
                     let color = match shadow.color {
-                        Color::CurrentColor => crate::style::properties::color::color_to_rgba(style.font.color),
-                        color => crate::style::properties::color::color_to_rgba(color),
+                        Color::CurrentColor => crate::style::properties::color::color_to_paint(style.font.color),
+                        color => crate::style::properties::color::color_to_paint(color),
                     };
                     self.display_list.box_shadow(border_box, radii, shadow, color, entity, z);
                 }
@@ -1310,7 +1308,7 @@ impl<'a> System<'a> for DisplayDecoration {
                     entity,
                     z,
                 );
-            } else if background_color != RGBA::transparent() {
+            } else if background_color != PaintColor::transparent() {
                 self.display_list.append(DisplayItem::Push, entity, z);
                 self.display_list
                     .append(DisplayItem::Color(background_color), entity, z);
@@ -1704,8 +1702,8 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
     // https://www.w3.org/TR/css-backgrounds-3/#special-backgrounds
     let canvas = *world.read_resource::<crate::layout::components::CanvasEntities>();
     let has_background = |style: &ComputedValues| {
-        crate::style::properties::color::color_to_rgba(style.background.background_color)
-            != RGBA::transparent()
+        crate::style::properties::color::color_to_paint(style.background.background_color)
+            != PaintColor::transparent()
             || style
                 .background
                 .background_image

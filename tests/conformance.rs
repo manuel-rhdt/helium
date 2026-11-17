@@ -107,3 +107,27 @@ fn the_gallery_conforms_to_pdfa() {
         check(&lib, level, vec![("letter", render("letter", level, &["--pdfa", level]))]);
     }
 }
+
+#[test]
+fn wide_gamut_colors_conform_to_pdfa() {
+    let Some(lib) = verapdf_lib() else {
+        eprintln!("skipped: VERAPDF_LIB is not set (see tools/fetch_verapdf.sh)");
+        return;
+    };
+    // colours of a wide gamut are CIELAB colours, which PDF/A allows; with an opacity (a
+    // transparency group) and a link besides
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("conformance_wide.html");
+    std::fs::write(
+        &input,
+        "<!doctype html><html lang=en><title>Wide</title>\
+         <p style=\"color: color(display-p3 1 0 0); background: oklch(0.7 0.3 150); border: 2px solid color(rec2020 0 1 0); opacity: .9\">\
+         wide <a href=\"#x\" style=\"color: lab(60 120 80)\">link</a></p><p id=x>x</p>",
+    )
+    .unwrap();
+    for level in ["2b", "3a"] {
+        let output = dir.join(format!("conformance_wide_{level}.pdf"));
+        common::helium().unwrap().args(["--no-system-fonts", "--pdfa", level]).arg(&input).arg(&output).assert().success();
+        assert!(validate(&lib, level, &[output.clone()]).is_empty(), "wide-gamut colours do not conform to {level}: {}", output.display());
+    }
+}

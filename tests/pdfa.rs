@@ -71,3 +71,31 @@ fn bad_levels_are_refused() {
     // level `a` is about the structure tree
     common::helium().unwrap().args(["--pdfa", "2a", "--no-tags"]).arg(&input).arg(&output).assert().failure();
 }
+
+fn render_with_image(name: &str, image: &str, args: &[&str]) -> std::process::Output {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join(format!("pdfa_{name}.html"));
+    let output = dir.join(format!("pdfa_{name}.pdf"));
+    let _ = std::fs::remove_file(&output);
+    std::fs::copy(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(image), dir.join(image)).unwrap();
+    std::fs::write(&input, format!("<!doctype html><html lang=en><title>T</title><img src=\"{image}\">")).unwrap();
+    common::helium().unwrap().args(args).arg(&input).arg(&output).output().unwrap()
+}
+
+#[test]
+fn a_cmyk_image_is_an_error_in_pdfa_mode() {
+    let output = render_with_image("cmyk", "cmyk.jpg", &["--pdfa", "2b"]);
+    assert!(!output.status.success());
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(message.contains("CMYK image"), "{message}");
+    // no file is left behind
+    let file = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("pdfa_cmyk.pdf");
+    assert!(!file.exists());
+}
+
+#[test]
+fn cmyk_images_are_fine_when_the_file_is_not_pdfa() {
+    assert!(render_with_image("cmyk_plain", "cmyk.jpg", &[]).status.success());
+    // and an RGB image is fine in PDF/A mode
+    assert!(render_with_image("rgb", "rgb.jpg", &["--pdfa", "2b"]).status.success());
+}

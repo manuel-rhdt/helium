@@ -8,7 +8,7 @@ use crate::parser::{ElementData, ParsedData};
 use crate::style::parse::{MarginBoxKind, PropertyDeclarationBlock, PseudoElement, Styles};
 use crate::style::properties::computed::{
     ComputedValues, Display, GenericSize, LineHeight, PixelLength as Px, PositionSpec, StyleBuilder,
-    TextAlign, color_to_rgba,
+    TextAlign, color_to_paint,
 };
 use crate::style::properties::specified::{MathFamily, PropertyDeclaration, Text};
 use crate::traverse::{Traversal, Traverse};
@@ -189,7 +189,8 @@ impl FlowConstructor {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let color = color_to_rgba(style.font.color);
+        // (the SVG elements of the page are painted in sRGB)
+        let color = color_to_paint(style.font.color).clip_to_srgb();
         let inherited = crate::svg_dom::Inherited {
             color: Some(format!("rgb({}, {}, {})", color.red, color.green, color.blue)),
             font_family: Some(family),
@@ -1364,7 +1365,7 @@ impl EntityConstructor {
             font_name: font.postscript_name(),
             font_size: style.font.font_size,
             color: crate::style::properties::color::with_opacity(
-                color_to_rgba(style.font.color),
+                color_to_paint(style.font.color),
                 style.font.inline_opacity,
             ),
             fallback,
@@ -2456,15 +2457,15 @@ fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
 
 /// The background color of the nearest inline ancestor of a text that has one (the text is
 /// painted on it). The ancestors that are blocks have their own background.
-fn inline_background<'a, N: AbstractNode<'a>>(node: &N) -> Option<crate::style::properties::computed::RGBA> {
+fn inline_background<'a, N: AbstractNode<'a>>(node: &N) -> Option<crate::style::properties::computed::PaintColor> {
     let mut ancestor = node.parent_node();
     while let Some(parent) = ancestor {
         let style = parent.style();
         if !matches!(style.box_.display, Display::Inline) {
             return None;
         }
-        let color = crate::style::properties::color::color_to_rgba(style.background.background_color);
-        if color.alpha > 0 {
+        let color = crate::style::properties::color::color_to_paint(style.background.background_color);
+        if color.alpha() > 0 {
             return Some(color);
         }
         ancestor = parent.parent_node();

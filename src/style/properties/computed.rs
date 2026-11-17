@@ -13,29 +13,117 @@ pub use super::specified::{
 pub use cssparser_color::Color;
 
 /// The sRGB colour a CSS colour is painted with, see [`super::color`].
-pub use super::color::color_to_rgba;
+pub use super::color::color_to_paint;
 
-/// An sRGB color with 8 bits per channel.
+/// An sRGB colour with 8 bits per channel and an alpha channel.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
-pub struct RGBA {
+pub struct SrgbColor {
     pub red: u8,
     pub green: u8,
     pub blue: u8,
     pub alpha: u8,
 }
 
-impl RGBA {
-    pub const fn new(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
-        RGBA {
-            red,
-            green,
-            blue,
-            alpha,
-        }
+/// A colour in Display P3 (the primaries of DCI-P3, the white of D65 and the curve of sRGB), with
+/// the encoded components from 0 to 1 and an alpha channel. The components are kept as their bits,
+/// so that colours can be compared and hashed.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct DisplayP3Color {
+    red: u32,
+    green: u32,
+    blue: u32,
+    pub alpha: u8,
+}
+
+impl DisplayP3Color {
+    pub fn new(red: f32, green: f32, blue: f32, alpha: u8) -> Self {
+        DisplayP3Color { red: red.to_bits(), green: green.to_bits(), blue: blue.to_bits(), alpha }
+    }
+
+    /// The encoded red, green and blue.
+    pub fn components(self) -> [f32; 3] {
+        [f32::from_bits(self.red), f32::from_bits(self.green), f32::from_bits(self.blue)]
+    }
+}
+
+/// A colour as CIE XYZ (D65, Y of 1 for the white), which holds every colour there is, with an
+/// alpha channel. The components are kept as their bits, like those of [`DisplayP3Color`].
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct XyzColor {
+    x: u32,
+    y: u32,
+    z: u32,
+    pub alpha: u8,
+}
+
+impl XyzColor {
+    pub fn new(x: f32, y: f32, z: f32, alpha: u8) -> Self {
+        XyzColor { x: x.to_bits(), y: y.to_bits(), z: z.to_bits(), alpha }
+    }
+
+    /// X, Y and Z.
+    pub fn components(self) -> [f32; 3] {
+        [f32::from_bits(self.x), f32::from_bits(self.y), f32::from_bits(self.z)]
+    }
+}
+
+/// A colour that is painted.
+///
+/// It is sRGB if sRGB can hold it; else Display P3 if that can (a colour of a wide gamut, like
+/// `color(display-p3 1 0 0)`); else CIE XYZ, which holds every colour. The colour has no channels
+/// to read: a consumer that can paint every case matches on them, and one that only has sRGB has
+/// to call [`PaintColor::clip_to_srgb`], which says what it does to the colours that sRGB cannot
+/// hold.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum PaintColor {
+    Srgb(SrgbColor),
+    DisplayP3(DisplayP3Color),
+    Xyz(XyzColor),
+}
+
+impl Default for PaintColor {
+    fn default() -> Self {
+        PaintColor::transparent()
+    }
+}
+
+impl PaintColor {
+    pub const fn srgb(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
+        PaintColor::Srgb(SrgbColor { red, green, blue, alpha })
     }
 
     pub const fn transparent() -> Self {
-        RGBA::new(0, 0, 0, 0)
+        PaintColor::srgb(0, 0, 0, 0)
+    }
+
+    /// The opacity of the colour, from 0 to 255.
+    pub const fn alpha(self) -> u8 {
+        match self {
+            PaintColor::Srgb(color) => color.alpha,
+            PaintColor::DisplayP3(color) => color.alpha,
+            PaintColor::Xyz(color) => color.alpha,
+        }
+    }
+
+    /// The same colour with another alpha channel.
+    pub fn with_alpha(self, alpha: u8) -> Self {
+        match self {
+            PaintColor::Srgb(color) => PaintColor::Srgb(SrgbColor { alpha, ..color }),
+            PaintColor::DisplayP3(color) => PaintColor::DisplayP3(DisplayP3Color { alpha, ..color }),
+            PaintColor::Xyz(color) => PaintColor::Xyz(XyzColor { alpha, ..color }),
+        }
+    }
+
+    /// The colour in sRGB, the nearest one that fits if it has none: the channels of a colour
+    /// outside of the gamut are clipped to the range. This loses the colour; use it only where
+    /// nothing but sRGB can be painted, and where the colour is painted by the PDF writer match
+    /// on the cases instead.
+    pub fn clip_to_srgb(self) -> SrgbColor {
+        match self {
+            PaintColor::Srgb(color) => color,
+            PaintColor::DisplayP3(color) => super::color::p3_to_srgb_clipped(color),
+            PaintColor::Xyz(color) => super::color::xyz_to_srgb_clipped(color),
+        }
     }
 }
 
