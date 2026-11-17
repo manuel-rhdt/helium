@@ -76,6 +76,7 @@ impl ElementData {
                 html5ever::LocalName::from(match pseudo {
                     PseudoElement::Before => "::before",
                     PseudoElement::After => "::after",
+                    PseudoElement::Marker => "::marker",
                 }),
             ),
             attributes: Default::default(),
@@ -92,6 +93,7 @@ impl ElementData {
         match &*self.name.local {
             "::before" => Some(PseudoElement::Before),
             "::after" => Some(PseudoElement::After),
+            "::marker" => Some(PseudoElement::Marker),
             _ => None,
         }
     }

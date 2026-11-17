@@ -184,6 +184,75 @@ impl CounterState {
         set.iter().rev().find(|counter| counter.name == name).map(|counter| counter.id)
     }
 
+    /// Applies `counter-reset`, `counter-increment` and `counter-set` of an element (whose
+    /// parent is `parent`) to the counters `set`.
+    fn apply_properties(&mut self, set: &mut Vec<Counter>, parent: usize, style: &ComputedValues, hints: ListHints) {
+        let mentions = |list: &CounterList, name: &str| list.0.iter().any(|(entry, _)| entry == name);
+        let is_item = style.box_.display == Display::ListItem;
+
+        // `counter-reset`; a list starts a new `list-item` counter at one before its first item
+        let mut resets = style.box_.counter_reset.0.clone();
+        if hints.resets_list_item && !mentions(&style.box_.counter_reset, "list-item") {
+            resets.push(("list-item".to_owned(), Some(hints.start.map_or(0, |start| (start - 1).clamp(i32::MIN as i64, i32::MAX as i64) as i32))));
+        }
+        for (name, value) in &resets {
+            self.instantiate(set, name, i64::from(value.unwrap_or(0)), parent);
+        }
+
+        // `counter-increment`; a list item counts in `list-item`
+        let mut increments = style.box_.counter_increment.0.clone();
+        if is_item && !mentions(&style.box_.counter_increment, "list-item") {
+            increments.push(("list-item".to_owned(), Some(1)));
+        }
+        for (name, by) in &increments {
+            let id = match Self::innermost(&set, name) {
+                Some(id) => id,
+                None => {
+                    self.instantiate(set, name, 0, parent);
+                    set.last().expect("the counter was just added").id
+                }
+            };
+            // an increment that would leave the range of a 32 bit integer is not made
+            let value = self.values.entry(id).or_insert(0);
+            let step = i64::from(by.unwrap_or(1));
+            if i32::try_from(*value + step).is_ok() {
+                *value += step;
+            }
+        }
+
+        // `counter-set`; `<li value>` sets the `list-item` counter
+        let mut sets = style.box_.counter_set.0.clone();
+        if let Some(value) = hints.value.filter(|_| is_item && !mentions(&style.box_.counter_set, "list-item")) {
+            sets.push(("list-item".to_owned(), i32::try_from(value).ok()));
+        }
+        for (name, to) in &sets {
+            let id = match Self::innermost(&set, name) {
+                Some(id) => id,
+                None => {
+                    self.instantiate(set, name, 0, parent);
+                    set.last().expect("the counter was just added").id
+                }
+            };
+            self.values.insert(id, i64::from(to.unwrap_or(0)));
+        }
+
+    }
+
+    /// Applies the counter properties of the `::marker` of the list item that was entered last
+    /// to the counters of the item itself: the marker is not a scope of its own, so a counter
+    /// that it resets stays in scope for the content that follows it.
+    pub fn apply_to_current(&mut self, parent: usize, style: &ComputedValues) {
+        let Some(frame) = self.frames.last() else { return };
+        if frame.inert {
+            return;
+        }
+        let mut set = (*frame.set).clone();
+        self.apply_properties(&mut set, parent, style, ListHints::default());
+        if let Some(frame) = self.frames.last_mut() {
+            frame.set = Rc::new(set);
+        }
+    }
+
     /// Counts for an element that is reached: the counters it inherits, then `counter-reset`,
     /// `counter-increment` and `counter-set`. `parent` identifies the parent element, `style`
     /// is the style of the element.
@@ -205,54 +274,7 @@ impl CounterState {
             }
         }
 
-        let mentions = |list: &CounterList, name: &str| list.0.iter().any(|(entry, _)| entry == name);
-        let is_item = style.box_.display == Display::ListItem;
-
-        // `counter-reset`; a list starts a new `list-item` counter at one before its first item
-        let mut resets = style.box_.counter_reset.0.clone();
-        if hints.resets_list_item && !mentions(&style.box_.counter_reset, "list-item") {
-            resets.push(("list-item".to_owned(), Some(hints.start.map_or(0, |start| (start - 1).clamp(i32::MIN as i64, i32::MAX as i64) as i32))));
-        }
-        for (name, value) in &resets {
-            self.instantiate(&mut set, name, i64::from(value.unwrap_or(0)), parent);
-        }
-
-        // `counter-increment`; a list item counts in `list-item`
-        let mut increments = style.box_.counter_increment.0.clone();
-        if is_item && !mentions(&style.box_.counter_increment, "list-item") {
-            increments.push(("list-item".to_owned(), Some(1)));
-        }
-        for (name, by) in &increments {
-            let id = match Self::innermost(&set, name) {
-                Some(id) => id,
-                None => {
-                    self.instantiate(&mut set, name, 0, parent);
-                    set.last().expect("the counter was just added").id
-                }
-            };
-            // an increment that would leave the range of a 32 bit integer is not made
-            let value = self.values.entry(id).or_insert(0);
-            let step = i64::from(by.unwrap_or(1));
-            if i32::try_from(*value + step).is_ok() {
-                *value += step;
-            }
-        }
-
-        // `counter-set`; `<li value>` sets the `list-item` counter
-        let mut sets = style.box_.counter_set.0.clone();
-        if let Some(value) = hints.value.filter(|_| is_item && !mentions(&style.box_.counter_set, "list-item")) {
-            sets.push(("list-item".to_owned(), i32::try_from(value).ok()));
-        }
-        for (name, to) in &sets {
-            let id = match Self::innermost(&set, name) {
-                Some(id) => id,
-                None => {
-                    self.instantiate(&mut set, name, 0, parent);
-                    set.last().expect("the counter was just added").id
-                }
-            };
-            self.values.insert(id, i64::from(to.unwrap_or(0)));
-        }
+        self.apply_properties(&mut set, parent, style, hints);
 
         self.frames.push(Frame { set: Rc::new(set), last_child_set: None, inert: false });
     }

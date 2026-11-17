@@ -387,7 +387,11 @@ impl QualifiedRule {
         );
         list.slice()
             .iter()
-            .filter(|selector| pseudo.is_none() || selector.pseudo_element() == pseudo.as_ref())
+            // (a selector with more pseudo-elements, `::before::marker`, is not for the one)
+            .filter(|selector| {
+                pseudo.is_none()
+                    || (selector.pseudo_element() == pseudo.as_ref() && selector.pseudo_elements().len() == 1)
+            })
             .filter(|selector| matching::matches_selector(selector, 0, None, elem, &mut context))
             .map(|selector| selector.specificity())
             .max()
@@ -958,12 +962,14 @@ impl ToCss for PseudoClass {
     }
 }
 
-/// The pseudo-elements that generate content: `::before` and `::after`.
+/// The pseudo-elements that generate content (`::before` and `::after`) and the one of the
+/// marker of a list item (`::marker`).
 /// https://www.w3.org/TR/css-pseudo-4/#generated-content
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum PseudoElement {
     Before,
     After,
+    Marker,
 }
 
 impl ToCss for PseudoElement {
@@ -974,11 +980,17 @@ impl ToCss for PseudoElement {
         dest.write_str(match *self {
             PseudoElement::Before => "::before",
             PseudoElement::After => "::after",
+            PseudoElement::Marker => "::marker",
         })
     }
 }
 
-impl selectors::parser::PseudoElement for PseudoElement {}
+impl selectors::parser::PseudoElement for PseudoElement {
+    /// `::before::marker` and `::after::marker` are valid selectors.
+    fn valid_after_before_or_after(&self) -> bool {
+        matches!(self, PseudoElement::Marker)
+    }
+}
 
 #[derive(Default)]
 struct SelectorParser;
@@ -1000,6 +1012,8 @@ impl<'i> selectors::Parser<'i> for SelectorParser {
             Ok(PseudoElement::Before)
         } else if name.eq_ignore_ascii_case("after") {
             Ok(PseudoElement::After)
+        } else if name.eq_ignore_ascii_case("marker") {
+            Ok(PseudoElement::Marker)
         } else {
             Err(ParseError::custom(
                 SelectorParseErrorKind::UnsupportedPseudoClassOrElement,

@@ -1522,7 +1522,7 @@ impl<'a> System<'a> for ListMarkerCreator {
                 ops.insert(0, TextOperator::BeginTag(tag));
                 ops.push(TextOperator::EndMarkedContent);
             }
-            let gap = marker.face.font_size * 0.4;
+            let gap = if marker.explicit { Px(0.0) } else { marker.face.font_size * 0.4 };
             let start_pos = (item_x - gap - width, line_pos.y + baseline);
             let color_glyphs = color_glyphs
                 .into_iter()

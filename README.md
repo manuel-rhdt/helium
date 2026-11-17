@@ -128,13 +128,18 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `counter-reset`, `counter-increment`, `counter-set` (scoped as in CSS Lists 3; elements
   without a box do not count) and `quotes` (`auto` picks the marks of the language of the text
   for the common languages). A pseudo-element is a box of its own, so `display`, `position`,
-  borders, backgrounds and the like apply to it. The counter styles are the ones of the
+  borders, backgrounds and the like apply to it. `::marker` styles the marker of a list item (`color` and the font properties, and
+  `content`, which replaces the marker text: `none` removes the marker and a text is the whole
+  marker, with no space added after it; the `counter-*` properties work on the counters of the
+  item, so `content` can use them). The marker is still drawn outside the item and is not a box
+  of its own: it takes no `display`, `position` or the like, and `list-style-position: inside` is
+  not supported. The counter styles are the ones of the
   `@page` margin boxes (which share the code) plus `lower-greek`, `georgian`, `disc`, `circle`, `square` and
   `none`. `display: list-item` (the default of `<li>`) counts in the `list-item` counter, which
   `<ol>`, `<ul>` and `<menu>` start and `<ol start>` and `<li value>` set; the number of
   the marker is the value of that counter, so `counter-increment: list-item` and the like
   change it (not supported: `<ol reversed>`). Not supported: `content` on elements (e.g. `content: url()`), images and
-  `url()` in `content`, `::marker`, `::first-line` and `::first-letter`, `counter-reset:
+  `url()` in `content`, `::before::marker` and `::after::marker`, `::first-line` and `::first-letter`, `counter-reset:
   reversed()`, `target-counter()`, and pseudo-elements of replaced elements (`img`, `input`,
   `br`, ...). Counters in `@page` margin boxes are only `page` and `pages`. A counter value stays
   within a 32 bit integer (an increment that would leave the range is not made), and a name that

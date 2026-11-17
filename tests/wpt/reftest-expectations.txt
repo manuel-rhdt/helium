@@ -9,6 +9,33 @@
 # single rule passes both. Revisit if the published text changes.
 css/css-lists/counter-list-item-2.html
 
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006a.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006b.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006c.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006d.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-006e.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-007b.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-008a.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-008b.html
+
+# needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
+css/css-lists/foo-counter-reversed-009b.html
+
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-001.xht
 css/CSS2/borders/border-003.xht
@@ -485,7 +512,6 @@ css/css-lists/list-style-type-string-001b.html
 css/css-lists/list-style-type-string-002.html
 css/css-lists/list-style-type-string-003.html
 css/css-lists/list-type-none-style-image.html
-css/css-lists/marker-counter.html
 css/css-lists/marker-webkit-text-fill-color.html
 css/css-lists/nested-marker-styling.html
 css/css-lists/outside-marker-alignment-with-block-content.html

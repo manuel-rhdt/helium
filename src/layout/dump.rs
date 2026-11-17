@@ -79,6 +79,10 @@ fn dump_node(node: &DomRef, world: &World, depth: usize, out: &mut String) {
         if let Some(text_run) = world.read_storage::<TextRun>().get(entity) {
             write!(out, ", \"text\": {}", json_string(&text_run.text)).unwrap();
         }
+        // the text of the marker of a list item, which is drawn outside of the item
+        if let Some(marker) = world.read_storage::<super::components::ListMarker>().get(entity) {
+            write!(out, ", \"marker\": {}", json_string(&marker.text)).unwrap();
+        }
         if let Some(pos) = world.read_storage::<Position>().get(entity).copied() {
             let deco = world
                 .read_storage::<Decoration>()

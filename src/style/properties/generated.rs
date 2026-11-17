@@ -19,8 +19,9 @@ pub enum ContentItem {
     Counter(String, CounterStyle),
     /// `counters(name, separator, style)`
     Counters(String, String, CounterStyle),
-    /// `attr(name)`: the value of an attribute of the originating element.
-    Attr(String),
+    /// `attr(name, fallback)`: the value of an attribute of the originating element, or the
+    /// fallback string (empty if there is none) if the element has no such attribute.
+    Attr(String, Option<String>),
     OpenQuote,
     CloseQuote,
     /// Like `open-quote` and `close-quote`, but without a quotation mark.
@@ -102,8 +103,13 @@ impl<'i> PropertyValue<'i> for Content {
                     })?,
                     "attr" => input.parse_nested_block(|input| {
                         let name = input.expect_ident()?.to_string();
+                        let fallback = if input.try_parse(|input| input.expect_comma()).is_ok() {
+                            Some(input.expect_string()?.to_string())
+                        } else {
+                            None
+                        };
                         input.expect_exhausted()?;
-                        Ok(ContentItem::Attr(name))
+                        Ok(ContentItem::Attr(name, fallback))
                     })?,
                     _ => return invalid(),
                 },

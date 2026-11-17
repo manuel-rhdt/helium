@@ -413,6 +413,9 @@ pub struct TextFace {
 pub struct ListMarker {
     pub text: String,
     pub face: TextFace,
+    /// The text comes from the `content` of a `::marker`, which sets the whole marker: there is
+    /// no space between it and the item.
+    pub explicit: bool,
 }
 
 impl Component for ListMarker {

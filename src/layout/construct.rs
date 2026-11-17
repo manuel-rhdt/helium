@@ -34,6 +34,24 @@ pub struct IslandSpec {
     pub height: f32,
 }
 
+/// What the `content` of a `::marker` makes of the text of a marker.
+#[derive(Debug, Clone)]
+enum MarkerText {
+    /// `normal`: the marker of the `list-style-type`.
+    Default,
+    /// `none`: no marker.
+    Hidden,
+    /// Text of `content`: the marker is this text and nothing else.
+    Explicit(String),
+}
+
+/// The style and the text that the rules for the `::marker` of a list item give its marker.
+#[derive(Debug, Clone)]
+struct MarkerOverride {
+    style: ComputedValues,
+    text: MarkerText,
+}
+
 /// tracks state while traversing the html document and builds a flow tree.
 #[derive(Debug)]
 pub struct FlowConstructor {
@@ -335,11 +353,11 @@ impl FlowConstructor {
         }
     }
 
-    /// Puts the text of the `content` of a pseudo-element together and adds it as its child.
-    fn fill_pseudo_element(&mut self, node: &DomRef, style: &ComputedValues) {
+    /// The text of the `content` of a pseudo-element with the style `style` of the element
+    /// `origin`, at the place that the counters have reached.
+    fn content_text(&mut self, origin: Option<&crate::tree::ElementRef>, style: &ComputedValues) -> String {
         use crate::style::properties::generated::{Content, ContentItem};
-        let Content::Items(items) = &style.box_.content else { return };
-        let origin = node.parent().and_then(|parent| parent.into_element_ref());
+        let Content::Items(items) = &style.box_.content else { return String::new() };
         let lang = style.font.lang.tag().unwrap_or("").to_owned();
         let mut text = String::new();
         for item in items {
@@ -357,12 +375,12 @@ impl FlowConstructor {
                         .collect();
                     text.push_str(&values.join(separator));
                 }
-                ContentItem::Attr(name) => {
-                    if let Some(element) = &origin {
-                        let key = QualName::new(None, ns!(), html5ever::LocalName::from(name.to_ascii_lowercase()));
-                        if let Some(attribute) = element.attributes.borrow().get(&key) {
-                            text.push_str(&attribute.value);
-                        }
+                ContentItem::Attr(name, fallback) => {
+                    let key = QualName::new(None, ns!(), html5ever::LocalName::from(name.to_ascii_lowercase()));
+                    let attributes = origin.map(|element| element.attributes.borrow());
+                    match attributes.as_ref().and_then(|attributes| attributes.get(&key)) {
+                        Some(attribute) => text.push_str(&attribute.value),
+                        None => text.push_str(fallback.as_deref().unwrap_or("")),
                     }
                 }
                 ContentItem::OpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, true)),
@@ -371,9 +389,64 @@ impl FlowConstructor {
                 ContentItem::NoCloseQuote => text.push_str(&self.counters.close_quote(&style.text.quotes, &lang, false)),
             }
         }
+        text
+    }
+
+    /// Puts the text of the `content` of a pseudo-element together and adds it as its child.
+    fn fill_pseudo_element(&mut self, node: &DomRef, style: &ComputedValues) {
+        let origin = node.parent().and_then(|parent| parent.into_element_ref());
+        let text = self.content_text(origin.as_ref(), style);
         if !text.is_empty() {
             node.append(DomRef::new(NodeData::from_html_data(ParsedData::Text(std::cell::RefCell::new(text)))));
         }
+    }
+
+    /// The style of the `::marker` of a list item, if a rule is about it: the rules that match
+    /// are cascaded on top of the style of the item.
+    fn marker_style(&self, element: &crate::tree::ElementRef, item_style: &ComputedValues) -> Option<ComputedValues> {
+        let mut matched_rules: Vec<_> = self
+            .styles
+            .rules_iter()
+            .enumerate()
+            .filter_map(|(index, rule)| {
+                rule.matching_pseudo_specificity(element, PseudoElement::Marker)
+                    .map(|specificity| (self.styles.is_user_agent_rule(index), specificity, rule))
+            })
+            .collect();
+        if matched_rules.is_empty() {
+            return None;
+        }
+        matched_rules.sort_by_key(|&(user_agent, specificity, _)| (!user_agent, specificity));
+        let cascade = cascade_declarations(&matched_rules, None, None);
+        let mut style_builder = StyleBuilder::new(item_style.clone());
+        style_builder.apply_cascade(cascade.iter().copied());
+        Some(style_builder.build())
+    }
+
+    /// Prepares the marker of a list item that is reached: the `::marker` can change the
+    /// counters of the item and its `content` can use them, and what it says about the text and
+    /// the style of the marker is handed to the entity of the item.
+    fn prepare_marker(&mut self, node: &DomRef, style: &ComputedValues) {
+        self.entity_constructor.marker = None;
+        let Some(element) = node.clone().into_element_ref() else { return };
+        // (the marker of a `::before` or `::after` that is a list item is not addressed by
+        // `::marker` rules of the document)
+        if style.box_.display != Display::ListItem || element.pseudo_element().is_some() {
+            return;
+        }
+        let Some(marker_style) = self.marker_style(&element, style) else { return };
+        // (the counters that the marker makes are the ones of the item, whose parent is the
+        // parent of the counters' creator)
+        let parent = node.parent().map_or(0, |parent| crate::tree::GetOpaqueNode::get_opaque(&parent).0);
+        self.counters.apply_to_current(parent, &marker_style);
+        let text = match &marker_style.box_.content {
+            crate::style::properties::generated::Content::Normal => MarkerText::Default,
+            crate::style::properties::generated::Content::None => MarkerText::Hidden,
+            crate::style::properties::generated::Content::Items(_) => {
+                MarkerText::Explicit(self.content_text(Some(&element), &marker_style))
+            }
+        };
+        self.entity_constructor.marker = Some(MarkerOverride { style: marker_style, text });
     }
 
     /// Counts the counters of an element that is reached.
@@ -630,6 +703,9 @@ impl Traversal<DomRef> for FlowConstructor {
         }
         let scoped = node.clone();
         self.entity_constructor.list_item_value = self.counters.value("list-item");
+        if let Some(style) = NodeData::style(&scoped) {
+            self.prepare_marker(&scoped, &style);
+        }
         self.entity_constructor.build_entity(node);
         self.entity_constructor.record_transform_scope(&scoped);
         self.record_vertical_align(&scoped);
@@ -915,6 +991,8 @@ impl FontSelector {
 pub struct EntityConstructor {
     /// The value of the `list-item` counter of the element that is built.
     list_item_value: i64,
+    /// What a `::marker` rule says about the marker of the list item that is built.
+    marker: Option<MarkerOverride>,
     font_match_cache: HashMap<FontSelector, String>,
     /// The fonts that the document can use, with its `@font-face` rules.
     fonts: Arc<super::text::font::FontContext>,
@@ -977,6 +1055,7 @@ impl EntityConstructor {
         world.insert(components::TransformScopes::default());
         EntityConstructor {
             list_item_value: 0,
+            marker: None,
             world,
             font_match_cache: Default::default(),
             fonts: super::text::font::FontContext::system(),
@@ -1130,14 +1209,18 @@ impl EntityConstructor {
                 } else {
                     0
                 };
-                let marker_text = style
-                    .font
-                    .list_style_type
-                    .marker_text(ordinal)
-                    .filter(|_| is_list_item);
-                let marker = marker_text.map(|text| {
-                    let (_, face) = self.text_face(&style, &text);
-                    components::ListMarker { text, face }
+                let marker_override = self.marker.take().filter(|_| is_list_item);
+                let default_text = || style.font.list_style_type.marker_text(ordinal).filter(|_| is_list_item);
+                // an explicit text is the whole marker: it brings its own spacing
+                let (marker_text, explicit) = match marker_override.as_ref().map(|marker| &marker.text) {
+                    Some(MarkerText::Explicit(text)) => (Some(text.clone()), true),
+                    Some(MarkerText::Hidden) => (None, false),
+                    _ => (default_text(), false),
+                };
+                let marker = marker_text.filter(|text| !text.is_empty()).map(|text| {
+                    let marker_style = marker_override.as_ref().map_or(&style, |marker| &marker.style);
+                    let (_, face) = self.text_face(marker_style, &text);
+                    components::ListMarker { text, face, explicit }
                 });
 
                 if style.box_.display.is_atomic_inline() {
