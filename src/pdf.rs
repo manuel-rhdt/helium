@@ -925,16 +925,17 @@ pub fn write_pdf(
         use crate::layout::margin_boxes::LabelStyle;
         use lemon_pdf::page_labels::{PageLabel, PageLabelStyle};
         context.set_page_labels(page_labels.iter().map(|range| {
-            let style = match range.style {
+            let style = range.style.map(|style| match style {
                 LabelStyle::Decimal => PageLabelStyle::Decimal,
                 LabelStyle::LowerRoman => PageLabelStyle::LowerRoman,
                 LabelStyle::UpperRoman => PageLabelStyle::UpperRoman,
                 LabelStyle::LowerLetters => PageLabelStyle::LowerLetters,
                 LabelStyle::UpperLetters => PageLabelStyle::UpperLetters,
-            };
-            // the number of a page is its index plus 1, like `counter(page)`
-            let label = PageLabel::numbered(style, range.first_page as u32 + 1);
-            let label = if range.prefix.is_empty() { label } else { label.with_prefix(range.prefix.clone()) };
+            });
+            let mut label = PageLabel { style, prefix: None, start: style.map(|_| range.start) };
+            if !range.prefix.is_empty() {
+                label = label.with_prefix(range.prefix.clone());
+            }
             (range.first_page, label)
         }));
     }

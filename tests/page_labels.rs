@@ -46,3 +46,65 @@ fn plain_page_numbers_need_no_labels() {
     let pdf = render("none", "<div>1</div>");
     assert_eq!(pdf.matches("/PageLabels").count(), 0);
 }
+
+const PAGE: &str = "@page { size: 200px 120px; margin: 20px } div { height: 60px } section { display: block }";
+
+#[test]
+fn the_page_counter_restarts_with_the_page_context() {
+    // `@page body:first { counter-reset: page 0 }`: the first page of the body is page 1
+    let pdf = render(
+        "restart",
+        &format!(
+            "<style>{PAGE} @page {{ @bottom-center {{ content: counter(page) }} }}\
+             @page front {{ -helium-page-label: counter(page, lower-roman) }}\
+             @page body:first {{ counter-reset: page 0 }}\
+             @page appendix:first {{ counter-reset: page 0 }}\
+             @page appendix {{ -helium-page-label: \"A-\" counter(page) }}\
+             .front {{ page: front }} .body {{ page: body }} .appendix {{ page: appendix }}</style>\
+             <section class=front><div>1</div><div>2</div></section>\
+             <section class=body><div>3</div><div>4</div></section>\
+             <section class=appendix><div>5</div><div>6</div></section>"
+        ),
+    );
+    assert_eq!(
+        page_labels(&pdf),
+        "/Nums [ 0 << /S /r /St 1 >> 2 << /S /D /St 1 >> 4 << /S /D /P (A-) /St 1 >> ]"
+    );
+}
+
+#[test]
+fn the_increment_of_the_page_counter_splits_the_ranges() {
+    // CSS Paged Media 3, 6.1: all pages are even-numbered; the labels count by ones, so
+    // every page is a range of its own
+    let pdf = render("even", &format!("<style>{PAGE} @page {{ counter-increment: page 2 }}</style><div>1</div><div>2</div><div>3</div>"));
+    assert_eq!(page_labels(&pdf), "/Nums [ 0 << /S /D /St 2 >> 1 << /S /D /St 4 >> 2 << /S /D /St 6 >> ]");
+}
+
+#[test]
+fn numbers_below_one_are_written_out() {
+    // a label has a positive number: the pages before it have the text of the number as a prefix
+    let pdf = render(
+        "negative",
+        &format!("<style>{PAGE} @page :first {{ counter-reset: page -3 }}</style><div>1</div><div>2</div><div>3</div><div>4</div>"),
+    );
+    assert_eq!(
+        page_labels(&pdf),
+        "/Nums [ 0 << /P (-2) >> 1 << /P (-1) >> 2 << /P (0) >> 3 << /S /D /St 1 >> ]"
+    );
+}
+
+#[test]
+fn the_label_property_is_independent_of_the_margin_boxes() {
+    // without a number in the margin box, the label is the one that the page says
+    let pdf = render(
+        "property",
+        &format!("<style>{PAGE} @page {{ -helium-page-label: \"p. \" counter(page, upper-alpha) }}</style><div>1</div><div>2</div>"),
+    );
+    assert_eq!(page_labels(&pdf), "/Nums [ 0 << /S /A /P (p. ) /St 1 >> ]");
+    // `none` is the number in decimal, whatever the footer prints
+    let pdf = render(
+        "none_label",
+        &format!("<style>{PAGE} @page {{ -helium-page-label: none; @bottom-center {{ content: counter(page, lower-roman) }} }}</style><div>1</div><div>2</div>"),
+    );
+    assert_eq!(pdf.matches("/PageLabels").count(), 0);
+}

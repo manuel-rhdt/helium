@@ -207,7 +207,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
   from strings and `counter(page)` / `counter(pages)`, in the styles `decimal`,
   `decimal-leading-zero`, `lower-` and `upper-roman`, `lower-` and `upper-alpha`/`latin`,
-  `arabic-indic` and `persian`.
+  `arabic-indic` and `persian`. The `page` counter is a real counter (CSS Paged Media 3, § 6.1):
+  `counter-reset`, `counter-increment` and `counter-set` of `page` in an `@page` rule apply to the
+  pages that it selects, in the order of CSS Lists: the page counter is reset, then incremented
+  (by 1 unless `counter-increment` says otherwise), then set. So `@page chapter:first {
+  counter-reset: page 0 }` makes the first page of a chapter page 1, and `@page {
+  counter-increment: page 2 }` numbers the pages 2, 4, 6. Not supported: `counter-reset` of
+  `page` on an element (the specification does not say what it does), and changing `pages`
+  (which, as in the specification, has no effect).
 - **Fragmentation:** `break-before`/`-after`/`-inside` (`auto`, `avoid`, `avoid-page`,
   `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
   `widows`, and `looseness` (not in CSS: how many lines more or fewer than the best breaking a
@@ -284,7 +291,7 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 
 PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from the HTML
 (headings, paragraphs, lists, tables, links, figures, formulas) and the PDF/UA identifier;
-document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels that are the numbers that the pages print in their margin boxes (the style and the text before `counter(page)` of the footer, or else of the header: "iii", "A-1"; the counter does not restart, so a label is always the number of the page in that style); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
+document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels (the `-helium-page-label` of the `@page` rules, which is not in CSS: `auto` takes the style of the `counter(page)` of the footer or else of the header and the text before it, `none` the number of the page in decimal, or `"A-" counter(page, upper-roman)` a prefix and the style of the number); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
 from the elements with a `bookmark-level` (UA default: `h1` to `h6` and `role=heading` with `aria-level`; entries nest by level, elements that are not displayed are left out), with `bookmark-label` (strings, `content()`, `attr()`) and `bookmark-state`; `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
