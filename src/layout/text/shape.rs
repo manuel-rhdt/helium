@@ -159,6 +159,8 @@ struct Scratch {
     spans: Vec<Span>,
     /// The glyphs of the text that `with_shaped` measures.
     glyphs: Vec<(GlyphPosition, GlyphInfo)>,
+    /// The text of a word and its hyphen, for shaping them together.
+    hyphenated: String,
 }
 
 thread_local! {
@@ -206,7 +208,73 @@ pub fn shape_directed_into(
     rtl: bool,
     out: &mut Vec<(GlyphPosition, GlyphInfo)>,
 ) {
-    let text = text.trim_end_matches(['\r', '\n']);
+    shape_text_into(text.trim_end_matches(['\r', '\n']), None, font, fonts, at, rtl, out);
+}
+
+/// Shapes `text` followed by `hyphen`, the hyphen that is inserted where a line breaks inside of
+/// a word. Shaped together, the hyphen is kerned with the letters in front of it like any
+/// character of the text. It is drawn with the font of the last character of `text` (see
+/// [`hyphen_character`]), not with the font of the text that follows it in the document. Its
+/// cluster is `text.len()`.
+pub fn shape_hyphenated_into(
+    text: &str,
+    hyphen: char,
+    font: &Font,
+    fonts: &TextFonts,
+    at: Option<usize>,
+    rtl: bool,
+    out: &mut Vec<(GlyphPosition, GlyphInfo)>,
+) {
+    let mut hyphenated = SCRATCH.with(|scratch| std::mem::take(&mut scratch.borrow_mut().hyphenated));
+    hyphenated.clear();
+    hyphenated.push_str(text);
+    hyphenated.push(hyphen);
+    shape_text_into(&hyphenated, Some(text.len()), font, fonts, at, rtl, out);
+    SCRATCH.with(|scratch| scratch.borrow_mut().hyphenated = hyphenated);
+}
+
+/// [`shape_hyphenated_into`] for measuring text, like [`with_shaped`].
+pub fn with_shaped_hyphenated<R>(
+    text: &str,
+    hyphen: char,
+    font: &Font,
+    fonts: &TextFonts,
+    at: Option<usize>,
+    f: impl FnOnce(&[(GlyphPosition, GlyphInfo)]) -> R,
+) -> R {
+    let mut glyphs = SCRATCH.with(|scratch| std::mem::take(&mut scratch.borrow_mut().glyphs));
+    glyphs.clear();
+    shape_hyphenated_into(text, hyphen, font, fonts, at, false, &mut glyphs);
+    let result = f(&glyphs);
+    SCRATCH.with(|scratch| scratch.borrow_mut().glyphs = glyphs);
+    result
+}
+
+/// The hyphen that a line break inside a word gets: U+2010 HYPHEN if the font that draws the
+/// letter in front of it has a glyph for that, else U+002D HYPHEN-MINUS (CSS Text 3,
+/// `hyphenate-character`). `last` is the byte offset of that letter in the text that `fonts` is
+/// for.
+pub fn hyphen_character(font: &Font, fonts: &TextFonts, last: Option<usize>) -> char {
+    const HYPHEN: char = '\u{2010}';
+    let set = font.fallback_set(&fonts.key);
+    let index = last
+        .and_then(|offset| fonts.font_at(offset))
+        .filter(|&index| index as usize <= set.fonts.len())
+        .unwrap_or(0);
+    if font_at(font, &set.fonts, index).covers(HYPHEN) { HYPHEN } else { '-' }
+}
+
+/// Shapes `text`, of which the characters from the byte `appended_from` on were added to the text
+/// that `fonts` is for: they get the font of the character in front of them.
+fn shape_text_into(
+    text: &str,
+    appended_from: Option<usize>,
+    font: &Font,
+    fonts: &TextFonts,
+    at: Option<usize>,
+    rtl: bool,
+    out: &mut Vec<(GlyphPosition, GlyphInfo)>,
+) {
     // harfbuzz hands back a null glyph array for an empty buffer, which trips
     // the slice precondition check in harfbuzz_rs.
     if text.is_empty() {
@@ -214,7 +282,7 @@ pub fn shape_directed_into(
     }
 
     let start = out.len();
-    shape_runs(text, font, fonts, at, rtl, out);
+    shape_runs(text, appended_from, font, fonts, at, rtl, out);
     if fonts.letter_spacing != 0.0 {
         apply_letter_spacing(&mut out[start..], text, fonts.letter_spacing, rtl);
     }
@@ -222,6 +290,7 @@ pub fn shape_directed_into(
 
 fn shape_runs(
     text: &str,
+    appended_from: Option<usize>,
     font: &Font,
     fonts: &TextFonts,
     at: Option<usize>,
@@ -241,6 +310,13 @@ fn shape_runs(
 
     let mut spans = SCRATCH.with(|scratch| std::mem::take(&mut scratch.borrow_mut().spans));
     cluster_spans(text, &mut spans);
+    // where the font runs of the text are looked up for a cluster: appended characters are
+    // looked up where the last character of the text is
+    let last_start = appended_from.and_then(|end| text[..end].char_indices().next_back().map(|(index, _)| index));
+    let looked_up = |start: usize| match (appended_from, last_start) {
+        (Some(end), Some(last)) if start >= end => last,
+        _ => start,
+    };
     let mut run_start = 0;
     // The font index and the script of the current run
     let mut run: Option<(u16, Script, bool)> = None;
@@ -255,7 +331,7 @@ fn shape_runs(
                 .is_some_and(|ch| crate::layout::writing_mode::is_upright(ch, orientation))
         });
         let from_runs = at
-            .and_then(|at| fonts.font_at(at + cluster.start))
+            .and_then(|at| fonts.font_at(at + looked_up(cluster.start)))
             .filter(|&index| index as usize <= fallbacks.len());
         let ch_font = match (from_runs, run) {
             (Some(index), _) => index,
@@ -763,5 +839,73 @@ mod tests {
         let kerned = shape("AVAV", &s.font, &s.fonts, Some(0));
         let plain = shape("AVAV", &s.font, &featured(&s, &[(*b"kern", 0)]), Some(0));
         assert!(total(&kerned) < total(&plain));
+    }
+
+    /// The advance of the glyphs of `glyphs`, in thousandths of an em.
+    fn advance(glyphs: &[(GlyphPosition, GlyphInfo)]) -> f64 {
+        glyphs.iter().map(|(position, _)| position.x_advance.0).sum()
+    }
+
+    #[test]
+    fn the_hyphen_is_u2010_if_the_font_has_it() {
+        let s = setup("abc");
+        assert_eq!(hyphen_character(&s.font, &s.fonts, Some(2)), '\u{2010}');
+    }
+
+    /// A font without U+2010 gets the hyphen-minus.
+    #[test]
+    fn the_hyphen_is_the_hyphen_minus_if_the_font_lacks_u2010() {
+        use harfbuzz_rs::subset::SubsetInput;
+        let s = setup("abc");
+        let mut input = SubsetInput::new().unwrap();
+        input.unicode_set_mut().insert_str("abc-");
+        let bytes = s.font.hb_font.face().subset(&input).unwrap().face_data().as_ref().to_vec();
+        let font = Font::load(std::sync::Arc::new(bytes), 0).unwrap();
+        assert!(!font.covers('\u{2010}') && font.covers('-'));
+        assert_eq!(hyphen_character(&font, &TextFonts::default(), Some(2)), '-');
+    }
+
+    /// The hyphen is shaped with the letters in front of it: the kerning pair of the two is
+    /// applied, which a hyphen that is shaped on its own cannot have. (Termes kerns "T" and "y"
+    /// with the hyphen-minus but has no pairs for U+2010.)
+    #[test]
+    fn the_hyphen_is_kerned_with_the_letters_in_front_of_it() {
+        let s = setup("Ty");
+        for letters in ["T", "y"] {
+            let mut together = Vec::new();
+            shape_hyphenated_into(letters, '-', &s.font, &s.fonts, Some(0), false, &mut together);
+            let apart = advance(&shape_directed(letters, &s.font, &s.fonts, Some(0), false))
+                + advance(&shape_directed("-", &s.font, &s.fonts, None, false));
+            assert!(advance(&together) < apart, "{letters}: {} {apart}", advance(&together));
+        }
+    }
+
+    /// The glyphs of the letters are the same as without the hyphen, and the hyphen is the last
+    /// glyph, with the cluster that follows the text.
+    #[test]
+    fn the_hyphen_follows_the_text_in_the_glyphs() {
+        let s = setup("abc");
+        let mut together = Vec::new();
+        shape_hyphenated_into("abc", '\u{2010}', &s.font, &s.fonts, Some(0), false, &mut together);
+        let clusters: Vec<u32> = together.iter().map(|(_, info)| info.cluster).collect();
+        assert_eq!(clusters, [0, 1, 2, 3]);
+        let hyphen = s.font.hb_font.get_nominal_glyph('\u{2010}').unwrap();
+        assert_eq!(together.last().unwrap().1.codepoint, hyphen);
+    }
+
+    /// A word that ends in a character of a fallback font gets the hyphen from that font, not
+    /// from the font of the text that comes after the word.
+    #[test]
+    fn the_hyphen_is_drawn_with_the_font_of_the_last_letter() {
+        let text = "a日 b";
+        let s = setup(text);
+        let mut together = Vec::new();
+        shape_hyphenated_into("a日", '\u{2010}', &s.font, &s.fonts, Some(0), false, &mut together);
+        let last = |glyphs: &[(GlyphPosition, GlyphInfo)], cluster: u32| {
+            glyphs.iter().find(|(_, info)| info.cluster == cluster).map(|(_, info)| info.font).unwrap()
+        };
+        assert_ne!(last(&together, 1), 0, "the character is drawn with a fallback font");
+        assert_eq!(last(&together, 4), last(&together, 1), "so is the hyphen");
+        assert_eq!(last(&together, 0), 0);
     }
 }

@@ -7,7 +7,7 @@
 use super::{
     FontMap,
     components::{
-        ContainingBlock, Decoration, GraphicsOp, IntrinsicSize, MathBox, MathNode, NO_CLUSTER,
+        ContainingBlock, Decoration, GraphicsOp, IntrinsicSize, MathBox, MathNode, NO_CLUSTER, PieceKind,
         Paragraph, Position, TextOperator, TransformMatrix, VectorGraphics, ZIndex,
     },
     inline_size::calculate_padding_and_border,
@@ -310,7 +310,8 @@ impl LayoutMathGlyphs {
                         let cluster = if text.is_some() { glyph.cluster } else { NO_CLUSTER };
                         para.ops.push_glyph(GlyphIndex(glyph.glyph), cluster);
                     }
-                    para.ops.push_verbatim_piece(first_glyph, text.unwrap_or(""));
+                    let glyphs = first_glyph..para.ops.glyphs.len();
+                    para.ops.push_piece(glyphs, text.unwrap_or(""), false, PieceKind::Formula);
                 }
                 Fragment::Rule(rect) => push_rule(graphics, x, y, rect),
                 Fragment::Line {

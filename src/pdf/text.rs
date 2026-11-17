@@ -6,7 +6,7 @@
 
 use crate::font_usage::FontUsage;
 use crate::pdf::encoding::GlyphEncoding;
-use crate::layout::components::{GlyphRange, KernedGlyph, KernedItem, NO_CLUSTER, TextOperator, TextOps};
+use crate::layout::components::{GlyphRange, KernedGlyph, KernedItem, NO_CLUSTER, PieceKind, TextOperator, TextOps};
 use crate::layout::text::clusters::{PieceClusters, trim_invisible, unit_start};
 use crate::layout::text::font::GlyphIndex;
 
@@ -120,21 +120,20 @@ pub(crate) fn with_actual_text(ops: &TextOps, usage: &FontUsage) -> Option<Vec<T
     if ops.pieces.is_empty() {
         return None;
     }
-    let contexts = ops.glyph_contexts();
+    let fonts = ops.glyph_fonts();
     let mut spans: Vec<Span> = vec![];
     // the span of every glyph, once there is one
     let mut span_of: Vec<Option<u32>> = vec![];
     let mut clusters = PieceClusters::default();
     for piece in &ops.pieces {
         let glyphs = piece.glyphs.start as usize..piece.glyphs.end as usize;
-        if contexts[glyphs.clone()].iter().any(|context| context.overridden) {
-            continue;
-        }
         let text = ops.piece_text(piece);
         let mut found: Vec<(u32, Span)> = vec![];
-        if piece.rtl {
-            // the glyphs are in visual order, but the text is in logical order
-            found.push((u32::MAX, Span { text: (if piece.verbatim { text } else { trim_invisible(text) }).to_owned(), last_glyph: glyphs.end - 1 }));
+        if piece.rtl || piece.kind == PieceKind::Inserted {
+            // The glyphs of right-to-left text are in visual order, but the text is in logical
+            // order. The text of inserted glyphs is not what their font says.
+            let text = if piece.kind == PieceKind::Shaped { trim_invisible(text) } else { text };
+            found.push((u32::MAX, Span { text: text.to_owned(), last_glyph: glyphs.end - 1 }));
         } else {
             clusters.set(&ops.glyphs, piece);
             let mut boundaries = vec![];
@@ -146,7 +145,7 @@ pub(crate) fn with_actual_text(ops: &TextOps, usage: &FontUsage) -> Option<Vec<T
                 let clean = match cluster.glyphs {
                     &[only] => {
                         let glyph = ops.glyphs[only as usize].glyph;
-                        let font = contexts[only as usize].font;
+                        let font = fonts[only as usize];
                         usage.font(font).is_none_or(|usage| usage.text(glyph) == Some(cluster.text))
                     }
                     _ => false,

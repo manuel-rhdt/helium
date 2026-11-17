@@ -609,10 +609,10 @@ pub struct KernedGlyph {
 /// The `cluster` of a glyph that stands for no text (the parts of a stretched operator).
 pub const NO_CLUSTER: u32 = u32::MAX;
 
-/// A run of the glyphs of a [`TextOps`] with the text that they were shaped from. Backends
-/// work out from it what text the glyphs of the page stand for (the `ToUnicode` map and the
-/// `/ActualText` of PDF, the characters of a word in HTML): the display list says what text
-/// every glyph was drawn for, and every backend decides how to carry that.
+/// A run of the glyphs of a [`TextOps`] with the text that they stand for. Backends work out
+/// from it what text the glyphs of the page stand for (the `ToUnicode` map and the `/ActualText`
+/// of PDF, the characters of a word in HTML): the display list says what text every glyph was
+/// drawn for, and every backend decides how to carry that.
 ///
 /// The glyphs of a piece are in the order in which they are drawn, from left to right. In
 /// right-to-left text (`rtl`) that is the reverse of the order of the text.
@@ -620,14 +620,25 @@ pub const NO_CLUSTER: u32 = u32::MAX;
 pub struct TextPiece {
     /// The glyphs of the piece: a range of [`TextOps::glyphs`].
     pub glyphs: std::ops::Range<u32>,
-    /// The text the glyphs were shaped from: a range of [`TextOps::text`].
+    /// The text of the glyphs: a range of [`TextOps::text`].
     pub text: std::ops::Range<u32>,
     pub rtl: bool,
-    /// Whether the text is exactly what the glyphs stand for. The text of other pieces has
-    /// invisible formatting characters in it that have no glyphs and that do not belong to the
-    /// text of the glyphs in front of them (a zero width space between words). The invisible
-    /// operators of a formula do: they say how the formula is read.
-    pub verbatim: bool,
+    pub kind: PieceKind,
+}
+
+/// What the text of a [`TextPiece`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PieceKind {
+    /// The characters that the glyphs were shaped from. The invisible formatting characters
+    /// between two clusters have no glyphs and are not part of the text of either.
+    Shaped,
+    /// The text of a formula, which is kept exactly: its invisible operators say how the
+    /// formula is read.
+    Formula,
+    /// Glyphs that the layout added to the text, like the hyphen at a line break. The text is
+    /// what they stand for in the text (a soft hyphen), not the character that they are the
+    /// glyphs of, so it says nothing about what the same glyph stands for elsewhere.
+    Inserted,
 }
 
 /// The glyphs of a `TJ` operator: a range of [`TextOps::glyphs`], and the kern after the last one.
@@ -669,16 +680,6 @@ impl GlyphRange {
         }
     }
 
-}
-
-/// How a glyph of a [`TextOps`] is drawn, as far as the operators say (see
-/// [`TextOps::glyph_contexts`]).
-#[derive(Debug, Clone, Copy)]
-pub struct GlyphContext<'a> {
-    /// The name of the font that the glyph is a glyph of.
-    pub font: &'a str,
-    /// Whether the glyph is drawn for the text of a [`TextOperator::BeginActualText`].
-    pub overridden: bool,
 }
 
 /// The operators of a text and the glyphs of its `TJ` operators, which are ranges of one `Vec`:
@@ -728,29 +729,19 @@ impl TextOps {
         self.ops.push(TextOperator::KernedGlyphs(GlyphRange { start, end: start + 1, trailing_kern: 0 }));
     }
 
-    /// Records that the glyphs from the index `first_glyph` on were shaped from `characters`.
+    /// Records that the glyphs `glyphs` (indices of [`TextOps::glyphs`]) stand for `characters`.
     /// The `cluster` of each of them is a byte offset in `characters`.
-    pub fn push_piece(&mut self, first_glyph: usize, characters: &str, rtl: bool) {
-        self.push_piece_of(first_glyph, characters, rtl, false);
-    }
-
-    /// Like [`push_piece`](Self::push_piece) for the glyphs of a formula, whose text is
-    /// [`verbatim`](TextPiece::verbatim).
-    pub fn push_verbatim_piece(&mut self, first_glyph: usize, characters: &str) {
-        self.push_piece_of(first_glyph, characters, false, true);
-    }
-
-    fn push_piece_of(&mut self, first_glyph: usize, characters: &str, rtl: bool, verbatim: bool) {
-        if self.glyphs.len() <= first_glyph {
+    pub fn push_piece(&mut self, glyphs: std::ops::Range<usize>, characters: &str, rtl: bool, kind: PieceKind) {
+        if glyphs.is_empty() {
             return;
         }
         let start = self.text.len() as u32;
         self.text.push_str(characters);
         self.pieces.push(TextPiece {
-            glyphs: first_glyph as u32..self.glyphs.len() as u32,
+            glyphs: glyphs.start as u32..glyphs.end as u32,
             text: start..self.text.len() as u32,
             rtl,
-            verbatim,
+            kind,
         });
     }
 
@@ -759,37 +750,19 @@ impl TextOps {
         &self.text[piece.text.start as usize..piece.text.end as usize]
     }
 
-    /// What the operators say about each glyph, indexed like [`TextOps::glyphs`]: the font that
-    /// it is drawn with and whether it is drawn for the text of a `BeginActualText`. A glyph
-    /// that no operator shows has no font (an empty name).
-    pub fn glyph_contexts(&self) -> Vec<GlyphContext<'_>> {
-        let mut contexts = vec![GlyphContext { font: "", overridden: false }; self.glyphs.len()];
+    /// The name of the font that each glyph is drawn with, indexed like [`TextOps::glyphs`]. A
+    /// glyph that no operator shows has no font (an empty name).
+    pub fn glyph_fonts(&self) -> Vec<&str> {
+        let mut fonts = vec![""; self.glyphs.len()];
         let mut font = "";
-        // the marked content that is open, and whether it is a text override
-        let mut open: Vec<bool> = vec![];
-        let mut overrides = 0;
         for op in &self.ops {
             match op {
                 TextOperator::SetFont(name, _) => font = name,
-                TextOperator::BeginActualText(_) => {
-                    open.push(true);
-                    overrides += 1;
-                }
-                TextOperator::BeginArtifact | TextOperator::BeginTag(_) => open.push(false),
-                TextOperator::EndMarkedContent => {
-                    if open.pop() == Some(true) {
-                        overrides -= 1;
-                    }
-                }
-                TextOperator::KernedGlyphs(range) => {
-                    for context in &mut contexts[range.start as usize..range.end as usize] {
-                        *context = GlyphContext { font, overridden: overrides > 0 };
-                    }
-                }
+                TextOperator::KernedGlyphs(range) => fonts[range.start as usize..range.end as usize].fill(font),
                 _ => {}
             }
         }
-        contexts
+        fonts
     }
 
     /// Appends the operators of `other`, its glyphs and its text.
@@ -802,7 +775,7 @@ impl TextOps {
             glyphs: piece.glyphs.start + glyph_base..piece.glyphs.end + glyph_base,
             text: piece.text.start + text_base..piece.text.end + text_base,
             rtl: piece.rtl,
-            verbatim: piece.verbatim,
+            kind: piece.kind,
         }));
         self.ops.extend(other.ops.into_iter().map(|mut op| {
             if let TextOperator::KernedGlyphs(range) = &mut op {
@@ -881,11 +854,10 @@ pub enum TextOperator {
     /// for glyphs that the font positions vertically, like marks and cursive attachments.
     SetRise(PixelLength),
     SetTransform(TransformMatrix),
-    /// Starts marked content that stands for the given text, whatever the characters were that
-    /// its glyphs were shaped from: the glyphs that follow, up to the matching
-    /// `EndMarkedContent`, are the visible form of that text (the hyphen at a soft hyphen, which
-    /// is shaped from "-" and is U+00AD in the text). Backends take it instead of the text of the
-    /// pieces of those glyphs.
+    /// Starts marked content that stands for the given text, up to the matching
+    /// `EndMarkedContent`. The PDF writer adds it where the text of glyphs cannot be given by the
+    /// `ToUnicode` map of a font (see `pdf::text::with_actual_text`); the layout does not: it
+    /// says what its glyphs stand for with the pieces of [`TextOps`].
     BeginActualText(String),
     /// Starts marked content that is not part of the text of the document (a page number):
     /// extractors that honour `/Artifact` leave it out.

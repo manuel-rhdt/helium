@@ -5,7 +5,7 @@
 //! what a backend does with them (the `ToUnicode` map and `/ActualText` of PDF, the characters
 //! of a word in HTML) is its own business.
 
-use crate::layout::components::{KernedGlyph, NO_CLUSTER, TextPiece};
+use crate::layout::components::{KernedGlyph, NO_CLUSTER, PieceKind, TextPiece};
 use crate::layout::text::is_invisible_formatting;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -33,14 +33,15 @@ pub struct PieceClusters {
     order: Vec<u32>,
     /// The start of every cluster and the range of `order` that holds its glyphs.
     groups: Vec<(usize, std::ops::Range<usize>)>,
-    /// Whether the text of the piece is kept as it is (see [`TextPiece::verbatim`]).
+    /// Whether the text of the piece is kept as it is: only the text of a shaped piece has
+    /// invisible formatting characters to leave out.
     verbatim: bool,
 }
 
 impl PieceClusters {
     /// Groups the glyphs of `piece` by cluster.
     pub fn set(&mut self, glyphs: &[KernedGlyph], piece: &TextPiece) {
-        self.verbatim = piece.verbatim;
+        self.verbatim = piece.kind != PieceKind::Shaped;
         self.order.clear();
         self.order.extend(
             (piece.glyphs.start..piece.glyphs.end).filter(|&index| glyphs[index as usize].cluster != NO_CLUSTER),

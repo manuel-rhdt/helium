@@ -8,9 +8,12 @@ use crate::style::properties::computed::{ComputedValues, PixelLength as Px, RGBA
 use crate::style::properties::specified::{Direction, UnicodeBidi};
 
 use crate::display_list::Rect;
-use crate::layout::text::{is_invisible_formatting, shape_directed_into, shape_with_levels, with_shaped};
+use crate::layout::text::{
+    hyphen_character, is_invisible_formatting, shape_directed_into, shape_hyphenated_into, shape_with_levels, with_shaped,
+    with_shaped_hyphenated,
+};
 
-use components::{GlyphRange, GraphicsOp, IntrinsicSize, KernedGlyph, Position, TextOps};
+use components::{GlyphRange, GraphicsOp, IntrinsicSize, KernedGlyph, PieceKind, Position, TextOps};
 use hyphenation::{Hyphenator, Language, Load, Standard};
 use lemon_pdf::font::FontUnit;
 use specs::storage::GenericReadStorage;
@@ -999,12 +1002,6 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         }
                     };
                     if !hyphenation.is_empty() {
-                        let hyphen_width = with_shaped("-", font, &text_run.face.fallback, None, |glyphs| {
-                            glyphs
-                                .iter()
-                                .map(|(position, _)| font.scale_to_px(position.x_advance, text_run.face.font_size))
-                                .fold(Px(0.0), |sum, width| sum + width)
-                        });
                         // The width of the text in front of a glyph, from the shaping of the
                         // whole run above: `(cluster, width of all glyphs before it)`.
                         let mut prefix_widths = Vec::with_capacity(shaped.len());
@@ -1035,15 +1032,32 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             let word_start = prefix.rfind(char::is_whitespace).map_or(0, |index| {
                                 index + prefix[index..].chars().next().map_or(1, char::len_utf8)
                             });
-                            let prefix_width = width_before(word_start)
-                                + with_shaped(&prefix[word_start..], font, &text_run.face.fallback, Some(word_start), |glyphs| {
-                                    glyphs
-                                        .iter()
-                                        .map(|(position, _)| {
-                                            font.scale_to_px(position.x_advance, text_run.face.font_size)
-                                        })
-                                        .fold(Px(0.0), |sum, width| sum + width)
-                                });
+                            // The hyphen is shaped with the end of the word, as it is drawn, so that it
+                            // is kerned with the letter in front of it: the kern is part of the advance
+                            // of that letter.
+                            let word_prefix = &prefix[word_start..];
+                            let last = prefix.char_indices().next_back().map(|(index, _)| index);
+                            let hyphen = hyphen_character(font, &text_run.face.fallback, last);
+                            let (prefix_advance, hyphen_width) = with_shaped_hyphenated(
+                                word_prefix,
+                                hyphen,
+                                font,
+                                &text_run.face.fallback,
+                                Some(word_start),
+                                |glyphs| {
+                                    let (mut before, mut after) = (Px(0.0), Px(0.0));
+                                    for (position, glyph_info) in glyphs {
+                                        let advance = font.scale_to_px(position.x_advance, text_run.face.font_size);
+                                        if (glyph_info.cluster as usize) < word_prefix.len() {
+                                            before += advance;
+                                        } else {
+                                            after += advance;
+                                        }
+                                    }
+                                    (before, after)
+                                },
+                            );
+                            let prefix_width = width_before(word_start) + prefix_advance;
                             // The line after the break starts with the rest of the word, shaped
                             // alone too (its first glyph is not kerned with the last one of the
                             // line before, and a ligature across the break is split). The rest
@@ -2034,28 +2048,17 @@ impl<'a> System<'a> for LineBoxCreator {
                             });
                             text_cursor = piece_start + shift_x;
                         }
-                        if hyphen && rtl {
-                            ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
-                            piece_width +=
-                                shape_piece(
-                                "-",
-                                font,
-                                &run.face.fallback,
-                                None,
-                                run.face.font_size,
-                                Px(0.0),
-                                &[],
-                                true,
-                                &mut ops,
-                            );
-                            ops.push(TextOperator::EndMarkedContent);
-                        }
                         let vertical = flow.is_vertical().then_some(VerticalPiece {
                             flow,
                             baseline_x: Px(line_origin.0),
                             start_y: line_pos.y + piece_start,
                         });
                         let ops_before = ops.len();
+                        // the hyphen is drawn with the font of the last letter in front of it
+                        let hyphen = hyphen.then(|| {
+                            let last = characters.char_indices().next_back().map(|(index, _)| piece.start + index);
+                            hyphen_character(font, &run.face.fallback, last)
+                        });
                         piece_width += shape_piece_in_flow(
                             characters,
                             font,
@@ -2065,6 +2068,7 @@ impl<'a> System<'a> for LineBoxCreator {
                             word_spacing,
                             &ifc.inter_letter_offsets(line, &piece),
                             rtl,
+                            hyphen,
                             vertical,
                             &mut ops,
                         );
@@ -2075,22 +2079,6 @@ impl<'a> System<'a> for LineBoxCreator {
                             (line_pos.x + piece_start + physical_x, line_pos.y + line.baseline + physical_y),
                             run.face.color,
                         ));
-                        if hyphen && !rtl {
-                            ops.push(TextOperator::BeginActualText(SOFT_HYPHEN.to_owned()));
-                            piece_width +=
-                                shape_piece(
-                                "-",
-                                font,
-                                &run.face.fallback,
-                                None,
-                                run.face.font_size,
-                                Px(0.0),
-                                &[],
-                                false,
-                                &mut ops,
-                            );
-                            ops.push(TextOperator::EndMarkedContent);
-                        }
                         if shifted {
                             // back to where the next piece starts
                             ops.push(TextOperator::NewLine {
@@ -2401,7 +2389,7 @@ pub(super) fn shape_piece(
     rtl: bool,
     ops: &mut TextOps,
 ) -> Px {
-    shape_piece_in_flow(characters, font, fonts, at, font_size, word_spacing, inter_letter, rtl, None, ops)
+    shape_piece_in_flow(characters, font, fonts, at, font_size, word_spacing, inter_letter, rtl, None, None, ops)
 }
 
 /// Where a piece of a vertical line is on the page, to draw its upright characters.
@@ -2422,6 +2410,11 @@ const IDEOGRAPHIC_CENTER: f32 = 0.38;
 /// Like [`shape_piece`]. In a vertical line (`vertical`), the characters that stand upright are
 /// drawn with a text matrix of their own, whose origin puts the center of their em box on the
 /// center of the line, while the others are turned with the line.
+///
+/// A `hyphen` is the hyphen of a line that breaks inside of a word (see `hyphen_character`),
+/// drawn behind the characters: it is shaped with them, so that it is kerned with the letters in
+/// front of it, and is part of the width that is returned. It is not part of the text: the
+/// glyph stands for a soft hyphen.
 pub(super) fn shape_piece_in_flow(
     characters: &str,
     font: &Font,
@@ -2431,22 +2424,35 @@ pub(super) fn shape_piece_in_flow(
     word_spacing: Px,
     inter_letter: &[usize],
     rtl: bool,
+    hyphen: Option<char>,
     vertical: Option<VerticalPiece>,
     ops: &mut TextOps,
 ) -> Px {
+    // the characters and the hyphen: the offsets of the clusters are in this text
+    let mut with_hyphen = String::new();
+    let (characters_end, text) = match hyphen {
+        Some(hyphen) => {
+            with_hyphen.reserve(characters.len() + hyphen.len_utf8());
+            with_hyphen.push_str(characters);
+            with_hyphen.push(hyphen);
+            (characters.len(), with_hyphen.as_str())
+        }
+        None => (characters.len(), characters),
+    };
+    let is_hyphen = |cluster: usize| hyphen.is_some() && cluster >= characters_end;
     // lines that run upwards or right-to-left in a vertical flow are not supported
     let vertical = vertical.filter(|_| !rtl);
     let is_upright = |cluster: usize| {
         vertical.is_some()
             && fonts.orientation.is_some_and(|orientation| {
-                characters[cluster..]
+                text[cluster..]
                     .chars()
                     .next()
                     .is_some_and(|ch| super::writing_mode::is_upright(ch, orientation))
             })
     };
     let is_invisible = |info: &super::text::GlyphInfo| {
-        characters[info.cluster as usize..]
+        text[info.cluster as usize..]
             .chars()
             .next()
             .is_some_and(is_invisible_formatting)
@@ -2454,7 +2460,10 @@ pub(super) fn shape_piece_in_flow(
     // the glyphs go to a buffer that is reused for the next piece
     let mut shaped = SHAPED_SCRATCH.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
     shaped.clear();
-    shape_directed_into(characters, font, fonts, at, rtl, &mut shaped);
+    match hyphen {
+        Some(hyphen) => shape_hyphenated_into(characters, hyphen, font, fonts, at, rtl, &mut shaped),
+        None => shape_directed_into(characters, font, fonts, at, rtl, &mut shaped),
+    }
     shaped.retain(|(_, info)| !is_invisible(info));
 
     // Glyphs of characters that `font` has no glyph for come from its fallback fonts. The font
@@ -2517,7 +2526,7 @@ pub(super) fn shape_piece_in_flow(
         });
         pen.0 += pos.x_advance.0;
         // adjust the width of space glyphs to allow text justification
-        if characters[cluster..].starts_with(char::is_whitespace) {
+        if text[cluster..].starts_with(char::is_whitespace) {
             advance += word_spacing;
             pen.0 += word_spacing_units.0;
         }
@@ -2526,6 +2535,9 @@ pub(super) fn shape_piece_in_flow(
 
     // The glyphs are written in visual order, and the piece says in which direction its text
     // goes. Each kern moves the pen to where its glyph is drawn.
+    // The clusters of the glyphs are offsets in the text of their piece: the hyphen is a piece
+    // of its own that starts at 0.
+    let piece_cluster = |cluster: usize| (if is_hyphen(cluster) { cluster - characters_end } else { cluster }) as u32;
     let mut out = GlyphRunWriter::new(ops);
     let mut current_font = 0u16;
     let mut rise = FontUnit(0.0);
@@ -2559,7 +2571,7 @@ pub(super) fn shape_piece_in_flow(
                 e: Px(center_x - advance_px / 2.0),
                 f: Px(along + advance_px / 2.0 + IDEOGRAPHIC_CENTER * size),
             }));
-            ops.push_glyph(glyph.glyph, glyph.cluster as u32);
+            ops.push_glyph(glyph.glyph, piece_cluster(glyph.cluster));
             out.skip_pushed(ops);
             // back to the line, behind the glyph
             let [a, b, c, d] = piece.flow.text_matrix();
@@ -2583,7 +2595,7 @@ pub(super) fn shape_piece_in_flow(
             rise = glyph.rise;
             ops.push(TextOperator::SetRise(font_size * (rise.0 as f32 / 1000.0)));
         }
-        out.glyph(ops, glyph.glyph, glyph.cluster as u32);
+        out.glyph(ops, glyph.glyph, piece_cluster(glyph.cluster));
         if vertical.is_none() && glyph_font.is_color_glyph(glyph.glyph) {
             ops.push(TextOperator::ColorGlyph {
                 font: glyph_font.postscript_name(),
@@ -2598,7 +2610,18 @@ pub(super) fn shape_piece_in_flow(
     // the text that follows continues from the end of the piece on the baseline
     out.kern(FontUnit(pen.0 - piece_end.0));
     out.flush(ops);
-    ops.push_piece(first_glyph, characters, rtl);
+    // The glyphs of the hyphen are at the end of the glyphs of the piece, or at its start in
+    // right-to-left text. They are a piece of their own that stands for a soft hyphen.
+    let hyphen_glyphs = placed.iter().filter(|glyph| is_hyphen(glyph.cluster)).count();
+    let glyphs = first_glyph..ops.glyphs.len();
+    let split = if rtl { glyphs.start + hyphen_glyphs } else { glyphs.end - hyphen_glyphs };
+    if rtl {
+        ops.push_piece(glyphs.start..split, SOFT_HYPHEN, true, PieceKind::Inserted);
+        ops.push_piece(split..glyphs.end, characters, true, PieceKind::Shaped);
+    } else {
+        ops.push_piece(glyphs.start..split, characters, false, PieceKind::Shaped);
+        ops.push_piece(split..glyphs.end, SOFT_HYPHEN, false, PieceKind::Inserted);
+    }
     if rise.0 != 0.0 {
         ops.push(TextOperator::SetRise(Px(0.0)));
     }
@@ -2699,7 +2722,7 @@ mod tests {
             ops.glyphs.push(KernedGlyph { glyph: glyph(ch), kern: 0, cluster });
         }
         ops.push(TextOperator::KernedGlyphs(GlyphRange { start: first as u32, end: 5, trailing_kern: 0 }));
-        ops.push_piece(first, "abcd", false);
+        ops.push_piece(first..ops.glyphs.len(), "abcd", false, PieceKind::Shaped);
 
         assert_eq!(actual_texts(&ops), ["b", "c"]);
         assert_balanced(&marked(&ops));
@@ -2725,11 +2748,16 @@ mod tests {
         .unwrap()
     }
 
+    /// Operators that select `font`, as the layout starts every line.
+    fn ops_for(font: &Font) -> TextOps {
+        TextOps::from_ops(vec![TextOperator::SetFont(font.postscript_name(), Px(16.0))])
+    }
+
     /// The operators `shape_piece` emits for `text`, with the width it returns.
     fn pieces(family: &str, text: &str, rtl: bool, word_spacing: Px) -> (TextOps, Px, Font) {
         let font = font_named(family);
         let fonts = crate::layout::text::fallback::TextFonts::default();
-        let mut ops = TextOps::default();
+        let mut ops = ops_for(&font);
         let width = shape_piece(text, &font, &fonts, None, Px(16.0), word_spacing, &[], rtl, &mut ops);
         (ops, width, font)
     }
@@ -2823,8 +2851,8 @@ mod tests {
     fn marking_does_not_depend_on_earlier_text() {
         let font = font_named("Noto Sans Devanagari");
         let fonts = crate::layout::text::fallback::TextFonts::default();
-        let mut first = TextOps::default();
-        let mut second = TextOps::default();
+        let mut first = ops_for(&font);
+        let mut second = ops_for(&font);
         for ops in [&mut first, &mut second] {
             shape_piece("कि", &font, &fonts, None, Px(16.0), Px(0.0), &[], false, ops);
         }
@@ -2980,5 +3008,90 @@ mod tests {
         assert!(is_justified_between("道a", 3));
         assert!(is_justified_between("かな", 3));
         assert!(is_justified_between("한국", 3));
+    }
+
+    /// The operators `shape_piece_in_flow` emits for `text` with a hyphen after it.
+    fn hyphenated(family: &str, text: &str, rtl: bool) -> (TextOps, Px, Font) {
+        let font = font_named(family);
+        let fonts = crate::layout::text::fallback::TextFonts::default();
+        let mut ops = ops_for(&font);
+        let width = shape_piece_in_flow(
+            text, &font, &fonts, Some(0), Px(16.0), Px(0.0), &[], rtl, Some('\u{2010}'), None, &mut ops,
+        );
+        (ops, width, font)
+    }
+
+    /// The hyphen is part of the shaped text but not of the text of the word: it is a piece of
+    /// its own that stands for a soft hyphen, with its own cluster.
+    #[test]
+    fn the_hyphen_is_a_piece_that_stands_for_a_soft_hyphen() {
+        let (ops, _, font) = hyphenated("TeX Gyre Termes", "Ty", false);
+        let pieces: Vec<_> = ops
+            .pieces
+            .iter()
+            .map(|piece| (ops.piece_text(piece), piece.kind, piece.glyphs.clone()))
+            .collect();
+        assert_eq!(
+            pieces,
+            [("Ty", PieceKind::Shaped, 0..2), (SOFT_HYPHEN, PieceKind::Inserted, 2..3)]
+        );
+        let clusters: Vec<u32> = ops.glyphs.iter().map(|glyph| glyph.cluster).collect();
+        assert_eq!(clusters, [0, 1, 0]);
+        // the glyph is the one of U+2010
+        let hyphen = font.hb_font.get_nominal_glyph('\u{2010}').unwrap();
+        assert_eq!(ops.glyphs[2].glyph, GlyphIndex(hyphen));
+        assert_eq!(actual_texts(&ops), [SOFT_HYPHEN]);
+        assert_balanced(&marked(&ops));
+    }
+
+    /// The width that is returned and the pen after the text include the hyphen.
+    #[test]
+    fn the_width_of_a_hyphenated_piece_includes_the_hyphen() {
+        let (plain, plain_width, _) = pieces("TeX Gyre Termes", "Ty", false, Px(0.0));
+        let (ops, width, font) = hyphenated("TeX Gyre Termes", "Ty", false);
+        assert_eq!(glyph_count(&ops), glyph_count(&plain) + 1);
+        assert!(width > plain_width);
+        assert!((net_advance(&ops, &font, 16.0) - width.0).abs() < 0.01);
+    }
+
+    /// In right-to-left text the hyphen is drawn first, on the left; its piece comes first too.
+    #[test]
+    fn the_hyphen_of_right_to_left_text_is_on_the_left() {
+        let (ops, _, _) = hyphenated("Noto Sans Hebrew", "אב", true);
+        let pieces: Vec<_> = ops
+            .pieces
+            .iter()
+            .map(|piece| (ops.piece_text(piece), piece.kind, piece.glyphs.clone(), piece.rtl))
+            .collect();
+        assert_eq!(
+            pieces,
+            [
+                (SOFT_HYPHEN, PieceKind::Inserted, 0..1, true),
+                ("אב", PieceKind::Shaped, 1..3, true)
+            ]
+        );
+        // the text of the word is marked as a whole, and the hyphen is a soft hyphen
+        assert_eq!(actual_texts(&ops), [SOFT_HYPHEN, "אב"]);
+        assert_balanced(&marked(&ops));
+    }
+
+    /// A hyphen that was inserted does not say what text its glyph stands for in the font:
+    /// hyphens that the author typed keep the text of the glyph, and need no `/ActualText`.
+    #[test]
+    fn an_inserted_hyphen_does_not_change_the_text_of_the_glyph() {
+        let (inserted, _, font) = hyphenated("TeX Gyre Termes", "Ty", false);
+        let fonts = crate::layout::text::fallback::TextFonts::default();
+        let mut typed = ops_for(&font);
+        shape_piece("a\u{2010}b", &font, &fonts, None, Px(16.0), Px(0.0), &[], false, &mut typed);
+
+        let mut usage = crate::font_usage::FontUsage::default();
+        usage.record_text(&inserted);
+        usage.record_text(&typed);
+        let glyphs = usage.font(&font.postscript_name()).unwrap();
+        let hyphen = GlyphIndex(font.hb_font.get_nominal_glyph('\u{2010}').unwrap());
+        assert_eq!(glyphs.text(hyphen), Some("\u{2010}"));
+        assert!(crate::pdf::text::with_actual_text(&typed, &usage).is_none());
+        // the inserted one still says that it is a soft hyphen
+        assert!(crate::pdf::text::with_actual_text(&inserted, &usage).is_some());
     }
 }

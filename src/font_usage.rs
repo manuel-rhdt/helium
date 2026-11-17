@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::display_list::{DisplayItem, PrintPages};
-use crate::layout::components::TextOps;
+use crate::layout::components::{PieceKind, TextOps};
 use crate::layout::text::clusters::PieceClusters;
 use crate::layout::text::font::GlyphIndex;
 use crate::svg_text::SvgFontNames;
@@ -75,14 +75,18 @@ impl FontUsage {
     /// from: a cluster of one glyph gives it that text, unless the glyph was drawn for other text
     /// before; the text of every other cluster is only kept as a fallback.
     pub fn record_text(&mut self, ops: &TextOps) {
-        let contexts = ops.glyph_contexts();
-        for (glyph, context) in ops.glyphs.iter().zip(&contexts) {
-            if !context.font.is_empty() {
-                self.entry(context.font).glyphs.insert(glyph.glyph);
+        let fonts = ops.glyph_fonts();
+        for (glyph, font) in ops.glyphs.iter().zip(&fonts) {
+            if !font.is_empty() {
+                self.entry(font).glyphs.insert(glyph.glyph);
             }
         }
         let mut clusters = PieceClusters::default();
         for piece in &ops.pieces {
+            // what inserted glyphs stand for says nothing about the glyphs themselves
+            if piece.kind == PieceKind::Inserted {
+                continue;
+            }
             clusters.set(&ops.glyphs, piece);
             for cluster in clusters.iter(ops.piece_text(piece)) {
                 if cluster.text.is_empty() {
@@ -94,7 +98,7 @@ impl FontUsage {
                 };
                 for &index in cluster.glyphs {
                     let glyph = ops.glyphs[index as usize].glyph;
-                    let font = contexts[index as usize].font;
+                    let font = fonts[index as usize];
                     if font.is_empty() {
                         continue;
                     }
