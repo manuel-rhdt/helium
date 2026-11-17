@@ -1162,6 +1162,11 @@ pub struct PrintPages {
     pub hyperlinks: Vec<Hyperlink>,
     /// The headings of the document, in document order (the bookmarks of the PDF).
     pub outline: Vec<crate::layout::components::OutlineEntry>,
+    /// Where the elements with an `id` start (the named destinations of the PDF).
+    pub named_destinations: std::collections::BTreeMap<String, crate::layout::components::GoToDestination>,
+    /// The ranges of pages that have the same kind of label (empty if the labels are the
+    /// numbers of the pages).
+    pub page_labels: Vec<crate::layout::margin_boxes::PageLabelRange>,
     /// The logical structure of the document (tagged PDF).
     pub structure: crate::tagging::StructureTree,
     /// The content of the `foreignObject` elements of SVG images, laid out like small pages, by
@@ -1805,6 +1810,14 @@ pub fn generate_display_list(world: &mut specs::World) -> PrintPages {
         font_map: (*world.read_resource::<crate::layout::FontMap>()).clone(),
         pages: page_vec,
         hyperlinks: world.read_resource::<Hyperlinks>().0.clone(),
+        named_destinations: world
+            .try_fetch::<crate::layout::components::NamedDestinations>()
+            .map(|destinations| destinations.0.clone())
+            .unwrap_or_default(),
+        page_labels: world
+            .try_fetch::<crate::layout::margin_boxes::PageLabels>()
+            .map(|labels| labels.0.clone())
+            .unwrap_or_default(),
         outline: world
             .try_fetch::<crate::layout::components::Outline>()
             .map(|outline| outline.0.clone())

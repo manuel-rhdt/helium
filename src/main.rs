@@ -30,6 +30,7 @@ pub mod svg_dom;
 mod svg_input;
 mod svg_text;
 pub mod layout;
+pub mod metadata;
 pub mod node_data_ref;
 mod parser;
 mod pdf;
@@ -56,6 +57,12 @@ struct Options {
     /// for assistive technology, reflow and text extraction) that is derived from the HTML.
     #[structopt(long = "no-tags")]
     no_tags: bool,
+    /// Write a file that conforms to this level of PDF/A: 2a, 2b, 2u, 3a, 3b or 3u. The level `a`
+    /// needs the structure tree, so it does not go with `--no-tags`. Colours are sRGB (the output
+    /// intent is a profile that is made in code); what the document uses that PDF/A forbids is
+    /// only CMYK images are reported (as a warning).
+    #[structopt(long = "pdfa", value_name = "LEVEL")]
+    pdfa: Option<pdf::PdfALevel>,
     /// Write the computed layout as JSON to this file (use `-` for stdout)
     #[structopt(long = "dump-layout", parse(from_os_str))]
     dump_layout: Option<PathBuf>,
@@ -108,6 +115,10 @@ fn main() -> Result<(), Error> {
     env_logger::init();
 
     let opt = Options::from_args();
+    if opt.no_tags && opt.pdfa.is_some_and(|level| level.needs_tags()) {
+        eprintln!("error: PDF/A level `a` needs the structure tree, so it cannot be used with --no-tags");
+        std::process::exit(2);
+    }
     let no_system_fonts = opt.no_system_fonts
         || std::env::var_os("HELIUM_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0");
     layout::text::font::set_use_system_fonts(!no_system_fonts);
@@ -226,6 +237,7 @@ fn main() -> Result<(), Error> {
         opt.no_filter,
         opt.crop,
         !opt.no_tags,
+        opt.pdfa,
     )?;
 
     if let Some(code) = check_exit_code {

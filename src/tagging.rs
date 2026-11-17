@@ -103,6 +103,8 @@ pub struct StructureTree {
     pub lang: Option<String>,
     /// The title of the document (`<title>`).
     pub title: Option<String>,
+    /// What the `<meta>` elements say: author, description, keywords, date.
+    pub metadata: crate::metadata::Metadata,
     next_slot: u32,
 }
 
@@ -607,6 +609,7 @@ impl StructureTree {
             tree: StructureTree {
                 nodes: vec![StructNode::new("Document", None)],
                 title: find_title(dom),
+                metadata: crate::metadata::Metadata::from_dom(dom),
                 lang: find_root_lang(dom),
                 ..Default::default()
             },

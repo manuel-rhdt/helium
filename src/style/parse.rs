@@ -326,6 +326,21 @@ pub enum ContentItem {
     Counter(CounterName, CounterStyle),
 }
 
+/// The value of `-helium-page-label`, the label of the page in the PDF (what the page box of a
+/// viewer shows). There is no CSS property for this.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum PageLabelSpec {
+    /// The label is the number that the footer or else the header of the page prints.
+    #[default]
+    Auto,
+    /// The label is the number of the page in decimal digits.
+    None,
+    /// A prefix and the number in a style, written like `content`: `"A-" counter(page, upper-roman)`.
+    /// The text after `counter(page)` is not part of the label, and no other counter can come
+    /// before it.
+    Content(Vec<ContentItem>),
+}
+
 /// A margin at-rule such as `@bottom-center { content: counter(page) }` inside of `@page`.
 #[derive(Debug)]
 pub struct MarginBoxRule {
@@ -339,6 +354,8 @@ pub struct QualifiedRule {
     selectors: GeneralizedSelector,
     pub properties: PropertyDeclarationBlock,
     pub margin_boxes: Vec<MarginBoxRule>,
+    /// `-helium-page-label` of an `@page` rule.
+    pub page_label: Option<PageLabelSpec>,
 }
 
 impl QualifiedRule {
@@ -347,6 +364,7 @@ impl QualifiedRule {
             selectors: GeneralizedSelector::Selectors(selectors),
             properties,
             margin_boxes: vec![],
+            page_label: None,
         }
     }
 
@@ -661,6 +679,7 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
             selectors: GeneralizedSelector::AtPage(prelude),
             properties: body.properties,
             margin_boxes: body.margin_boxes,
+            page_label: body.page_label,
         })])
     }
 }
@@ -670,11 +689,13 @@ struct PageBody {
     properties: PropertyDeclarationBlock,
     content: Option<Vec<ContentItem>>,
     margin_boxes: Vec<MarginBoxRule>,
+    page_label: Option<PageLabelSpec>,
 }
 
 enum PageBodyItem {
     Declaration(ParsedDeclaration),
     Content(Vec<ContentItem>),
+    PageLabel(PageLabelSpec),
     MarginBox(MarginBoxRule),
 }
 
@@ -685,6 +706,7 @@ fn parse_page_body(input: &mut Parser) -> PageBody {
         match item {
             Ok(PageBodyItem::Declaration(decl)) => body.properties.declarations.push(decl),
             Ok(PageBodyItem::Content(content)) => body.content = Some(content),
+            Ok(PageBodyItem::PageLabel(label)) => body.page_label = Some(label),
             Ok(PageBodyItem::MarginBox(margin_box)) => body.margin_boxes.push(margin_box),
             Err((error, text, _location)) => {
                 warn!("Error while parsing declaration {:?}: {:?}", text, error)
@@ -692,6 +714,29 @@ fn parse_page_body(input: &mut Parser) -> PageBody {
         }
     }
     body
+}
+
+/// `auto | none | <string>* counter(page [, <counter-style>])`
+fn parse_page_label<'i>(input: &mut Parser<'i>) -> Result<PageLabelSpec, ParseError<StyleParseError>> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        input.expect_exhausted()?;
+        return Ok(PageLabelSpec::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        input.expect_exhausted()?;
+        return Ok(PageLabelSpec::None);
+    }
+    let items = parse_content(input)?;
+    // a prefix of strings, then the number of the page: nothing else makes a label
+    let numbered = items.iter().position(|item| matches!(item, ContentItem::Counter(..)));
+    let valid = numbered.is_some_and(|at| {
+        items[..at].iter().all(|item| matches!(item, ContentItem::String(_)))
+            && matches!(items[at], ContentItem::Counter(CounterName::Page, _))
+    });
+    if !valid {
+        return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) });
+    }
+    Ok(PageLabelSpec::Content(items))
 }
 
 fn parse_content<'i>(
@@ -771,6 +816,9 @@ impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
     ) -> Result<Self::Declaration, ParseError<Self::Error>> {
         if name.eq_ignore_ascii_case("content") {
             return Ok(PageBodyItem::Content(parse_content(input)?));
+        }
+        if name.eq_ignore_ascii_case("-helium-page-label") {
+            return Ok(PageBodyItem::PageLabel(parse_page_label(input)?));
         }
         let declaration =
             input.parse_until_before(cssparser::Delimiter::Bang, |input| parse_property(name, input))?;

@@ -13,6 +13,7 @@ helium [options] input.html output.pdf
 | `--no-compression` | write uncompressed content streams (for inspecting the PDF) |
 | `--crop` | one page that is as large as the content, instead of A4 pages: no page breaks (also not forced ones), page margins, `@page` rules or margin boxes. The page is as wide as the content needs (what shrink-to-fit comes to with no limit, so text is not broken into lines: give the `body` a `width` to set one) and as high as the content, up to 100 000 pixels, after which it has another page |
 | `--no-tags` | write an untagged PDF |
+| `--pdfa <level>` | write a PDF/A file: level `2a`, `2b`, `2u`, `3a`, `3b` or `3u`. Adds the identification to the XMP packet and an output intent with an sRGB profile (made in code, so there is no file and no licence to care about), which is what makes the device colours that the pages use conformant. The level `a` needs the structure tree (not with `--no-tags`). Not checked: what the document uses that PDF/A forbids, except that a CMYK image is reported as a warning |
 | `--no-system-fonts` | use only the built-in fonts, so that the output does not depend on the machine |
 | `--dump-layout <file>` | write the computed layout as JSON (`-` for stdout) |
 | `--check-layout` | evaluate the `data-expected-*` attributes of the document against the layout |
@@ -207,7 +208,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
   from strings and `counter(page)` / `counter(pages)`, in the styles `decimal`,
   `decimal-leading-zero`, `lower-` and `upper-roman`, `lower-` and `upper-alpha`/`latin`,
-  `arabic-indic` and `persian`.
+  `arabic-indic` and `persian`. The `page` counter is a real counter (CSS Paged Media 3, § 6.1):
+  `counter-reset`, `counter-increment` and `counter-set` of `page` in an `@page` rule apply to the
+  pages that it selects, in the order of CSS Lists: the page counter is reset, then incremented
+  (by 1 unless `counter-increment` says otherwise), then set. So `@page chapter:first {
+  counter-reset: page 0 }` makes the first page of a chapter page 1, and `@page {
+  counter-increment: page 2 }` numbers the pages 2, 4, 6. Not supported: `counter-reset` of
+  `page` on an element (the specification does not say what it does), and changing `pages`
+  (which, as in the specification, has no effect).
 - **Fragmentation:** `break-before`/`-after`/`-inside` (`auto`, `avoid`, `avoid-page`,
   `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
   `widows`, and `looseness` (not in CSS: how many lines more or fewer than the best breaking a
@@ -284,11 +292,20 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 
 PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from the HTML
 (headings, paragraphs, lists, tables, links, figures, formulas) and the PDF/UA identifier;
-document title and language; XMP metadata; link annotations; a document outline (bookmarks)
+document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels (the `-helium-page-label` of the `@page` rules, which is not in CSS: `auto` takes the style of the one `counter(page)` that the headers and footers of the page have between them, and the decimal number if there are none or several, `none` the decimal number, or `"A-" counter(page, upper-roman)` a prefix and the style of the number; the text around a counter in a header or footer is never a prefix); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
 from the elements with a `bookmark-level` (UA default: `h1` to `h6` and `role=heading` with `aria-level`; entries nest by level, elements that are not displayed are left out), with `bookmark-label` (strings, `content()`, `attr()`) and `bookmark-state`; `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
 groups for `opacity`.
+
+### Conformance
+
+The gallery is validated with [veraPDF](https://verapdf.org) for PDF/UA-1 and for every level of
+`--pdfa` (`tests/conformance.rs`; the test is skipped unless `VERAPDF_LIB` is the directory with the
+jars of veraPDF, which `tools/fetch_verapdf.sh DIR` downloads to `DIR/lib`). All documents conform
+but one: the sidebar of the `cv` has headings before the `h1`, which PDF/UA-1 does not allow. This
+says that veraPDF finds nothing wrong in the gallery, which is not a proof for every document: it
+checks what a program can check, and not for example whether the reading order makes sense.
 
 ## Not supported
 

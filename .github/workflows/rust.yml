@@ -26,5 +26,10 @@ jobs:
         sudo apt-get install -y libfontconfig1-dev fonts-stix fonts-lmodern poppler-utils
     - name: Build
       run: cargo build --verbose
+    - name: Install veraPDF
+      run: tools/fetch_verapdf.sh "$RUNNER_TEMP/verapdf"
     - name: Run tests
       run: cargo test --verbose
+      env:
+        # tests/conformance.rs validates the gallery for PDF/A and PDF/UA-1 with veraPDF
+        VERAPDF_LIB: ${{ runner.temp }}/verapdf/lib

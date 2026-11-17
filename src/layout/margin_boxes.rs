@@ -12,7 +12,8 @@ use super::components::{PageGeometry, Paragraph, PlacedColorGlyph, Position, Tex
 use super::inline::{ShapedLine, shape_line};
 use super::pages::{PageContext, PageMargins, Pages, normalize};
 use super::counters::format_counter;
-use crate::style::parse::{ContentItem, CounterName, MarginBoxKind};
+use crate::style::parse::{ContentItem, CounterName, MarginBoxKind, PageLabelSpec};
+use crate::style::properties::generated::CounterList;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use crate::style::properties::computed::{Language, PixelLength as Px, TextAlign};
@@ -32,17 +33,99 @@ pub struct ResolvedMarginBox {
     pub text_align: TextAlign,
 }
 
+/// What the page context of a page does to the `page` counter (CSS Paged Media 3, § 6.1): the
+/// `counter-reset`, `counter-increment` and `counter-set` of the `@page` rules that apply to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageCounterOps {
+    /// The value that the counter is reset to when the page box is generated (before the
+    /// increment).
+    pub reset: Option<i32>,
+    /// What the counter is incremented by: 1 unless `counter-increment` names `page`.
+    pub increment: i32,
+    /// The value that the counter is set to after the increment.
+    pub set: Option<i32>,
+}
+
+impl Default for PageCounterOps {
+    fn default() -> Self {
+        PageCounterOps { reset: None, increment: 1, set: None }
+    }
+}
+
+impl PageCounterOps {
+    /// The operations of the lists of `counter-reset`, `counter-increment` and `counter-set` that
+    /// apply to a page. An entry for a counter other than `page` is not for us.
+    pub fn from_lists(
+        reset: Option<&CounterList>,
+        increment: Option<&CounterList>,
+        set: Option<&CounterList>,
+    ) -> Self {
+        // the values written for `page` in a list (`None` for no value)
+        fn entries(list: Option<&CounterList>) -> Vec<Option<i32>> {
+            list.map_or_else(Vec::new, |list| {
+                list.0.iter().filter(|(name, _)| name == "page").map(|(_, value)| *value).collect()
+            })
+        }
+        let mut ops = PageCounterOps::default();
+        // (a counter that is named twice in a `counter-reset` takes the last value; increments add)
+        ops.reset = entries(reset).last().map(|value| value.unwrap_or(0));
+        let increments = entries(increment);
+        if !increments.is_empty() {
+            ops.increment = increments.iter().map(|value| value.unwrap_or(1)).sum();
+        }
+        ops.set = entries(set).last().map(|value| value.unwrap_or(0));
+        ops
+    }
+
+    /// The value of the counter on a page box, given its value on the page before (0 before the
+    /// first page): in the order of CSS Lists 3, reset, then increment, then set.
+    pub fn next(&self, before: i64) -> i64 {
+        let mut value = self.reset.map_or(before, i64::from);
+        value += i64::from(self.increment);
+        if let Some(set) = self.set {
+            value = i64::from(set);
+        }
+        value
+    }
+}
+
 /// The margin boxes of the kinds of pages that the `@page` rules tell apart.
 #[derive(Debug, Clone, Default)]
 pub struct MarginBoxes {
     pub names: HashSet<Arc<str>>,
     pub pages: HashMap<PageContext, Vec<ResolvedMarginBox>>,
+    /// What the page context does to the `page` counter, by kind of page.
+    pub counters: HashMap<PageContext, PageCounterOps>,
+    /// The `-helium-page-label` of the kinds of pages.
+    pub labels: HashMap<PageContext, PageLabelSpec>,
 }
 
 impl MarginBoxes {
     /// Whether the document has any headers or footers at all.
     pub fn is_empty(&self) -> bool {
         self.pages.values().all(|boxes| boxes.is_empty())
+    }
+
+    /// The operations on the `page` counter of a page.
+    fn counter_ops(&self, page: &PageContext) -> PageCounterOps {
+        self.counters.get(&normalize(page, &self.names)).copied().unwrap_or_default()
+    }
+
+    /// The `-helium-page-label` of a page.
+    fn label_spec(&self, page: &PageContext) -> &PageLabelSpec {
+        self.labels.get(&normalize(page, &self.names)).unwrap_or(&PageLabelSpec::Auto)
+    }
+
+    /// The value of the `page` counter on every one of the first `num_pages` pages, which are
+    /// the pages of `pages`.
+    pub fn page_numbers(&self, pages: &Pages, num_pages: usize, rtl: bool) -> Vec<i64> {
+        let mut number = 0;
+        (0..num_pages)
+            .map(|index| {
+                number = self.counter_ops(&page_context(pages, index, rtl)).next(number);
+                number
+            })
+            .collect()
     }
 
     fn for_page(&self, page: &PageContext) -> &[ResolvedMarginBox] {
@@ -52,15 +135,153 @@ impl MarginBoxes {
     }
 }
 
-fn content_text(content: &[ContentItem], page: usize, pages: usize) -> String {
+/// The page context of the page with this index.
+fn page_context(pages: &Pages, index: usize, rtl: bool) -> PageContext {
+    pages.0.get(index).cloned().unwrap_or(PageContext { index, name: None, first_in_group: false, rtl })
+}
+
+fn content_text(content: &[ContentItem], page: i64, pages: usize) -> String {
     content
         .iter()
         .map(|item| match item {
             ContentItem::String(string) => string.clone(),
-            ContentItem::Counter(CounterName::Page, style) => format_counter(page as i64, *style),
+            ContentItem::Counter(CounterName::Page, style) => format_counter(page, *style),
             ContentItem::Counter(CounterName::Pages, style) => format_counter(pages as i64, *style),
         })
         .collect()
+}
+
+/// How the number of a page is written in its label in the PDF.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelStyle {
+    Decimal,
+    LowerRoman,
+    UpperRoman,
+    LowerLetters,
+    UpperLetters,
+}
+
+impl LabelStyle {
+    fn counter_style(self) -> crate::style::parse::CounterStyle {
+        use crate::style::parse::CounterStyle;
+        match self {
+            LabelStyle::Decimal => CounterStyle::Decimal,
+            LabelStyle::LowerRoman => CounterStyle::LowerRoman,
+            LabelStyle::UpperRoman => CounterStyle::UpperRoman,
+            LabelStyle::LowerLetters => CounterStyle::LowerAlpha,
+            LabelStyle::UpperLetters => CounterStyle::UpperAlpha,
+        }
+    }
+}
+
+/// A range of pages with the same kind of label: from `first_page` (counted from 0) to the page
+/// before the start of the next range. The pages of the range are numbered from `start` in the
+/// style, after the prefix; without a style the label is the prefix alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageLabelRange {
+    pub first_page: usize,
+    pub style: Option<LabelStyle>,
+    pub prefix: String,
+    pub start: u32,
+}
+
+/// The ranges of the labels of the pages, a resource of the world of the document.
+#[derive(Debug, Clone, Default)]
+pub struct PageLabels(pub Vec<PageLabelRange>);
+
+/// The style that the PDF has for a counter style. The other styles (leading zeros, scripts,
+/// symbols) are numbers in decimal.
+fn label_style(style: crate::style::parse::CounterStyle) -> LabelStyle {
+    use crate::style::parse::CounterStyle;
+
+    match style {
+        CounterStyle::LowerRoman => LabelStyle::LowerRoman,
+        CounterStyle::UpperRoman => LabelStyle::UpperRoman,
+        CounterStyle::LowerAlpha => LabelStyle::LowerLetters,
+        CounterStyle::UpperAlpha => LabelStyle::UpperLetters,
+        _ => LabelStyle::Decimal,
+    }
+}
+
+/// The style of the number and the prefix of a label written like `content`: the literal text
+/// before `counter(page, <style>)` is the prefix. `None` if there is no `counter(page)` that only
+/// strings come before; what comes after the number is not part of the label.
+fn label_of(content: &[ContentItem]) -> Option<(LabelStyle, String)> {
+    let mut prefix = String::new();
+    for item in content {
+        match item {
+            ContentItem::String(string) => prefix.push_str(string),
+            ContentItem::Counter(CounterName::Pages, _) => return None,
+            ContentItem::Counter(CounterName::Page, style) => return Some((label_style(*style), prefix)),
+        }
+    }
+    None
+}
+
+/// The style of the number of a page for `-helium-page-label: auto`: if the margin boxes of the
+/// page (headers and footers) have exactly one `counter(page)` between them, its style. With none
+/// or with several (which could differ) there is nothing to follow. The text around the counter
+/// is not a prefix of the label: it could be anything, like the title of the book.
+fn sole_counter_style(boxes: &[ResolvedMarginBox]) -> Option<LabelStyle> {
+    let mut styles = boxes.iter().flat_map(|margin_box| &margin_box.content).filter_map(|item| match item {
+        ContentItem::Counter(CounterName::Page, style) => Some(label_style(*style)),
+        _ => None,
+    });
+    let style = styles.next()?;
+    styles.next().is_none().then_some(style)
+}
+
+/// The ranges of the labels of the pages. The label of a page is decided by its
+/// `-helium-page-label` (`auto`: the style of the one `counter(page)` of its margin boxes) and
+/// the value of its `page` counter. A page that has no label from that has its number in decimal. Empty if all labels are the numbers of the pages in decimal, which
+/// the PDF needs no `/PageLabels` for.
+///
+/// Must run after the margin boxes are known, like [`MarginBoxPaint`].
+pub fn page_label_ranges(world: &specs::World) -> Vec<PageLabelRange> {
+    use specs::{Join, WorldExt};
+
+    let margin_boxes = world.read_resource::<MarginBoxes>();
+    if margin_boxes.is_empty() && margin_boxes.counters.is_empty() && margin_boxes.labels.is_empty() {
+        return vec![];
+    }
+    let pages = world.read_resource::<Pages>();
+    let page_margins = world.read_resource::<PageMargins>();
+    let positions = world.read_storage::<Position>();
+    let num_pages = (&positions).join().map(|pos| pos.page + 1).max().unwrap_or(0);
+    let numbers = margin_boxes.page_numbers(&pages, num_pages, page_margins.rtl);
+
+    let mut ranges: Vec<PageLabelRange> = Vec::new();
+    for (page, &number) in numbers.iter().enumerate() {
+        let context = page_context(&pages, page, page_margins.rtl);
+        let (style, prefix) = match margin_boxes.label_spec(&context) {
+            PageLabelSpec::None => None,
+            PageLabelSpec::Content(content) => label_of(content),
+            PageLabelSpec::Auto => sole_counter_style(margin_boxes.for_page(&context)).map(|style| (style, String::new())),
+        }
+        .unwrap_or((LabelStyle::Decimal, String::new()));
+        // a label of the PDF has a positive number: the others are written out
+        let (style, prefix, start) = if number >= 1 {
+            (Some(style), prefix, number.min(i64::from(u32::MAX)) as u32)
+        } else {
+            (None, prefix + &format_counter(number, style.counter_style()), 1)
+        };
+        // the labels of the pages go on counting, in the same style, as long as the counter does
+        let continues = ranges.last().is_some_and(|last| {
+            last.style == style
+                && style.is_some()
+                && last.prefix == prefix
+                && numbers[page - 1] + 1 == number
+        });
+        if !continues {
+            ranges.push(PageLabelRange { first_page: page, style, prefix, start });
+        }
+    }
+    if let [only] = ranges.as_slice() {
+        if only.style == Some(LabelStyle::Decimal) && only.prefix.is_empty() && only.start == 1 {
+            return vec![];
+        }
+    }
+    ranges
 }
 
 /// Creates the paragraphs of the margin boxes of every page.
@@ -93,13 +314,9 @@ impl<'a> System<'a> for MarginBoxPaint {
             .max()
             .unwrap_or(0);
 
+        let numbers = margin_boxes.page_numbers(&pages, num_pages, page_margins.rtl);
         for page in 0..num_pages {
-            let context = pages.0.get(page).cloned().unwrap_or(PageContext {
-                index: page,
-                name: None,
-                first_in_group: false,
-                rtl: page_margins.rtl,
-            });
+            let context = page_context(&pages, page, page_margins.rtl);
             // the margins of the page: the inner and outer margins of a book differ, and the
             // first page of a document or of a page group can have other margins
             let edges = page_margins.edges(&context);
@@ -109,7 +326,7 @@ impl<'a> System<'a> for MarginBoxPaint {
             let area_left = margin_left;
             let area_width = page_width - margin_left - margin_right;
             for margin_box in margin_boxes.for_page(&context) {
-                let mut text = content_text(&margin_box.content, page + 1, num_pages);
+                let mut text = content_text(&margin_box.content, numbers[page], num_pages);
                 if let Some(transformed) = crate::layout::text::transform::apply(
                     &text,
                     margin_box.text_transform,
@@ -192,6 +409,131 @@ impl<'a> System<'a> for MarginBoxPaint {
 mod test {
     use super::*;
     use crate::style::parse::{CounterStyle, PagePseudo, PageSelector, Styles};
+
+    fn margin_box(kind: MarginBoxKind, content: Vec<ContentItem>) -> ResolvedMarginBox {
+        ResolvedMarginBox {
+            kind,
+            content,
+            face: Default::default(),
+            text_transform: Default::default(),
+            lang: Default::default(),
+            text_align: TextAlign::Center,
+        }
+    }
+
+    #[test]
+    fn auto_follows_the_one_counter_of_the_margin_boxes() {
+        use crate::style::parse::CounterStyle;
+
+        let number = |style| ContentItem::Counter(CounterName::Page, style);
+        let pages = |style| ContentItem::Counter(CounterName::Pages, style);
+        let text = |text: &str| ContentItem::String(text.into());
+        // no number
+        assert_eq!(sole_counter_style(&[]), None);
+        assert_eq!(sole_counter_style(&[margin_box(MarginBoxKind::TopLeft, vec![text("Title")])]), None);
+        // one counter, wherever it is, and whatever is around it: the text is no prefix
+        let one = |kind, content| sole_counter_style(&[margin_box(kind, content)]);
+        assert_eq!(
+            one(MarginBoxKind::BottomCenter, vec![text("A-"), number(CounterStyle::UpperRoman), text(" of ")]),
+            Some(LabelStyle::UpperRoman)
+        );
+        assert_eq!(
+            one(MarginBoxKind::TopLeft, vec![text("My Book - "), number(CounterStyle::LowerAlpha)]),
+            Some(LabelStyle::LowerLetters)
+        );
+        // the total of pages is another counter
+        assert_eq!(
+            one(MarginBoxKind::BottomRight, vec![number(CounterStyle::LowerRoman), text("/"), pages(CounterStyle::Decimal)]),
+            Some(LabelStyle::LowerRoman)
+        );
+        // styles that the PDF has no label for are decimal
+        assert_eq!(one(MarginBoxKind::BottomCenter, vec![number(CounterStyle::DecimalLeadingZero)]), Some(LabelStyle::Decimal));
+        // several counters, in one box or in several: nothing to follow
+        assert_eq!(
+            one(MarginBoxKind::BottomCenter, vec![number(CounterStyle::LowerRoman), number(CounterStyle::Decimal)]),
+            None
+        );
+        let boxes = [
+            margin_box(MarginBoxKind::TopCenter, vec![number(CounterStyle::LowerAlpha)]),
+            margin_box(MarginBoxKind::BottomRight, vec![number(CounterStyle::LowerRoman)]),
+        ];
+        assert_eq!(sole_counter_style(&boxes), None);
+    }
+
+    #[test]
+    fn the_label_property_has_a_prefix() {
+        use crate::style::parse::CounterStyle;
+
+        let content = [
+            ContentItem::String("A-".into()),
+            ContentItem::Counter(CounterName::Page, CounterStyle::UpperRoman),
+            ContentItem::String(" of".into()),
+        ];
+        assert_eq!(label_of(&content), Some((LabelStyle::UpperRoman, "A-".to_string())));
+        assert_eq!(label_of(&[ContentItem::String("x".into())]), None);
+        assert_eq!(
+            label_of(&[ContentItem::Counter(CounterName::Pages, CounterStyle::Decimal), content[1].clone()]),
+            None
+        );
+    }
+
+    fn list(entries: &[(&str, Option<i32>)]) -> CounterList {
+        CounterList(entries.iter().map(|(name, value)| (name.to_string(), *value)).collect())
+    }
+
+    #[test]
+    fn the_page_counter_follows_the_page_context() {
+        let numbers = |ops: &[PageCounterOps]| {
+            let mut value = 0;
+            ops.iter().map(|ops| { value = ops.next(value); value }).collect::<Vec<_>>()
+        };
+        let plain = PageCounterOps::default();
+        assert_eq!(numbers(&[plain; 4]), [1, 2, 3, 4]);
+        // CSS Paged Media 3, 6.1: `counter-increment: page 2` makes all pages even-numbered
+        let twice = PageCounterOps::from_lists(None, Some(&list(&[("page", Some(2))])), None);
+        assert_eq!(numbers(&[twice; 3]), [2, 4, 6]);
+        // the reset comes before the increment (CSS Lists 3): `page 0` makes this page the first
+        let restart = PageCounterOps::from_lists(Some(&list(&[("page", Some(0))])), None, None);
+        assert_eq!(numbers(&[plain, plain, restart, plain]), [1, 2, 1, 2]);
+        // no number: 0
+        let restart = PageCounterOps::from_lists(Some(&list(&[("page", None)])), None, None);
+        assert_eq!(numbers(&[plain, plain, restart]), [1, 2, 1]);
+        // `counter-set` comes after the increment
+        let set = PageCounterOps::from_lists(None, None, Some(&list(&[("page", Some(10))])));
+        assert_eq!(numbers(&[plain, set, plain]), [1, 10, 11]);
+        // other counters are not for us, and an increment without a value is 1
+        let other = PageCounterOps::from_lists(
+            Some(&list(&[("chapter", Some(5))])),
+            Some(&list(&[("chapter", Some(7)), ("page", None), ("page", Some(2))])),
+            None,
+        );
+        assert_eq!(other, PageCounterOps { reset: None, increment: 3, set: None });
+    }
+
+    #[test]
+    fn page_labels_are_parsed() {
+        use crate::style::parse::{CounterStyle, PageLabelSpec, Styles};
+
+        let label = |css: &str| {
+            let mut styles = Styles::default();
+            styles.parse_css(&format!("@page {{ -helium-page-label: {css} }}"));
+            styles.rules_iter().last().unwrap().page_label.clone()
+        };
+        assert_eq!(label("auto"), Some(PageLabelSpec::Auto));
+        assert_eq!(label("none"), Some(PageLabelSpec::None));
+        assert_eq!(
+            label("\"A-\" counter(page, upper-roman)"),
+            Some(PageLabelSpec::Content(vec![
+                ContentItem::String("A-".into()),
+                ContentItem::Counter(CounterName::Page, CounterStyle::UpperRoman),
+            ]))
+        );
+        // no number, the total of pages, or something else before the number
+        for invalid in ["\"x\"", "counter(pages)", "counter(pages) counter(page)", "counter(page) counter(page)", "red"] {
+            let valid = label(invalid).is_some();
+            assert_eq!(valid, invalid == "counter(page) counter(page)", "{invalid}");
+        }
+    }
 
     #[test]
     fn counters_are_formatted() {

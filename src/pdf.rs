@@ -629,6 +629,7 @@ fn embed_images(
     display_list: &mut display_list::DisplayList,
     images: &mut HashMap<*const crate::image::LoadedImage, Embedded>,
     svg_writer: &mut crate::svg::SvgWriter,
+    pdfa: Option<PdfALevel>,
 ) {
     for item in display_list.items() {
         let DisplayItem::Image { image, .. } = item else {
@@ -641,6 +642,12 @@ fn embed_images(
         let embedded = match &**image {
             crate::image::LoadedImage::Raster(raster) => raster
                 .to_pdf_image()
+                .inspect(|pdf_image| {
+                    // the output intent of a PDF/A file is RGB: CMYK needs a profile of its own
+                    if pdfa.is_some() && pdf_image.color_space() == lemon_pdf::image::ColorSpace::DeviceCMYK {
+                        log::warn!("A CMYK image does not conform to PDF/A (the output intent is sRGB).");
+                    }
+                })
                 .and_then(|pdf_image| context.write_image(pdf_image).map_err(|error| error.to_string()))
                 .map(Embedded::Raster),
             crate::image::LoadedImage::Svg(svg) => svg_writer
@@ -657,20 +664,60 @@ fn embed_images(
     }
 }
 
+/// The level of PDF/A (ISO 19005) that a file is written for, like `2b` or `3u`.
+///
+/// Parts 2 and 3 are the ones that fit the PDF 1.7 that is written (part 1 forbids the
+/// transparency that the pages use, part 4 is for PDF 2.0). Level `b` is about the looks of the
+/// pages, `u` adds that the text can be extracted, `a` that the file is tagged. Helium always
+/// writes the maps from the glyphs to Unicode, so `u` costs nothing; `a` needs the structure tree,
+/// so it does not go with `--no-tags`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PdfALevel {
+    /// 2 or 3.
+    pub part: u8,
+    /// `A`, `B` or `U`.
+    pub conformance: char,
+}
+
+impl PdfALevel {
+    /// Whether the level needs a tagged PDF.
+    pub fn needs_tags(&self) -> bool {
+        self.conformance == 'A'
+    }
+}
+
+impl std::str::FromStr for PdfALevel {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        let text = text.trim().to_ascii_uppercase();
+        let mut chars = text.chars();
+        match (chars.next(), chars.next(), chars.next()) {
+            (Some(part @ ('2' | '3')), Some(conformance @ ('A' | 'B' | 'U')), None) => {
+                Ok(PdfALevel { part: part as u8 - b'0', conformance })
+            }
+            _ => Err(format!("`{text}` is not a level of PDF/A that is supported: 2a, 2b, 2u, 3a, 3b or 3u")),
+        }
+    }
+}
+
 /// Writes the pages as a PDF file. If `tagged`, it is a tagged PDF whose structure tree is the
-/// `structure` of the pages.
+/// `structure` of the pages. With a `pdfa` level the file is written to conform to it.
 pub fn write_pdf(
     output_path: PathBuf,
     mut print_pages: PrintPages,
     no_filter: bool,
     crop: bool,
     tagged: bool,
+    pdfa: Option<PdfALevel>,
 ) -> Result<(), Error> {
     let file = BufWriter::new(File::create(output_path)?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
     let structure = std::mem::take(&mut print_pages.structure);
     let outline = std::mem::take(&mut print_pages.outline);
+    let named_destinations = std::mem::take(&mut print_pages.named_destinations);
+    let page_labels = std::mem::take(&mut print_pages.page_labels);
     // what `write_outline` needs of the pages, which are consumed below
     let page_sizes: Vec<(crate::display_list::Rect, crate::style::properties::computed::PixelLength)> = print_pages
         .pages
@@ -678,11 +725,38 @@ pub fn write_pdf(
         .map(|page| (page.content_rect.clone(), page.height))
         .collect();
     let mut recorder = tagged.then(|| TagRecorder::new(&structure, print_pages.pages.len()));
-    if let Some(title) = &structure.title {
-        context
-            .document_info
-            .insert("Title".to_owned(), TextString(title.clone()));
+    if structure.title.is_some() {
         context.set_display_doc_title(true);
+    }
+    // the document information dictionary and the XMP packet say the same
+    let metadata = &structure.metadata;
+    let date = metadata.date.or_else(crate::metadata::Timestamp::from_environment);
+    let producer = format!("Helium {}", env!("CARGO_PKG_VERSION"));
+    {
+        let info = &mut context.document_info;
+        let mut set = |key: &str, value: String| {
+            info.insert(key.to_owned(), TextString(value));
+        };
+        if let Some(title) = &structure.title {
+            set("Title", title.clone());
+        }
+        if !metadata.authors.is_empty() {
+            set("Author", metadata.authors.join(", "));
+        }
+        if let Some(description) = &metadata.description {
+            set("Subject", description.clone());
+        }
+        if let Some(keywords) = &metadata.keywords {
+            set("Keywords", keywords.clone());
+        }
+        if let Some(creator) = &metadata.creator {
+            set("Creator", creator.clone());
+        }
+        set("Producer", producer);
+        if let Some(date) = date {
+            set("CreationDate", date.pdf());
+            set("ModDate", date.pdf());
+        }
     }
     if let Some(lang) = &structure.lang {
         context.set_lang(lang);
@@ -696,7 +770,21 @@ pub fn write_pdf(
             log::warn!("The document has no `<title>`: the PDF does not conform to PDF/UA.");
         }
     }
-    context.set_metadata(&xmp_metadata(structure.title.as_deref(), structure.lang.as_deref(), tagged))?;
+    context.set_metadata(&xmp_metadata(&structure, date, tagged, pdfa))?;
+    if pdfa.is_some() {
+        // device colours (everything that is painted) are sRGB, which the output intent says
+        use lemon_pdf::output_intent::{OutputIntentDesc, OutputIntentSubtype};
+        context.add_output_intent(
+            OutputIntentDesc {
+                subtype: OutputIntentSubtype::PdfA,
+                output_condition_identifier: "sRGB IEC61966-2.1".to_owned(),
+                info: Some("sRGB IEC61966-2.1".to_owned()),
+                profile: lemon_pdf::icc::srgb_profile(),
+                components: 3,
+            },
+            if no_filter { None } else { Some(StreamFilter::Deflate) },
+        )?;
+    }
     // All pages get their references up front so that links can point to later pages.
     let page_references: Vec<IndirectReference<Page>> = (0..print_pages.pages.len())
         .map(|_| context.create_reference())
@@ -739,7 +827,7 @@ pub fn write_pdf(
     // own, which come after it, so the last one is written first.
     for index in (0..print_pages.islands.len()).rev() {
         let mut island = std::mem::take(&mut print_pages.islands[index]);
-        embed_images(&mut context, &mut island.display_list, &mut images, &mut svg_writer);
+        embed_images(&mut context, &mut island.display_list, &mut images, &mut svg_writer, pdfa);
         let (width, height) = (island.width, island.height);
         let form = context.write_form(
             [Pt(0.0), Pt(0.0), Pt::from(width), Pt::from(height)],
@@ -764,7 +852,7 @@ pub fn write_pdf(
         svg_writer.add_island(index as u64, form);
     }
     for page in &mut print_pages.pages {
-        embed_images(&mut context, &mut page.display_list, &mut images, &mut svg_writer);
+        embed_images(&mut context, &mut page.display_list, &mut images, &mut svg_writer, pdfa);
     }
 
     log::info!("Write {} pages.", print_pages.pages.len());
@@ -892,13 +980,55 @@ pub fn write_pdf(
 
         context.add_reserved_page(page_references[page_index], page)?;
     }
+    {
+        use crate::layout::margin_boxes::LabelStyle;
+        use lemon_pdf::page_labels::{PageLabel, PageLabelStyle};
+        context.set_page_labels(page_labels.iter().map(|range| {
+            let style = range.style.map(|style| match style {
+                LabelStyle::Decimal => PageLabelStyle::Decimal,
+                LabelStyle::LowerRoman => PageLabelStyle::LowerRoman,
+                LabelStyle::UpperRoman => PageLabelStyle::UpperRoman,
+                LabelStyle::LowerLetters => PageLabelStyle::LowerLetters,
+                LabelStyle::UpperLetters => PageLabelStyle::UpperLetters,
+            });
+            let mut label = PageLabel { style, prefix: None, start: style.map(|_| range.start) };
+            if !range.prefix.is_empty() {
+                label = label.with_prefix(range.prefix.clone());
+            }
+            (range.first_page, label)
+        }));
+    }
+    context.set_named_destinations(named_destinations.iter().filter_map(|(id, destination)| {
+        Some((id.as_bytes().to_vec(), pdf_destination(destination, &page_references, &page_sizes, crop)?))
+    }));
     write_outline(&mut context, &outline, &page_references, &page_sizes, crop)?;
+    if !outline.is_empty() {
+        // viewers open the panel of the bookmarks
+        context.set_page_mode(lemon_pdf::PageMode::UseOutlines);
+    }
     if let Some(recorder) = recorder {
         recorder.finish(&mut context, &page_references)?;
     }
     context.finish()?;
 
     Ok(())
+}
+
+/// The destination in the PDF of a position of the layout: the page and the point on it (which
+/// is measured from the bottom left corner of the page, and from the content of a cropped page).
+fn pdf_destination(
+    destination: &crate::layout::components::GoToDestination,
+    page_references: &[IndirectReference<Page>],
+    page_sizes: &[(crate::display_list::Rect, crate::style::properties::computed::PixelLength)],
+    crop: bool,
+) -> Option<lemon_pdf::annotation::Destination> {
+    let (&page, (content_rect, page_height)) =
+        (page_references.get(destination.page)?, page_sizes.get(destination.page)?);
+    let (offset_x, offset_y) = if crop { (content_rect.x, content_rect.y) } else { Default::default() };
+    Some(lemon_pdf::annotation::Destination {
+        page,
+        point: (Pt::from(destination.x - offset_x), Pt::from(*page_height - (destination.y - offset_y))),
+    })
 }
 
 /// Writes the outline (bookmarks) of the PDF from the headings of the document: a heading of
@@ -911,10 +1041,7 @@ fn write_outline(
     page_sizes: &[(crate::display_list::Rect, crate::style::properties::computed::PixelLength)],
     crop: bool,
 ) -> Result<(), Error> {
-    use lemon_pdf::annotation::Destination;
     use lemon_pdf::outline::OutlineItem;
-
-
 
     let mut roots: Vec<OutlineItem> = Vec::new();
     let mut open: Vec<(u8, OutlineItem)> = Vec::new();
@@ -928,20 +1055,10 @@ fn write_outline(
         }
     }
     for entry in entries {
-        let destination = &entry.destination;
-        let (Some(&page), Some((content_rect, page_height))) =
-            (page_references.get(destination.page), page_sizes.get(destination.page))
-        else {
+        let Some(destination) = pdf_destination(&entry.destination, page_references, page_sizes, crop) else {
             continue;
         };
-        let (offset_x, offset_y) = if crop { (content_rect.x, content_rect.y) } else { Default::default() };
-        let mut item = OutlineItem::new(
-            entry.title.clone(),
-            Destination {
-                page,
-                point: (Pt::from(destination.x - offset_x), Pt::from(*page_height - (destination.y - offset_y))),
-            },
-        );
+        let mut item = OutlineItem::new(entry.title.clone(), destination);
         item.open = !entry.closed;
         close_to(&mut roots, &mut open, entry.level);
         open.push((entry.level, item));
@@ -995,7 +1112,42 @@ pub(crate) fn emit_path(
     Ok(())
 }
 
-fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String {
+/// The declaration of the schema of `pdfuaid:part` for the XMP of a PDF/A file (ISO 19005-2, 6.6.2.3).
+const PDFUA_EXTENSION_SCHEMA: &str = "   <pdfaExtension:schemas>
+    <rdf:Bag>
+     <rdf:li rdf:parseType=\"Resource\">
+      <pdfaSchema:schema>PDF/UA identification schema</pdfaSchema:schema>
+      <pdfaSchema:namespaceURI>http://www.aiim.org/pdfua/ns/id/</pdfaSchema:namespaceURI>
+      <pdfaSchema:prefix>pdfuaid</pdfaSchema:prefix>
+      <pdfaSchema:property>
+       <rdf:Seq>
+        <rdf:li rdf:parseType=\"Resource\">
+         <pdfaProperty:name>part</pdfaProperty:name>
+         <pdfaProperty:valueType>Integer</pdfaProperty:valueType>
+         <pdfaProperty:category>internal</pdfaProperty:category>
+         <pdfaProperty:description>Indicates, which part of ISO 14289 standard is followed</pdfaProperty:description>
+        </rdf:li>
+       </rdf:Seq>
+      </pdfaSchema:property>
+     </rdf:li>
+    </rdf:Bag>
+   </pdfaExtension:schemas>
+";
+
+/// The namespaces of the XMP packet of a PDF/A file, on top of the others.
+const PDFA_NAMESPACES: &str = "
+    xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\"
+    xmlns:pdfaExtension=\"http://www.aiim.org/pdfa/ns/extension/\"
+    xmlns:pdfaSchema=\"http://www.aiim.org/pdfa/ns/schema#\"
+    xmlns:pdfaProperty=\"http://www.aiim.org/pdfa/ns/property#\"";
+
+fn xmp_metadata(
+    structure: &crate::tagging::StructureTree,
+    date: Option<crate::metadata::Timestamp>,
+    tagged: bool,
+    pdfa: Option<PdfALevel>,
+) -> String {
+    let (title, lang, metadata) = (structure.title.as_deref(), structure.lang.as_deref(), &structure.metadata);
     fn escape(text: &str) -> String {
         text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
     }
@@ -1009,6 +1161,25 @@ fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String
     if let Some(lang) = lang {
         properties += &format!("   <dc:language><rdf:Bag><rdf:li>{}</rdf:li></rdf:Bag></dc:language>\n", escape(lang));
     }
+    if !metadata.authors.is_empty() {
+        let authors: String = metadata.authors.iter().map(|author| format!("<rdf:li>{}</rdf:li>", escape(author))).collect();
+        properties += &format!("   <dc:creator><rdf:Seq>{authors}</rdf:Seq></dc:creator>\n");
+    }
+    if let Some(description) = &metadata.description {
+        properties += &format!(
+            "   <dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">{}</rdf:li></rdf:Alt></dc:description>\n",
+            escape(description)
+        );
+    }
+    if let Some(keywords) = &metadata.keywords {
+        properties += &format!("   <pdf:Keywords>{}</pdf:Keywords>\n", escape(keywords));
+    }
+    if let Some(creator) = &metadata.creator {
+        properties += &format!("   <xmp:CreatorTool>{}</xmp:CreatorTool>\n", escape(creator));
+    }
+    if let Some(date) = date {
+        properties += &format!("   <xmp:CreateDate>{0}</xmp:CreateDate>\n   <xmp:ModifyDate>{0}</xmp:ModifyDate>\n", date.xmp());
+    }
     properties += &format!(
         "   <pdf:Producer>Helium {}</pdf:Producer>\n",
         env!("CARGO_PKG_VERSION")
@@ -1016,6 +1187,18 @@ fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String
     if tagged {
         properties += "   <pdfuaid:part>1</pdfuaid:part>\n";
     }
+    if let Some(level) = pdfa {
+        // ISO 19005-2 and -3, 6.6.4: the identification of the file
+        properties += &format!(
+            "   <pdfaid:part>{}</pdfaid:part>\n   <pdfaid:conformance>{}</pdfaid:conformance>\n",
+            level.part, level.conformance
+        );
+        if tagged {
+            // the properties of a schema that is not one of the predefined ones must be declared
+            properties += PDFUA_EXTENSION_SCHEMA;
+        }
+    }
+    let pdfa_namespaces = if pdfa.is_some() { PDFA_NAMESPACES } else { "" };
     format!(
         "<?xpacket begin=\"\u{FEFF}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\">
@@ -1023,7 +1206,8 @@ fn xmp_metadata(title: Option<&str>, lang: Option<&str>, tagged: bool) -> String
   <rdf:Description rdf:about=\"\"
     xmlns:dc=\"http://purl.org/dc/elements/1.1/\"
     xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"
-    xmlns:pdfuaid=\"http://www.aiim.org/pdfua/ns/id/\">
+    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"
+    xmlns:pdfuaid=\"http://www.aiim.org/pdfua/ns/id/\"{pdfa_namespaces}>
 {properties}  </rdf:Description>
  </rdf:RDF>
 </x:xmpmeta>

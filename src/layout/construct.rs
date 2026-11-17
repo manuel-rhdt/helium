@@ -1,6 +1,6 @@
 use super::components::{self, BlockLevelElement, LayoutEntity, MathNode, Position, RootNode};
 use super::inline::InlineFormattingContext;
-use super::margin_boxes::{MarginBoxes, ResolvedMarginBox};
+use super::margin_boxes::{MarginBoxes, PageCounterOps, ResolvedMarginBox};
 use super::pages::{self, PageContext};
 use super::normal_formatting::BlockFormattingContext;
 use super::{FontMap, text::Font};
@@ -745,9 +745,37 @@ impl FlowConstructor {
         let mut boxes = MarginBoxes {
             pages: HashMap::new(),
             names: names.clone(),
+            ..Default::default()
         };
         for page in pages::representative_pages(&names, rtl) {
             boxes.pages.insert(page.clone(), resolve(&page));
+            // the `page` counter and the label of the page: the last rule that sets a property
+            // (the most specific one) decides, as for any property
+            let (mut reset, mut increment, mut set) = (None, None, None);
+            let mut label = None;
+            for rule in pages::matching_rules(&self.styles, &page) {
+                for declaration in rule.properties.declarations() {
+                    if let PropertyDeclaration::Box(property) = declaration {
+                        use crate::style::properties::specified::Box as BoxProperty;
+                        match property {
+                            BoxProperty::CounterReset(list) => reset = Some(list),
+                            BoxProperty::CounterIncrement(list) => increment = Some(list),
+                            BoxProperty::CounterSet(list) => set = Some(list),
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(spec) = &rule.page_label {
+                    label = Some(spec.clone());
+                }
+            }
+            let ops = PageCounterOps::from_lists(reset, increment, set);
+            if ops != PageCounterOps::default() {
+                boxes.counters.insert(page.clone(), ops);
+            }
+            if let Some(label) = label {
+                boxes.labels.insert(page, label);
+            }
         }
         boxes
     }
