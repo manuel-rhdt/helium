@@ -35,8 +35,9 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   interlacing (gray, RGB and palette, 1 to 16 bits, also with a transparent color or a single
   transparent palette entry) are embedded without being decoded. All other PNG files (alpha
   channel, interlaced, partially transparent palettes) are decoded, with 16 bit samples reduced
-  to 8 bits and the alpha channel written as a soft mask. Gamma and color profiles of PNG files
-  are ignored. SVG files are drawn as vector graphics (see below). Sizes follow the
+  to 8 bits and the alpha channel written as a soft mask. The ICC profile of a JPEG or PNG file (`iCCP`, or a `cICP` of Display P3) is the
+  colour space of the image, written once however many images have it; one that does not fit the image (components, header) is
+  ignored with a warning, and an image without a profile is sRGB. PNG gamma and chromaticity chunks are ignored. SVG files are drawn as vector graphics (see below). Sizes follow the
   `width`/`height` attributes and properties and the proportions of the image; an image in a box
   of another shape is scaled to fit and centered.
 - **SVG** (`usvg` parses it): paths and basic shapes, fill and stroke (caps, joins, dashes), solid

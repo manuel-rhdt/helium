@@ -672,6 +672,39 @@ fn paint_item(
     Ok(())
 }
 
+/// Gives the image the ICC profile of its file, if it has one that a PDF can use for the image (its colour
+/// space and number of components are those of the image); otherwise the image keeps its device
+/// colours, which are sRGB (`DefaultRGB`), what CSS says for an image without a profile. The profile
+/// is written once, however many images have it.
+fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::RasterImage, image: lemon_pdf::image::Image) -> lemon_pdf::image::Image {
+    let Some(profile) = raster.icc_profile() else {
+        return image;
+    };
+    let components = image.color_space().components();
+    match lemon_pdf::icc::inspect_profile(&profile) {
+        Ok(info) if info.components == components => {}
+        Ok(info) => {
+            log::warn!("the ICC profile of an image has {} components and the image {}: it is ignored", info.components, components);
+            return image;
+        }
+        Err(why) => {
+            log::warn!("the ICC profile of an image is ignored: {why}");
+            return image;
+        }
+    }
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    profile.hash(&mut hasher);
+    let key = format!("image-profile-{:016x}-{}", hasher.finish(), profile.len());
+    match context.icc_color_space(&key, || profile, i64::from(components), Some(StreamFilter::Deflate)) {
+        Ok(space) => image.with_icc_profile(space),
+        Err(error) => {
+            log::warn!("the ICC profile of an image cannot be written: {error}");
+            image
+        }
+    }
+}
+
 /// Embeds the images of the items of a display list that are not embedded yet.
 fn embed_images(
     context: &mut DocumentContext<'_>,
@@ -690,7 +723,10 @@ fn embed_images(
         let embedded = match &**image {
             crate::image::LoadedImage::Raster(raster) => raster
                 .to_pdf_image()
-                .and_then(|pdf_image| context.write_image(pdf_image).map_err(|error| error.to_string()))
+                .and_then(|pdf_image| {
+                    let pdf_image = with_icc_profile(context, raster, pdf_image);
+                    context.write_image(pdf_image).map_err(|error| error.to_string())
+                })
                 .map(Embedded::Raster),
             crate::image::LoadedImage::Svg(svg) => svg_writer
                 .write(context, &svg.tree)
