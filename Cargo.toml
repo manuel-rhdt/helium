@@ -5,6 +5,7 @@ authors = ["Manuel Reinhardt"]
 edition = "2024"
 
 [dependencies]
+serde_json = "1.0.154"
 flate2 = "1"
 structopt = ">= 0.2"
 derive_more = { version = "*", features = ["full"] }
@@ -54,7 +55,6 @@ assert_cmd = "1"
 predicates = "1"
 quickcheck = "1"
 quickcheck_macros = "1"
-serde_json = "1.0.154"
 
 [build-dependencies]
 fontdb = { version = "0.24", default-features = false, features = ["std"] }

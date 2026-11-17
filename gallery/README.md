@@ -17,6 +17,7 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 | `emoji/` | colour emoji painted as vectors from the `COLR` table of the built-in Noto Color Emoji: ZWJ sequences, skin tones, flags and keycaps, text and emoji presentation, any size, tables, lists, page margins |
 | `typography/` | a specimen of OpenType features in EB Garamond, chosen with `font-feature-settings` and the `font-variant-*` properties: ligatures, real small capitals, old-style, lining and tabular figures, fractions, superiors, historical forms, case-sensitive forms, stylistic sets (needs EB Garamond, which CI downloads) |
 | `design/` | gradients, blend modes, tiled patterns, rounded boxes, SVG images (clip path, mask, pattern, text), a dashboard |
+| `article/` | a two-column physics letter in the layout of a journal such as Physical Review Letters: a full-width title block and abstract, then 10 pt text in two columns of 24 em that run over the pages, run-in headings, numbered MathML equations, SVG figures with real data from `generate.py` (an exact first-passage calculation and a Langevin simulation), tables with rules, numbered references, running heads on facing pages |
 
 ## Build locally
 

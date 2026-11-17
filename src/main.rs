@@ -57,6 +57,13 @@ struct Options {
     /// Write the computed layout as JSON to this file (use `-` for stdout)
     #[structopt(long = "dump-layout", parse(from_os_str))]
     dump_layout: Option<PathBuf>,
+    /// Write the choices of the paginator as JSON to this file (use `-` for stdout): for every page
+    /// what it holds, what it costs and why (room, orphans and widows, avoided breaks, the cost of
+    /// the lines), the ways to break its paragraphs that were chosen, and the ones that the
+    /// paragraphs had. The values that are tried in experiments are `HELIUM_LINE_TOLERANCE` and
+    /// `HELIUM_VARIANT_TOLERANCE`.
+    #[structopt(long = "dump-pagination", parse(from_os_str))]
+    dump_pagination: Option<PathBuf>,
     /// Evaluate the `data-expected-*` attributes (web-platform-tests `checkLayout`) of the input
     /// document against the computed layout and exit with an error if any expectation fails.
     #[structopt(long = "check-layout")]
@@ -128,6 +135,7 @@ fn main() -> Result<(), Error> {
             height: PixelLength(1123.0),
         }
     };
+    layout::report_pagination(opt.dump_pagination.is_some());
     let before_layout = Instant::now();
     let mut layout_context =
         layout::layout(dom.clone(), device, opt.crop, &input_dir)?;
@@ -144,6 +152,15 @@ fn main() -> Result<(), Error> {
         let json = layout::dump::dump_layout(&dom, &layout_context);
         if path.as_os_str() == "-" {
             print!("{}", json);
+        } else {
+            fs::write(path, json)?;
+        }
+    }
+
+    if let Some(path) = &opt.dump_pagination {
+        let json = layout::take_pagination_report().unwrap_or_default();
+        if path.as_os_str() == "-" {
+            println!("{}", json);
         } else {
             fs::write(path, json)?;
         }

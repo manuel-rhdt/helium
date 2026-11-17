@@ -205,15 +205,16 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         line_extent: 0.0,
         choices: ChoiceId::NONE,
     };
-    let css = CssObjective;
+    let css = CssObjective::default();
     // 10 px are left on the page
     let slack = CssCost {
+        pages: 1,
         slack: CssCost::slack_of(10.0),
         ..CssCost::default()
     };
     assert_eq!(slack.slack, 640 * 640 * 640);
     assert_eq!(css.page_cost(&fill, false), Some(slack));
-    assert_eq!(css.page_cost(&fill, true), Some(CssCost::default()));
+    assert_eq!(css.page_cost(&fill, true), Some(CssCost { pages: 1, ..CssCost::default() }));
     let avoid = PageFill {
         end_kind: BreakKind::Avoid,
         ..fill
@@ -242,8 +243,8 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         end_kind: BreakKind::Forced,
         ..fill
     };
-    assert_eq!(css.page_cost(&forced, true), Some(CssCost::default()));
-    assert_eq!(css.page_cost(&forced, false), Some(CssCost::default()));
+    assert_eq!(css.page_cost(&forced, true), Some(CssCost { pages: 1, ..CssCost::default() }));
+    assert_eq!(css.page_cost(&forced, false), Some(CssCost { pages: 1, ..CssCost::default() }));
     let overflow = PageFill {
         overflow: true,
         used: 150.0,
@@ -254,6 +255,7 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         css.page_cost(&overflow, false),
         Some(CssCost {
             overflows: 1,
+            pages: 1,
             ..CssCost::default()
         })
     );
@@ -267,12 +269,17 @@ fn a_cost_is_compared_by_its_fields_in_the_order_of_their_priority() {
         overflows,
         avoided_breaks,
         orphans_and_widows,
+        pages: 0,
         slack,
     };
     assert!(cost(1, 0, 0, 0) > cost(0, 1000, 1000, u128::MAX / 2));
     assert!(cost(0, 1, 0, 0) > cost(0, 0, 1000, u128::MAX / 2));
     assert!(cost(0, 0, 1, 0) > cost(0, 0, 0, u128::MAX / 2));
     assert!(cost(0, 0, 0, 2) > cost(0, 0, 0, 1));
+    // a page more is worse than any amount of room on the pages, and better than a widow
+    let pages = |pages, slack| CssCost { pages, ..cost(0, 0, 0, slack) };
+    assert!(pages(2, 0) > pages(1, u128::MAX / 2));
+    assert!(cost(0, 0, 1, 0) > pages(1000, u128::MAX / 2));
     // rounding errors of single precision positions do not make costs differ
     assert_eq!(CssCost::slack_of(20.8), CssCost::slack_of(20.800_04));
     // the sum adds the fields
@@ -282,7 +289,7 @@ fn a_cost_is_compared_by_its_fields_in_the_order_of_their_priority() {
 fn solve(flow: GalleyFlow, block_size: f32) -> (Vec<Position>, Vec<PageFill>) {
     let (problem, mut service) = flow.finish(page(block_size));
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let pages = kernel
         .realize(&solution)
         .expect("the solution of the exact solver is valid");
@@ -476,7 +483,9 @@ fn reference_solution(reference: &Reference) -> Vec<usize> {
             if reference_violation(reference, from, to) {
                 cost += 1e11;
             }
-            cost
+            // (a page costs more than all the room that the pages can have left, and less than
+            // a violation)
+            cost + 1e8
         }
     });
     assert_eq!(sequence.pop(), Some(last));
@@ -617,7 +626,7 @@ fn the_exact_solver_chooses_what_the_least_weight_subsequence_chose() {
         })
         .left_right_differ(false);
         let mut kernel = Kernel::new(&problem, &mut service);
-        let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+        let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
         let chosen: Vec<usize> = solution
             .pages
             .iter()
@@ -651,7 +660,7 @@ fn a_break_to_a_right_page_leaves_a_left_page_empty() {
         .content(10.0);
     let (problem, mut service) = flow.finish(page(100.0));
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let numbers: Vec<_> = solution.pages.iter().map(|start| start.index).collect();
     // the first page is a right page, the second is left and empty, the third is right and
     // has the content; the next page is left; the fifth is right, so the sixth is the one
@@ -679,7 +688,7 @@ fn the_pages_of_a_right_to_left_document_start_on_the_left() {
     let (mut problem, mut service) = flow.finish(page(100.0));
     problem.pages.rtl = true;
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     // the first page is a left page, so the second is a right page, and the third a left page
     let numbers: Vec<_> = solution.pages.iter().map(|start| start.index).collect();
     assert_eq!(numbers, [0, 2]);
@@ -699,7 +708,7 @@ fn the_geometry_of_a_page_follows_its_kind() {
     flow.content(40.0);
     let (problem, mut service) = flow.finish(table);
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let pages = kernel.realize(&solution).unwrap();
     let kinds: Vec<_> = pages.iter().map(|fill| fill.kind).collect();
     assert_eq!(
@@ -766,7 +775,7 @@ fn a_paragraph_is_cut_for_the_width_of_each_page() {
     let problem = Problem::new(table, items);
     let mut service = Characters;
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let cuts: Vec<_> = solution
         .pages
         .iter()
@@ -967,7 +976,7 @@ fn the_exact_solver_minimises_what_the_objective_combines() {
     let pages = kernel.realize(&solution).unwrap();
     assert_eq!(used(&pages), [60.0, 60.0]);
     // with the sum, which is what pages are made of, the fullest pages win
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let pages = kernel.realize(&solution).unwrap();
     assert_eq!(used(&pages), [90.0, 30.0]);
 }
@@ -1112,7 +1121,7 @@ fn the_fragments_that_a_page_has_are_listed_for_its_layout() {
     flow.container(items(8), 2, ColumnFill::Auto, (0.0, 0.0));
     let (problem, mut service) = flow.finish(page(100.0));
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let pages = kernel.realize(&solution).unwrap();
     let first = kernel.fragments(&solution.pages[0], pages[0].end);
     assert_eq!(first.len(), 1);
@@ -1151,7 +1160,7 @@ fn the_lines_that_the_next_fragment_starts_with_are_counted_against_the_widows()
     flow.container(inner, 2, ColumnFill::Balance, (0.0, 0.0));
     let (problem, mut service) = flow.finish(page(300.0));
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     let fills = kernel.realize(&solution).unwrap();
     assert_eq!(used(&fills), [300.0, 20.0]);
     assert!(fills.iter().all(|fill| !fill.widow_violation && !fill.orphan_violation));
@@ -1170,7 +1179,7 @@ fn a_problem_can_start_in_the_middle_of_its_items() {
     let first = kernel.first_page();
     assert_eq!(kernel.position(first.at), Position::Item(2));
     assert_eq!(used(&kernel.candidates(&first)), [20.0, 50.0]);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     assert_eq!(solution.pages, [first]);
     assert_eq!(used(&kernel.realize(&solution).unwrap()), [50.0]);
 }
@@ -1188,7 +1197,7 @@ fn the_pages_of_a_fragment_end_where_the_last_of_them_does() {
     let (problem, mut service) = inner.finish(page(40.0));
     let problem = problem.with_level(BreakLevel::Column).with_page_limit(2).as_fragment();
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     // two pages, and the place where the fragment ends
     let (pages, end) = solution.fragment_end().unwrap();
     assert_eq!(pages.len(), 2);
@@ -1522,7 +1531,8 @@ fn ways_problem(block: f32, extra: u32) -> Problem {
             avoid_inside: false,
         }],
     )
-    .with_variants(extra, Variants::TOLERANCE)
+    // (the ways of the test service are made for a tolerance of 200: one has lines of badness 300)
+    .with_variants(extra, 200.0)
 }
 
 #[test]
@@ -1551,13 +1561,16 @@ fn with_variants_a_page_is_listed_for_every_way_that_fits() {
     assert_eq!(whole[0].used, 60.0);
     assert_ne!(whole[0].choices, ChoiceId::NONE);
     assert_eq!(&*kernel.choices(whole[0].choices), &[Choice { item: 0, variant: 1 }]);
-    // its lines have the demerits of the way: three lines of 600
-    assert_eq!(whole[0].line_demerits, 1800.0);
+    // its lines have the demerits of the way, three lines of 600, above those of the first three
+    // lines of the first way, which are 100 each
+    assert_eq!(whole[0].line_demerits, 1500.0);
     assert_eq!(whole[0].line_extent, 20.0);
-    // a page that ends in the paragraph has the demerits of the lines that it has
+    // a page that ends in the paragraph has the demerits that its lines have above the first way:
+    // none for the pages of the first way
     let cut: Vec<_> = fills.iter().filter(|fill| !kernel.is_end(fill.end)).collect();
     assert!(!cut.is_empty());
-    assert!(cut.iter().all(|fill| fill.line_demerits > 0.0));
+    assert!(cut.iter().any(|fill| fill.line_demerits > 0.0));
+    assert!(cut.iter().any(|fill| fill.line_demerits == 0.0));
     // the ways are listed with a page of the same room only once: of two ways that use the same
     // room, the one with the least demerits
     let mut seen = vec![];
@@ -1603,7 +1616,7 @@ fn the_exact_solver_takes_a_way_to_break_a_paragraph_that_fits_a_page() {
         let problem = ways_problem(70.0, extra);
         let mut service = Ways { units: vec![12] };
         let mut kernel = Kernel::new(&problem, &mut service);
-        let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+        let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
         assert_eq!(solution.pages.len(), pages, "extra {extra}");
         let fills = kernel.realize(&solution).expect("the solution is valid");
         assert_eq!(fills.len(), pages);
@@ -1621,7 +1634,7 @@ fn a_solution_names_the_ways_that_it_breaks_its_paragraphs() {
     let problem = ways_problem(70.0, 1);
     let mut service = Ways { units: vec![12] };
     let mut kernel = Kernel::new(&problem, &mut service);
-    let solution = ExactSolver::new(CssObjective).solve(&mut kernel);
+    let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
     assert!(kernel.realize(&solution).is_ok());
     // another way for the page is a page too: the first way does not fit it, though
     let wrong = Solution {
@@ -1645,5 +1658,20 @@ fn the_rest_of_a_paragraph_after_a_cut_chooses_among_ways_of_its_own() {
     let rest = kernel.candidates(&next);
     // from the cut after six units, the rest is six units: two lines of three, or of four and two
     assert!(rest.iter().any(|fill| kernel.is_end(fill.end)));
-    assert!(rest.iter().all(|fill| fill.line_demerits > 0.0));
+    assert!(rest.iter().any(|fill| fill.line_demerits > 0.0));
+    assert!(rest.iter().any(|fill| fill.line_demerits == 0.0));
+}
+
+#[test]
+fn a_page_pays_only_for_the_lines_that_are_worse_than_those_of_the_first_way() {
+    // a document in which a paragraph has other ways to break it is not paginated differently if
+    // the pages take the first way: the lines of a page that has more of them do not cost more
+    let problem = ways_problem(1000.0, 1);
+    let mut service = Ways { units: vec![12, 12, 12] };
+    let mut kernel = Kernel::new(&problem, &mut service);
+    let start = kernel.first_page();
+    let fills = kernel.candidates(&start);
+    let first_way = fills.iter().filter(|fill| fill.choices == ChoiceId::NONE).collect::<Vec<_>>();
+    assert!(!first_way.is_empty());
+    assert!(first_way.iter().all(|fill| fill.line_demerits == 0.0), "{first_way:?}");
 }

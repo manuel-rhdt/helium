@@ -309,8 +309,29 @@ impl HeliumTree<'_, '_> {
                 windowed.push(*id);
             }
         }
+        // A paragraph that the page breaks in another way than the one the cache was filled for
+        // has another height, and so have the boxes above it.
+        if self.page_variants.values().any(|&variant| variant != 0) {
+            self.mark_variants(root, &mut windowed);
+        }
         self.windowed = windowed;
         self.window = Some(window);
+    }
+
+    /// Takes the boxes on the way from `id` to the paragraphs of the page that have a way to break
+    /// that is not the optimum out of the cache. Whether `id` is one of them is the result.
+    fn mark_variants(&mut self, id: NodeId, windowed: &mut Vec<NodeId>) -> bool {
+        let mut found = self.page_variants.get(&id).is_some_and(|&variant| variant != 0);
+        for child in self.node(id).children.clone() {
+            found |= self.mark_variants(child, windowed);
+        }
+        if found {
+            self.node_mut(id).windowed = true;
+            if !windowed.contains(&id) {
+                windowed.push(id);
+            }
+        }
+        found
     }
 }
 

@@ -1330,6 +1330,166 @@ and 7) are independent of it, except that step 3 here shares `fragment` with ste
 - Orthogonal writing modes. A column is a block-axis fragmentainer, and the inline axis of a
   vertical document is the vertical one. Nothing here has been checked for them.
 
+## How much `looseness` does
+
+`tools/looseness_bench.py` renders generated documents (plain prose, chapters that each start on a
+new page, prose with unbreakable figures; 20 seeds each) with `looseness` 0, 1 and 2 and measures the
+pages, the room left at the foot of the pages that are not the last (from the words of the PDF, in
+lines), and the badness of the lines (the log line `LINES:`).
+
+| kind | pages | room | lines | lines worse than 100 | mean badness | documents with fewer pages |
+| --- | --- | --- | --- | --- | --- | --- |
+| prose | 19.70 to 19.60 | 7.06 to 4.31 | 454.6 to 455.7 | 23.8 to 24.4 | 26.5 to 26.8 | 2 of 20 |
+| chapters | 56.40 to 56.20 | 130.7 to 122.6 | 1213.8 to 1216.5 | 64.0 to 65.9 | 28.0 to 28.3 | 4 of 20 |
+| figures | 24.40 to 24.30 | 45.2 to 38.9 | 348.0 to 352.1 | 19.6 to 22.5 | 30.1 to 31.3 | 2 of 20 |
+
+No document got a page more, and `looseness` 2 gives the same as 1. The effect is small: a third of a percent of the
+pages and between a seventh and a third of the room, for a few lines that are looser. The synthetic
+text has a short measure, and the lines that another way to break a paragraph has are bad
+(the median of the worst badness is 2900 for a line more, and the paragraphs that can have a line
+more within the tolerance of 200 are 5 of 78), so these numbers are a lower bound for text that is
+set to a longer measure.
+
+The two numbers that decide how much is taken can be changed without rebuilding
+(`HELIUM_LINE_TOLERANCE`, the exchange rate of lines and room, and `HELIUM_VARIANT_TOLERANCE`, the
+worst badness of a line of another breaking; both 200 by default), and the harness takes them as
+`--knob LINE_TOLERANCE=400`. With `looseness: 2`, 20 documents of each kind:
+
+| knob | chapters: pages, room | figures: pages, room, lines worse than 100, mean badness |
+| --- | --- | --- |
+| `looseness` 0 | 56.40, 130.7 | 24.40, 45.2, 19.6, 30.1 |
+| line 50 | 56.20, 125.3 | 24.30, 41.3, 19.9, 30.2 |
+| line 200 (default) | 56.20, 122.6 | 24.30, 38.9, 22.5, 31.3 |
+| line 800 | 56.20, 121.4 | 24.30, 38.7, 22.9, 31.4 |
+| variant 1000 | 56.15, 121.3 | 24.30, 35.9, 27.4, 34.7 |
+| both open (variant 100000, line 20000) | | 24.30, 7.4, 153.7, 734 |
+
+A greater tolerance of either kind trades worse lines for less room, in steps that get smaller
+for the exchange rate, and not at all for the default. Opened up completely it takes the room
+almost away, and the lines are bad (a mean badness of 734): the harness shows what the knobs buy,
+and the price.
+
+### Columns
+
+The columns choose among the ways to break their paragraphs too (`plan_fragment` and `choose`
+give the inner problems the variants, `ColumnCost` has the price of the lines in its height, and
+the plan carries the ways of every column to the layout and to the writer). `looseness` in columns
+is measured by the kinds `balanced` (containers that are not split) and `columns` (containers that
+go over pages) of `tools/looseness_bench.py`:
+
+| 20 documents, 300 containers | height of the containers, lines | containers shorter | taller |
+| --- | --- | --- | --- |
+| `looseness` 0 | 342.2 | | |
+| `looseness` 1 and 2 | 341.1 | 22 (7%) by a line | 0 |
+| both tolerances open | 340.7 | | |
+
+A balanced container is shorter by a line only if a breaking with a line fewer is within the
+tolerance, and only when the number of lines is odd for two columns, which is why a tenth of the
+containers gain and the rest cannot: a breaking with a line more never makes a balanced container
+shorter. In containers that go over pages the first fragments are filled, and a looser breaking
+holds less text, so the container ends later; the pages are the same in number. Whether a taller
+container is good depends on the page (a page that is left with room, an orphan), which the inner
+choice cannot know: the page has to choose among fragments (see "Multi-column layout").
+
+### Fragments of a container that end earlier
+
+`LayoutService::fragment` has always returned a list, and the kernel makes a page of every
+fragment in it (the `end` of a fragment is part of what the page records, `PageFragment`), but the
+tree service gave only the fragment that fills the page. It gives now that one and up to three
+that end earlier: the columns are chosen again for the room less one, two and three lines of the
+first paragraph (`HELIUM_EARLIER_FRAGMENTS`, 3 by default, 0 for the old behaviour), and the ones
+that end at a place that another has are left out. The plans are kept by where the fragment starts,
+the page, the room, and where it ends. The page takes a fragment that ends earlier where that
+costs less in total, which is where the room left on the pages is spread better.
+
+Measured over 30 documents of two kinds that go over pages (the kinds `headings`, with headings
+that must not end a column, and `columns`; the room is of the pages that do not end at a forced
+break nor are the last):
+
+| kind | pages | room in lines | sum of the cubes of the room | the most room on a page |
+| --- | --- | --- | --- | --- |
+| headings, only the fragment that fills the page | 398 | 141 | 1131 | 6 |
+| headings, with the earlier ones | 398 | 113 | 209 | 3 |
+| columns, only the fragment that fills the page | 370 | 145 | 1597 | 10 |
+| columns, with the earlier ones | 370 | 130 | 190 | 2 |
+
+(Measured after the margin between containers was counted, see below; before it the numbers were
+smaller, because the pages were counted too short.)
+
+No page broke a rule of orphans and widows or ended at an avoided break in either case, so the
+gain is in the room, and not in the rules: the inner choice already keeps the rules, and what it
+cannot do is leave room on the page for the next fragment to start better. The time that the
+fragments take has not been looked at yet: it is more than without them, and it grows with the
+size of a container.
+
+`tools/check_quality.py` renders the generated documents with and without them and checks the
+pages: the words are the same ones (none lost, none twice), every word is inside the content area of
+its page, the layout and the paginator agree on the height of the pages, and no page breaks
+orphans or widows or ends at an avoided break. All hold with and without the fragments, over 60
+documents. The check found a defect that was not caused by them: a container that is split over
+pages was laid out with no height where the extents of the document are taken, so its bottom margin
+collapsed through it, and the gap between two containers was not counted: a page with several
+of them had up to 20px of content below its bottom for each. Such a container has a height that is
+not zero there now.
+
+### What the first measurements got wrong
+
+Two results of the first runs looked like bugs, and one was.
+
+- *More looseness gave emptier pages.* The pages were charged for the demerits of all of their lines
+  as soon as one paragraph of the document asked for variants, so a page cost more the more lines
+  it had, and the search preferred pages with fewer of them. One paragraph with `looseness: 1`
+  changed the pages of the whole document (a document of 12 pages whose first paragraph had it had
+  pages of 20 to 22 lines instead of 23 and 24). A page is charged now for the demerits of its lines
+  above those that the first ways to break the paragraphs have (`Label::baseline`), which are
+  zero for a page that takes only those, and the document is paginated as without `looseness`.
+- *The room was measured wrong.* The text of the layout dump counts a line more on pages where a
+  paragraph goes on, so the harness took the room from the words of the PDF.
+- *`looseness: 2` gave the same as 1.* It does not need to be a defect: the breaker gives the ways of
+  two lines more, but none of 78 paragraphs has one that is within the tolerance, and their lines
+  would cost 57 lines of room at the default exchange rate (20 lines for one line more). With both
+  knobs opened up the results differ.
+
+### Looking at the choices
+
+`helium --dump-pagination FILE` (`-` for stdout) writes what the paginator chose and why, as JSON:
+for every page its room, how it ends, orphans, widows, avoided breaks and overflow, its cost in
+the parts of the typed cost, the price of its lines in room (`line_room`), the ways chosen for its
+paragraphs, and for every paragraph on it the lines it has with their badness and the ways it
+had (the number of lines, the demerits and the worst badness of each).
+`python3 tools/pagination_report.py FILE [--ways]` shows it as a table.
+
+## How even the pages are
+
+`tools/page_uniformity.py` sets generated documents on a grid of 20px lines (pages and columns of 24
+lines: a book of chapters with headings, sub-headings and quotations, 5 to 9 chapters of 25 to 60
+paragraphs, and a container with two columns that goes over pages) and counts the lines of the
+pages, or of the columns, that do not end the document or a chapter. 15 documents of each kind,
+about 1200 pages or columns for every setting:
+
+| setting (book) | pages with all 24 lines | lines missing, mean | on the other pages, at most | lines worse than 100 per document |
+| --- | --- | --- | --- | --- |
+| `looseness` 0 | 63.2% | 0.39 | 3 | 112 |
+| `looseness` 1 | 77.9% | 0.23 | 3 | 117 |
+| `looseness` 2, tolerance of the other ways 1000 | 79.2% | 0.22 | 3 | 117 |
+| `looseness` 2, both tolerances open | 100% | 0 | 0 | 176 (mean badness 31 to 46) |
+| `looseness` 0, orphans and widows 1 | 96.1% | 0.04 | 2 | 112 |
+| `looseness` 0, orphans and widows 3 | 32.2% | 1.03 | 5 | 112 |
+
+So the pages are as even as the rules and the lines allow: a page is a line short mostly because a
+paragraph cannot be cut where it has to be (orphans and widows of 2), and the rest is a heading or a quotation
+that cannot end a page. `looseness` takes a third of those away at the default tolerances, and all of them with
+the tolerances open, at the price of about a third more lines that are worse than 100 and
+a mean badness that goes from 31 to 46: that is the exchange that the two knobs set.
+
+In the columns of a container that goes over pages it does not work as well: 66.8% of the columns are full,
+and `looseness` gets that to 76.8% (78.5% with the tolerances open), and the first
+fragment of a container is always full. The fragments that start in the middle of a paragraph are the ones that are
+short (and `HELIUM_EARLIER_FRAGMENTS` takes about four points of this away, on purpose: it leaves room
+to the pages where that is cheaper, see above). In a container with one column the tolerances open give 89%, with three
+columns `looseness` changes nothing, and a way of a paragraph is hardly ever taken there. This has not
+been explained: the same machinery gives 100% for the pages of the book.
+
 ## Open questions
 
 - **Taffy's cache.** Resolved by reading `taffy-0.15.1/src/tree/cache.rs` and the layout

@@ -238,7 +238,7 @@ impl LayoutService for GalleyService {
         let (top, bottom) = edges;
         let top = if from.is_none() { top } else { 0.0 };
         // (the bottom edge is only known to be there once the container ends)
-        let plan = plan_fragment(self, &items, columns, page_inline, from, (available - top) as f32, bottom as f32, fill);
+        let plan = plan_fragment(self, &items, columns, page_inline, from, (available - top) as f32, bottom as f32, fill, crate::Variants::default());
         let used = plan.height as f64 + top + if plan.end.is_none() { bottom } else { 0.0 };
         Rc::from(vec![Fragment {
             end: plan.end,

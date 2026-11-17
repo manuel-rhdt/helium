@@ -150,6 +150,8 @@ impl TaffyBlockLayout {
             plain_root: None,
             page_fragments: HashMap::new(),
             paragraph_variants: 0,
+            variants_config: helium_paginate::Variants::default(),
+            earlier_fragments: 3,
             page_variants: HashMap::new(),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
@@ -178,8 +180,16 @@ impl TaffyBlockLayout {
             .map(|&paragraph| tree.computed_values.get(tree.node(paragraph).entity).map_or(0, |style| style.page.looseness as u32))
             .max()
             .unwrap_or(0);
-        let problem = problem.with_variants(looseness, helium_paginate::Variants::TOLERANCE);
+        let tuning = Tuning::from_environment();
+        let problem = problem.with_variants(looseness, tuning.variant_tolerance);
+        let objective = helium_paginate::CssObjective { line_tolerance: tuning.line_tolerance };
         tree.paragraph_variants = looseness;
+        tree.earlier_fragments = tuning.earlier_fragments;
+        tree.variants_config = helium_paginate::Variants {
+            extra: looseness,
+            tolerance: tuning.variant_tolerance,
+            line_tolerance: tuning.line_tolerance,
+        };
         tree.icb_height = first_spec.block_size;
 
         // choose the pages
@@ -206,7 +216,7 @@ impl TaffyBlockLayout {
             #[cfg(not(test))]
             let custom: Option<helium_paginate::Solution> = None;
             let solution = custom
-                .unwrap_or_else(|| helium_paginate::ExactSolver::new(helium_paginate::CssObjective).solve(&mut kernel));
+                .unwrap_or_else(|| helium_paginate::ExactSolver::new(objective).solve(&mut kernel));
             let fills = kernel.realize(&solution).map_err(|error| format!("invalid pagination: {error:?}"))?;
             let end = helium_paginate::Position::Item(flow.items.len());
             for (page, fill) in fills.iter().enumerate() {
@@ -248,11 +258,14 @@ impl TaffyBlockLayout {
         let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
         let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
         let mut rules: Vec<Rule> = vec![];
+        let mut line_stats = LineStats::default();
+        let reporting = PAGINATION_REPORT.load(std::sync::atomic::Ordering::Relaxed);
+        let mut pages_report: Vec<serde_json::Value> = vec![];
         let mut positions = world.write_storage::<Position>();
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
-        for (start, from, to, fill, on_page, choices) in &planned {
+        for (number, (start, from, to, fill, on_page, choices)) in planned.iter().enumerate() {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
                 let index = page_contexts.len();
@@ -291,7 +304,7 @@ impl TaffyBlockLayout {
             tree.page_fragments = on_page
                 .iter()
                 .map(|fragment| {
-                    let key = (fragment.from, fragment.page_inline.to_bits(), fragment.available.to_bits());
+                    let key = (fragment.from, fragment.page_inline.to_bits(), fragment.available.to_bits(), fragment.end);
                     (NodeId::from(fragment.container.0 as usize), key)
                 })
                 .collect();
@@ -332,6 +345,8 @@ impl TaffyBlockLayout {
             let HeliumTree {
                 nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, page_variants, paragraph_variants, ..
             } = tree;
+            let mut paragraphs_log: Vec<serde_json::Value> = vec![];
+            let report = reporting.then_some(());
             let mut writer = Writer {
                 nodes,
                 out_of_flow: &out_of_flow,
@@ -343,6 +358,7 @@ impl TaffyBlockLayout {
                 intrinsic_sizes,
                 line_cache: lines,
                 page_variants: &*page_variants,
+                column_variants: None,
                 paragraph_variants: *paragraph_variants,
                 positions: &mut positions,
                 decorations: &mut decorations,
@@ -356,6 +372,8 @@ impl TaffyBlockLayout {
                 fragments: &mut fragments,
                 overlay: None,
                 rules: &mut rules,
+                line_stats: &mut line_stats,
+                paragraphs_log: report.as_ref().map(|_| &mut paragraphs_log),
             };
             // The root is placed at the top left corner of the content area of the page.
             writer.write_box(
@@ -368,9 +386,55 @@ impl TaffyBlockLayout {
                 1,
                 0,
             )?;
+            if reporting {
+                let containers: Vec<serde_json::Value> = on_page
+                    .iter()
+                    .filter_map(|fragment| {
+                        let id = NodeId::from(fragment.container.0 as usize);
+                        let key = (fragment.from, fragment.page_inline.to_bits(), fragment.available.to_bits(), fragment.end);
+                        let plan = service.tree.node(id).columns.as_ref()?.fragments.get(&key)?.clone();
+                        Some(serde_json::json!({
+                            "container": usize::from(id),
+                            "starts_in_container": fragment.from.is_some(),
+                            "ends_in_container": fragment.end.is_some(),
+                            "available": fragment.available,
+                            "height": plan.height,
+                            "columns": plan.used,
+                        }))
+                    })
+                    .collect();
+                pages_report.push(page_report(start, from, to, fill, on_page, choices, &objective, &flow, std::mem::take(&mut paragraphs_log), containers, number + 1 == planned.len()));
+            }
             page_contexts.push(context);
         }
+        if reporting {
+            let report = serde_json::json!({
+                "tuning": {
+                    "line_tolerance": tuning.line_tolerance,
+                    "variant_tolerance": tuning.variant_tolerance,
+                    "looseness": looseness,
+                },
+                "items": flow.items.len(),
+                "lines": {
+                    "count": line_stats.lines,
+                    "mean_badness": line_stats.badness / line_stats.lines.max(1) as f64,
+                    "worst_badness": line_stats.worst,
+                    "over_100": line_stats.loose,
+                },
+                "pages": pages_report,
+            });
+            if let Ok(mut slot) = PAGINATION_JSON.lock() {
+                *slot = serde_json::to_string_pretty(&report).ok();
+            }
+        }
         log::info!("TIMED: layout of the pages {:?}", before.elapsed());
+        log::info!(
+            "LINES: {} lines, mean badness {:.2}, worst {:.1}, {} over 100",
+            line_stats.lines,
+            line_stats.badness / line_stats.lines.max(1) as f64,
+            line_stats.worst,
+            line_stats.loose
+        );
         drop(service);
         drop(tree);
 
@@ -454,6 +518,9 @@ struct Writer<'a, 'w> {
     /// The ways that the paragraphs of the page are broken that are not the first, and the most lines
     /// more or fewer than the best breaking that the paragraphs may have.
     page_variants: &'a HashMap<NodeId, usize>,
+    /// The ways to break the paragraphs of the column that is being written, which are the ones
+    /// of the column and not of the page.
+    column_variants: Option<&'a HashMap<NodeId, usize>>,
     paragraph_variants: u32,
     positions: &'a mut WriteStorage<'w, Position>,
     decorations: &'a mut WriteStorage<'w, Decoration>,
@@ -477,6 +544,10 @@ struct Writer<'a, 'w> {
     overlay: Option<&'a HashMap<NodeId, columns::Snap>>,
     /// The rules between the columns.
     rules: &'a mut Vec<Rule>,
+    /// How well the lines that are written are broken (for the log).
+    line_stats: &'a mut LineStats,
+    /// What is written of the paragraphs of the page, if the choices of the pages are reported.
+    paragraphs_log: Option<&'a mut Vec<serde_json::Value>>,
 }
 
 /// A rule between two columns: a filled rectangle.
@@ -836,6 +907,7 @@ impl<'a> Writer<'a, '_> {
         for (index, (window, snapshot)) in plan.columns.iter().zip(&layouts.columns).enumerate() {
             let window_before = std::mem::replace(&mut self.window, window);
             let overlay_before = self.overlay.replace(snapshot);
+            let variants_before = std::mem::replace(&mut self.column_variants, plan.variants.get(index));
             // the part of a box that goes on in the next column is painted down to the bottom of
             // the column
             let bottom_before = std::mem::replace(&mut self.page_bottom, content_y + plan.height);
@@ -867,6 +939,7 @@ impl<'a> Writer<'a, '_> {
             };
             self.window = window_before;
             self.overlay = overlay_before;
+            self.column_variants = variants_before;
             self.page_bottom = bottom_before;
             written?;
         }
@@ -946,7 +1019,13 @@ impl<'a> Writer<'a, '_> {
             return Ok(());
         };
         let looseness = style.map_or(0, |style| style.page.looseness as u32);
-        let variant = (self.page_variants.get(&id).copied().unwrap_or(0), self.paragraph_variants.min(looseness));
+        let way = self
+            .column_variants
+            .and_then(|ways| ways.get(&id))
+            .or_else(|| self.page_variants.get(&id))
+            .copied()
+            .unwrap_or(0);
+        let variant = (way, self.paragraph_variants.min(looseness));
         let measured = lines_between(
             self.line_cache,
             ifc,
@@ -959,6 +1038,52 @@ impl<'a> Writer<'a, '_> {
             self.intrinsic_sizes,
             self.aligns,
         );
+        for line in &measured {
+            self.line_stats.add(line.badness);
+        }
+        if self.paragraphs_log.is_some() {
+            let ways = if variant.1 > 0 {
+                let from = cut.and_then(|(from, _)| from).map(tree::LineCut::of);
+                tree::variants_from(
+                    self.line_cache,
+                    ifc,
+                    entity.id(),
+                    from,
+                    PixelLength(line_width),
+                    PixelLength(indent),
+                    variant.1,
+                    self.text_runs,
+                    self.intrinsic_sizes,
+                    self.aligns,
+                )
+                .iter()
+                .map(|lines| {
+                    serde_json::json!({
+                        "lines": lines.len(),
+                        "demerits": lines.iter().map(|line| line.demerits).sum::<f64>(),
+                        "worst_badness": lines.iter().map(|line| line.badness).fold(0.0, f64::max),
+                    })
+                })
+                .collect::<Vec<_>>()
+            } else {
+                vec![]
+            };
+            let entry = serde_json::json!({
+                "entity": entity.id(),
+                "cut_at_start": cut.is_some_and(|(from, _)| from.is_some()),
+                "cut_at_end": cut.is_some_and(|(_, to)| to.is_some()),
+                "lines": measured.len(),
+                "way": variant.0,
+                "looseness": variant.1,
+                "demerits": measured.iter().map(|line| line.demerits).sum::<f64>(),
+                "badness": measured.iter().map(|line| (line.badness * 10.0).round() / 10.0).collect::<Vec<_>>(),
+                // the ways that the page chose among, if the paragraph has any
+                "ways": ways,
+            });
+            if let Some(log) = self.paragraphs_log.as_mut() {
+                log.push(entry);
+            }
+        }
         let first = ifc.push_lines(measured, self.entities);
         let align = ifc.resolved_text_align();
         let indent_offset = ifc.indent_offset(PixelLength(indent)).0;
@@ -974,6 +1099,7 @@ impl<'a> Writer<'a, '_> {
             .collect();
 
         let mut y = content_offset.1;
+        let mut line_boxes: Vec<[f32; 4]> = vec![];
         for (index, (line_entity, height, advance)) in lines.into_iter().enumerate() {
             let (x0, w0) = if index == 0 {
                 (content_offset.0 + indent_offset, width - indent)
@@ -987,11 +1113,147 @@ impl<'a> Writer<'a, '_> {
                 TextAlign::Justify => (x0, w0),
             };
             let (px, py, pw, ph) = frame.to_physical((x, y, w, height));
+            line_boxes.push([px, py, pw, ph]);
             self.set_position(line_entity, px, py, pw, ph, z);
             self.emit(BlockLevelElement::Leaf(line_entity));
             y += height;
         }
+        // (where the lines are, for the report of the choices of the pages)
+        if let Some(entry) = self.paragraphs_log.as_mut().and_then(|log| log.last_mut()) {
+            entry["boxes"] = serde_json::json!(line_boxes);
+            entry["justified"] = serde_json::json!(matches!(align, TextAlign::Justify));
+        }
         Ok(())
+    }
+}
+
+/// One page of the report of the choices of the pages: what the page is, what it costs and why,
+/// and the paragraphs that are on it.
+#[allow(clippy::too_many_arguments)]
+fn page_report(
+    start: &helium_paginate::PageStart,
+    from: &helium_paginate::Position,
+    to: &helium_paginate::Position,
+    fill: &helium_paginate::PageFill,
+    fragments: &[helium_paginate::PageFragment],
+    choices: &[helium_paginate::Choice],
+    objective: &helium_paginate::CssObjective,
+    flow: &flow::Flow,
+    paragraphs: Vec<serde_json::Value>,
+    containers: Vec<serde_json::Value>,
+    last: bool,
+) -> serde_json::Value {
+    use helium_paginate::Objective;
+    let cost = objective.page_cost(fill, last).unwrap_or_default();
+    let line_room = objective.line_room(fill);
+    let unit = helium_paginate::CssCost::SLACK_UNIT;
+    serde_json::json!({
+        "page": start.index + 1,
+        "kind": format!("{:?}", fill.kind),
+        "from": format!("{from:?}"),
+        "to": format!("{to:?}"),
+        "block_size": fill.spec.block_size,
+        "used": fill.used,
+        "room": fill.spec.block_size - fill.used,
+        "ends_with": format!("{:?}", fill.end_kind),
+        "orphan_violation": fill.orphan_violation,
+        "widow_violation": fill.widow_violation,
+        "overflow": fill.overflow,
+        "line_demerits_above_first_way": fill.line_demerits,
+        "line_room": line_room,
+        "cost": {
+            "overflows": cost.overflows,
+            "avoided_breaks": cost.avoided_breaks,
+            "orphans_and_widows": cost.orphans_and_widows,
+            "pages": cost.pages,
+            // (the cube of the room in pixels)
+            "slack": cost.slack as f64 / (unit * unit * unit),
+        },
+        "variants": choices
+            .iter()
+            .map(|choice| serde_json::json!({ "item": choice.item, "way": choice.variant }))
+            .collect::<Vec<_>>(),
+        "containers": containers,
+        "paragraphs": paragraphs,
+        "items": flow.items.len(),
+    })
+}
+
+/// Whether the choices of the pages are written down (`--dump-pagination`).
+static PAGINATION_REPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Asks for a report of the choices of the pages: [`take_pagination_report`] has it as JSON
+/// after the layout.
+pub fn report_pagination(on: bool) {
+    PAGINATION_REPORT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+static PAGINATION_JSON: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The choices of the pages of the last layout as JSON, if they were asked for with
+/// [`report_pagination`].
+pub fn take_pagination_report() -> Option<String> {
+    PAGINATION_JSON.lock().ok()?.take()
+}
+
+/// The numbers that decide how much a page gives up for better lines. They are the values of an
+/// experiment, and can be changed to try others (`tools/looseness_bench.py`): the environment
+/// variables `HELIUM_LINE_TOLERANCE` (the exchange rate of lines and room,
+/// [`helium_paginate::CssObjective::line_tolerance`]) and `HELIUM_VARIANT_TOLERANCE` (the worst
+/// badness of a line of another way to break a paragraph, [`helium_paginate::Variants`]).
+#[derive(Debug, Copy, Clone)]
+struct Tuning {
+    line_tolerance: f64,
+    variant_tolerance: f64,
+    /// The fragments of a container that end earlier than the one that fills the page, which it
+    /// offers the pages besides it (`HELIUM_EARLIER_FRAGMENTS`, 3 by default; 0 gives only the one that fills it).
+    earlier_fragments: u32,
+}
+
+impl Tuning {
+    fn from_environment() -> Self {
+        let number = |name: &str, default: f64| match std::env::var(name) {
+            Ok(value) => match value.parse::<f64>() {
+                Ok(number) if number > 0.0 && number.is_finite() => {
+                    log::info!("TUNING: {name} = {number}");
+                    number
+                }
+                _ => {
+                    log::warn!("{name} must be a positive number, not {value:?}");
+                    default
+                }
+            },
+            Err(_) => default,
+        };
+        Tuning {
+            line_tolerance: number("HELIUM_LINE_TOLERANCE", helium_paginate::CssObjective::LINE_TOLERANCE),
+            variant_tolerance: number("HELIUM_VARIANT_TOLERANCE", helium_paginate::Variants::TOLERANCE),
+            earlier_fragments: match std::env::var("HELIUM_EARLIER_FRAGMENTS").ok().and_then(|value| value.parse().ok()) {
+                Some(count) => count,
+                None => 3,
+            },
+        }
+    }
+}
+
+/// How well the lines of the document are broken: the badness of TeX (100 for a line that is
+/// stretched or shrunk by its whole stretch), which is infinite for a line that does not fit.
+#[derive(Debug, Default)]
+struct LineStats {
+    lines: usize,
+    badness: f64,
+    worst: f64,
+    loose: usize,
+}
+
+impl LineStats {
+    fn add(&mut self, badness: f64) {
+        // (the badness of a line that cannot be stretched, as the last one, is not a measure)
+        let badness = if badness.is_finite() { badness.min(10_000.0) } else { 10_000.0 };
+        self.lines += 1;
+        self.badness += badness;
+        self.worst = self.worst.max(badness);
+        self.loose += usize::from(badness > 100.0);
     }
 }
 

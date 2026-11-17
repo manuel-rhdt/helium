@@ -77,6 +77,30 @@ pub(super) struct TreeService<'t, 'a, 'w> {
 }
 
 impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
+    /// The extent of a line of the first paragraph of a container with columns: by how much the
+    /// room of a fragment is made less to find the fragments that end earlier. 0 if it has none.
+    fn line_step(&mut self, container: NodeId, content_width: f32) -> f64 {
+        let (_, width, _) = self.tree.column_geometry(container, content_width);
+        let paragraph = self
+            .tree
+            .node(container)
+            .columns
+            .as_ref()
+            .and_then(|columns| columns.inner.as_ref())
+            .and_then(|inner| {
+                inner.items.iter().find_map(|item| match item {
+                    helium_paginate::Item::Paragraph { id, .. } => Some(*id),
+                    _ => None,
+                })
+            });
+        let Some(paragraph) = paragraph else {
+            return 0.0;
+        };
+        let root = BoxRef(usize::from(container) as u32);
+        let lines = LayoutService::lines_in(self, root, paragraph, None, width);
+        lines.first().map_or(0.0, |line| line.extent)
+    }
+
     pub fn new(tree: &'t mut HeliumTree<'a, 'w>, flow: &'t Flow, icb_height: f32) -> Self {
         TreeService {
             tree,
@@ -448,16 +472,36 @@ impl LayoutService for TreeService<'_, '_, '_> {
         let edges = *self.galley(page_inline).containers.get(&id).expect("the container is in the flow");
         // (the padding and the border at the top are the first fragment's)
         let top = if from.is_none() { edges.top } else { 0.0 };
-        let (_, plan) = super::columns::fragment_plan(self, id, edges.width, from, page_inline, available, top, edges.bottom);
-        let bottom = if plan.end.is_none() { edges.bottom } else { 0.0 };
-        let fragments: Rc<[Fragment]> = Rc::from(vec![Fragment {
-            end: plan.end.map(|cut| cut),
-            used: f64::from(plan.height + top + bottom),
-            end_kind: plan.end_kind,
-            orphan_violation: plan.orphan_violation,
-            widow_violation: plan.widow_violation,
-            avoid_violation: plan.avoid_violation,
-        }]);
+        // The fragment that fills the page, and fragments that end earlier, which the page can
+        // take instead of it: a fragment that has an orphan or a widow, or a break that should be
+        // avoided, is not the only one that the container can have.
+        let earlier = self.tree.earlier_fragments;
+        let step = self.line_step(id, edges.width);
+        let mut found: Vec<Fragment> = vec![];
+        for earlier in 0..=earlier {
+            let planned = available - f64::from(earlier) * step;
+            if earlier > 0 && planned - f64::from(top) <= step {
+                break;
+            }
+            let (_, plan) = super::columns::fragment_plan(
+                self, id, edges.width, from, page_inline, available, top, edges.bottom, planned,
+            );
+            if found.iter().any(|fragment| fragment.end == plan.end) {
+                continue;
+            }
+            let bottom = if plan.end.is_none() { edges.bottom } else { 0.0 };
+            found.push(Fragment {
+                end: plan.end,
+                used: f64::from(plan.height + top + bottom),
+                end_kind: plan.end_kind,
+                orphan_violation: plan.orphan_violation,
+                widow_violation: plan.widow_violation,
+                avoid_violation: plan.avoid_violation,
+            });
+        }
+        // (in the order of growing content)
+        found.sort_by(|left, right| left.used.total_cmp(&right.used));
+        let fragments: Rc<[Fragment]> = Rc::from(found);
         self.fragments.insert(key, fragments.clone());
         fragments
     }
