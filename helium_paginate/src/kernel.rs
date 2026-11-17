@@ -1,5 +1,5 @@
-use crate::flow::{BoxRef, BreakKind, Item, PageKind, PageSpec, Problem};
-use crate::service::LayoutService;
+use crate::flow::{BoxRef, BreakKind, FloatSide, Item, PageKind, PageSpec, Problem};
+use crate::service::{ContainerFloat, LayoutService};
 use crate::token::{BreakToken, ContainerCut, Cut, Interner, Position};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -161,12 +161,20 @@ pub struct Kernel<'a> {
     left_right_matter: bool,
     /// The start of the first page.
     first: BreakToken,
+    /// The floats that wait at the start of the first page.
+    first_carry: FloatList,
     /// While a page that ends at any cut of a paragraph is listed ([`Kernel::fill_at`]): the
     /// paragraph and the cut.
     force_end: Option<(usize, Cut)>,
     /// The lists of choices that pages have, by their number; the first is the empty one.
     choices: Vec<Rc<[Choice]>>,
     choice_ids: HashMap<Vec<Choice>, ChoiceId>,
+    /// The floats of the page that are called for inside of containers, which are asked of the
+    /// layout service when a container is first walked: a float is `items.len()` plus its number
+    /// here, as an entry of a list of floats.
+    hoisted: Vec<(usize, ContainerFloat)>,
+    /// By the item of the container: the numbers of its floats.
+    hoisted_of: HashMap<usize, std::ops::Range<usize>>,
     /// The lists of floats that pages have, by their number; the first is the empty one.
     float_lists: Vec<Rc<[usize]>>,
     float_list_ids: HashMap<Vec<usize>, FloatList>,
@@ -290,6 +298,12 @@ impl<'a> Kernel<'a> {
         }
         tokens.intern(Position::Item(items.len()));
         let first = tokens.intern(problem.start);
+        let first_waiting: Vec<usize> = match problem.waiting {
+            Some(from) => (from..problem.start.item().min(items.len()))
+                .filter(|&item| matches!(items[item], Item::Float { .. }))
+                .collect(),
+            None => vec![],
+        };
         let left_right_matter = problem.pages.left_right_differ
             || items.iter().any(|item| {
                 matches!(
@@ -298,18 +312,23 @@ impl<'a> Kernel<'a> {
                         if *level == problem.level
                 )
             });
-        Kernel {
+        let mut kernel = Kernel {
             problem,
             service,
             tokens,
             left_right_matter,
             first,
+            first_carry: FloatList::NONE,
+            hoisted: vec![],
+            hoisted_of: HashMap::new(),
             force_end: None,
             choices: vec![Rc::from(vec![])],
             choice_ids: HashMap::from([(vec![], ChoiceId::NONE)]),
             float_lists: vec![Rc::from(vec![])],
             float_list_ids: HashMap::from([(vec![], FloatList::NONE)]),
-        }
+        };
+        kernel.first_carry = kernel.float_list(&first_waiting);
+        kernel
     }
 
     /// Every place where a page can start or end that is known so far: the start and the end of
@@ -341,8 +360,19 @@ impl<'a> Kernel<'a> {
         PageStart {
             at: self.first,
             index: 0,
-            carry: FloatList::NONE,
+            carry: self.first_carry,
         }
+    }
+
+    /// Whether the page that `fill` is ends the document (or the content of a fragment): it ends at
+    /// the end of the items and no float waits for a page.
+    pub fn ends_document(&self, fill: &PageFill) -> bool {
+        self.is_end(fill.end) && fill.carry == FloatList::NONE
+    }
+
+    /// The boxes and the places of the floats of a list.
+    pub fn float_boxes(&self, list: FloatList) -> Vec<(BoxRef, FloatSide)> {
+        self.float_lists[list.0 as usize].iter().filter_map(|&key| self.float_box(key)).collect()
     }
 
     /// The ways to break paragraphs that the problem asks for.
@@ -554,10 +584,18 @@ impl<'a> Kernel<'a> {
         if start.carry != FloatList::NONE {
             let carried = self.floats(start.carry);
             let at_end = item >= items.len();
-            let fraction = if at_end { 0.0 } else { f64::from(problem.float_fraction) };
+            let fraction = if take_rest {
+                f64::INFINITY
+            } else if at_end {
+                0.0
+            } else {
+                f64::from(problem.float_fraction)
+            };
             self.place_carried(&carried, spec, fraction, &mut first_label);
-            if self.force_end.is_none() {
-                self.float_page(&carried, spec, page_kind, start.at, record, &mut fills);
+            // (on the last page that there can be, all the floats are placed, and a page of floats
+            // is the only way to place them at the end of the content)
+            if self.force_end.is_none() && (!take_rest || at_end) {
+                self.float_page(&carried, spec, page_kind, start.at, record, &mut fills, take_rest);
             }
             if at_end || first_label.placed.is_empty() {
                 return fills;
@@ -620,9 +658,11 @@ impl<'a> Kernel<'a> {
                     let room = f64::from(spec.block_size);
                     let cap = room * f64::from(problem.float_fraction);
                     for label in &mut labels {
-                        let fits = label.deferred.is_empty()
-                            && label.float_space + extent <= cap
-                            && label.used + label.float_space + extent <= room;
+                        // (the last page that there can be takes all that is left)
+                        let fits = take_rest
+                            || (label.deferred.is_empty()
+                                && label.float_space + extent <= cap
+                                && label.used + label.float_space + extent <= room);
                         if fits {
                             label.float_space += extent;
                             label.placed.push(item);
@@ -777,6 +817,9 @@ impl<'a> Kernel<'a> {
                     let from = container_from.take();
                     let available = f64::from(spec.block_size) - used - labels[0].float_space - pending;
                     let fragments = self.service.fragment(node, from, spec.inline_size, available);
+                    // The floats of the page that the fragment calls for wait for the next page:
+                    // they take room at its top, from the rest of the container.
+                    let ended_called = self.called_by(item, node, from, None);
                     let mut ended = None;
                     for fragment in fragments.iter() {
                         let page_fragment = PageFragment {
@@ -808,10 +851,13 @@ impl<'a> Kernel<'a> {
                         if record {
                             here.push(page_fragment);
                         }
+                        let mut waiting_label = labels[0].clone();
+                        let called = self.called_by(item, node, from, Some(end));
+                        waiting_label.deferred.extend(called);
                         if self.emit(
                             record,
                             &found,
-                            &labels[0],
+                            &waiting_label,
                             pending + fragment.used,
                             None,
                             start_paragraph,
@@ -828,6 +874,7 @@ impl<'a> Kernel<'a> {
                         return fills;
                     };
                     labels[0].used += pending + fragment.used;
+                    labels[0].deferred.extend(ended_called);
                     pending = 0.0;
                     leading = false;
                     broken_orphans |= fragment.orphan_violation || fragment.avoid_violation;
@@ -850,12 +897,69 @@ impl<'a> Kernel<'a> {
         fills
     }
 
-    /// The extent of the float that is the item `item` of the flow.
-    fn float_extent_of(&mut self, item: usize, page_inline: f32) -> f64 {
-        match self.problem.items[item] {
-            Item::Float { node, .. } => self.service.float_extent(node, page_inline),
-            other => panic!("the item {item} is no float: {other:?}"),
+    /// The box and the place of a float of a list: an item of the flow, or a float that is called
+    /// for inside of a container.
+    fn float_box(&self, key: usize) -> Option<(BoxRef, FloatSide)> {
+        let items = &self.problem.items;
+        if key < items.len() {
+            match items[key] {
+                Item::Float { node, side } => Some((node, side)),
+                _ => None,
+            }
+        } else {
+            self.hoisted.get(key - items.len()).map(|(_, float)| (float.node, float.side))
         }
+    }
+
+    /// The extent of the float of a list on a page.
+    fn float_extent_of(&mut self, key: usize, page_inline: f32) -> f64 {
+        let (node, _) = self.float_box(key).unwrap_or_else(|| panic!("{key} is no float"));
+        self.service.float_extent(node, page_inline)
+    }
+
+    /// The floats of a container that belong to the page, as numbers (entries of a list of floats).
+    fn container_floats(&mut self, item: usize, container: BoxRef) -> std::ops::Range<usize> {
+        if let Some(range) = self.hoisted_of.get(&item) {
+            return range.clone();
+        }
+        let floats = self.service.container_floats(container);
+        let first = self.hoisted.len();
+        self.hoisted.extend(floats.iter().map(|&float| (item, float)));
+        let range = first..self.hoisted.len();
+        self.hoisted_of.insert(item, range.clone());
+        range
+    }
+
+    /// The floats that a fragment of the container `item` calls for: the ones that are called for
+    /// in front of the end of the fragment and not in front of its start.
+    fn called_by(
+        &mut self,
+        item: usize,
+        container: BoxRef,
+        from: Option<ContainerCut>,
+        end: Option<ContainerCut>,
+    ) -> Vec<usize> {
+        let range = self.container_floats(item, container);
+        let len = self.problem.items.len();
+        range
+            .filter(|&number| {
+                let anchor = self.hoisted[number].1.anchor;
+                // (in front of an item that a paragraph that is cut has started in: called for
+                // by the fragment that started it)
+                let after_start = match from {
+                    None => true,
+                    Some(ContainerCut { item, cut: None, .. }) => anchor >= item,
+                    Some(ContainerCut { item, cut: Some(_), .. }) => anchor > item,
+                };
+                let before_end = match end {
+                    None => true,
+                    Some(ContainerCut { item, cut: None, .. }) => anchor < item,
+                    Some(ContainerCut { item, cut: Some(_), .. }) => anchor <= item,
+                };
+                after_start && before_end
+            })
+            .map(|number| len + number)
+            .collect()
     }
 
     /// Places the floats that wait at the start of a page, in order, while they take at most
@@ -884,12 +988,13 @@ impl<'a> Kernel<'a> {
         at: BreakToken,
         record: bool,
         fills: &mut Fills,
+        all: bool,
     ) {
         let room = f64::from(spec.block_size);
         let mut label = Label::default();
         for &item in carried {
             let extent = self.float_extent_of(item, spec.inline_size);
-            if label.deferred.is_empty() && (label.placed.is_empty() || label.float_space + extent <= room) {
+            if label.deferred.is_empty() && (all || label.placed.is_empty() || label.float_space + extent <= room) {
                 label.float_space += extent;
                 label.placed.push(item);
             } else {

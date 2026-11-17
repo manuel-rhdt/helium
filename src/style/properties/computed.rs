@@ -6,7 +6,7 @@ use super::specified::{
 };
 pub use super::specified::{
     BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle,
-    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, Break, BreakInside, Float,
+    GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, Break, BreakInside, Float, FloatReference,
     Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
 
@@ -1340,6 +1340,7 @@ pub struct Page {
     pub break_inside: BreakInside,
     /// Not inherited.
     pub float: Float,
+    pub float_reference: FloatReference,
 }
 
 impl Default for Page {
@@ -1354,6 +1355,7 @@ impl Default for Page {
             break_before: Break::Auto,
             break_inside: BreakInside::Auto,
             float: Float::None,
+            float_reference: FloatReference::Column,
         }
     }
 }

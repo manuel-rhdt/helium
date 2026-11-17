@@ -3,6 +3,19 @@ use crate::flow::{BoxRef, BreakKind, BreakLevel, Item, NodeRef, PageTable, ParId
 use crate::token::{ContainerCut, Cut};
 use std::rc::Rc;
 
+/// A float of the page that is called for inside of a container with columns.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ContainerFloat {
+    /// The box of the float, which the layout service knows the extent of on a page
+    /// ([`LayoutService::float_extent`]).
+    pub node: BoxRef,
+    pub side: crate::FloatSide,
+    /// The float is called for in front of this item of the content of the container: it is
+    /// called for by the fragment of the container that has the item (or the part of it in front
+    /// of the cut, if the item is a paragraph that is cut).
+    pub anchor: u32,
+}
+
 /// A line of a paragraph of the flow.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ParLine {
@@ -95,6 +108,14 @@ pub trait LayoutService {
     fn float_extent(&mut self, float: BoxRef, page_inline: f32) -> f64 {
         let _ = (float, page_inline);
         panic!("the layout service has no floats")
+    }
+
+    /// The floats that are called for inside of a container with columns and belong to the page
+    /// (`float-reference: page`): they are as wide as the page, and they take room from the
+    /// fragment of the container on the page that they are placed on. In the order of the content.
+    fn container_floats(&mut self, container: BoxRef) -> Rc<[ContainerFloat]> {
+        let _ = container;
+        Rc::from(vec![])
     }
 
     // The questions about a subtree. They are for a box whose content is laid out at a width that

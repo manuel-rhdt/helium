@@ -23,8 +23,8 @@ after it are the design, with notes where the code differs.
 ## Non-goals
 
 - Footnotes, and floats beyond the basics: `float: left` and `right`, floats in the middle of a
-  paragraph, floats in columns, floats that are split over pages. The basic floats (`top` and
-  `bottom`) have a section of their own, "Floats".
+  paragraph, floats that are split over pages. The basic floats (`top` and `bottom`, on the page
+  and in a column) have a section of their own, "Floats".
 - Multi-column layout is not part of steps 1 to 7. It has a section of its own, "Multi-column
   layout", and its own order of work.
 - Forking Taffy to make it fragmentation-aware.
@@ -935,6 +935,46 @@ is laid out for what is left of the page) is shown below them, and the floats at
 are stacked so that the last one ends at the bottom of the content area. The text of a page is
 `used - floats_used` high, and the check of the paginator against the layout compares that.
 
+**Floats in columns.** In the content of a container with columns, `float: top` and `bottom`
+make a float of the *column*: it is as wide as a column. The extractor makes an `Item::Float` in
+the flow of the content, and the columns are chosen by the same kernel with the same rules: the
+columns are the pages of the inner problem, a float goes in the column that has the place where
+it is called for if it fits next to the text of that column, else it waits for the next column
+(a column can be a page of floats), and the columns of a balanced container are chosen with the
+floats in them (the room that a column has to be balanced is the text and the floats). `used` of
+a column has the room of its floats, so the height of a fragment does.
+
+Floats that wait at the end of a fragment go on in the next one, on the next page. A fragment
+ends at a `ContainerCut`, and the cut has the item of the first float that waits
+(`ContainerCut::waiting`); the floats that wait are the ones of the content from that item to
+the cut, because floats keep their order and the ones that were placed are the first ones. The
+token of the end of a fragment has it, so two ways to the same place that leave other floats
+waiting are different states of the search. If the content ends and floats still wait, the
+container has a fragment that is made of columns of floats. Where the last column of a container
+that is not split over pages (or of a fragment that is the last one that the problem has) has no
+room for a float, it is placed anyway and the column overflows, which the cost of the solver
+avoids where it can.
+
+The layout of a column (`layout_columns`) lays its floats out on their own for the width of a
+column; `write_columns` stacks them at the top and the bottom of the column, with the text of the
+column between them.
+
+**Floats for the page, in columns.** `float-reference: page` on a float that is called for in
+the content of a container that is split over pages makes it a float of the page: it is as wide
+as the page and it takes room from the container on the page that it is placed on, like a
+`figure*` in LaTeX. The extractor takes the float out of the flow of the content and keeps it with
+the item that it is called for in front of (`Inner::hoisted`); the layout service gives the
+kernel those floats (`LayoutService::container_floats`). When the kernel walks a fragment of the
+container on a page, it adds the floats that the fragment calls for (the ones whose items are in
+the part of the content that the fragment has) to the floats that wait for the next page. A float
+that is called for in a container is never placed on the page that it is called for on, as in
+LaTeX: there is no way to know how much room the fragment needs without the float and with it at
+the same time, and the next page gets it at the top, where it takes room from the fragment that
+continues the container (what the fragment has is what the page has, less the floats on it, which
+the kernel subtracts before it asks for the fragment). Where the container is not split over pages
+(it has a height, it is in a flex or grid container, in a column, or the document has no pages)
+the value is ignored and the float is one of the column.
+
 **Divergences from TeX.** What is not done, and what is different.
 
 - No `[h]` (here), no `[p]` as a placement (the pages of floats are the way that LaTeX's
@@ -952,8 +992,11 @@ are stacked so that the last one ends at the bottom of the content area. The tex
   every other box.
 - A float that is taller than a page overflows it, and the part below the page is not printed
   (the program says so), like any other box that does not fit.
-- A float is not part of the pages of a container with columns, and a float in a paragraph (an
-  inline box) is not a float.
+- A float in a paragraph (an inline box) is not a float, and a float of the page that is called
+  for in a container with columns waits for the next page, even where it would fit on the page that
+  it is called for on.
+- Floats are placed in columns with the part of a column that floats may take (0.7), the same
+  as for pages.
 - The order of the floats in the structure tree is the order of reading of the page: the floats
   at the top, the text, the floats at the bottom.
 

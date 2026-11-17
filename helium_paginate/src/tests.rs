@@ -1171,7 +1171,7 @@ fn the_lines_that_the_next_fragment_starts_with_are_counted_against_the_widows()
     assert!(fills.iter().all(|fill| !fill.widow_violation && !fill.orphan_violation));
     // the second fragment starts 59 lines into the paragraph
     let second = kernel.position(solution.pages[1].at);
-    assert_eq!(second, Position::InContainer { item: 0, cut: ContainerCut { item: 0, cut: Some(Cut(59)) } });
+    assert_eq!(second, Position::InContainer { item: 0, cut: ContainerCut { item: 0, cut: Some(Cut(59)), waiting: None } });
 }
 
 #[test]

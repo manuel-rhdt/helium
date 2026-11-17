@@ -847,6 +847,11 @@ pub enum Page {
     /// https://www.w3.org/TR/css-gcpm-3/#float-positions
     #[property]
     Float(Float),
+    /// What `float: top` and `bottom` place a float relative to: the page, or the column that
+    /// the float is called for in (only in a container with columns that is split over pages).
+    /// https://www.w3.org/TR/css-gcpm-3/#float-reference
+    #[property]
+    FloatReference(FloatReference),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -3026,6 +3031,17 @@ pub enum Float {
     None,
     Top,
     Bottom,
+}
+
+/// `float-reference`: `column` places a float in the column that it is called for in (outside of
+/// a container with columns, the page is the column), and `page` places it on the page, as wide as
+/// the page, taking room from the container that it is in. The other values of GCPM (`inline` and
+/// `region`) are not supported.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PropertyValue)]
+pub enum FloatReference {
+    #[default]
+    Column,
+    Page,
 }
 
 /// The values of `page-break-before` and `page-break-after`.

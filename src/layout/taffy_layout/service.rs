@@ -509,6 +509,24 @@ impl LayoutService for TreeService<'_, '_, '_> {
         fragments
     }
 
+    fn container_floats(&mut self, container: BoxRef) -> Rc<[helium_paginate::ContainerFloat]> {
+        let id = NodeId::from(container.0 as usize);
+        let inner = self.tree.node(id).columns.as_ref().and_then(|columns| columns.inner.clone());
+        inner
+            .map(|inner| {
+                inner
+                    .hoisted
+                    .iter()
+                    .map(|&(node, side, anchor)| helium_paginate::ContainerFloat {
+                        node: BoxRef(usize::from(node) as u32),
+                        side,
+                        anchor,
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| Rc::from(vec![]))
+    }
+
     fn float_extent(&mut self, float: BoxRef, page_inline: f32) -> f64 {
         let key = (float.0, page_inline.to_bits());
         if let Some(&extent) = self.floats.get(&key) {

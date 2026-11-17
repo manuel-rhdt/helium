@@ -24,12 +24,23 @@ pub struct Cut(pub u32);
 pub struct ContainerCut {
     pub item: u32,
     pub cut: Option<Cut>,
+    /// The item of the first float in the content that is called for in front of the cut and
+    /// waits for a column to be placed in, if there is one. The floats that wait are the floats of
+    /// the content from this item to the cut: floats keep their order, so the ones that were
+    /// placed are the first ones. It makes a fragment that ends with floats that wait another
+    /// place than one that ends where none does.
+    pub waiting: Option<u32>,
 }
 
 impl ContainerCut {
     /// In front of an item of the content.
     pub fn at_item(item: usize) -> Self {
-        ContainerCut { item: item as u32, cut: None }
+        ContainerCut { item: item as u32, cut: None, waiting: None }
+    }
+
+    /// The same place, with the floats that wait from the item `waiting` on.
+    pub fn with_waiting(self, waiting: Option<usize>) -> Self {
+        ContainerCut { waiting: waiting.map(|item| item as u32), ..self }
     }
 
     /// The position in the content that the cut is.
@@ -44,7 +55,7 @@ impl ContainerCut {
     pub fn of(position: Position) -> Self {
         match position {
             Position::Item(item) => ContainerCut::at_item(item),
-            Position::InParagraph { item, cut } => ContainerCut { item: item as u32, cut: Some(cut) },
+            Position::InParagraph { item, cut } => ContainerCut { item: item as u32, cut: Some(cut), waiting: None },
             Position::InContainer { .. } => panic!("a container is not inside a container"),
         }
     }

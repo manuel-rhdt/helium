@@ -235,3 +235,64 @@ fn a_container_with_columns_below_a_float_starts_on_the_page_of_the_float() {
     let first = rects(&dump, BLUE)[0];
     assert_eq!((first.0, first.2, first.4), (0, 60.0, 140.0));
 }
+
+/// A document with a container with two columns, on pages that are 300px high.
+fn columns_dump(name: &str, content: &str) -> Value {
+    let html = format!(
+        r#"<!DOCTYPE html><html><head><style>
+        @page {{ width: 300px; height: 300px; margin: 0 }}
+        body, p, div {{ margin: 0; padding: 0 }}
+        body {{ font: 16px/20px sans-serif }}
+        </style></head><body><div style="column-count: 2; column-gap: 20px">{content}</div></body></html>"#
+    );
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join(format!("floats__{name}.html"));
+    std::fs::write(&input, html).unwrap();
+    let output = common::helium()
+        .unwrap()
+        .arg("--dump-layout")
+        .arg("-")
+        .arg(&input)
+        .arg(dir.join(format!("floats__{name}.pdf")))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn a_float_in_a_container_with_columns_is_placed_in_a_column() {
+    // (a float that is called for in a column is as wide as the column)
+    let content = format!(
+        "{}{}{}{}",
+        text(RED_CSS, 6),
+        float("top", GREEN_CSS, 50, ""),
+        text(ORANGE_CSS, 8),
+        float("bottom", BLUE_CSS, 30, "")
+    ) + &text(ORANGE_CSS, 8);
+    let dump = columns_dump("column", &content);
+    // the one at the top is above the text of the first column, and the one at the bottom ends
+    // the second, which is as high as the first
+    assert_eq!(rects(&dump, GREEN), [(0, 0.0, 0.0, 140.0, 50.0)]);
+    assert_eq!(rects(&dump, BLUE), [(0, 160.0, 240.0, 140.0, 30.0)]);
+    assert_eq!(rects(&dump, RED)[0].2, 50.0);
+}
+
+#[test]
+fn a_float_for_the_page_takes_room_from_the_container_on_the_next_page() {
+    let lines = |lines, color| {
+        format!(r#"<p style="background-color: {color}">{}</p>"#, vec!["line"; lines].join("<br>"))
+    };
+    // 30 lines fill the two columns of the first page
+    let content = format!(
+        r#"{}<div style="float: top; float-reference: page; height: 70px; background-color: {GREEN_CSS}"></div>{}"#,
+        lines(30, RED_CSS),
+        lines(30, BLUE_CSS)
+    );
+    let dump = columns_dump("page_float", &content);
+    // the float is as wide as the page, at the top of the page after the one it is called for on
+    assert_eq!(rects(&dump, GREEN), [(1, 0.0, 0.0, 300.0, 70.0)]);
+    // the columns start below it and are 70px lower than they would be
+    assert_eq!(rects(&dump, BLUE)[0], (1, 0.0, 70.0, 140.0, 220.0));
+    assert_eq!(rects(&dump, BLUE)[1], (1, 160.0, 70.0, 140.0, 220.0));
+}

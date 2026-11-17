@@ -76,8 +76,11 @@ pub(super) struct ColumnPlan {
     pub columns: Vec<Window>,
     /// For every column, the ways to break its paragraphs that are not the first, by paragraph.
     pub variants: Vec<HashMap<NodeId, usize>>,
-    /// The extent that the content of every column has (for the report of the pages).
+    /// The extent that the content of every column has, with its floats (for the report of the
+    /// pages).
     pub used: Vec<f32>,
+    /// The floats of every column, in order.
+    pub floats: Vec<Vec<(NodeId, helium_paginate::FloatSide)>>,
 }
 
 /// What the layout of one box in a column found out, which the layout of the next column
@@ -94,6 +97,8 @@ pub(super) struct Snap {
 pub(super) struct ColumnLayouts {
     pub plan: Rc<ColumnPlan>,
     pub columns: Vec<HashMap<NodeId, Snap>>,
+    /// The floats of every column, laid out for the width of a column.
+    pub floats: Vec<Vec<super::PlacedFloat>>,
 }
 
 /// The window that Taffy is shown, to put it back.
@@ -133,6 +138,10 @@ impl LayoutService for InColumns<'_, '_, '_, '_> {
 
     fn lines_to_in(&mut self, root: BoxRef, par: ParId, from: Option<Cut>, to: Cut, inline: f32) -> Rc<[ParLine]> {
         self.service.lines_to_in(root, par, from, to, inline)
+    }
+
+    fn float_extent(&mut self, float: BoxRef, inline: f32) -> f64 {
+        self.service.float_extent(float, inline)
     }
 
     fn content_extent(&mut self, root: BoxRef, inline: f32) -> f64 {
@@ -326,6 +335,23 @@ impl HeliumTree<'_, '_> {
     fn layout_columns(&mut self, id: NodeId, plan: Rc<ColumnPlan>) {
         let saved = self.save_window();
         let mut columns = vec![];
+        // The floats of the columns are laid out on their own for the width of a column. (The
+        // text of a column is laid out below its floats: the layout of the window does not know
+        // them.)
+        let icb_height = self.icb_height;
+        let floats: Vec<Vec<super::PlacedFloat>> = plan
+            .floats
+            .iter()
+            .map(|column| {
+                column
+                    .iter()
+                    .map(|&(float, side)| {
+                        let laid_out = self.layout_float(float, plan.width, icb_height);
+                        super::PlacedFloat { id: float, side, margin: laid_out.margin, outer: laid_out.outer_height() }
+                    })
+                    .collect()
+            })
+            .collect();
         let page_variants = self.page_variants.clone();
         for (index, window) in plan.columns.iter().enumerate() {
             // (the ways to break the paragraphs that the column has, for the lines and for the
@@ -379,7 +405,7 @@ impl HeliumTree<'_, '_> {
         self.page_variants = page_variants;
         self.restore_window(saved);
         if let Some(node) = self.node_mut(id).columns.as_mut() {
-            node.layouts = Some(Rc::new(ColumnLayouts { plan, columns }));
+            node.layouts = Some(Rc::new(ColumnLayouts { plan, columns, floats }));
         }
     }
 
@@ -454,7 +480,7 @@ fn choose(
         end_container: None,
     };
     if inner.items.is_empty() {
-        return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![], variants: vec![], used: vec![] };
+        return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![], variants: vec![], used: vec![], floats: vec![] };
     }
     // what the container is as high as: a column of the content on its own is as high as the
     // content, the columns of a container with a height are as high as it is
@@ -465,7 +491,7 @@ fn choose(
         // something has to be kept together. The bound grows if it is too small.
         None => (content / count as f32 * 1.15).min(content) + 1.0,
     };
-    let (starts, used, variants) = loop {
+    let (starts, used, variants, floats) = loop {
         let table = PageTable::uniform(PageSpec { inline_size: width, block_size: bound });
         let problem = Problem::new(table, inner.items.clone())
             .with_variants(config.extra, config.tolerance)
@@ -476,7 +502,7 @@ fn choose(
         let solution = balance(&mut kernel);
         let Ok(fills) = kernel.realize(&solution) else {
             log::warn!("the columns of a container cannot be chosen: its content is not split");
-            return ColumnPlan { width, gap, height: height.unwrap_or(content), columns: vec![whole()], variants: vec![], used: vec![] };
+            return ColumnPlan { width, gap, height: height.unwrap_or(content), columns: vec![whole()], variants: vec![], used: vec![], floats: vec![] };
         };
         // Within the bound, nothing was found that keeps all the rules, and there is room for a
         // taller column: look again with a higher bound.
@@ -495,7 +521,8 @@ fn choose(
             .iter()
             .map(|fill| ways_of(inner, &kernel.choices(fill.choices)))
             .collect();
-        break (positions, fills.iter().map(|fill| fill.used).collect::<Vec<f32>>(), ways);
+        let floats = fills.iter().map(|fill| float_nodes(kernel.float_boxes(fill.placed))).collect();
+        break (positions, fills.iter().map(|fill| fill.used).collect::<Vec<f32>>(), ways, floats);
     };
     let mut columns = vec![];
     for (start, end) in starts {
@@ -506,7 +533,12 @@ fn choose(
         columns.push(paginate::window(&inner.items, &inner.leaves, BreakLevel::Column, Some(id), start, end, gap_extent));
     }
     let tallest = used.iter().copied().fold(0.0, f32::max);
-    ColumnPlan { width, gap, height: height.unwrap_or(tallest), columns, variants, used: used.clone() }
+    ColumnPlan { width, gap, height: height.unwrap_or(tallest), columns, variants, used: used.clone(), floats }
+}
+
+/// The nodes of the boxes of floats.
+fn float_nodes(boxes: Vec<(BoxRef, helium_paginate::FloatSide)>) -> Vec<(NodeId, helium_paginate::FloatSide)> {
+    boxes.into_iter().map(|(float, side)| (NodeId::from(float.0 as usize), side)).collect()
 }
 
 /// The fragment of a container that starts at `from` and has `available` height on a page that is
@@ -565,7 +597,8 @@ pub(super) fn fragment_plan(
         columns.push(paginate::window(&inner.items, &inner.leaves, BreakLevel::Column, Some(id), start, end, gap_extent));
     }
     let variants = found.choices.iter().map(|choices| ways_of(&inner, choices)).collect();
-    let plan = Rc::new(ColumnPlan { width, gap, height: found.height, columns, variants, used: found.used.clone() });
+    let floats = found.floats.iter().cloned().map(float_nodes).collect();
+    let plan = Rc::new(ColumnPlan { width, gap, height: found.height, columns, variants, used: found.used.clone(), floats });
     let key = (from, page_inline.to_bits(), available.to_bits(), found.end);
     if let Some(columns) = service.tree.node_mut(id).columns.as_mut() {
         columns.fragments.insert(key, plan.clone());

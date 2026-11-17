@@ -87,7 +87,8 @@ pub struct TaffyBlockLayout {
     pub shrink_wrap: bool,
 }
 
-/// A float on a page, laid out.
+/// A float on a page or in a column, laid out.
+#[derive(Debug, Clone, Copy)]
 struct PlacedFloat {
     id: NodeId,
     side: helium_paginate::FloatSide,
@@ -257,8 +258,8 @@ impl TaffyBlockLayout {
             Vec<helium_paginate::PageFragment>,
             // the ways to break the paragraphs of the page that are not the first
             Vec<helium_paginate::Choice>,
-            // the floats on the page: their items in the flow
-            Vec<usize>,
+            // the floats on the page
+            Vec<(helium_paginate::BoxRef, helium_paginate::FloatSide)>,
         )> = vec![];
         {
             use helium_paginate::Solver;
@@ -276,7 +277,7 @@ impl TaffyBlockLayout {
                 let finish = kernel.position(fill.end);
                 let fragments = kernel.fragments(&start, fill.end);
                 let choices = kernel.choices(fill.choices).to_vec();
-                let floats = kernel.floats(fill.placed).to_vec();
+                let floats = kernel.float_boxes(fill.placed);
                 planned.push((start, kernel.position(start.at), finish, *fill, fragments, choices, floats));
             }
             if fills.is_empty() {
@@ -361,10 +362,7 @@ impl TaffyBlockLayout {
             // The floats of the page are laid out on their own for the width of the page. They
             // are in the order of the flow, the ones that waited first.
             let mut placed_floats: Vec<PlacedFloat> = vec![];
-            for &item in floats {
-                let helium_paginate::Item::Float { node, side } = flow.items[item] else {
-                    continue;
-                };
+            for &(node, side) in floats {
                 let id = NodeId::from(node.0 as usize);
                 let laid_out = tree.layout_float(id, spec.inline_size, tree.icb_height);
                 placed_floats.push(PlacedFloat { id, side, margin: laid_out.margin, outer: laid_out.outer_height() });
@@ -1001,16 +999,35 @@ impl<'a> Writer<'a, '_> {
             let window_before = std::mem::replace(&mut self.window, window);
             let overlay_before = self.overlay.replace(snapshot);
             let variants_before = std::mem::replace(&mut self.column_variants, plan.variants.get(index));
+            // The floats of the column are at its top and its bottom, and its text is between
+            // them (the column is as high as the fragment, which has them).
+            let floats = &layouts.floats[index];
+            let height_of = |side| -> f32 {
+                floats.iter().filter(|placed| placed.side == side).map(|placed| placed.outer).sum()
+            };
+            let (top_floats, bottom_floats) =
+                (height_of(helium_paginate::FloatSide::Top), height_of(helium_paginate::FloatSide::Bottom));
             // the part of a box that goes on in the next column is painted down to the bottom of
-            // the column
-            let bottom_before = std::mem::replace(&mut self.page_bottom, content_y + plan.height);
+            // the column's text
+            let bottom_before = std::mem::replace(&mut self.page_bottom, content_y + plan.height - bottom_floats);
             let frame = Frame {
                 flow,
-                origin: Point { x: column_x(index), y: content_y },
+                origin: Point { x: column_x(index), y: content_y + top_floats },
                 inline_size: plan.width,
-                block_size: plan.height,
+                block_size: plan.height - top_floats - bottom_floats,
             };
-            let written = match node.content {
+            let mut written = Ok(());
+            for (side, mut y) in [
+                (helium_paginate::FloatSide::Top, content_y),
+                (helium_paginate::FloatSide::Bottom, content_y + plan.height - bottom_floats),
+            ] {
+                for placed in floats.iter().filter(|placed| placed.side == side) {
+                    let origin = Point { x: column_x(index) + placed.margin.left, y: y + placed.margin.top };
+                    written = written.and_then(|()| self.write_box(placed.id, origin, flow, z + 1, z_base));
+                    y += placed.outer;
+                }
+            }
+            let written = written.and_then(|()| match node.content {
                 Content::Inline => self.write_lines(id, &frame, (0.0, 0.0), plan.width, z + 1),
                 _ => {
                     let mut written = Ok(());
@@ -1029,7 +1046,7 @@ impl<'a> Writer<'a, '_> {
                     }
                     written
                 }
-            };
+            });
             self.window = window_before;
             self.overlay = overlay_before;
             self.column_variants = variants_before;

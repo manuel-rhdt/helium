@@ -15,7 +15,7 @@
 //!   balanced with `balance`), and the columns are filled in turn with `auto`. A fragment that ends
 //!   at a forced break of the page level is balanced with `balance-all` only.
 
-use crate::flow::{BreakKind, BreakLevel, Item, PageSpec, PageTable, Problem, Variants};
+use crate::flow::{BoxRef, BreakKind, BreakLevel, FloatSide, Item, PageSpec, PageTable, Problem, Variants};
 use crate::kernel::Choice;
 use crate::kernel::Kernel;
 use crate::service::LayoutService;
@@ -59,8 +59,13 @@ pub struct FragmentPlan {
     /// For every column, the ways to break its paragraphs that are not the first
     /// ([`Variants`]).
     pub choices: Vec<Vec<Choice>>,
-    /// The extent that the content of every column has.
+    /// The extent that the content of every column has, with the floats in it.
     pub used: Vec<f32>,
+    /// The floats in every column, in order: the ones that waited for a column first. The ones at
+    /// the top are above the content of the column and the ones at the bottom below it.
+    pub floats: Vec<Vec<(BoxRef, FloatSide)>>,
+    /// The room that the floats of every column take (`used` has it, too).
+    pub floats_used: Vec<f32>,
 }
 
 /// The columns that the content of a container has in the fragment that starts at `from`
@@ -83,7 +88,9 @@ pub fn plan_fragment(
     variants: Variants,
 ) -> FragmentPlan {
     let start = from.map_or(Position::Item(0), ContainerCut::position);
-    if matches!(start, Position::Item(item) if item >= items.len()) {
+    let waiting = from.and_then(|cut| cut.waiting).map(|item| item as usize);
+    // (floats that wait get columns of their own at the end of the content)
+    if matches!(start, Position::Item(item) if item >= items.len()) && waiting.is_none() {
         return FragmentPlan {
             columns: vec![],
             end: None,
@@ -95,6 +102,8 @@ pub fn plan_fragment(
             widow_violation: false,
             choices: vec![],
             used: vec![],
+            floats: vec![],
+            floats_used: vec![],
         };
     }
     let columns = columns.max(1);
@@ -111,6 +120,7 @@ pub fn plan_fragment(
             .with_level(BreakLevel::Column)
             .with_page_limit(columns)
             .starting_at(start)
+            .with_waiting(waiting)
             .as_fragment();
         let mut kernel = Kernel::new(&problem, service);
         let solution = ExactSolver::new(CssObjective::default()).solve(&mut kernel);
@@ -121,9 +131,12 @@ pub fn plan_fragment(
             .zip(&fills)
             .map(|(page, fill)| (kernel.position(page.at), kernel.position(fill.end)))
             .collect();
-        let ended = fills.last().is_some_and(|fill| kernel.is_end(fill.end));
+        let ended = fills.last().is_some_and(|fill| kernel.ends_document(fill));
         let choices: Vec<Vec<Choice>> = fills.iter().map(|fill| kernel.choices(fill.choices).to_vec()).collect();
-        Some((places, fills, ended, choices))
+        let floats: Vec<Vec<(BoxRef, FloatSide)>> = fills.iter().map(|fill| kernel.float_boxes(fill.placed)).collect();
+        // the floats that wait after the last column go on in the next fragment
+        let waiting = fills.last().and_then(|fill| kernel.floats(fill.carry).first().copied());
+        Some((places, fills, ended, choices, floats, waiting))
     };
 
     // The columns of a fragment that is as full as it can be. A fragment that ends the container
@@ -141,7 +154,7 @@ pub fn plan_fragment(
             }
         }
     }
-    let (mut places, mut fills, ended, mut choices) = found;
+    let (mut places, mut fills, ended, mut choices, mut floats, waiting_out) = found;
     // (how the last column ends is how the fragment does, whatever the columns are made into)
     let end_kind = if ended {
         BreakKind::Allowed
@@ -176,6 +189,7 @@ pub fn plan_fragment(
             .with_level(BreakLevel::Column)
             .with_page_limit(columns)
             .starting_at(start)
+            .with_waiting(waiting)
             .with_page_breaks();
         let mut kernel = Kernel::new(&problem, service);
         let solution = balance(&mut kernel);
@@ -192,13 +206,14 @@ pub fn plan_fragment(
                 entry.1 = last;
             }
             choices = balanced_fills.iter().map(|fill| kernel.choices(fill.choices).to_vec()).collect();
+            floats = balanced_fills.iter().map(|fill| kernel.float_boxes(fill.placed)).collect();
             fills = balanced_fills;
         }
     }
 
     let end = match last_end {
         Some(_) if ended => None,
-        Some(position) => Some(ContainerCut::of(position)),
+        Some(position) => Some(ContainerCut::of(position).with_waiting(waiting_out)),
         None => None,
     };
     let (mut orphan_violation, mut widow_violation, mut avoid_violation, mut overflow) = (false, false, false, false);
@@ -221,6 +236,8 @@ pub fn plan_fragment(
         widow_violation,
         choices,
         used: fills.iter().map(|fill| fill.used).collect(),
+        floats,
+        floats_used: fills.iter().map(|fill| fill.floats_used).collect(),
     }
 }
 
@@ -237,5 +254,7 @@ fn whole(items: &[Item], start: Position, available: f32) -> FragmentPlan {
         widow_violation: false,
         choices: vec![],
         used: vec![],
+        floats: vec![],
+        floats_used: vec![],
     }
 }

@@ -208,6 +208,10 @@ pub struct Problem {
     pub page_breaks: bool,
     /// How many ways to break a paragraph a page chooses among.
     pub variants: Variants,
+    /// For the problem of a fragment of a container: the item of the first float in front of
+    /// `start` that waits for a column ([`ContainerCut::waiting`](crate::ContainerCut::waiting)).
+    /// The floats that wait are the ones from this item to `start`.
+    pub waiting: Option<usize>,
     /// The part of a page that floats can take together, where text goes on the page
     /// ([`FLOAT_FRACTION`](Problem::FLOAT_FRACTION)). A float that does not fit under it waits
     /// for a page of floats.
@@ -258,6 +262,7 @@ impl Problem {
             page_breaks: false,
             variants: Variants::default(),
             float_fraction: Self::FLOAT_FRACTION,
+            waiting: None,
         }
     }
 
@@ -265,6 +270,12 @@ impl Problem {
     /// `\topfraction` (0.7) for the floats at the top and its `\bottomfraction` (0.3) for the
     /// ones at the bottom, which are not told apart here.
     pub const FLOAT_FRACTION: f32 = 0.7;
+
+    /// The floats from the item `first` to the start wait for a page (see [`Problem::waiting`]).
+    pub fn with_waiting(mut self, first: Option<usize>) -> Self {
+        self.waiting = first;
+        self
+    }
 
     /// Floats take at most this part of a page that has text on it.
     pub fn with_float_fraction(mut self, fraction: f32) -> Self {
