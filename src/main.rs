@@ -23,6 +23,7 @@ use std::time::Instant;
 pub mod default_cell_ext;
 pub mod display_list;
 pub mod dot;
+pub mod font_usage;
 pub mod image;
 mod svg;
 pub mod svg_dom;

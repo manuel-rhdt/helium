@@ -2355,13 +2355,10 @@ pub(super) struct ShapedLine {
 pub(super) fn shape_line(text: &str, font: &Font, face: &components::TextFace, rtl: bool) -> ShapedLine {
     use unicode_bidi::{BidiInfo, Level};
 
-    let mut ops = TextOps::from_parts(
-        vec![
-            TextOperator::SetFont(face.font_name.clone(), face.font_size),
-            TextOperator::SetColor(face.color),
-        ],
-        vec![],
-    );
+    let mut ops = TextOps::from_ops(vec![
+        TextOperator::SetFont(face.font_name.clone(), face.font_size),
+        TextOperator::SetColor(face.color),
+    ]);
     let info = BidiInfo::new(text, Some(if rtl { Level::rtl() } else { Level::ltr() }));
     let mut width = Px(0.0);
     let mut color_glyphs = Vec::new();
@@ -2470,15 +2467,8 @@ pub(super) fn shape_piece_in_flow(
         }
     };
 
-    let (mut actual_text, boundaries) = record_to_unicode(characters, &shaped, &font_at);
-    // Right-to-left glyphs are written in visual order, but text is logical order: the whole
-    // piece gets its text as `/ActualText` (ISO 32000-1 14.9.4), which replaces the text of
-    // the glyphs in it, including that of the graphemes that would have their own.
-    let run_text = (rtl && !shaped.is_empty()).then(|| trim_invisible(characters));
-    if run_text.is_some() {
-        actual_text.clear();
-    }
-    let mut open_cluster: Option<usize> = None;
+    // the glyphs of this piece start here: they are the ones that the piece's text is for
+    let first_glyph = ops.glyphs.len();
 
     let word_spacing_units = FontUnit((word_spacing / font_size.0).0 as f64 * 1000.0);
 
@@ -2534,33 +2524,14 @@ pub(super) fn shape_piece_in_flow(
     }
     let piece_end = pen;
 
-    // The glyphs are written in visual order, and right-to-left text gets its logical order from
-    // `/ActualText`. Each kern moves the pen to where its glyph is drawn.
+    // The glyphs are written in visual order, and the piece says in which direction its text
+    // goes. Each kern moves the pen to where its glyph is drawn.
     let mut out = GlyphRunWriter::new(ops);
     let mut current_font = 0u16;
     let mut rise = FontUnit(0.0);
     // where the pen is after the last glyph
     let mut pen = FontUnit(0.0);
-    if let Some(text) = run_text {
-        ops.push(TextOperator::BeginActualText(text.to_owned()));
-    }
     for glyph in &placed {
-        // the clusters that are marked with their text; there are none in most pieces
-        if !actual_text.is_empty() {
-            let cluster = grapheme_start(&boundaries, glyph.cluster);
-            if open_cluster != Some(cluster) {
-                if open_cluster.take().is_some() {
-                    out.flush(ops);
-                    ops.push(TextOperator::EndMarkedContent);
-                }
-                if let Some(text) = actual_text.get(&cluster) {
-                    out.flush(ops);
-                    ops.push(TextOperator::BeginActualText(text.clone()));
-                    open_cluster = Some(cluster);
-                }
-            }
-        }
-
         if glyph.font != current_font {
             out.flush(ops);
             current_font = glyph.font;
@@ -2588,7 +2559,7 @@ pub(super) fn shape_piece_in_flow(
                 e: Px(center_x - advance_px / 2.0),
                 f: Px(along + advance_px / 2.0 + IDEOGRAPHIC_CENTER * size),
             }));
-            ops.push_glyph(glyph.glyph);
+            ops.push_glyph(glyph.glyph, glyph.cluster as u32);
             out.skip_pushed(ops);
             // back to the line, behind the glyph
             let [a, b, c, d] = piece.flow.text_matrix();
@@ -2612,7 +2583,7 @@ pub(super) fn shape_piece_in_flow(
             rise = glyph.rise;
             ops.push(TextOperator::SetRise(font_size * (rise.0 as f32 / 1000.0)));
         }
-        out.glyph(ops, glyph.glyph);
+        out.glyph(ops, glyph.glyph, glyph.cluster as u32);
         if vertical.is_none() && glyph_font.is_color_glyph(glyph.glyph) {
             ops.push(TextOperator::ColorGlyph {
                 font: glyph_font.postscript_name(),
@@ -2624,16 +2595,10 @@ pub(super) fn shape_piece_in_flow(
         }
         pen = FontUnit(glyph.x.0 + glyph_font.advance(glyph.glyph).0);
     }
-    if open_cluster.is_some() {
-        out.flush(ops);
-        ops.push(TextOperator::EndMarkedContent);
-    }
     // the text that follows continues from the end of the piece on the baseline
     out.kern(FontUnit(pen.0 - piece_end.0));
     out.flush(ops);
-    if run_text.is_some() {
-        ops.push(TextOperator::EndMarkedContent);
-    }
+    ops.push_piece(first_glyph, characters, rtl);
     if rise.0 != 0.0 {
         ops.push(TextOperator::SetRise(Px(0.0)));
     }
@@ -2671,9 +2636,9 @@ impl GlyphRunWriter {
         if tenths.abs() >= 1.0 { tenths as i32 } else { 0 }
     }
 
-    fn glyph(&mut self, ops: &mut TextOps, glyph: GlyphIndex) {
+    fn glyph(&mut self, ops: &mut TextOps, glyph: GlyphIndex, cluster: u32) {
         let kern = self.take_kern();
-        ops.glyphs.push(KernedGlyph { glyph, kern });
+        ops.glyphs.push(KernedGlyph { glyph, kern, cluster });
     }
 
     /// Continues after glyphs that were pushed to `ops` without this writer.
@@ -2700,107 +2665,6 @@ thread_local! {
     /// The glyphs of the piece that `shape_piece_in_flow` is shaping.
     static SHAPED_SCRATCH: std::cell::RefCell<Vec<(super::text::GlyphPosition, super::text::GlyphInfo)>> =
         const { std::cell::RefCell::new(Vec::new()) };
-    /// The buffers of `record_to_unicode`: the glyphs by cluster and the starts of the clusters.
-    static TO_UNICODE_SCRATCH: std::cell::RefCell<(Vec<(usize, u16, GlyphIndex)>, Vec<usize>)> =
-        const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
-}
-
-/// Records which characters the glyphs of `shaped` (in logical order) stand for, so that the text
-/// can be extracted from the PDF.
-///
-/// A cluster of one glyph goes into the `ToUnicode` map of its font, unless the map already says
-/// something else for that glyph. Every other cluster (a glyph sequence like a reordered
-/// vowel sign and its consonant, or a glyph that is used for different text) cannot be
-/// described by a map from glyph to text: it is returned, by its start offset, with the text to
-/// give it as `/ActualText`.
-fn record_to_unicode<'a>(
-    characters: &str,
-    shaped: &[(super::text::GlyphPosition, super::text::GlyphInfo)],
-    font_at: &impl Fn(u16) -> &'a Font,
-) -> (std::collections::HashMap<usize, String>, Vec<usize>) {
-    use unicode_segmentation::UnicodeSegmentation;
-    // The glyphs by cluster. The buffers are reused: this runs for every piece of text.
-    let (mut glyphs, mut starts) = TO_UNICODE_SCRATCH.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    glyphs.clear();
-    glyphs.extend(shaped.iter().map(|(_, info)| (info.cluster as usize, info.font, GlyphIndex(info.codepoint))));
-    // the glyphs are in logical order, which is the order of their clusters, but not in every
-    // case (the stable sort keeps the order of the glyphs of a cluster)
-    if !glyphs.is_sorted_by_key(|&(cluster, ..)| cluster) {
-        glyphs.sort_by_key(|&(cluster, ..)| cluster);
-    }
-    starts.clear();
-    starts.extend(glyphs.chunk_by(|a, b| a.0 == b.0).map(|group| group[0].0));
-    // The unit of `/ActualText` is the grapheme cluster: a base character with its marks, whose
-    // glyphs the extractor would otherwise have to assemble from the positions of the marks.
-    // A unit has to hold whole glyph clusters too, since a glyph cannot be split between two
-    // texts: a conjunct with its vowel sign (Kannada "ಲ್ಲಾ", Sinhala "ක්‍රි") is several
-    // grapheme clusters but one glyph cluster. So a unit boundary is a grapheme boundary where a
-    // glyph cluster starts.
-    // Only needed for clusters that go into `actual_text`, so it is built when the first one
-    // is found: it is empty if there are none, which is the case for most texts.
-    let mut boundaries: Vec<usize> = Vec::new();
-    let mut unclean = std::collections::BTreeSet::new();
-    for (i, group) in glyphs.chunk_by(|a, b| a.0 == b.0).enumerate() {
-        let start = group[0].0;
-        let end = starts.get(i + 1).copied().unwrap_or(characters.len());
-        // without the invisible characters that were dropped in front of the next cluster
-        let Some(text) = characters.get(start..end) else { continue };
-        let text = trim_invisible(text);
-        if text.is_empty() {
-            continue;
-        }
-        let clean = match group {
-            &[(_, font, glyph)] => {
-                let mut map = font_at(font).to_unicode.lock();
-                match map.get(&glyph) {
-                    Some(existing) => existing == text,
-                    None => {
-                        map.insert(glyph, text.to_owned());
-                        true
-                    }
-                }
-            }
-            _ => false,
-        };
-        if !clean {
-            for &(_, font, glyph) in group {
-                font_at(font)
-                    .to_unicode_fallback
-                    .lock()
-                    .entry(glyph)
-                    .or_insert_with(|| text.to_owned());
-            }
-            if boundaries.is_empty() {
-                boundaries.extend(
-                    characters
-                        .grapheme_indices(true)
-                        .map(|(i, _)| i)
-                        .filter(|&i| i == 0 || starts.binary_search(&i).is_ok()),
-                );
-            }
-            unclean.insert(grapheme_start(&boundaries, start));
-        }
-    }
-    TO_UNICODE_SCRATCH.with(|scratch| *scratch.borrow_mut() = (glyphs, starts));
-    let mut actual_text = std::collections::HashMap::new();
-    for &start in &unclean {
-        let i = boundaries.partition_point(|&b| b <= start);
-        let end = boundaries.get(i).copied().unwrap_or(characters.len());
-        actual_text.insert(start, trim_invisible(&characters[start..end]).to_owned());
-    }
-    (actual_text, boundaries)
-}
-
-/// `text` without the invisible formatting characters at its end, which have no glyphs. The
-/// joiners stay: they are part of the spelling in Indic and Arabic scripts (a Malayalam chillu,
-/// a Sinhala yansaya, a Persian half-space).
-fn trim_invisible(text: &str) -> &str {
-    text.trim_end_matches(|ch| is_invisible_formatting(ch) && !matches!(ch, '\u{200C}' | '\u{200D}'))
-}
-
-/// The start of the grapheme cluster that contains the byte `offset`.
-fn grapheme_start(boundaries: &[usize], offset: usize) -> usize {
-    boundaries[boundaries.partition_point(|&b| b <= offset).saturating_sub(1)]
 }
 
 #[cfg(test)]
@@ -2808,11 +2672,18 @@ mod tests {
     use super::*;
     use crate::style::properties::computed::Language as Lang;
 
+    /// The operators of `ops` as the PDF writer gets them: with the `/ActualText` that the text
+    /// of the glyphs needs.
+    fn marked(ops: &TextOps) -> Vec<TextOperator> {
+        let mut usage = crate::font_usage::FontUsage::default();
+        usage.record_text(ops);
+        crate::pdf::text::with_actual_text(ops, &usage).unwrap_or_else(|| ops.iter().cloned().collect())
+    }
+
     /// Glyph clusters that a map from glyph to text cannot describe get `/ActualText`; the
-    /// others go into the `ToUnicode` map, where a glyph keeps the text of its first use.
+    /// others go into the map, where a glyph keeps the text of its first use.
     #[test]
     fn ambiguous_clusters_get_actual_text() {
-        use crate::layout::text::{GlyphInfo, GlyphPosition};
         use crate::style::properties::computed::{FontFamily, FontStyle, FontWeight};
         let font = crate::layout::text::font::system_font(
             &[FontFamily::Named("TeX Gyre Termes".into())],
@@ -2820,26 +2691,28 @@ mod tests {
             &FontStyle::Normal,
         )
         .unwrap();
-        let glyph = |ch: char| font.hb_font.get_nominal_glyph(ch).unwrap();
-        let info = |codepoint: u32, cluster: u32| {
-            (GlyphPosition::default(), GlyphInfo { codepoint, cluster, font: 0 })
-        };
+        let glyph = |ch: char| GlyphIndex(font.hb_font.get_nominal_glyph(ch).unwrap());
         // "a" one glyph; "b" drawn with the glyph of "a"; "c" with two glyphs; "d" one glyph
-        let characters = "abcd";
-        let shaped = [
-            info(glyph('a'), 0),
-            info(glyph('a'), 1),
-            info(glyph('c'), 2),
-            info(glyph('c'), 2),
-            info(glyph('d'), 3),
-        ];
-        let (actual_text, _) = record_to_unicode(characters, &shaped, &|_| &font);
-        let mut found: Vec<_> = actual_text.into_iter().collect();
-        found.sort();
-        assert_eq!(found, [(1, "b".to_owned()), (2, "c".to_owned())]);
-        let map = font.to_unicode.lock();
-        assert_eq!(map.get(&GlyphIndex(glyph('a'))).map(String::as_str), Some("a"));
-        assert_eq!(map.get(&GlyphIndex(glyph('d'))).map(String::as_str), Some("d"));
+        let mut ops = TextOps::from_ops(vec![TextOperator::SetFont(font.postscript_name(), Px(16.0))]);
+        let first = ops.glyphs.len();
+        for (ch, cluster) in [('a', 0), ('a', 1), ('c', 2), ('c', 2), ('d', 3)] {
+            ops.glyphs.push(KernedGlyph { glyph: glyph(ch), kern: 0, cluster });
+        }
+        ops.push(TextOperator::KernedGlyphs(GlyphRange { start: first as u32, end: 5, trailing_kern: 0 }));
+        ops.push_piece(first, "abcd", false);
+
+        assert_eq!(actual_texts(&ops), ["b", "c"]);
+        assert_balanced(&marked(&ops));
+
+        let mut usage = crate::font_usage::FontUsage::default();
+        usage.record_text(&ops);
+        let usage = usage.font(&font.postscript_name()).unwrap();
+        assert_eq!(usage.text(glyph('a')), Some("a"));
+        assert_eq!(usage.text(glyph('d')), Some("d"));
+        // a glyph without a text of its own gets the first text it was drawn for in a cluster
+        assert_eq!(usage.text(glyph('c')), None);
+        assert_eq!(usage.fallback_text(glyph('c')), Some("c"));
+        assert_eq!(usage.fallback_text(glyph('a')), Some("b"));
     }
 
     fn font_named(family: &str) -> Font {
@@ -2861,10 +2734,12 @@ mod tests {
         (ops, width, font)
     }
 
-    fn actual_texts(ops: &[TextOperator]) -> Vec<&str> {
-        ops.iter()
+    /// The `/ActualText` of the marked content that the PDF writer makes for `ops`.
+    fn actual_texts(ops: &TextOps) -> Vec<String> {
+        marked(ops)
+            .into_iter()
             .filter_map(|op| match op {
-                TextOperator::BeginActualText(text) => Some(text.as_str()),
+                TextOperator::BeginActualText(text) => Some(text),
                 _ => None,
             })
             .collect()
@@ -2920,7 +2795,7 @@ mod tests {
     fn plain_text_has_no_marked_content() {
         let (ops, _, _) = pieces("TeX Gyre Termes", "Hello, world", false, Px(0.0));
         assert!(actual_texts(&ops).is_empty(), "{ops:?}");
-        assert!(!ops.iter().any(|op| matches!(op, TextOperator::EndMarkedContent)));
+        assert!(!marked(&ops).iter().any(|op| matches!(op, TextOperator::EndMarkedContent)));
         assert_eq!(glyph_count(&ops), "Hello, world".len());
     }
 
@@ -2930,6 +2805,7 @@ mod tests {
     fn reordered_clusters_are_wrapped_in_actual_text() {
         let (ops, _, _) = pieces("Noto Sans Devanagari", "कि पि", false, Px(0.0));
         assert_eq!(actual_texts(&ops), ["कि", "पि"]);
+        let ops = marked(&ops);
         assert_balanced(&ops);
         // each cluster's glyphs are inside of its marked content, so there are at least as many
         // `TJ` operators as clusters and the first operator is the start of the first span
@@ -2941,8 +2817,8 @@ mod tests {
         );
     }
 
-    /// The same shaped text gives the same operators the second time, although the `ToUnicode`
-    /// map has the glyphs of the first by then.
+    /// The marking of a piece does not depend on the text that comes before it in the document:
+    /// the same text gets the same marked content whether or not the fonts have seen it.
     #[test]
     fn marking_does_not_depend_on_earlier_text() {
         let font = font_named("Noto Sans Devanagari");
@@ -2952,7 +2828,15 @@ mod tests {
         for ops in [&mut first, &mut second] {
             shape_piece("कि", &font, &fonts, None, Px(16.0), Px(0.0), &[], false, ops);
         }
-        assert_eq!(format!("{first:?}"), format!("{second:?}"));
+        let mut alone = crate::font_usage::FontUsage::default();
+        alone.record_text(&first);
+        let mut both = crate::font_usage::FontUsage::default();
+        both.record_text(&first);
+        both.record_text(&second);
+        assert_eq!(
+            format!("{:?}", crate::pdf::text::with_actual_text(&first, &alone)),
+            format!("{:?}", crate::pdf::text::with_actual_text(&second, &both)),
+        );
     }
 
     /// Right-to-left text, whose glyphs are in visual order, is marked with its text in logical
@@ -2962,7 +2846,7 @@ mod tests {
         for text in ["בְּרֵאשִׁית בָּרָא", "אב"] {
             let (ops, _, _) = pieces("Noto Sans Hebrew", text, true, Px(0.0));
             assert_eq!(actual_texts(&ops), [text], "{ops:?}");
-            assert_balanced(&ops);
+            assert_balanced(&marked(&ops));
         }
     }
 
@@ -2972,18 +2856,18 @@ mod tests {
     fn actual_text_covers_the_whole_glyph_cluster() {
         let (ops, _, _) = pieces("Noto Sans Kannada", "ಎಲ್ಲಾ", false, Px(0.0));
         assert_eq!(actual_texts(&ops).concat(), "ಲ್ಲಾ", "{ops:?}");
-        assert_balanced(&ops);
+        assert_balanced(&marked(&ops));
         let (ops, _, _) = pieces("Noto Sans Sinhala", "ක්\u{200D}රියා", false, Px(0.0));
         let texts = actual_texts(&ops);
-        assert!(texts.contains(&"ක්\u{200D}රි"), "{texts:?}");
-        assert_balanced(&ops);
+        assert!(texts.iter().any(|text| text == "ක්\u{200D}රි"), "{texts:?}");
+        assert_balanced(&marked(&ops));
     }
 
     #[test]
     fn two_part_vowel_signs_are_marked() {
         let (ops, _, _) = pieces("Noto Sans Bengali", "কো", false, Px(0.0));
         assert_eq!(actual_texts(&ops), ["কো"]);
-        assert_balanced(&ops);
+        assert_balanced(&marked(&ops));
     }
 
     /// The glyphs are written left to right whichever direction the text has, and the kerns put

@@ -159,20 +159,21 @@ impl TextShaper for HeliumShaper {
 /// images, as the PostScript names of fonts in the font map of the document.
 pub type SvgFontNames = HashMap<usvg::fontdb::ID, String>;
 
-/// Records the glyphs of the text in `tree` (and in the SVG images inside of it) in the fonts of
-/// the document, so that the PDF writer can show them as text with an embedded font. A font that
-/// the document does not have yet is added to `font_map`. `names` tells which font of the map is
-/// meant by an ID of the font database. `seen` holds the trees that were recorded already.
+/// Records the glyphs of the text in `tree` (and in the SVG images inside of it) in `usage`, so
+/// that the PDF writer can show them as text with an embedded font. A font that the document
+/// does not have yet is added to `font_map`. `names` tells which font of the map is meant by an
+/// ID of the font database. `seen` holds the trees that were recorded already.
 pub fn register_glyphs(
     tree: &usvg::Tree,
     font_map: &mut crate::layout::FontMap,
     names: &mut SvgFontNames,
+    usage: &mut crate::font_usage::FontUsage,
     seen: &mut std::collections::HashSet<*const usvg::Tree>,
 ) {
     if !seen.insert(tree as *const usvg::Tree) {
         return;
     }
-    register_group(tree.root(), tree.fontdb(), font_map, names, seen);
+    register_group(tree.root(), tree.fontdb(), font_map, names, usage, seen);
 }
 
 fn register_group(
@@ -180,15 +181,16 @@ fn register_group(
     db: &usvg::fontdb::Database,
     font_map: &mut crate::layout::FontMap,
     names: &mut SvgFontNames,
+    usage: &mut crate::font_usage::FontUsage,
     seen: &mut std::collections::HashSet<*const usvg::Tree>,
 ) {
     use crate::layout::text::font::{Font, GlyphIndex};
     for node in group.children() {
         match node {
-            usvg::Node::Group(inner) => register_group(inner, db, font_map, names, seen),
+            usvg::Node::Group(inner) => register_group(inner, db, font_map, names, usage, seen),
             usvg::Node::Image(image) => {
                 if let usvg::ImageKind::SVG(tree) = image.kind() {
-                    register_glyphs(tree, font_map, names, seen);
+                    register_glyphs(tree, font_map, names, usage, seen);
                 }
             }
             usvg::Node::Text(text) => {
@@ -209,8 +211,8 @@ fn register_group(
                                 name
                             }
                         };
-                        if let Some(font) = font_map.get(&name) {
-                            font.record_glyph(GlyphIndex(u32::from(glyph.id.0)), &glyph.text);
+                        if font_map.contains_key(&name) {
+                            usage.record_glyph(&name, GlyphIndex(u32::from(glyph.id.0)), &glyph.text);
                         }
                     }
                 }

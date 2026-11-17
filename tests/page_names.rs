@@ -285,12 +285,14 @@ fn right_to_left_text_in_margin_boxes_is_shaped_right_to_left() {
         .iter()
         .find(|run| run["ops"][0]["op"] == "artifact")
         .expect("the header is drawn");
-    // right-to-left glyphs are in visual order, so the logical text is given as `ActualText`
-    let actual = header["ops"]
+    // right-to-left glyphs are in visual order: the piece says that its text, which is in
+    // logical order, was shaped right-to-left
+    let paragraph = header;
+    let piece = paragraph["pieces"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|op| op["op"] == "actual_text")
-        .expect("the glyphs were shaped right-to-left");
-    assert_eq!(actual["text"], "كليلة ودمنة");
+        .find(|piece| piece["text"] == "كليلة ودمنة")
+        .expect("the glyphs were shaped from the text");
+    assert_eq!(piece["rtl"], true);
 }

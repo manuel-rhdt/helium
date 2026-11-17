@@ -7,7 +7,7 @@
 use super::{
     FontMap,
     components::{
-        ContainingBlock, Decoration, Glyphs, GraphicsOp, IntrinsicSize, MathBox, MathNode,
+        ContainingBlock, Decoration, GraphicsOp, IntrinsicSize, MathBox, MathNode, NO_CLUSTER,
         Paragraph, Position, TextOperator, TransformMatrix, VectorGraphics, ZIndex,
     },
     inline_size::calculate_padding_and_border,
@@ -27,7 +27,7 @@ use crate::style::properties::computed::{
 };
 use crate::style::properties::specified::AutoBool;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use PixelLength as Px;
@@ -272,13 +272,11 @@ impl LayoutMathGlyphs {
     fn paint_node(
         para: &mut Paragraph,
         graphics: &mut VectorGraphics,
-        font_map: &FontMap,
         node: &MathNode,
         style: Option<&ComputedValues>,
         x: Px,
         y: Px,
         layout: &NodeLayout,
-        to_unicode_maps: &mut HashMap<String, BTreeMap<GlyphIndex, String>>,
     ) {
         let mut color_set = false;
         for fragment in &layout.fragments {
@@ -288,7 +286,6 @@ impl LayoutMathGlyphs {
                     font_size,
                     glyphs,
                 } => {
-                    let font = &font_map[&node.font_name];
                     if !color_set {
                         if let Some(style) = style {
                             para.ops
@@ -301,53 +298,19 @@ impl LayoutMathGlyphs {
                         Px(*font_size),
                     ));
 
-                    let to_unicode_map = to_unicode_maps.entry(node.font_name.clone()).or_default();
+                    // the pieces of a stretched operator have no text of their own
                     let text = node.text.as_deref();
-                    let mut previous_cluster = u32::MAX;
-                    let mut cluster_starting_glyph = 0;
+                    let first_glyph = para.ops.glyphs.len();
                     for glyph in glyphs {
                         let transform = TransformMatrix::translation(
                             x + Px(origin.x + glyph.offset.x),
                             y + Px(origin.y + glyph.offset.y),
                         );
                         para.ops.push(TextOperator::SetTransform(transform));
-                        let glyph_index = GlyphIndex(glyph.glyph);
-                        let _ = font.advance(glyph_index);
-                        para.ops.push_glyph(glyph_index);
-                        // the pieces of a stretched operator have no text of their own
-                        if let Some(text) = text {
-                            font.to_unicode_fallback
-                                .lock()
-                                .entry(glyph_index)
-                                .or_insert_with(|| text.to_owned());
-                        }
-
-                        if let Some(text) = text {
-                            if glyph.cluster != previous_cluster {
-                                // a new cluster began
-                                if previous_cluster < glyph.cluster {
-                                    if let Some(cluster_text) =
-                                        text.get(previous_cluster as usize..glyph.cluster as usize)
-                                    {
-                                        to_unicode_map.insert(
-                                            GlyphIndex(cluster_starting_glyph),
-                                            cluster_text.to_owned(),
-                                        );
-                                    }
-                                }
-                                cluster_starting_glyph = glyph.glyph;
-                                previous_cluster = glyph.cluster;
-                            }
-                        }
+                        let cluster = if text.is_some() { glyph.cluster } else { NO_CLUSTER };
+                        para.ops.push_glyph(GlyphIndex(glyph.glyph), cluster);
                     }
-                    if let Some(text) = text {
-                        if let Some(cluster_text) = text.get(previous_cluster as usize..) {
-                            to_unicode_map.insert(
-                                GlyphIndex(cluster_starting_glyph),
-                                cluster_text.to_owned(),
-                            );
-                        }
-                    }
+                    para.ops.push_verbatim_piece(first_glyph, text.unwrap_or(""));
                 }
                 Fragment::Rule(rect) => push_rule(graphics, x, y, rect),
                 Fragment::Line {
@@ -433,7 +396,6 @@ impl<'world> System<'world> for LayoutMathGlyphs {
             structure,
         ): Self::SystemData,
     ) {
-        let mut to_unicode_maps = HashMap::new();
         for (entity, math_box, pos) in (&entities, &math_boxes, &positions).join() {
             let mut para = Paragraph::new(Px(0.0), Px(0.0));
             let mut vg = VectorGraphics {
@@ -449,13 +411,11 @@ impl<'world> System<'world> for LayoutMathGlyphs {
                 Self::paint_node(
                     &mut para,
                     &mut vg,
-                    &font_map,
                     node,
                     computed_values.get(*node_entity),
                     pos.x + *x,
                     pos.y + *y,
                     layout,
-                    &mut to_unicode_maps,
                 );
             }
             // the formula is tagged as a whole
@@ -465,9 +425,6 @@ impl<'world> System<'world> for LayoutMathGlyphs {
             }
             paragraphs.insert(entity, para).unwrap();
             vector_graphics.insert(entity, vg).unwrap();
-        }
-        for (font_name, mut map) in to_unicode_maps {
-            font_map[&font_name].to_unicode.lock().append(&mut map);
         }
     }
 }

@@ -67,12 +67,6 @@ impl FallbackSet {
 #[derive(Debug)]
 pub struct Font {
     pub(crate) upem: u32,
-    pub(crate) glyph_advances: Mutex<BTreeMap<GlyphIndex, FontUnit>>,
-    pub(crate) to_unicode: Mutex<BTreeMap<GlyphIndex, String>>,
-    /// Text for the `ToUnicode` map of glyphs that `to_unicode` has nothing for: the text of a
-    /// glyph cluster that a glyph is drawn in (which `/ActualText` gives exactly). PDF/UA wants
-    /// every glyph mapped to Unicode (ISO 14289-1 7.21.7).
-    pub(crate) to_unicode_fallback: Mutex<BTreeMap<GlyphIndex, String>>,
     pub(crate) hb_font: HarfbuzzFont,
     pub(crate) postscript_name: String,
     /// The bytes of the font file and the index of the face in it.
@@ -96,9 +90,6 @@ impl Clone for Font {
     fn clone(&self) -> Self {
         Font {
             upem: self.upem,
-            glyph_advances: Mutex::new(self.glyph_advances.lock().clone()),
-            to_unicode: Mutex::new(self.to_unicode.lock().clone()),
-            to_unicode_fallback: Mutex::new(self.to_unicode_fallback.lock().clone()),
             data: self.data.clone(),
             index: self.index,
             color: self.color,
@@ -150,9 +141,6 @@ impl Font {
         Some(Font {
             color,
             upem,
-            glyph_advances: Default::default(),
-            to_unicode: Default::default(),
-            to_unicode_fallback: Default::default(),
             hb_font,
             postscript_name: name,
             data,
@@ -281,32 +269,14 @@ impl Font {
         )
     }
 
-    pub fn advance(&self, glyph: GlyphIndex) -> FontUnit {
-        *self
-            .glyph_advances
-            .lock()
-            .entry(glyph)
-            .or_insert_with(|| scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0)))
+    /// Whether the outlines of the font are in a `glyf` table (TrueType) and not in a CFF table.
+    pub fn is_truetype(&self) -> bool {
+        self.hb_font.face().table_with_tag(b"glyf").is_some()
     }
 
-    /// Records that `glyph` is drawn for `text` (the text of SVG images, whose glyphs are shown
-    /// by the PDF writer): the glyph is embedded and is extracted as `text`. A glyph that is used
-    /// for different text, or one that stands for more than a character, gets the text of its
-    /// first use as the fallback text of the `ToUnicode` map.
-    pub(crate) fn record_glyph(&self, glyph: GlyphIndex, text: &str) {
-        self.advance(glyph);
-        if text.is_empty() {
-            return;
-        }
-        let single = text.chars().count() == 1;
-        if single {
-            let mut map = self.to_unicode.lock();
-            if map.get(&glyph).is_none_or(|existing| existing == text) {
-                map.insert(glyph, text.to_owned());
-                return;
-            }
-        }
-        self.to_unicode_fallback.lock().entry(glyph).or_insert_with(|| text.to_owned());
+    /// The horizontal advance of `glyph`.
+    pub fn advance(&self, glyph: GlyphIndex) -> FontUnit {
+        scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0))
     }
 
     /// Whether the font has an OpenType `MATH` table.
