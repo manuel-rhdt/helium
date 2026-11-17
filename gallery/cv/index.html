@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A curriculum vitae</title>
+<meta name="description" content="A one-page CV with a gradient sidebar, an illustrated portrait and icons in inline SVG, skill rings drawn with conic gradients, bars, a timeline built from borders and generated content, project cards, tags and a pull quote.">
+<meta name="keywords" content="svg, conic-gradient, flexbox, grid, box-shadow, generated content, custom properties">
+<style>
+  @page { size: A4; margin: 0; }
+
+  :root {
+    --navy: #121c3a;
+    --navy-2: #1d2b57;
+    --coral: #ff6b57;
+    --gold: #f2b441;
+    --teal: #29b3a8;
+    --cream: #fffcf6;
+    --sand: #e9e1cf;
+    --ink: #1e2233;
+    --soft: #646a80;
+  }
+  html { font-family: sans-serif; font-size: 9.2pt; line-height: 1.42; color: var(--ink); }
+  body { margin: 0; background: var(--cream); }
+  h1, h2, h3, h4, p, ul { margin: 0; }
+
+  .sheet { display: flex; width: 210mm; height: 297mm; box-sizing: border-box; background: var(--cream); }
+
+  /* the sidebar */
+  .side { flex: none; width: 68mm; box-sizing: border-box; padding: 15mm 8mm 12mm; color: #e8ebf8; background: linear-gradient(170deg, #1d2b57 0%, #121c3a 55%, #0d1430 100%); display: flex; flex-direction: column; }
+  .portrait { display: block; width: 36mm; height: 36mm; margin: 0 auto 6mm; border-radius: 18mm; box-shadow: 0 0 0 1.1mm var(--gold), 0 0 0 2.2mm rgba(242, 180, 65, 0.25), 0 3mm 7mm rgba(0, 0, 0, 0.45); }
+  .side h2 { font-size: 7.6pt; letter-spacing: 2.6pt; text-transform: uppercase; color: var(--gold); margin: 7mm 0 3mm; display: flex; align-items: center; gap: 2.4mm; }
+  .side h2::after { content: ""; flex: 1; height: 0.25mm; background: rgba(242, 180, 65, 0.4); }
+  .side h2:first-of-type { margin-top: 0; }
+
+  .contact { list-style: none; padding: 0; }
+  .contact li { display: flex; align-items: center; gap: 3mm; padding: 1.3mm 0; font-size: 8.6pt; }
+  .contact svg { flex: none; width: 4.2mm; height: 4.2mm; }
+  .contact a { color: #e8ebf8; text-decoration: none; }
+
+  .rings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm; text-align: center; }
+  .ring { width: 16mm; height: 16mm; border-radius: 8mm; margin: 0 auto 1.4mm; display: flex; align-items: center; justify-content: center; }
+  .ring span { width: 12.2mm; height: 12.2mm; border-radius: 6.1mm; background: #16224a; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 8.4pt; color: #fff; }
+  .rings div { font-size: 7.4pt; letter-spacing: 0.4pt; color: #c3c9e4; }
+  .r1 { background: conic-gradient(var(--coral) 0 90%, rgba(255, 255, 255, 0.12) 0); }
+  .r2 { background: conic-gradient(var(--gold) 0 82%, rgba(255, 255, 255, 0.12) 0); }
+  .r3 { background: conic-gradient(var(--teal) 0 76%, rgba(255, 255, 255, 0.12) 0); }
+
+  .bars div { display: flex; justify-content: space-between; font-size: 8.2pt; margin-top: 2.4mm; }
+  .bar { height: 1.5mm; border-radius: 1mm; background: rgba(255, 255, 255, 0.14); margin-top: 1mm; }
+  .bar i { display: block; height: 1.5mm; border-radius: 1mm; background: linear-gradient(90deg, var(--teal), var(--gold)); }
+
+  .langs { list-style: none; padding: 0; }
+  .langs li { display: flex; justify-content: space-between; align-items: center; font-size: 8.6pt; padding: 1mm 0; }
+  .dots { display: flex; gap: 1.2mm; }
+  .dots i { display: block; width: 2.4mm; height: 2.4mm; border-radius: 1.2mm; background: var(--gold); }
+  .dots i.off { background: rgba(255, 255, 255, 0.18); }
+
+  .likes span { display: inline-block; font-size: 7.8pt; padding: 0.8mm 2.8mm; border-radius: 3mm; margin: 0 1.3mm 1.5mm 0; background: rgba(255, 255, 255, 0.1); border: 0.25mm solid rgba(255, 255, 255, 0.22); color: #dfe3f6; }
+  .grow { flex: 1; }
+  .quote { border-left: 0.9mm solid var(--coral); padding-left: 3.6mm; font-family: serif; font-style: italic; font-size: 10pt; line-height: 1.35; color: #fff; }
+  .quote small { display: block; margin-top: 1.6mm; font-family: sans-serif; font-style: normal; font-size: 7.2pt; letter-spacing: 1.4pt; text-transform: uppercase; color: #9aa3cc; }
+
+  /* the main column */
+  .main { flex: 1; box-sizing: border-box; padding: 0 13mm 12mm 12mm; display: flex; flex-direction: column; }
+  .head { margin: 0 -13mm 0 -12mm; padding: 13mm 13mm 7mm 12mm; background: linear-gradient(110deg, #ffe9df 0%, #fff6dc 60%, var(--cream) 100%); position: relative; }
+  .head::after { content: ""; position: absolute; left: 12mm; bottom: 0; width: 24mm; height: 1.1mm; background: linear-gradient(90deg, var(--coral), var(--gold)); }
+  .head h1 { font-family: serif; font-size: 30pt; line-height: 1; letter-spacing: -0.4pt; color: var(--navy); }
+  .head h1 b { color: var(--coral); }
+  .head .role { margin-top: 2.6mm; font-size: 10.6pt; letter-spacing: 0.4pt; color: var(--soft); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3.4mm; margin: 5mm 0 0; }
+  .stat { border-radius: 2.4mm; padding: 2.8mm 3.4mm; background: #fff; box-shadow: 0 0.6mm 2.4mm rgba(18, 28, 58, 0.14); border-top: 0.9mm solid var(--coral); }
+  .stat:nth-child(2) { border-top-color: var(--gold); } .stat:nth-child(3) { border-top-color: var(--teal); }
+  .stat b { display: block; font-family: serif; font-size: 17pt; line-height: 1; color: var(--navy); }
+  .stat span { font-size: 7.6pt; letter-spacing: 1pt; text-transform: uppercase; color: var(--soft); }
+
+  .main h2 { font-family: serif; font-size: 13.4pt; color: var(--navy); margin: 5.2mm 0 2.6mm; display: flex; align-items: center; gap: 3mm; }
+  .main h2::before { content: ""; width: 2.6mm; height: 2.6mm; border-radius: 0.8mm; background: linear-gradient(135deg, var(--coral), var(--gold)); transform: rotate(45deg); }
+  .main h2::after { content: ""; flex: 1; height: 0.25mm; background: var(--sand); }
+  .lead { font-size: 9.6pt; line-height: 1.5; text-align: justify; hyphens: auto; }
+
+  .timeline { margin-left: 1.8mm; }
+  .job { position: relative; padding: 0 0 3.4mm 7mm; border-left: 0.5mm solid var(--sand); }
+  .job:last-child { padding-bottom: 0; border-left-color: transparent; }
+  .job::before { content: ""; position: absolute; left: -2.1mm; top: 0.8mm; width: 3.7mm; height: 3.7mm; border-radius: 2mm; background: var(--coral); box-shadow: 0 0 0 1mm var(--cream); }
+  .job:nth-child(2)::before { background: var(--gold); } .job:nth-child(3)::before { background: var(--teal); }
+  .job .when { font-size: 7.6pt; letter-spacing: 1.4pt; text-transform: uppercase; font-weight: bold; color: var(--coral); }
+  .job h3 { font-size: 10.6pt; margin: 0.6mm 0 0.4mm; color: var(--navy); }
+  .job h3 span { font-weight: normal; color: var(--soft); }
+  .job ul { margin-top: 1.4mm; padding-left: 4mm; }
+  .job li { margin: 0.5mm 0; }
+  .tags { margin-top: 2mm; }
+  .tag { display: inline-block; white-space: nowrap; font-size: 7.4pt; letter-spacing: 0.4pt; padding: 0.7mm 2.6mm; border-radius: 3mm; margin: 0 1.2mm 1.2mm 0; background: #eef0fa; color: var(--navy-2); }
+  .tag.hot { background: #ffe4de; color: #a8392a; }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
+  .card { border-radius: 2.6mm; padding: 3.4mm 4mm 3.4mm 5mm; background: #fff; box-shadow: 0 0.6mm 2.6mm rgba(18, 28, 58, 0.14); position: relative; }
+  .card::before { content: ""; position: absolute; left: 0; top: 2.6mm; bottom: 2.6mm; width: 1.1mm; border-radius: 0 1mm 1mm 0; background: linear-gradient(180deg, var(--coral), var(--gold)); }
+  .card:nth-child(2)::before { background: linear-gradient(180deg, var(--teal), var(--navy-2)); }
+  .card h4 { font-size: 9.6pt; color: var(--navy); }
+  .card p { font-size: 8.5pt; line-height: 1.38; color: var(--soft); margin-top: 0.8mm; }
+
+  .edu { display: flex; justify-content: space-between; gap: 6mm; }
+  .edu div { flex: 1; }
+  .edu b { display: block; font-size: 9.6pt; color: var(--navy); }
+  .edu span { font-size: 8.4pt; color: var(--soft); }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="side">
+    <svg class="portrait" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Portrait">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb199"/><stop offset="1" stop-color="#ff6b57"/></linearGradient>
+        <linearGradient id="coat" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3a73"/><stop offset="1" stop-color="#16224a"/></linearGradient>
+        <clipPath id="disc"><circle cx="60" cy="60" r="60"/></clipPath>
+      </defs>
+      <g clip-path="url(#disc)">
+        <rect width="120" height="120" fill="url(#bg)"/>
+        <circle cx="92" cy="26" r="18" fill="#ffd9a0" opacity="0.7"/>
+        <path d="M-5 128 C 4 92 30 84 60 84 C 90 84 116 92 125 128 Z" fill="url(#coat)"/>
+        <path d="M46 84 L60 102 L74 84 Z" fill="#f6efe2"/>
+        <rect x="53" y="70" width="14" height="18" rx="6" fill="#b9714a"/>
+        <ellipse cx="60" cy="50" rx="19" ry="22" fill="#c98259"/>
+        <path d="M39 48 C 36 22 52 14 64 15 C 80 16 86 30 81 50 C 77 38 70 33 60 33 C 50 33 43 38 39 48 Z" fill="#241a18"/>
+        <path d="M37 50 C 33 38 40 24 52 22 C 42 30 40 40 41 50 Z" fill="#241a18"/>
+        <circle cx="52" cy="52" r="1.9" fill="#241a18"/><circle cx="68" cy="52" r="1.9" fill="#241a18"/>
+        <path d="M53 63 C 57 67 63 67 67 63" fill="none" stroke="#7a3f2a" stroke-width="2" stroke-linecap="round"/>
+        <g fill="none" stroke="#f2b441" stroke-width="1.6"><circle cx="52" cy="52" r="6.4"/><circle cx="68" cy="52" r="6.4"/><path d="M58.4 51 L61.6 51"/></g>
+      </g>
+    </svg>
+
+    <h2>Contact</h2>
+    <ul class="contact">
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="#f2b441" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7l8.5 6 8.5-6"/></svg><a href="mailto:mira@example.org">mira@example.org</a></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="#f2b441" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>+41 44 555 01 42</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="#f2b441" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.800 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>Zürich, Switzerland</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="#f2b441" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><a href="https://example.org/mira">example.org/mira</a></li>
+    </ul>
+
+    <h2>Strengths</h2>
+    <div class="rings">
+      <div><div class="ring r1"><span>90</span></div>Rendering</div>
+      <div><div class="ring r2"><span>82</span></div>Systems</div>
+      <div><div class="ring r3"><span>76</span></div>Teaching</div>
+    </div>
+
+    <h2>Tools</h2>
+    <div class="bars">
+      <div><span>Rust</span><span>Expert</span></div><div class="bar"><i style="width: 94%"></i></div>
+      <div><span>GPU compute</span><span>Advanced</span></div><div class="bar"><i style="width: 82%"></i></div>
+      <div><span>Python and NumPy</span><span>Advanced</span></div><div class="bar"><i style="width: 80%"></i></div>
+      <div><span>TypeScript</span><span>Working</span></div><div class="bar"><i style="width: 58%"></i></div>
+    </div>
+
+    <h2>Languages</h2>
+    <ul class="langs">
+      <li>English<span class="dots"><i></i><i></i><i></i><i></i><i></i></span></li>
+      <li>German<span class="dots"><i></i><i></i><i></i><i></i><i class="off"></i></span></li>
+      <li>Portuguese<span class="dots"><i></i><i></i><i></i><i class="off"></i><i class="off"></i></span></li>
+    </ul>
+
+    <h2>Interests</h2>
+    <div class="likes"><span>Typography</span><span>Climbing</span><span>Chess</span><span>Sourdough</span><span>Maps</span></div>
+
+    <div class="grow"></div>
+    <div class="quote">Good layout is the art of making hard choices look easy.<small>My working motto</small></div>
+  </div>
+
+  <div class="main">
+    <div class="head">
+      <h1>Mira <b>Okonkwo</b>-Reyes</h1>
+      <div class="role">Principal Research Engineer · Rendering &amp; Geometry</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>12</b><span>years in industry</span></div>
+      <div class="stat"><b>31</b><span>papers and talks</span></div>
+      <div class="stat"><b>4</b><span>granted patents</span></div>
+    </div>
+
+    <h2>Profile</h2>
+    <p class="lead">Engineer and researcher who turns geometry into software that people rely on every day. I lead small teams that build fast, correct rendering libraries, and I like problems where a clean algorithm beats a clever hack. I enjoy writing documentation and teaching as much as writing code.</p>
+
+    <h2>Experience</h2>
+    <div class="timeline">
+      <div class="job">
+        <div class="when">2020 – today</div>
+        <h3>Principal Research Engineer <span>· Lumen Graphics, Zürich</span></h3>
+        <ul>
+          <li>Led the rewrite of the vector renderer in Rust: 3× faster on large maps and half the memory.</li>
+          <li>Designed a tile-based GPU rasteriser now used by four products and about 20 million users.</li>
+        </ul>
+        <div class="tags"><span class="tag hot">Rust</span><span class="tag hot">wgpu</span><span class="tag">Geometry</span><span class="tag">Leadership</span></div>
+      </div>
+      <div class="job">
+        <div class="when">2015 – 2020</div>
+        <h3>Senior Software Engineer <span>· Northfield Labs, Lisbon</span></h3>
+        <ul>
+          <li>Built the layout engine behind an invoicing product that renders 2 million PDFs a month.</li>
+          <li>Cut the time to the first page from 900 ms to 120 ms by caching shaped text.</li>
+        </ul>
+        <div class="tags"><span class="tag">C++</span><span class="tag">Typography</span><span class="tag">PDF</span></div>
+      </div>
+      <div class="job">
+        <div class="when">2012 – 2015</div>
+        <h3>Research Assistant <span>· Institute of Computer Science, ETH</span></h3>
+        <ul><li>Fast polygon clipping and robust predicates; first-author paper at a leading graphics conference.</li></ul>
+      </div>
+    </div>
+
+    <h2>Selected projects</h2>
+    <div class="cards">
+      <div class="card"><h4>Tessera</h4><p>An open-source library for tiling and clipping vector shapes; 3,200 stars and 40 contributors.</p></div>
+      <div class="card"><h4>The Page Book</h4><p>A free online book about page layout algorithms with interactive figures, read by thousands.</p></div>
+    </div>
+
+    <h2>Education</h2>
+    <div class="edu">
+      <div><b>PhD, Computer Science</b><span>ETH Zürich · 2012 – 2016</span></div>
+      <div><b>MSc, Applied Mathematics</b><span>University of Lisbon · 2010 – 2012</span></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
