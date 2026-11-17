@@ -1,6 +1,6 @@
 use crate::layout::components::ImageBox;
 use crate::layout::components::{
-    Decoration, DecorationFragment, EdgeValues, Glyphs, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator, TextOps,
+    Decoration, DecorationFragment, EdgeValues, GraphicsOp, Hyperlink, Hyperlinks, Paragraph, Position, TextOperator,
     TransformMatrix, VectorGraphics, ZIndex,
 };
 use crate::layout::normal_formatting::Pages;
@@ -476,7 +476,6 @@ pub enum DisplayItem {
     /// A colour glyph (an emoji) painted from the `COLR` table of its font, whose origin is on
     /// the baseline at the point.
     ColorGlyph(Box<ColorGlyphItem>),
-    Text(Point, PixelLength, String, Glyphs),
     Paragraph(Paragraph),
     Translate(PixelLength, PixelLength),
     /// Applies a transformation (the CSS `transform`) to what follows, until the enclosing `Pop`.
@@ -993,21 +992,6 @@ impl DisplayList {
             self.append(DisplayItem::Pop, entity, z);
         }
     }
-
-    // fn append_text(&mut self, pos: Point, text: &components::Text, z_index: ZIndex) {
-    //     self.append(
-    //         DisplayItem::Text(
-    //             Point {
-    //                 y: pos.y + text.baseline,
-    //                 ..pos
-    //             },
-    //             text.font_size,
-    //             text.font.clone(),
-    //             text.glyphs.clone(),
-    //         ),
-    //         z_index,
-    //     );
-    // }
 }
 
 #[derive(Debug, Clone)]
@@ -1385,9 +1369,9 @@ fn resolve_embeds(
     {
         return paragraph;
     }
-    let Paragraph { start_pos, ops: old, mut color_glyphs } = paragraph;
-    let (old_ops, glyphs) = old.into_parts();
-    let mut ops = TextOps::from_parts(Vec::with_capacity(old_ops.len()), glyphs);
+    let Paragraph { start_pos, mut ops, mut color_glyphs } = paragraph;
+    let old_ops = ops.take_ops();
+    ops.reserve(old_ops.len());
     for op in old_ops {
         match op {
             TextOperator::Embed { entity, x, y } => {
