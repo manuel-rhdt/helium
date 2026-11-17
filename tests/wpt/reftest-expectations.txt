@@ -40,6 +40,14 @@ css/css-lists/foo-counter-reversed-009b.html
 # block-in-inline tests); it passed while the inside marker was drawn outside
 css/css-lists/inside-marker-with-block-in-inline.html
 
+# An inline-table without a width does not shrink-wrap to the width of its block child. It passed
+# while .xht files were read by the HTML parser, which left `&gt;` in the style sheet (an invalid
+# selector) and so ignored every rule; as XML the rules apply.
+css/CSS2/normal-flow/inline-table-width-002a.xht
+
+# Their references paint the background of an inline box (now painted); the tests need a column group background, opacity groups and attr()
+css/CSS2/box-display/display-012.xht
+
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-001.xht
 css/CSS2/borders/border-003.xht
@@ -116,6 +124,7 @@ css/CSS2/box-display/containing-block-023.xht
 css/CSS2/box-display/display-005.xht
 css/CSS2/box-display/display-006.xht
 css/CSS2/box-display/display-007.xht
+css/CSS2/box-display/display-013.xht
 css/CSS2/box-display/display-014.xht
 css/CSS2/box-display/inline-text-after-block-in-inline-margin.html
 css/CSS2/box-display/multiple-block-in-inlines-margins-collapse.html
@@ -222,10 +231,6 @@ css/CSS2/normal-flow/inline-replaced-width-014.xht
 css/CSS2/normal-flow/inline-table-002a.xht
 css/CSS2/normal-flow/inline-table-002b.xht
 css/CSS2/normal-flow/inline-table-valign-001.xht
-# An inline-table without a width does not shrink-wrap to the width of its block child. It passed
-# while .xht files were read by the HTML parser, which left `&gt;` in the style sheet (an invalid
-# selector) and so ignored every rule; as XML the rules apply.
-css/CSS2/normal-flow/inline-table-width-002a.xht
 css/CSS2/normal-flow/inline-table-zorder-003.xht
 css/CSS2/normal-flow/inline-table-zorder-004.xht
 css/CSS2/normal-flow/inline-table-zorder-005.xht
@@ -383,8 +388,11 @@ css/css-color/color-mix-currentcolor-001.html
 css/css-color/color-mix-currentcolor-002.html
 css/css-color/color-mix-currentcolor-003.html
 css/css-color/color-mix-currentcolor-nested-for-color-property.html
+css/css-color/color-mix-currentcolor-visited.html
+css/css-color/color-svg-visited.html
 css/css-color/composited-filters-under-opacity.html
 css/css-color/currentcolor-004.html
+css/css-color/currentcolor-visited-fallback.html
 css/css-color/hsl-009.html
 css/css-color/hsl-010.html
 css/css-color/hsl-011.html
@@ -395,6 +403,9 @@ css/css-color/oklch-010.html
 css/css-color/predefined-011.html
 css/css-color/predefined-012.html
 css/css-color/rec2020-001.html
+css/css-color/rec2020-gamma-001.html
+css/css-color/rec2020-gamma-002.html
+css/css-color/rec2020-gamma-003.html
 css/css-color/relative-currentcolor-a98rgb-01.html
 css/css-color/relative-currentcolor-displayp3-01.html
 css/css-color/relative-currentcolor-hsl-01.html
@@ -412,6 +423,8 @@ css/css-color/relative-currentcolor-rgb-02.html
 css/css-color/relative-currentcolor-xyzd50-01.html
 css/css-color/relative-currentcolor-xyzd65-01.html
 css/css-color/t31-color-currentColor-b.xht
+css/css-color/t32-opacity-offscreen-multiple-boxes-1-c.xht
+css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.xht
 css/css-color/t41-html4-keywords-a.xht
 css/css-color/t421-rgb-func-int-a.xht
 css/css-color/t421-rgb-func-pct-a.xht
@@ -429,6 +442,79 @@ css/css-color/t424-hsl-values-b-4.html
 css/css-color/t425-hsla-h-rotating-b.xht
 css/css-color/t425-hsla-values-b.xht
 css/css-color/t43-svg-keywords-a.xht
+css/css-images/conic-gradient-angle-negative.html
+css/css-images/conic-gradient-angle.html
+css/css-images/conic-gradient-center.html
+css/css-images/cross-fade-basic.html
+css/css-images/cross-fade-cross-origin-orientation.sub.html
+css/css-images/cross-fade-natural-size-gradients.html
+css/css-images/cross-fade-natural-size-image-and-gradient.html
+css/css-images/cross-fade-natural-size.html
+css/css-images/cross-fade-premultiplied-alpha.html
+css/css-images/cross-fade-target-alpha.html
+css/css-images/css-image-fallbacks-and-annotations.html
+css/css-images/css-image-fallbacks-and-annotations002.html
+css/css-images/css-image-fallbacks-and-annotations003.html
+css/css-images/css-image-fallbacks-and-annotations004.html
+css/css-images/css-image-fallbacks-and-annotations005.html
+css/css-images/gradient-border-box.html
+css/css-images/gradient-content-box.html
+css/css-images/gradient/display-p3-linear-gradient.html
+css/css-images/gradient/gradient-analogous-missing-components-001.html
+css/css-images/gradient/gradient-analogous-missing-components-004.html
+css/css-images/gradient/gradient-decreasing-hue-hsl.html
+css/css-images/gradient/gradient-decreasing-hue-lch.html
+css/css-images/gradient/gradient-hue-direction.html
+css/css-images/gradient/gradient-increasing-hue-hsl.html
+css/css-images/gradient/gradient-increasing-hue-lch.html
+css/css-images/gradient/gradient-none-interpolation.html
+css/css-images/gradient/gradient-powerless-hue-hsl.html
+css/css-images/gradient/gradient-powerless-hue-hwb.html
+css/css-images/gradient/gradient-powerless-hue-lch.html
+css/css-images/gradient/gradient-powerless-hue-oklch.html
+css/css-images/gradient/gradient-single-stop-decreasing-hue-hsl.html
+css/css-images/gradient/gradient-single-stop-decreasing-hue-oklch.html
+css/css-images/gradient/gradient-single-stop-increasing-hue-hsl.html
+css/css-images/gradient/gradient-single-stop-increasing-hue-oklch.html
+css/css-images/gradient/gradient-single-stop-longer-hue-hsl.html
+css/css-images/gradient/gradient-single-stop-longer-hue-oklch.html
+css/css-images/gradient/gradient-single-stop-none-interpolation.html
+css/css-images/gradient/linear-gradient-relative-currentcolor-stop.html
+css/css-images/gradient/oklab-gradient.html
+css/css-images/gradient/srgb-gradient.html
+css/css-images/gradient/srgb-linear-gradient.html
+css/css-images/gradient/xyz-gradient.html
+css/css-images/image-color-basic.html
+css/css-images/image-color-cross-fade.html
+css/css-images/image-color-layered.html
+css/css-images/image-light-dark.html
+css/css-images/infinite-radial-gradient-refcrash.html
+css/css-images/linear-gradient-1.html
+css/css-images/linear-gradient-2.html
+css/css-images/multiple-position-color-stop-conic-2.html
+css/css-images/multiple-position-color-stop-radial.html
+css/css-images/normalization-conic-degenerate.html
+css/css-images/normalization-linear-degenerate.html
+css/css-images/normalization-radial-4.html
+css/css-images/normalization-radial-degenerate.html
+css/css-images/object-fit-none-svg-width-only.html
+css/css-images/object-fit-svg-no-natural-dimensions.html
+css/css-images/object-view-box-contain-intrinsic-size.html
+css/css-images/object-view-box-empty-bounds.html
+css/css-images/object-view-box-iframe.html
+css/css-images/object-view-box-negative-bounds.html
+css/css-images/object-view-box-rect-auto.html
+css/css-images/object-view-box-same-size.html
+css/css-images/object-view-box-size-containment.html
+css/css-images/object-view-box-svg-img-no-size.html
+css/css-images/out-of-range-color-stop-conic.html
+css/css-images/radial-gradient-container-relative-units-001.html
+css/css-images/radial-gradient-container-relative-units-002.html
+css/css-images/radial-gradient-container-relative-units-003.html
+css/css-images/radial-gradient-container-relative-units-004.html
+css/css-images/svg-script-is-ignored.html
+css/css-images/tiled-gradients.html
+css/css-images/tiled-radial-gradients.html
 css/css-lists/counter-reset-reversed-display-none.html
 css/css-lists/counter-reset-reversed-list-item-start.html
 css/css-lists/counter-reset-reversed-list-item.html
@@ -490,6 +576,9 @@ css/css-values/attr-namespace-case-sensitivity.xhtml
 css/css-values/attr-namespace-non-existing.html
 css/css-values/attr-namespace-valid.xhtml
 css/css-values/attr-notype-fallback.html
+css/css-values/attr-style-sharing-1.html
+css/css-values/attr-style-sharing-2.html
+css/css-values/attr-style-sharing-3.html
 css/css-values/attr-style-sharing-4.html
 css/css-values/calc-size/calc-size-flex-008.html
 css/css-values/calc-size/calc-size-flex-009.html
@@ -524,12 +613,3 @@ css/mediaqueries/negation-001.html
 css/mediaqueries/prefers-color-scheme-svg-as-image.html
 css/mediaqueries/scripting-print-noscript.html
 css/mediaqueries/scripting-print-script.html
-
-# Their references paint the background of an inline box (now painted); the tests need a column group background, opacity groups and attr()
-css/CSS2/box-display/display-012.xht
-css/CSS2/box-display/display-013.xht
-css/css-color/t32-opacity-offscreen-multiple-boxes-1-c.xht
-css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.xht
-css/css-values/attr-style-sharing-1.html
-css/css-values/attr-style-sharing-2.html
-css/css-values/attr-style-sharing-3.html
