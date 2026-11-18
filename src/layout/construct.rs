@@ -1593,10 +1593,12 @@ impl EntityConstructor {
                         &mut self.in_word,
                     );
                     let background = inline_background(&node);
+                    let edges = inline_box_edges(&node);
                     let built = self.build_text_entity(style, transformed.as_deref().unwrap_or(&*text));
-                    if background.is_some() {
+                    if background.is_some() || edges.is_some() {
                         if let Some(run) = self.world.write_storage::<components::TextRun>().get_mut(built.0) {
                             run.background = background;
+                            run.edges = edges;
                         }
                     }
                     built
@@ -1724,6 +1726,7 @@ impl EntityConstructor {
                 baseline,
                 decoration,
                 background: None,
+                edges: None,
                 hyphens,
                 manual_hyphen_points,
                 lang,
@@ -2034,6 +2037,54 @@ impl EntityConstructor {
     }
 
     // called on bottom-up traversal
+    /// The runs that make room for the margin, the border and the padding at the start and at the
+    /// end of the line (in the direction of the text) of an inline box. The ones of the border and
+    /// the padding have the background of the box.
+    fn inline_edges<'a>(&mut self, node: &'a impl AbstractNode<'a>) -> (Vec<Entity>, Vec<Entity>) {
+        use crate::style::properties::computed::PixelLength;
+        let style = node.style();
+        if style.box_.display != Display::Inline
+            || style.text.writing_mode != crate::style::properties::specified::WritingMode::HorizontalTb
+        {
+            return (vec![], vec![]);
+        }
+        let position = &style.position;
+        let zero = PixelLength(0.0);
+        let rtl = style.text.direction == crate::style::properties::specified::Direction::Rtl;
+        let (margin_left, margin_right) =
+            (position.margin_left.absolute(zero, zero), position.margin_right.absolute(zero, zero));
+        let (padding_left, padding_right) = (position.padding_left.absolute(zero), position.padding_right.absolute(zero));
+        let (border_left, border_right) = (position.used_border_left_width(), position.used_border_right_width());
+        let (start, end) = if rtl {
+            ((margin_right, padding_right + border_right), (padding_left + border_left, margin_left))
+        } else {
+            ((margin_left, padding_left + border_left), (padding_right + border_right, margin_right))
+        };
+        if start.0 .0 == 0.0 && start.1 .0 == 0.0 && end.0 .0 == 0.0 && end.1 .0 == 0.0 {
+            return (vec![], vec![]);
+        }
+        let own = crate::style::properties::color::color_to_paint(style.background.background_color);
+        let outer = inline_background(node);
+        let inner = if own.alpha() > 0 { Some(own) } else { outer };
+        let mut make = |this: &mut Self, width: PixelLength, background, edges| -> Option<Entity> {
+            if width.0 == 0.0 {
+                return None;
+            }
+            let mut edge_style = style.clone();
+            std::sync::Arc::make_mut(&mut edge_style.text).letter_spacing = width;
+            let entity = this.build_text_entity(edge_style, "\u{2060}").0;
+            if let Some(run) = this.world.write_storage::<components::TextRun>().get_mut(entity) {
+                run.background = background;
+                run.edges = edges;
+                run.decoration = Default::default();
+            }
+            Some(entity)
+        };
+        let start = [make(self, start.0, outer, None), make(self, start.1, inner, edges_of(&style, true, false))];
+        let end = [make(self, end.0, inner, edges_of(&style, false, true)), make(self, end.1, outer, None)];
+        (start.into_iter().flatten().collect(), end.into_iter().flatten().collect())
+    }
+
     fn build_inline_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
         let strut = self.strut(&node.style());
         let mut inline_formatting_context =
@@ -2092,6 +2143,16 @@ impl EntityConstructor {
             inline_formatting_context
                 .elements
                 .push(self.build_text_entity(node.style(), "").0);
+        }
+
+        // The margin, border and padding at the ends of an inline box take room on the line: they
+        // are runs of a zero-width character that is as wide as they are.
+        {
+            let (start, end) = self.inline_edges(node);
+            if !start.is_empty() {
+                inline_formatting_context.elements.splice(0..0, start);
+            }
+            inline_formatting_context.elements.extend(end);
         }
 
         // `unicode-bidi` (e.g. from the `dir` attribute or `<bdo>`) is implemented by bidi
@@ -2495,6 +2556,52 @@ fn inline_background<'a, N: AbstractNode<'a>>(node: &N) -> Option<crate::style::
         let color = crate::style::properties::color::color_to_paint(style.background.background_color);
         if color.alpha() > 0 {
             return Some(color);
+        }
+        ancestor = parent.parent_node();
+    }
+    None
+}
+
+/// The edges of an inline box, from its style: `None` if it has no border and no vertical padding.
+fn edges_of(style: &ComputedValues, start: bool, end: bool) -> Option<components::InlineBoxEdges> {
+    use crate::style::properties::computed::PixelLength;
+    let position = &style.position;
+    let widths = [
+        position.used_border_top_width(),
+        position.used_border_right_width(),
+        position.used_border_bottom_width(),
+        position.used_border_left_width(),
+    ];
+    let zero = PixelLength(0.0);
+    let (padding_top, padding_bottom) = (position.padding_top.absolute(zero).0, position.padding_bottom.absolute(zero).0);
+    if widths.iter().all(|width| width.0 == 0.0) && padding_top == 0.0 && padding_bottom == 0.0 {
+        return None;
+    }
+    let colors = crate::layout::inline_size::decoration_colors(style).border_color;
+    Some(components::InlineBoxEdges {
+        border: [
+            (widths[0].0, colors.top),
+            (widths[1].0, colors.right),
+            (widths[2].0, colors.bottom),
+            (widths[3].0, colors.left),
+        ],
+        padding_top,
+        padding_bottom,
+        start,
+        end,
+    })
+}
+
+/// The border and the vertical padding of the nearest inline ancestor of a text that has them.
+fn inline_box_edges<'a, N: AbstractNode<'a>>(node: &N) -> Option<components::InlineBoxEdges> {
+    let mut ancestor = node.parent_node();
+    while let Some(parent) = ancestor {
+        let style = parent.style();
+        if !matches!(style.box_.display, Display::Inline) {
+            return None;
+        }
+        if let Some(edges) = edges_of(&style, false, false) {
+            return Some(edges);
         }
         ancestor = parent.parent_node();
     }

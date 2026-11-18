@@ -138,8 +138,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   background with a blend mode, the images are painted over the blended layers, without being
   blended. Text in an SVG image that is a background is set in the system and built-in fonts, not
   in the `@font-face` fonts of the document. The background color of an inline box (`<mark>`, a
-  `<span>`) is painted behind its text over the em box of the font, line by line; its padding,
-  border and background images are not painted (and the padding does not take room).
+  `<span>`) is painted behind its text over the em box of the font plus the vertical padding and border, and the horizontal margin, border and padding at its ends take room on the line
+  (a box that wraps has them at its first and last line only). Borders are drawn solid, whatever their style, and the vertical padding and border do not change the height of the line; background images of inline boxes are not painted. Percentages in the padding and margin of an inline box count as 0, and none of this applies in vertical lines.
 - **Shadows:** `box-shadow` with offsets, blur radius, spread, colour and several shadows. The
   blur is a Gaussian, drawn as a stack of translucent shapes (vector, no raster image). The
   shadow is clipped to the outside of the border box, follows `border-radius`, and is painted

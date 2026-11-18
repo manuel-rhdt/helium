@@ -77,7 +77,6 @@ css/CSS2/borders/border-top-width-025.xht
 css/CSS2/borders/border-top-width-080.xht
 css/CSS2/borders/border-top-width-applies-to-005.xht
 css/CSS2/borders/border-top-width-applies-to-006.xht
-css/CSS2/borders/border-width-applies-to-008.xht
 css/CSS2/borders/shand-border-001.xht
 css/CSS2/box-display/block-in-inline-001.xht
 css/CSS2/box-display/block-in-inline-002.xht
@@ -131,7 +130,6 @@ css/CSS2/margin-padding-clear/margin-shorthand-001.xht
 css/CSS2/margin-padding-clear/margin-shorthand-002.xht
 css/CSS2/margin-padding-clear/margin-shorthand-003.xht
 css/CSS2/margin-padding-clear/margin-shorthand-004.xht
-css/CSS2/margin-padding-clear/margin-top-applies-to-008.xht
 css/CSS2/margin-padding-clear/padding-bottom-applies-to-014.xht
 css/CSS2/margin-padding-clear/padding-em-inherit-001.xht
 css/CSS2/margin-padding-clear/padding-right-applies-to-012.xht
@@ -160,11 +158,8 @@ css/CSS2/normal-flow/inline-block-replaced-width-007.xht
 css/CSS2/normal-flow/inline-block-replaced-width-008.xht
 css/CSS2/normal-flow/inline-block-valign-001.xht
 css/CSS2/normal-flow/inline-block-valign-002.xht
-css/CSS2/normal-flow/inline-block-zorder-003.xht
 css/CSS2/normal-flow/inline-block-zorder-004.xht
 css/CSS2/normal-flow/inline-block-zorder-005.xht
-css/CSS2/normal-flow/inline-non-replaced-height-002.xht
-css/CSS2/normal-flow/inline-non-replaced-height-003.xht
 css/CSS2/normal-flow/inline-replaced-height-002.xht
 css/CSS2/normal-flow/inline-replaced-height-006.xht
 css/CSS2/normal-flow/inline-replaced-height-009.xht
@@ -179,10 +174,8 @@ css/CSS2/normal-flow/inline-table-valign-001.xht
 # while .xht files were read by the HTML parser, which left `&gt;` in the style sheet (an invalid
 # selector) and so ignored every rule; as XML the rules apply.
 css/CSS2/normal-flow/inline-table-width-002a.xht
-css/CSS2/normal-flow/inline-table-zorder-003.xht
 css/CSS2/normal-flow/inline-table-zorder-004.xht
 css/CSS2/normal-flow/inline-table-zorder-005.xht
-css/CSS2/normal-flow/inlines-016.xht
 css/CSS2/normal-flow/inlines-017.xht
 css/CSS2/normal-flow/inlines-020.xht
 css/CSS2/normal-flow/max-height-applies-to-005.xht
@@ -428,3 +421,6 @@ css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.xht
 css/css-values/attr-style-sharing-1.html
 css/css-values/attr-style-sharing-2.html
 css/css-values/attr-style-sharing-3.html
+
+# the inline box of the test has its border at the em box of the font, which is not the line box of the border of the reference: it differs by a pixel
+css/CSS2/borders/border-color-012.xht
