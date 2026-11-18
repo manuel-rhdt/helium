@@ -85,7 +85,13 @@ jobs:
     # harfbuzz is compiled from its bundled source and needs the MSVC C++ toolchain. Windows
     # finds its fonts through fontdb's directory scan, so fontconfig stays off.
     - name: Build
-      run: cargo build --release --locked --no-default-features --target "$env:TARGET"
+      run: |
+        cargo build --release --locked --no-default-features --target "$env:TARGET" 2>&1 | Tee-Object -FilePath build.log
+        if ($LASTEXITCODE -ne 0) {
+          $tail = (Get-Content build.log -Tail 25) -join '%0A'
+          Write-Output "::error title=windows build::$tail"
+          exit 1
+        }
     - name: Smoke test
       run: |
         & "target/$env:TARGET/release/helium.exe" tests/documents/book.html book.pdf
