@@ -141,6 +141,14 @@ fn paints_red(pages: &[Page]) -> bool {
         .any(|page| page.pixels.chunks(3).any(|p| p[0] >= 250 && p[1] <= 5 && p[2] <= 5))
 }
 
+/// Whether there is red in the pages that is close to the red of a failing test (a gradient from red
+/// has pixels of it that are not exactly red, with a reference that is rasterized differently).
+fn nearly_red(pages: &[Page]) -> bool {
+    pages
+        .iter()
+        .any(|page| page.pixels.chunks(3).any(|p| p[0] >= 240 && p[1] <= 40 && p[2] <= 40))
+}
+
 fn is_blank(pages: &[Page]) -> bool {
     pages.iter().all(|page| page.pixels.iter().all(|&channel| channel >= 250))
 }
@@ -172,7 +180,7 @@ fn run_reftest(test: &Path, expected: &Result<Vec<Page>, String>) -> Result<(), 
 
     // (red is what the tests of the WPT show when they fail, unless the reference has it too, like the
     // gradients that start with red: then the pixels decide)
-    if paints_red(&actual) && !paints_red(expected) {
+    if paints_red(&actual) && !nearly_red(expected) {
         return Err("paints red".into());
     }
     if is_blank(&actual) && is_blank(expected) {
