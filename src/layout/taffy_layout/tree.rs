@@ -279,6 +279,8 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         }
         let id = self.new_node(entity, Content::Replaced);
         self.make_leaf(id, block_ctxs);
+        // (a box with inline content only: the out-of-flow boxes in it are its children)
+        self.prepare_right_to_left(id);
         id
     }
 
@@ -459,7 +461,9 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         let rtl = self.computed_values.get(node.entity).is_some_and(|style| {
             style.text.direction == crate::style::properties::specified::Direction::Rtl
         });
-        let has_block_children = matches!(node.content, Content::Blocks | Content::Table);
+        // (the children of the inline content of a box are out-of-flow boxes)
+        let has_block_children = matches!(node.content, Content::Blocks | Content::Table)
+            || (node.content == Content::Inline && !node.children.is_empty());
         // in a vertical flow, `direction` would run the lines upwards, which is not supported
         if !rtl || !has_block_children || node.flow.is_vertical() {
             return;
@@ -655,6 +659,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             if !existing.contains(&absolute) {
                 let child = self.build_box(absolute, block_ctxs);
                 self.node_mut(id).children.push(child);
+                self.resolve_self_alignment(id);
             }
         }
         for atom in atoms {
