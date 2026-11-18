@@ -426,13 +426,6 @@ css/css-images/gradient/display-p3-linear-gradient.html
 css/css-images/gradient/gradient-analogous-missing-components-001.html
 css/css-images/gradient/gradient-analogous-missing-components-004.html
 css/css-images/gradient/gradient-none-interpolation.html
-css/css-images/gradient/gradient-single-stop-decreasing-hue-hsl.html
-css/css-images/gradient/gradient-single-stop-decreasing-hue-oklch.html
-css/css-images/gradient/gradient-single-stop-increasing-hue-hsl.html
-css/css-images/gradient/gradient-single-stop-increasing-hue-oklch.html
-css/css-images/gradient/gradient-single-stop-longer-hue-hsl.html
-css/css-images/gradient/gradient-single-stop-longer-hue-oklch.html
-css/css-images/gradient/gradient-single-stop-none-interpolation.html
 css/css-images/gradient/linear-gradient-relative-currentcolor-stop.html
 css/css-images/image-color-basic.html
 css/css-images/image-color-cross-fade.html

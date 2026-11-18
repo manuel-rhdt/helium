@@ -183,6 +183,8 @@ pub struct Stop<L, C> {
     pub color: C,
     /// A stop with two positions is two stops with the same colour.
     pub positions: Vec<StopPosition<L>>,
+    /// The components that are missing (`none`) in the colour space that the colours are interpolated in.
+    pub missing: [bool; 3],
 }
 
 /// The parsed value of `background-image`.
@@ -283,12 +285,15 @@ fn parse_gradient<'i>(
             break;
         }
     }
-    if !input.is_exhausted() || stops.len() < 2 {
+    if !input.is_exhausted() || stops.is_empty() {
         return Err(input.new_error_for_next_token());
     }
     // Without an `in <space>` the colours are interpolated in Oklab, except those of the legacy sRGB
     // syntaxes, which are in gamma-encoded sRGB (CSS Color 4, 13.3): that is when every stop is one of them.
     let interpolation = interpolation.unwrap_or_else(|| default_interpolation(&stops));
+    for stop in &mut stops {
+        stop.missing = super::color_mix::missing_components(interpolation.space, &stop.color);
+    }
     Ok(Gradient { kind, repeating, interpolation, stops })
 }
 
@@ -563,7 +568,7 @@ fn parse_stop<'i>(
             Err(_) => break,
         }
     }
-    Ok(Stop { color, positions })
+    Ok(Stop { color, positions, missing: [false; 3] })
 }
 
 /// The shorthand `background`: `<bg-layer>#? , <final-bg-layer>` where a layer is an image,
@@ -715,6 +720,7 @@ impl Gradient<QuantityOrPercentage, Color> {
             .iter()
             .map(|stop| Stop {
                 color: stop.color,
+                missing: stop.missing,
                 positions: stop
                     .positions
                     .iter()
@@ -746,6 +752,7 @@ impl Gradient<LengthPercentage, Color> {
                         color => color_to_paint(color),
                     },
                     positions: stop.positions.clone(),
+                    missing: stop.missing,
                 })
                 .collect(),
         }
@@ -928,7 +935,7 @@ impl ResolvedGradient {
             }
         };
 
-        let stops = resolve_stop_offsets(&self.stops, length, matches!(self.kind, GradientKind::Conic(_)));
+        let stops = resolve_stop_offsets(&self.stops, length, matches!(self.kind, GradientKind::Conic(_)), self.interpolation);
         let stops = if self.repeating {
             repeat_stops(stops)
         } else {
@@ -946,6 +953,7 @@ fn resolve_stop_offsets(
     stops: &[Stop<LengthPercentage, PaintColor>],
     length: f32,
     conic: bool,
+    how: Interpolation,
 ) -> Vec<(f32, PaintColor)> {
     let to_offset = |position: &StopPosition<LengthPercentage>| match position {
         StopPosition::Angle(degrees) => degrees / 360.0,
@@ -954,13 +962,13 @@ fn resolve_stop_offsets(
     };
 
     // a stop with two positions is two stops
-    let mut list: Vec<(Option<f32>, PaintColor)> = vec![];
+    let mut list: Vec<(Option<f32>, PaintColor, [bool; 3])> = vec![];
     for stop in stops {
         match stop.positions.as_slice() {
-            [] => list.push((None, stop.color)),
+            [] => list.push((None, stop.color, stop.missing)),
             positions => {
                 for position in positions {
-                    list.push((Some(to_offset(position)), stop.color));
+                    list.push((Some(to_offset(position)), stop.color, stop.missing));
                 }
             }
         }
@@ -974,7 +982,7 @@ fn resolve_stop_offsets(
     }
     // an offset smaller than an earlier one is raised to it
     let mut highest = f32::NEG_INFINITY;
-    for (offset, _) in list.iter_mut() {
+    for (offset, _, _) in list.iter_mut() {
         if let Some(offset) = offset {
             if *offset < highest {
                 *offset = highest;
@@ -1000,7 +1008,15 @@ fn resolve_stop_offsets(
             entry.0 = Some(before + (after - before) * (n + 1) as f32 / count);
         }
     }
-    list.into_iter().map(|(offset, color)| (offset.unwrap(), color)).collect()
+    if !list.iter().any(|entry| entry.2.iter().any(|&m| m)) {
+        return list.into_iter().map(|(offset, color, _)| (offset.unwrap(), color)).collect();
+    }
+    // the missing components take the values of the neighbours
+    let colors: Vec<([f32; 4], [bool; 3])> = list.iter().map(|entry| (entry.1.to_extended_srgb(), entry.2)).collect();
+    super::color_mix::fill_missing(how, &colors)
+        .into_iter()
+        .map(|(index, color)| (list[index].0.unwrap(), PaintColor::from_extended_srgb([color[0], color[1], color[2]], color[3])))
+        .collect()
 }
 
 /// Repeats the stops over the range `0..=1`.
@@ -1285,12 +1301,18 @@ mod tests {
 
     #[test]
     fn invalid_gradients_are_rejected() {
-        assert!(parse("linear-gradient(red)").is_none());
         assert!(parse("linear-gradient()").is_none());
         assert!(parse("linear-gradient(red, 50%, blue)").is_none(), "colour hints are unsupported");
         assert!(parse("linear-gradient(red 10deg, blue)").is_none());
         assert!(parse("foo-gradient(red, blue)").is_none());
         assert!(parse("conic-gradient(red 10px, blue)").is_none());
+    }
+
+    #[test]
+    fn a_single_colour_stop_is_a_gradient() {
+        // (CSS Images 4: the colour list has one stop at least)
+        assert_eq!(gradient("linear-gradient(to right in oklch, red 50%)").stops.len(), 1);
+        assert_eq!(gradient("radial-gradient(blue)").stops.len(), 1);
     }
 
     #[test]
@@ -1363,7 +1385,7 @@ mod tests {
     const BOX: BoxSize = BoxSize { x: 10.0, y: 20.0, width: 200.0, height: 100.0 };
 
     fn stop(color: PaintColor, positions: &[LengthPercentage]) -> Stop<LengthPercentage, PaintColor> {
-        Stop { color, positions: positions.iter().cloned().map(StopPosition::Length).collect() }
+        Stop { color, positions: positions.iter().cloned().map(StopPosition::Length).collect(), missing: [false; 3] }
     }
 
     fn linear(direction: LinearDirection, stops: Vec<Stop<LengthPercentage, PaintColor>>) -> ResolvedGradient {
@@ -1587,8 +1609,8 @@ mod tests {
             repeating: false,
             interpolation: Default::default(),
             stops: vec![
-                Stop { color: RED, positions: vec![StopPosition::Angle(90.0)] },
-                Stop { color: BLUE, positions: vec![StopPosition::Length(pct(0.75))] },
+                Stop { color: RED, positions: vec![StopPosition::Angle(90.0)], missing: [false; 3] },
+                Stop { color: BLUE, positions: vec![StopPosition::Length(pct(0.75))], missing: [false; 3] },
             ],
         };
         let resolved = g.resolve(BOX, BOX).unwrap();
