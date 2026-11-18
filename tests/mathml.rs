@@ -450,3 +450,34 @@ fn other_html_in_a_token_is_left_out() {
     assert_eq!(box_of(&plain, "m")[2], box_of(&with_span, "m")[2]);
     assert!(find(&with_span["document"], "s").unwrap()["border_box"].is_null());
 }
+
+#[test]
+fn inline_svg_in_a_fraction_and_a_square_root() {
+    let svg = |id: &str| {
+        format!(
+            r##"<svg id="{}" width="30" height="20" viewBox="0 0 30 20"><rect width="30" height="20" fill="#639"/></svg>"##,
+            id
+        )
+    };
+    let plain = formula("svg_plain", "<mfrac><mtext>a</mtext><mtext>b</mtext></mfrac>");
+    let with = formula(
+        "svg_fraction",
+        &format!(
+            "<mfrac><mtext>{}</mtext><mtext>{}</mtext></mfrac><msqrt><mtext>{}</mtext></msqrt>",
+            svg("top"), svg("bottom"), svg("root")
+        ),
+    );
+    let [_, _, _, plain_height] = box_of(&plain, "m");
+    let [top_x, top_y, top_width, top_height] = box_of(&with, "top");
+    let [_, bottom_y, _, _] = box_of(&with, "bottom");
+    let [_, _, root_width, root_height] = box_of(&with, "root");
+    let [math_x, math_y, math_width, math_height] = box_of(&with, "m");
+    assert_eq!((top_width, top_height), (30.0, 20.0));
+    assert_eq!((root_width, root_height), (30.0, 20.0));
+    // the numerator is above the denominator, and the fraction is taller than with text
+    assert!(top_y + top_height <= bottom_y, "{} {}", top_y + top_height, bottom_y);
+    assert!(math_height > plain_height + 10.0, "{} {}", math_height, plain_height);
+    // everything is inside of the formula
+    assert!(top_x >= math_x && top_x + top_width <= math_x + math_width);
+    assert!(top_y >= math_y - 0.01 && top_y + top_height <= math_y + math_height + 0.01);
+}
