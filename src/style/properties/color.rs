@@ -113,16 +113,11 @@ fn prophoto_decode(encoded: f32) -> f32 {
     }
 }
 
-/// The `rec2020` transfer function.
+/// The `rec2020` transfer function: the display-referred pure power of 2.4 of Rec. ITU-R BT.1886 (with a
+/// black lift of 0 and a gain of 1), defined over the extended range (CSS Color 4: Issue 12574; before, the
+/// camera OETF of BT.2020 was used).
 fn rec2020_decode(encoded: f32) -> f32 {
-    const ALPHA: f32 = 1.099_296_8;
-    const BETA: f32 = 0.018_053_969;
-    let abs = encoded.abs();
-    if abs < BETA * 4.5 {
-        encoded / 4.5
-    } else {
-        encoded.signum() * ((abs + ALPHA - 1.0) / ALPHA).powf(1.0 / 0.45)
-    }
+    encoded.abs().powf(2.4) * encoded.signum()
 }
 
 /// CIELAB (D50) to XYZ, https://drafts.csswg.org/css-color-4/#lab-to-xyz.

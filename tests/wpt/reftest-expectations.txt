@@ -389,12 +389,6 @@ css/css-color/lch-009.html
 css/css-color/lch-010.html
 css/css-color/oklch-009.html
 css/css-color/oklch-010.html
-css/css-color/predefined-011.html
-css/css-color/predefined-012.html
-css/css-color/rec2020-001.html
-css/css-color/rec2020-gamma-001.html
-css/css-color/rec2020-gamma-002.html
-css/css-color/rec2020-gamma-003.html
 css/css-color/relative-currentcolor-a98rgb-01.html
 css/css-color/relative-currentcolor-displayp3-01.html
 css/css-color/relative-currentcolor-hsl-01.html
