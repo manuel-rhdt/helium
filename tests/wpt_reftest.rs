@@ -5,7 +5,7 @@
 //! `helium --dump-layout`: the solid rectangles (backgrounds and borders) and the glyph runs with
 //! their positions. This is independent of how the two documents are structured, which is what
 //! reftests rely on. Following the WPT convention that "red means failure", a test must also not
-//! paint anything pure red.
+//! paint anything pure red that its reference does not paint.
 
 //! Runs vendored web-platform-tests reftests: a test and its `<link rel="match">` reference must
 //! look the same.
@@ -13,7 +13,7 @@
 //! Both documents are turned into PDFs, which `pdftoppm` (poppler-utils) rasterizes at 96 dpi, so
 //! that a pixel is a CSS pixel; the pages must be the same size and no pixel may differ by more
 //! than a little. Following the WPT convention that "red means failure", a test must also not
-//! paint pure red.
+//! paint pure red that its reference does not paint.
 
 mod common;
 
@@ -170,7 +170,9 @@ fn run_reftest(test: &Path, expected: &Result<Vec<Page>, String>) -> Result<(), 
     let actual = render(test)?;
     let expected = expected.as_ref().map_err(|why| format!("the reference: {}", why))?;
 
-    if paints_red(&actual) {
+    // (red is the colour of failure, unless the reference paints it too: then it is what the test
+    // is about, like a text that "should be red", and the comparison decides)
+    if paints_red(&actual) && !paints_red(expected) {
         return Err("paints red".into());
     }
     if is_blank(&actual) && is_blank(expected) {
@@ -276,7 +278,13 @@ fn wpt_reftests() {
     for (test, result) in tests.iter().zip(results) {
         let name = test_name(test);
         match (result, known_failures.contains(&name)) {
-            (Ok(()), false) | (Err(_), true) => {}
+            (Ok(()), false) => {}
+            // (`WPT_REASONS=1` says why the known failures fail)
+            (Err(why), true) => {
+                if std::env::var_os("WPT_REASONS").is_some() {
+                    eprintln!("KNOWN {}: {}", name, why);
+                }
+            }
             (Err(why), false) => problems.push(format!("FAIL {}: {}", name, why)),
             (Ok(()), true) => problems.push(format!(
                 "UNEXPECTED PASS {} (remove it from tests/wpt/reftest-expectations.txt)",
