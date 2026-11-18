@@ -1,0 +1,5 @@
+# Ship one self-contained exe: the C runtime is linked statically, so the binary does not need the
+# Visual C++ redistributable. Everything else that is C (harfbuzz) is compiled from source in the
+# same build, and `cc` follows this flag, so no part of the binary links the CRT dynamically.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

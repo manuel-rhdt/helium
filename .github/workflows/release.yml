@@ -88,6 +88,11 @@ jobs:
     # finds its fonts through fontdb's directory scan, so fontconfig stays off.
     - name: Build
       run: cargo build --release --locked --no-default-features --target "$env:TARGET"
+    - name: Check that the binary needs no C runtime DLL
+      run: |
+        $deps = dumpbin /dependents "target/$env:TARGET/release/helium.exe"
+        $deps
+        if ($deps -match 'VCRUNTIME|MSVCP|ucrtbase\.dll') { throw "the binary still imports the C runtime" }
     - name: Smoke test
       run: |
         & "target/$env:TARGET/release/helium.exe" tests/documents/book.html book.pdf

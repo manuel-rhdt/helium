@@ -16,10 +16,9 @@ configured. There is no macOS binary yet.
 
 ### Windows
 
-The binary is built with the MSVC toolchain, so it needs the
-[VC++ 2015–2022 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe), which most
-machines already have. It is not signed, so SmartScreen asks once when it is started from a
-download: *More info* → *Run anyway*. There is no installer and no file association: unpack
+The binary is built with the MSVC toolchain and links the C runtime statically, so it needs no
+redistributable and no other file. It is not signed, so SmartScreen asks once when it is started
+from a download: *More info* → *Run anyway*. There is no installer and no file association: unpack
 `helium-vX.Y.Z-x86_64-pc-windows-msvc.zip` where you want it and put that directory on `PATH`, in
 PowerShell:
 
