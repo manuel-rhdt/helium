@@ -102,7 +102,8 @@ pub(super) fn self_alignment(value: SelfAlignment) -> Option<taffy::AlignSelf> {
         SelfAlignment::FlexStart => taffy::AlignItems::FLEX_START,
         SelfAlignment::FlexEnd => taffy::AlignItems::FLEX_END,
         SelfAlignment::Center => taffy::AlignItems::CENTER,
-        SelfAlignment::Baseline => taffy::AlignItems::BASELINE,
+        SelfAlignment::Baseline | SelfAlignment::FirstBaseline(_) => taffy::AlignItems::BASELINE,
+        SelfAlignment::LastBaseline(_) => taffy::AlignItems::END,
     })
 }
 

@@ -1082,6 +1082,34 @@ pub enum SelfAlignment {
     FlexEnd,
     Center,
     Baseline,
+    /// `first baseline`, the same as `baseline`.
+    FirstBaseline(FirstBaselineKeyword),
+    /// `last baseline`: aligns to the end, as a box that shares its baseline with no other does.
+    LastBaseline(LastBaselineKeyword),
+}
+
+/// The keywords `first baseline` and `last baseline`, which are two words.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct FirstBaselineKeyword;
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct LastBaselineKeyword;
+
+impl<'i> PropertyValue<'i> for FirstBaselineKeyword {
+    type Error = StyleParseError;
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        input.expect_ident_matching("first")?;
+        input.expect_ident_matching("baseline")?;
+        Ok(FirstBaselineKeyword)
+    }
+}
+
+impl<'i> PropertyValue<'i> for LastBaselineKeyword {
+    type Error = StyleParseError;
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        input.expect_ident_matching("last")?;
+        input.expect_ident_matching("baseline")?;
+        Ok(LastBaselineKeyword)
+    }
 }
 
 /// The values of `place-content`, `place-items` and `place-self`: the alignment in the block axis

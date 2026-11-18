@@ -63,6 +63,9 @@ pub(super) struct Node {
     pub orthogonal: bool,
     /// The style of an orthogonal flow in the logical axes of its parent.
     pub item_style: Option<taffy::Style>,
+    /// `justify-self` and `align-self` as resolved for the container (`resolve_self_alignment`),
+    /// which `item_style` has to be given again when it is made.
+    pub resolved_self: (Option<crate::style::properties::specified::SelfAlignment>, Option<crate::style::properties::specified::SelfAlignment>),
     pub content: Content,
     /// The children of the node in document order, including the out-of-flow ones. A node with
     /// inline content only has out-of-flow children.
@@ -202,6 +205,15 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             let node = self.node_mut(id);
             node.orthogonal = true;
             node.item_style = item;
+            let (justify, align) = node.resolved_self;
+            if let Some(style) = node.item_style.as_mut() {
+                if let Some(value) = justify {
+                    style.justify_self = super::style::self_alignment(value);
+                }
+                if let Some(value) = align {
+                    style.align_self = super::style::self_alignment(value);
+                }
+            }
         }
         for child in self.node(id).children.clone() {
             self.mark_orthogonal(child, flow);
@@ -228,6 +240,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             flow,
             orthogonal: false,
             item_style: None,
+            resolved_self: (None, None),
             content,
             children: vec![],
             atoms: vec![],
@@ -363,9 +376,9 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         use crate::style::properties::specified::{Direction, SelfAlignment};
         use crate::style::properties::computed::ComputedValues;
         let Some(container) = self.computed_values.get(self.node(id).entity) else { return };
-        if !container.box_.display.is_flex_or_grid() {
-            return;
-        }
+        // (a block container aligns its children in the inline axis only, with `justify-self`;
+        // the boxes that it is the containing block of can use both)
+        let flex_or_grid = container.box_.display.is_flex_or_grid();
         #[derive(PartialEq, Clone, Copy)]
         enum Side { Left, Right, Top, Bottom }
         let side = |style: &ComputedValues, inline: bool| -> Side {
@@ -414,13 +427,14 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
                 })
             };
             let justify = resolve(style.box_.justify_self, true);
-            let align = resolve(style.box_.align_self, false);
+            let align = if flex_or_grid || self.node(child).style.position == taffy::Position::Absolute { resolve(style.box_.align_self, false) } else { None };
             if justify.is_some() || align.is_some() {
                 updates.push((child, justify, align));
             }
         }
         for (child, justify, align) in updates {
             let node = self.node_mut(child);
+            node.resolved_self = (justify, align);
             for style in std::iter::once(&mut node.style).chain(node.item_style.iter_mut()) {
                 if let Some(value) = justify {
                     style.justify_self = super::style::self_alignment(value);
