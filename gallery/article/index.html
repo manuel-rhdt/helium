@@ -32,6 +32,8 @@
   h1 { font: bold 17pt/20pt "TeX Gyre Termes", Times, serif; margin: 0 0 10pt; hyphens: manual; }
   .authors { font-size: 11pt; line-height: 14pt; margin: 0 0 3pt; }
   .authors sup, .affil sup { font-size: 0.7em; line-height: 0; }
+  /* a raised or lowered box must not push its line apart from the others */
+  sub, sup { line-height: 0; }
   .affil { font-style: italic; font-size: 9pt; line-height: 11pt; margin: 0; }
   .date { font-size: 9pt; margin: 5pt 0 9pt; }
   .abstract { margin: 0 0.4in; font-size: 9pt; line-height: 11pt; text-align: justify; padding-bottom: 7pt; border-bottom: 0.6pt solid #000; margin-bottom: 9pt; }
@@ -43,7 +45,8 @@
   .cols .first { text-indent: 0; }
   .cols i.run { font-style: italic; }
 
-  .eq { display: grid; grid-template-columns: 1fr auto; align-items: center; margin: 6pt 0; text-indent: 0; break-inside: avoid; }
+  /* no break before a display: the line that introduces it goes with it, as in TeX (\predisplaypenalty) */
+  .eq { display: grid; grid-template-columns: 1fr auto; align-items: center; margin: 6pt 0; text-indent: 0; break-inside: avoid; break-before: avoid; }
   .eq math { margin: 0; justify-self: center; }
   .eq .no { font-size: 10pt; padding-left: 6pt; }
 
@@ -129,7 +132,7 @@
 <p class="first">The coefficient is a numerical result: the quotient (<i>r</i>/<i>r<sub>K</sub></i> − 1)/<i>D</i>, evaluated at <i>D</i> = 2.5, 5, and 7.5 × 10<sup>−3</sup> and extrapolated linearly to <i>D</i> = 0, gives −1.50 (dotted line in Fig. 3). We have not derived it analytically; an asymptotic expansion in <i>D</i>, as in Refs. [3,4], would serve to confirm it.</p>
 
 <p><i class="run">Corrected formula.</i>—Taken at face value, Eq. (7) suggests the corrected rate</p>
-<div class="eq"><math display="block"><msub><mi>r</mi><mi>c</mi></msub><mo>=</mo><msub><mi>r</mi><mi>K</mi></msub><mo stretchy="false">(</mo><mn>1</mn><mo>−</mo><mfrac><mn>3</mn><mn>2</mn></mfrac><mi>D</mi><mo stretchy="false">)</mo></math><span class="no">(8)</span></div>
+<div class="eq"><math display="block"><msub><mi>r</mi><mi>c</mi></msub><mo>=</mo><msub><mi>r</mi><mi>K</mi></msub><mrow><mo>(</mo><mn>1</mn><mo>−</mo><mfrac><mn>3</mn><mn>2</mn></mfrac><mi>D</mi><mo>)</mo></mrow></math><span class="no">(8)</span></div>
 <p class="first">Table II compares it with Eq. (4). The corrected formula is within 1% of the exact rate up to <i>D</i> = 0.038 and within 5% up to <i>D</i> = 0.11; beyond that the linear term overshoots, because the ratio turns around at <i>D</i> ≈ 0.09 (Fig. 3) while Eq. (8) keeps falling. The correction is therefore useful in the range where Kramers’ formula is already good, and not beyond it.</p>
 
 <div class="table">
