@@ -17,7 +17,7 @@ use formel::{
     host::{
         Direction, Edges, ForeignMetrics, Fragment, LayoutCollector, MathComputedStyle,
         MathLayoutHost, MathShift, MathTree, NodeKind, NodeLayout, OperatorOverrides, Rect,
-        TokenSegment, default_operator_overrides, layout_math,
+        TokenSegment, axis_height, default_operator_overrides, layout_math,
     },
     shaper::Shaper,
 };
@@ -146,7 +146,8 @@ impl EcsMathTree<'_, '_> {
     /// The margin box of foreign content. Only replaced content is laid out: an image is as big
     /// as its `width` and `height` say, else as its intrinsic size (keeping the ratio when only
     /// one of them is given), and sits on the baseline with its bottom margin edge. Padding and
-    /// border of the image are not taken into account. Anything else has no size.
+    /// border of the image are not taken into account. Anything else has no size. See below for
+    /// `vertical-align`.
     fn foreign_metrics(&self, entity: Entity) -> ForeignMetrics {
         use computed::GenericSize;
         let (Some(image), Some(style)) = (self.images.get(entity), self.styles.get(entity)) else {
@@ -166,10 +167,27 @@ impl EcsMathTree<'_, '_> {
         let deco = calculate_padding_and_border(Px(0.0), style);
         let margin_left = style.position.margin_left.absolute(Px(0.0), Px(0.0)).0;
         let margin_right = style.position.margin_right.absolute(Px(0.0), Px(0.0)).0;
+        // `vertical-align` raises the box: a length or a percentage of the `line-height` as in
+        // CSS, `middle` puts its middle on the math axis (CSS puts it half an x-height above the
+        // baseline; the axis is what a formula is centered on). The other values refer to a line
+        // box, which a formula does not have: they are the baseline.
+        let shift = match style.box_.vertical_align {
+            computed::VerticalAlign::LengthPercentage(length) => {
+                let line_height = match style.font.line_height {
+                    computed::LineHeight::LengthPercentage(line_height) => {
+                        line_height.absolute(style.font.font_size).0
+                    }
+                    computed::LineHeight::Normal => 1.2 * style.font.font_size.0,
+                };
+                length.absolute(Px(line_height)).0
+            }
+            computed::VerticalAlign::Middle => axis_height(self, entity) - height / 2.0,
+            _ => 0.0,
+        };
         ForeignMetrics {
             width: margin_left + width + margin_right,
-            ascent: deco.margin.top.0 + height,
-            descent: deco.margin.bottom.0,
+            ascent: deco.margin.top.0 + height + shift,
+            descent: deco.margin.bottom.0 - shift,
         }
     }
 }

@@ -481,3 +481,33 @@ fn inline_svg_in_a_fraction_and_a_square_root() {
     assert!(top_x >= math_x && top_x + top_width <= math_x + math_width);
     assert!(top_y >= math_y - 0.01 && top_y + top_height <= math_y + math_height + 0.01);
 }
+
+#[test]
+fn vertical_align_moves_an_image_off_the_baseline() {
+    // the distance from the baseline of the text up to the bottom edge of the image
+    let raised = |name: &str, style: &str| {
+        let dump = formula(
+            name,
+            &format!(r#"<mtext>ab<img id="i" style="{}" src="{}">cd</mtext>"#, style, RED_40X30),
+        );
+        let [_, y, _, height] = box_of(&dump, "i");
+        let [_, math_y, _, math_height] = box_of(&dump, "m");
+        let baseline = math_glyph_ys(&dump)[0];
+        // the formula always has room for the image
+        assert!(y >= math_y - 0.01 && y + height <= math_y + math_height + 0.01, "{}: {:?}", style, (y, height, math_y, math_height));
+        (baseline - (y + height), y + height / 2.0, baseline)
+    };
+    let close = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 0.01, "{}: {} != {}", what, a, b);
+
+    close(raised("va_baseline", "").0, 0.0, "baseline");
+    close(raised("va_up", "vertical-align: 6px").0, 6.0, "6px up");
+    close(raised("va_down", "vertical-align: -10px").0, -10.0, "10px down");
+    // a percentage is of the line-height
+    close(raised("va_percent", "line-height: 20px; vertical-align: 50%").0, 10.0, "50% of 20px");
+    // `top`, `sub` and the like refer to a line box that a formula does not have
+    close(raised("va_top", "vertical-align: top").0, 0.0, "top");
+    // `middle` centers on the math axis: above the baseline, by a fraction of the font size
+    let (_, middle, baseline) = raised("va_middle", "vertical-align: middle");
+    let axis = baseline - middle;
+    assert!(axis > 2.0 && axis < 8.0, "axis: {}", axis);
+}
