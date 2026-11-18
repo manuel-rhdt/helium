@@ -7,6 +7,52 @@ renderer: it lays out pages, not a scrollable screen, and it runs no scripts.
 helium [options] input.html output.pdf
 ```
 
+## Install
+
+The releases carry a binary for Linux (`x86_64-unknown-linux-musl`) and one for Windows
+(`x86_64-pc-windows-msvc`). It is a single file: the fonts of the default `font-family` (DejaVu) are
+built in, the fonts installed on the machine are used for everything else, and nothing has to be
+configured. There is no macOS binary yet.
+
+### Windows
+
+The binary is built with the MSVC toolchain, so it needs the
+[VC++ 2015–2022 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe), which most
+machines already have. It is not signed, so SmartScreen asks once when it is started from a
+download: *More info* → *Run anyway*. There is no installer and no file association: unpack
+`helium-vX.Y.Z-x86_64-pc-windows-msvc.zip` where you want it and put that directory on `PATH`, in
+PowerShell:
+
+```powershell
+$dir = "$env:LOCALAPPDATA\Programs\helium"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Copy-Item .\helium.exe $dir
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($userPath -notlike "*$dir*") {
+  [Environment]::SetEnvironmentVariable('Path', "$userPath;$dir", 'User')
+}
+```
+
+A new terminal then has `helium --version` and `helium document.html document.pdf`. The fonts are
+read from `%SYSTEMROOT%\Fonts` and the two per-user font directories (those of `%USERPROFILE%`);
+`--font-dir DIR` adds another one, and `--no-system-fonts` leaves only the built-in families
+(DejaVu, TeX Gyre, STIX Two Math, Latin Modern Math), so that the output does not depend on the
+machine. Pass on `LICENSE-DejaVu.txt`, which the zip and the tarball carry, with the binary.
+
+### Linux
+
+Unpack `helium-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz` (statically linked against musl, so it
+needs no shared library, not even fontconfig) and put `helium` on `PATH`:
+
+```
+tar xzf helium-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz
+install -m 755 helium-vX.Y.Z-x86_64-unknown-linux-musl/helium ~/.local/bin/
+```
+
+The installed fonts are found by scanning the font directories.
+
+## Options
+
 | Option | Effect |
 | --- | --- |
 | `--xml` / `--html` | read the input with the XML parser / the HTML parser (by default: XML for the extensions `.svg`, `.xhtml`, `.xht` and `.xml`, HTML for all others) |
