@@ -78,7 +78,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 
 ## CSS
 
-- **Box model:** `width`, `height`, `min-`/`max-` width and height, `box-sizing`, `margin`,
+- **Box model:** `width`, `height` (also `min-content`, `max-content`, `fit-content` and `stretch`; not in `min-`/`max-` sizes), `min-`/`max-` width and height, `box-sizing`, `margin`,
   `padding`, `border` (width, color and style, per side), `border-radius`, `top`/`right`/`bottom`/`left`.
   All border styles are painted (`dotted`, `dashed`, `double`, `groove`, `ridge`, `inset`,
   `outset`, `hidden`), except that a border with rounded corners draws `dotted`, `dashed`,

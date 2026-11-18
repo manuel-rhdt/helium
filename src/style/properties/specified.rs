@@ -331,9 +331,9 @@ pub enum PropertyDeclaration<'a> {
 #[computed = "super::computed::Position"]
 pub enum Position<'a> {
     #[property]
-    Width(AutoOrQuantityOrPercentage),
+    Width(SizeValue),
     #[property]
-    Height(AutoOrQuantityOrPercentage),
+    Height(SizeValue),
     /// https://www.w3.org/TR/CSS22/visudet.html#min-max-widths
     #[property]
     MinWidth(AutoOrQuantityOrPercentage),
@@ -2061,6 +2061,29 @@ impl<'i> PropertyValue<'i> for Percentage {
 pub enum QuantityOrPercentage {
     Quantity(Quantity),
     Percentage(Percentage),
+}
+
+/// The value of `width` and `height`: a length, a percentage, `auto` or a sizing keyword.
+/// https://www.w3.org/TR/css-sizing-3/#sizing-values
+#[derive(Debug, Copy, Clone, PropertyValue)]
+pub enum SizeValue {
+    Auto,
+    MinContent,
+    MaxContent,
+    FitContent,
+    Stretch,
+    Quantity(Quantity),
+    Percentage(Percentage),
+}
+
+impl From<AutoOrQuantityOrPercentage> for SizeValue {
+    fn from(value: AutoOrQuantityOrPercentage) -> Self {
+        match value {
+            AutoOrQuantityOrPercentage::Auto => SizeValue::Auto,
+            AutoOrQuantityOrPercentage::Quantity(quantity) => SizeValue::Quantity(quantity),
+            AutoOrQuantityOrPercentage::Percentage(percentage) => SizeValue::Percentage(percentage),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PropertyValue)]

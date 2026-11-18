@@ -105,7 +105,7 @@ pub fn calculate_inline_size(
     }
 
     match width {
-        GenericSize::Auto => {
+        GenericSize::Auto | GenericSize::Keyword(_) => {
             margin.left = position.margin_left.absolute(Px(0.0), container_size);
             margin.right = position.margin_right.absolute(Px(0.0), container_size);
             (container_size
@@ -129,6 +129,7 @@ pub fn calculate_inline_size(
                 (GenericSize::LengthPercentage(val), GenericSize::Auto) => {
                     val.absolute(container_size)
                 }
+                (GenericSize::Keyword(_), _) | (_, GenericSize::Keyword(_)) => Px(0.0),
                 (GenericSize::Auto, GenericSize::LengthPercentage(val)) => {
                     let margin_right = val.absolute(container_size);
                     let border_box_width =

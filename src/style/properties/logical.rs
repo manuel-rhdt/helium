@@ -57,7 +57,7 @@ pub enum Logical {
     Padding(Edges<QuantityOrPercentage>),
     Inset(Edges<AutoOrQuantityOrPercentage>),
     /// `inline-size` or `block-size`
-    Size(Axis, AutoOrQuantityOrPercentage),
+    Size(Axis, super::specified::SizeValue),
     /// `min-inline-size` or `min-block-size`
     MinSize(Axis, AutoOrQuantityOrPercentage),
     /// `max-inline-size` or `max-block-size`
@@ -117,7 +117,7 @@ impl<'i> ParseDeclaration<'i> for Logical {
         match (property, rest) {
             ("inline" | "block", "size") => {
                 let axis = if property == "inline" { Axis::Inline } else { Axis::Block };
-                return Ok(Logical::Size(axis, AutoOrQuantityOrPercentage::from_css_property_value(input)?));
+                return Ok(Logical::Size(axis, super::specified::SizeValue::from_css_property_value(input)?));
             }
             ("min" | "max", "inline-size" | "block-size") => {
                 let axis = if rest.starts_with("inline") { Axis::Inline } else { Axis::Block };

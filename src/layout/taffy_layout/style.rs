@@ -1,6 +1,6 @@
 //! Conversion of helium's computed style to Taffy's [`taffy::Style`].
 
-use crate::style::properties::computed::{
+use crate::style::properties::computed::{SizingKeyword, 
     BoxSizing, ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
     GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize, TrackEntry, Breadth,
 };
@@ -35,14 +35,14 @@ fn length_percentage(value: LengthPercentage) -> TLengthPercentage {
 /// A gap of a grid or flex container: `normal` is no gap.
 fn gap(value: GenericSize) -> TLengthPercentage {
     match value {
-        GenericSize::Auto => TLengthPercentage::length(0.0),
+        GenericSize::Auto | GenericSize::Keyword(_) => TLengthPercentage::length(0.0),
         GenericSize::LengthPercentage(value) => length_percentage(value),
     }
 }
 
 fn length_percentage_auto(value: GenericSize) -> LengthPercentageAuto {
     match value {
-        GenericSize::Auto => LengthPercentageAuto::auto(),
+        GenericSize::Auto | GenericSize::Keyword(_) => LengthPercentageAuto::auto(),
         GenericSize::LengthPercentage(lp) => match lp {
             LengthPercentage::PixelLength(px) => LengthPercentageAuto::length(px.0),
             LengthPercentage::Percentage(p) => LengthPercentageAuto::percent(p.0),
@@ -54,6 +54,12 @@ fn length_percentage_auto(value: GenericSize) -> LengthPercentageAuto {
 fn dimension(value: GenericSize) -> Dimension {
     match value {
         GenericSize::Auto => Dimension::auto(),
+        GenericSize::Keyword(keyword) => match keyword {
+            SizingKeyword::MinContent => Dimension::min_content(),
+            SizingKeyword::MaxContent => Dimension::max_content(),
+            SizingKeyword::FitContent => Dimension::fit_content(),
+            SizingKeyword::Stretch => Dimension::stretch(),
+        },
         GenericSize::LengthPercentage(lp) => match lp {
             LengthPercentage::PixelLength(px) => Dimension::length(px.0),
             LengthPercentage::Percentage(p) => Dimension::percent(p.0),

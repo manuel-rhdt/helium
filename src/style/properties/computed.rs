@@ -373,6 +373,17 @@ impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage 
 pub enum GenericSize {
     LengthPercentage(LengthPercentage),
     Auto,
+    /// A sizing keyword of `width` and `height`.
+    Keyword(SizingKeyword),
+}
+
+/// `min-content`, `max-content`, `fit-content` and `stretch`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SizingKeyword {
+    MinContent,
+    MaxContent,
+    FitContent,
+    Stretch,
 }
 
 impl GenericSize {
@@ -413,6 +424,26 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
             }) => GenericSize::LengthPercentage(LengthPercentage::PixelLength(
                 PixelLength::from_val_unit(*value, *unit, FontSizes::of(style)),
             )),
+        }
+    }
+}
+
+impl super::ComputedValue<specified::SizeValue> for GenericSize {
+    fn from_specified(spec: &specified::SizeValue, style: &ComputedValues) -> Self {
+        use specified::SizeValue;
+        match *spec {
+            SizeValue::Auto => GenericSize::Auto,
+            SizeValue::MinContent => GenericSize::Keyword(SizingKeyword::MinContent),
+            SizeValue::MaxContent => GenericSize::Keyword(SizingKeyword::MaxContent),
+            SizeValue::FitContent => GenericSize::Keyword(SizingKeyword::FitContent),
+            SizeValue::Stretch => GenericSize::Keyword(SizingKeyword::Stretch),
+            SizeValue::Percentage(percentage) => percentage.into(),
+            SizeValue::Quantity(quantity) => {
+                <GenericSize as super::ComputedValue<specified::AutoOrQuantityOrPercentage>>::from_specified(
+                    &specified::AutoOrQuantityOrPercentage::Quantity(quantity),
+                    style,
+                )
+            }
         }
     }
 }
@@ -476,7 +507,7 @@ impl super::ComputedValue<specified::NoneOrQuantityOrPercentage> for GenericSize
 impl GenericSize {
     pub fn absolute(self, if_auto: PixelLength, container_size: PixelLength) -> PixelLength {
         match self {
-            GenericSize::Auto => if_auto,
+            GenericSize::Auto | GenericSize::Keyword(_) => if_auto,
             GenericSize::LengthPercentage(lp) => lp.absolute(container_size),
         }
     }
