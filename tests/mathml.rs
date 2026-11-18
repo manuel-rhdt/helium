@@ -261,3 +261,82 @@ fn fractions_have_tex_like_space_on_both_sides() {
         bare
     );
 }
+
+fn math_height(name: &str, math: &str) -> f64 {
+    let dump = dump(
+        name,
+        &format!(
+            r#"<style>body {{ margin: 0 }}</style><p style="margin: 0"><math id="m" display="inline">{}</math></p>"#,
+            math
+        ),
+    );
+    height(&dump, "m")
+}
+
+fn math_width(name: &str, math: &str) -> f64 {
+    let dump = dump(
+        name,
+        &format!(r#"<style>body {{ margin: 0 }}</style><p style="margin: 0"><math id="m" display="inline">{}</math></p>"#, math),
+    );
+    find(&dump["document"], "m").unwrap()["border_box"]["width"].as_f64().unwrap()
+}
+
+#[test]
+fn displaystyle_attribute_selects_the_display_style() {
+    // a large operator is only large in display style
+    let sum = |attr: &str| format!(r#"<mstyle {}><mo>∑</mo></mstyle>"#, attr);
+    let inline = math_height("ds_default", &sum(""));
+    let display = math_height("ds_true", &sum(r#"displaystyle="true""#));
+    let off = math_height("ds_false", &sum(r#"displaystyle="false""#));
+    assert!(display > inline + 1.0, "display: {}, inline: {}", display, inline);
+    assert!((off - inline).abs() < 0.01, "off: {}, inline: {}", off, inline);
+}
+
+#[test]
+fn scriptlevel_attribute_sets_the_script_level() {
+    let width = |name: &str, attr: &str| {
+        math_width(name, &format!(r#"<mstyle {}><mi>x</mi><mi>x</mi></mstyle>"#, attr))
+    };
+    let base = width("sl_none", "");
+    let one = width("sl_one", r#"scriptlevel="1""#);
+    let plus = width("sl_plus", r#"scriptlevel="+1""#);
+    let zero = width("sl_zero", r#"scriptlevel="0""#);
+    assert!(one < base - 1.0, "one: {}, base: {}", one, base);
+    assert!((plus - one).abs() < 0.01, "plus: {}, one: {}", plus, one);
+    assert!((zero - base).abs() < 0.01, "zero: {}, base: {}", zero, base);
+    // an invalid value is ignored
+    assert!((width("sl_bad", r#"scriptlevel="big""#) - base).abs() < 0.01);
+}
+
+#[test]
+fn mathsize_attribute_sets_the_font_size() {
+    let width = |name: &str, attr: &str| {
+        math_width(name, &format!(r#"<mstyle {}><mi>x</mi></mstyle>"#, attr))
+    };
+    let base = width("ms_none", "");
+    let double = width("ms_200", r#"mathsize="200%""#);
+    let em = width("ms_em", r#"mathsize="2em""#);
+    assert!((double / base - 2.0).abs() < 0.02, "double: {}, base: {}", double, base);
+    assert!((em - double).abs() < 0.01, "em: {}, double: {}", em, double);
+    assert!((width("ms_bad", r#"mathsize="huge""#) - base).abs() < 0.01);
+}
+
+#[test]
+fn table_cells_have_padding() {
+    // MathML Core: `mtd { padding: 0.5ex 0.4em }`
+    let cell = |name: &str, style: &str| {
+        math_width(
+            name,
+            &format!(r#"<mtable><mtr><mtd {}><mi>x</mi></mtd></mtr></mtable>"#, style),
+        )
+    };
+    let padded = cell("mtd_padded", "");
+    let bare = cell("mtd_bare", r#"style="padding: 0""#);
+    // the font size is 16px
+    assert!(
+        (padded - bare - 2.0 * 0.4 * 16.0).abs() < 0.05,
+        "padded: {}, bare: {}",
+        padded,
+        bare
+    );
+}

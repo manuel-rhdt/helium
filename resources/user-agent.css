@@ -530,6 +530,10 @@ mmultiscripts > mprescripts ~ :nth-child(odd) {
 mtable {
   -helium-math-style: inline;
 }
+/* MathML Core has `0.5ex 0.4em`; the font's x-height is not known here. */
+mtd {
+  padding: 0.25em 0.4em;
+}
 
 math[display="inline"] {
   -helium-math-style: inline;
