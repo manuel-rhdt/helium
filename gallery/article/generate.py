@@ -177,6 +177,8 @@ sub = lambda a, b: f"<msub>{a}{b}</msub>"
 sqrt = lambda a: f"<msqrt>{a}</msqrt>"
 d = mi("d", normal=True)
 paren = lambda *p: mo("(") + "".join(p) + mo(")")
+# fences that grow with a tall argument (a fraction): the operator dictionary makes them stretchy
+bigparen = lambda *p: row("<mo>(</mo>", *p, "<mo>)</mo>")
 sp = '<mspace width="0.2em"/>'
 x, t, D_, y, z = mi("x"), mi("t"), mi("D"), mi("y"), mi("z")
 Uf = lambda arg: mi("U") + paren(arg)
@@ -194,7 +196,7 @@ EQ4 = display(mi("τ"), paren(sub(x, mn("0"))), mo("="), frac(mn("1"), D_), '<mu
 EQ5 = display(mi("r"), mo("="), frac(mn("1"), row(mn("2"), mi("τ"), paren(mn("−1")))))
 EQ6 = display(frac(mi("r"), sub(mi("r"), mi("K"))), mo("="), mn("1"), mo("−"), frac(mn("3"), mn("2")), D_, mo("+"), mi("O"), paren(sup(D_, mn("2"))))
 
-EQ7 = display(sub(mi("r"), mi("c")), mo("="), sub(mi("r"), mi("K")), paren(mn("1"), mo("−"), frac(mn("3"), mn("2")), D_))
+EQ7 = display(sub(mi("r"), mi("c")), mo("="), sub(mi("r"), mi("K")), bigparen(mn("1"), mo("−"), frac(mn("3"), mn("2")), D_))
 CORR = inline(mo("⟨"), mi("ξ"), paren(t), mi("ξ"), paren(mi("t", False) + mo("′")), mo("⟩"), mo("="), mi("δ"), paren(t, mo("−"), mi("t") + mo("′")))
 M = lambda *p: inline(*p)
 M_U = M(mi("U"), paren(x))

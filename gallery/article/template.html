@@ -32,6 +32,8 @@
   h1 { font: bold 17pt/20pt "TeX Gyre Termes", Times, serif; margin: 0 0 10pt; hyphens: manual; }
   .authors { font-size: 11pt; line-height: 14pt; margin: 0 0 3pt; }
   .authors sup, .affil sup { font-size: 0.7em; line-height: 0; }
+  /* a raised or lowered box must not push its line apart from the others */
+  sub, sup { line-height: 0; }
   .affil { font-style: italic; font-size: 9pt; line-height: 11pt; margin: 0; }
   .date { font-size: 9pt; margin: 5pt 0 9pt; }
   .abstract { margin: 0 0.4in; font-size: 9pt; line-height: 11pt; text-align: justify; padding-bottom: 7pt; border-bottom: 0.6pt solid #000; margin-bottom: 9pt; }
