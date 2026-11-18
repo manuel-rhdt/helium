@@ -1,4 +1,4 @@
-use super::components::{self, BlockLevelElement, LayoutEntity, MathNode, Position, RootNode};
+use super::components::{self, BlockLevelElement, LayoutEntity, MathNode, MathSegment, Position, RootNode};
 use super::inline::InlineFormattingContext;
 use super::margin_boxes::{MarginBoxes, PageCounterOps, ResolvedMarginBox};
 use super::pages::{self, PageContext};
@@ -283,7 +283,8 @@ impl FlowConstructor {
                 let size_hint = image_size_hint(element_ref)
                     .or_else(|| table_hint(node, element_ref))
                     .or_else(|| list_type_hint(node, element_ref))
-                    .or_else(|| gauge_hint(element_ref));
+                    .or_else(|| gauge_hint(element_ref))
+                    .or_else(|| math_hint(element_ref));
                 let cascade = cascade_declarations(&matched_rules, size_hint.as_ref(), inline_style.as_ref());
                 style_builder.apply_cascade(cascade.iter().copied());
                 let mut style = style_builder.build();
@@ -2207,20 +2208,40 @@ impl EntityConstructor {
 
         let math_nodes = WriteStorage::<MathNode>::fetch(&self.world);
         let text_runs = WriteStorage::<TextRun>::fetch(&self.world);
+        let images = self.world.read_storage::<components::ImageBox>();
         let mut children = Vec::new();
         let mut raw_text = String::new();
+        // the text and the foreign content of a token, in order
+        let mut pieces: Vec<Result<String, Entity>> = Vec::new();
+        let mut piece_text = String::new();
         for child in node.children() {
             let Some(LayoutEntity(child_entity)) = child.layout_entity() else {
                 continue;
             };
             if let Some(text_run) = text_runs.get(child_entity) {
                 raw_text.push_str(&text_run.text);
-            } else if math_nodes.contains(child_entity) {
-                children.push(child_entity);
+                piece_text.push_str(&text_run.text);
+            } else if let Some(child_node) = math_nodes.get(child_entity) {
+                if is_token && child_node.kind == NodeKind::Foreign {
+                    // only replaced content (an image) is laid out inside a token; other HTML
+                    // is left out
+                    if images.contains(child_entity) {
+                        if !piece_text.is_empty() {
+                            pieces.push(Ok(std::mem::take(&mut piece_text)));
+                        }
+                        pieces.push(Err(child_entity));
+                    }
+                } else {
+                    children.push(child_entity);
+                }
             }
         }
+        if !piece_text.is_empty() {
+            pieces.push(Ok(piece_text));
+        }
+        let has_foreign = pieces.iter().any(Result::is_err);
 
-        let text = is_token.then(|| {
+        let transform = |raw_text: &str| {
             let is_mi = kind == NodeKind::Math(MathElement::Mi);
             let is_mo = kind == NodeKind::Math(MathElement::Mo);
             // By default, an `mi` is only italic if it consists of a single character, longer
@@ -2235,8 +2256,18 @@ impl EntityConstructor {
             };
             let text = raw_text.adapt_to_family(Some(variant.into()));
             text.replace_anomalous_characters(is_mo)
+        };
+        let text = is_token.then(|| transform(&raw_text));
+        let segments = has_foreign.then(|| {
+            pieces
+                .into_iter()
+                .map(|piece| match piece {
+                    Ok(text) => MathSegment::Text(transform(&text)),
+                    Err(entity) => MathSegment::Foreign(entity),
+                })
+                .collect::<Vec<_>>()
         });
-        drop((math_nodes, text_runs));
+        drop((math_nodes, text_runs, images));
 
         self.world
             .write_storage::<MathNode>()
@@ -2247,6 +2278,7 @@ impl EntityConstructor {
                     children,
                     text,
                     attributes,
+                    segments,
                     font_name,
                 },
             )
@@ -2542,6 +2574,47 @@ fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
     }
     // pixels are the size of the image box itself (see `image_of`)
     has_percentage.then(|| PropertyDeclarationBlock::parse_inline(&css))
+}
+
+/// The presentational hints of the `displaystyle`, `scriptlevel` and `mathsize` attributes of a
+/// MathML element (MathML Core 3.1 "attribute mappings"): `math-style`, `math-depth` and
+/// `font-size`. They replace what the structural rules of the user agent stylesheet set. Invalid
+/// values are ignored.
+fn math_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
+    if element.name.ns != ns!(mathml) {
+        return None;
+    }
+    let attributes = element.attributes.borrow();
+    let attribute = |name: &str| -> Option<String> {
+        let name = QualName::new(None, ns!(), html5ever::LocalName::from(name));
+        Some(attributes.get(&name)?.value.trim().to_owned())
+    };
+    let mut css = String::new();
+    match attribute("displaystyle").as_deref() {
+        Some("true") => css.push_str("math-style: normal;"),
+        Some("false") => css.push_str("math-style: compact;"),
+        _ => {}
+    }
+    if let Some(level) = attribute("scriptlevel") {
+        let digits = level.trim_start_matches(['+', '-']);
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+            if level.starts_with('+') {
+                css.push_str(&format!("math-depth: add({digits});"));
+            } else if level.starts_with('-') {
+                css.push_str(&format!("math-depth: add(-{digits});"));
+            } else {
+                css.push_str(&format!("math-depth: {digits};"));
+            }
+        }
+    }
+    if let Some(size) = attribute("mathsize") {
+        let end = size.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(size.len());
+        let (number, unit) = size.split_at(end);
+        if number.parse::<f32>().is_ok() && matches!(unit.trim(), "%" | "px" | "em" | "ex" | "pt" | "pc" | "in" | "cm" | "mm") {
+            css.push_str(&format!("font-size: {number}{};", unit.trim()));
+        }
+    }
+    (!css.is_empty()).then(|| PropertyDeclarationBlock::parse_inline(&css))
 }
 
 /// The background color of the nearest inline ancestor of a text that has one (the text is

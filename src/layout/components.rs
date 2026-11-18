@@ -1000,8 +1000,30 @@ pub struct MathNode {
     pub text: Option<String>,
     /// The attributes of the element, by local name.
     pub attributes: HashMap<String, String>,
+    /// The content of a token element that contains foreign content (an image in `<mtext>`):
+    /// its text and the foreign nodes, in document order. `children` does not list the foreign
+    /// nodes of such a token.
+    pub segments: Option<Vec<MathSegment>>,
     /// The font of this node (a key of `FontMap`).
     pub font_name: String,
+}
+
+/// A piece of the content of a token element with foreign content.
+#[derive(Debug, Clone)]
+pub enum MathSegment {
+    Text(String),
+    Foreign(Entity),
+}
+
+impl MathNode {
+    /// The child elements and the foreign nodes of the content of a token.
+    pub fn child_entities(&self) -> impl Iterator<Item = Entity> + '_ {
+        let foreign = self.segments.iter().flatten().filter_map(|segment| match segment {
+            MathSegment::Foreign(entity) => Some(*entity),
+            MathSegment::Text(_) => None,
+        });
+        self.children.iter().copied().chain(foreign)
+    }
 }
 
 impl Component for MathNode {

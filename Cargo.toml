@@ -66,6 +66,8 @@ harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "m
 # since only one package may link to native harfbuzz.
 [patch.crates-io]
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main" }
+# `MathTree::token_content`, for foreign content (an image) inside `<mtext>`. Drop this once it is released.
+formel = { git = "https://github.com/manuel-rhdt/formel.git", branch = "master" }
 
 # The build script subsets the bundled fonts; do not run harfbuzz unoptimized.
 [profile.dev.build-override]

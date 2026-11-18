@@ -912,7 +912,7 @@ pub enum Math {
     Form(MathOperatorForm),
     #[ua_property]
     OperatorIsStretchy(AutoBool),
-    #[ua_property]
+    #[property]
     MathStyle(MathStyle),
     #[property]
     MathDepth(MathDepth),
@@ -3697,15 +3697,18 @@ impl Default for MathShift {
     }
 }
 
+/// The `math-style` property: `normal | compact`. `normal` is display style, `compact` inline
+/// style. Unlike the standard initial value (`normal`), helium starts out compact.
+/// https://w3c.github.io/mathml-core/#the-math-style
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum MathStyle {
-    Inline,
-    Display,
+    Compact,
+    Normal,
 }
 
 impl Default for MathStyle {
     fn default() -> MathStyle {
-        MathStyle::Inline
+        MathStyle::Compact
     }
 }
 

@@ -474,28 +474,34 @@ math, math * {
   font-size: math;
 }
 
+/* TeX puts \nulldelimiterspace (1.2pt at 10pt, i.e. 0.12em) on both sides of a fraction, so
+   that a following `e^x` doesn't touch the fraction rule. MathML Core only has 1px here. */
+mfrac {
+  padding-inline: 0.12em;
+}
+
 /* Script level changes, after MathML Core's user agent stylesheet. */
 mfrac > * {
   math-depth: auto-add;
-  -helium-math-style: inline;
+  math-style: compact;
 }
 msub > :not(:first-child),
 msup > :not(:first-child),
 msubsup > :not(:first-child),
 mmultiscripts > :not(:first-child) {
   math-depth: add(1);
-  -helium-math-style: inline;
+  math-style: compact;
 }
 mroot > :not(:first-child) {
   math-depth: add(2);
-  -helium-math-style: inline;
+  math-style: compact;
 }
 munder > :nth-child(2),
 mover > :nth-child(2),
 munderover > :nth-child(2),
 munderover > :nth-child(3) {
   math-depth: add(1);
-  -helium-math-style: inline;
+  math-style: compact;
 }
 /* Accents are not scripts. */
 mover[accent="true"] > :nth-child(2),
@@ -522,21 +528,25 @@ mmultiscripts > mprescripts ~ :nth-child(odd) {
 }
 
 mtable {
-  -helium-math-style: inline;
+  math-style: compact;
+}
+/* MathML Core has `0.5ex 0.4em`; the font's x-height is not known here. */
+mtd {
+  padding: 0.25em 0.4em;
 }
 
 math[display="inline"] {
-  -helium-math-style: inline;
+  math-style: compact;
   display: inline;
 }
 
 math[display="block"] {
-  -helium-math-style: display;
+  math-style: normal;
   margin-left: auto;
   margin-right: auto;
   display: block;
 }
-math annotation {
+math annotation, math annotation-xml {
   display: none;
 }
 math mi {

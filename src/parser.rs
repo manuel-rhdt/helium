@@ -258,6 +258,25 @@ impl TreeSink for Sink {
         target.as_element().unwrap().name.expanded()
     }
 
+    /// `<annotation-xml encoding="text/html">` (or `application/xhtml+xml`) holds HTML: without this,
+    /// the parser treats its children as breaking out of the formula.
+    /// https://html.spec.whatwg.org/multipage/parsing.html#html-integration-point
+    fn is_mathml_annotation_xml_integration_point(&self, handle: &Self::Handle) -> bool {
+        let Some(element) = handle.as_element() else {
+            return false;
+        };
+        element.name.ns == html5ever::ns!(mathml)
+            && &*element.name.local == "annotation-xml"
+            && element
+                .attributes
+                .borrow()
+                .get(&QualName::new(None, html5ever::ns!(), html5ever::local_name!("encoding")))
+                .is_some_and(|encoding| {
+                    encoding.value.eq_ignore_ascii_case("text/html")
+                        || encoding.value.eq_ignore_ascii_case("application/xhtml+xml")
+                })
+    }
+
     #[inline]
     fn create_element(
         &self,
