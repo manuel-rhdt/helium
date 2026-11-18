@@ -63,6 +63,9 @@ pub(super) struct Node {
     pub orthogonal: bool,
     /// The style of an orthogonal flow in the logical axes of its parent.
     pub item_style: Option<taffy::Style>,
+    /// `justify-self` and `align-self` as resolved for the container (`resolve_self_alignment`),
+    /// which `item_style` has to be given again when it is made.
+    pub resolved_self: (Option<crate::style::properties::specified::SelfAlignment>, Option<crate::style::properties::specified::SelfAlignment>),
     pub content: Content,
     /// The children of the node in document order, including the out-of-flow ones. A node with
     /// inline content only has out-of-flow children.
@@ -202,6 +205,15 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             let node = self.node_mut(id);
             node.orthogonal = true;
             node.item_style = item;
+            let (justify, align) = node.resolved_self;
+            if let Some(style) = node.item_style.as_mut() {
+                if let Some(value) = justify {
+                    style.justify_self = super::style::self_alignment(value);
+                }
+                if let Some(value) = align {
+                    style.align_self = super::style::self_alignment(value);
+                }
+            }
         }
         for child in self.node(id).children.clone() {
             self.mark_orthogonal(child, flow);
@@ -228,6 +240,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             flow,
             orthogonal: false,
             item_style: None,
+            resolved_self: (None, None),
             content,
             children: vec![],
             atoms: vec![],
@@ -266,6 +279,8 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         }
         let id = self.new_node(entity, Content::Replaced);
         self.make_leaf(id, block_ctxs);
+        // (a box with inline content only: the out-of-flow boxes in it are its children)
+        self.prepare_right_to_left(id);
         id
     }
 
@@ -363,9 +378,9 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         use crate::style::properties::specified::{Direction, SelfAlignment};
         use crate::style::properties::computed::ComputedValues;
         let Some(container) = self.computed_values.get(self.node(id).entity) else { return };
-        if !container.box_.display.is_flex_or_grid() {
-            return;
-        }
+        // (a block container aligns its children in the inline axis only, with `justify-self`;
+        // the boxes that it is the containing block of can use both)
+        let flex_or_grid = container.box_.display.is_flex_or_grid();
         #[derive(PartialEq, Clone, Copy)]
         enum Side { Left, Right, Top, Bottom }
         let side = |style: &ComputedValues, inline: bool| -> Side {
@@ -413,14 +428,31 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
                     _ => return None,
                 })
             };
-            let justify = resolve(style.box_.justify_self, true);
-            let align = resolve(style.box_.align_self, false);
+            let mut justify = resolve(style.box_.justify_self, true);
+            // In a vertical flow with `direction: rtl` the inline axis runs upwards: `start` is at
+            // the bottom (the sides that `resolve` gave are physical already).
+            if !flex_or_grid && container_flow.is_vertical() && container_rtl {
+                let flip = |value: SelfAlignment| match value {
+                    SelfAlignment::Start => SelfAlignment::End,
+                    SelfAlignment::End => SelfAlignment::Start,
+                    value => value,
+                };
+                justify = match style.box_.justify_self {
+                    SelfAlignment::Start | SelfAlignment::End => Some(flip(style.box_.justify_self)),
+                    SelfAlignment::LastBaseline(_) => Some(SelfAlignment::Start),
+                    SelfAlignment::Baseline | SelfAlignment::FirstBaseline(_) if self.node(child).style.position == taffy::Position::Absolute => Some(SelfAlignment::End),
+                    SelfAlignment::SelfStart | SelfAlignment::SelfEnd => justify.map(flip),
+                    _ => justify,
+                };
+            }
+            let align = if flex_or_grid || self.node(child).style.position == taffy::Position::Absolute { resolve(style.box_.align_self, false) } else { None };
             if justify.is_some() || align.is_some() {
                 updates.push((child, justify, align));
             }
         }
         for (child, justify, align) in updates {
             let node = self.node_mut(child);
+            node.resolved_self = (justify, align);
             for style in std::iter::once(&mut node.style).chain(node.item_style.iter_mut()) {
                 if let Some(value) = justify {
                     style.justify_self = super::style::self_alignment(value);
@@ -445,7 +477,9 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
         let rtl = self.computed_values.get(node.entity).is_some_and(|style| {
             style.text.direction == crate::style::properties::specified::Direction::Rtl
         });
-        let has_block_children = matches!(node.content, Content::Blocks | Content::Table);
+        // (the children of the inline content of a box are out-of-flow boxes)
+        let has_block_children = matches!(node.content, Content::Blocks | Content::Table)
+            || (node.content == Content::Inline && !node.children.is_empty());
         // in a vertical flow, `direction` would run the lines upwards, which is not supported
         if !rtl || !has_block_children || node.flow.is_vertical() {
             return;
@@ -641,6 +675,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             if !existing.contains(&absolute) {
                 let child = self.build_box(absolute, block_ctxs);
                 self.node_mut(id).children.push(child);
+                self.resolve_self_alignment(id);
             }
         }
         for atom in atoms {
@@ -1008,6 +1043,16 @@ impl HeliumTree<'_, '_> {
                 to_content(size(style.size.width, parent.width), extras.0),
                 to_content(size(style.size.height, parent.height), extras.1),
             );
+            // an `aspect-ratio` without `auto` is the ratio of the border box in a `border-box`
+            if let (true, Some(ratio), false) = (border_box, node.style.aspect_ratio, natural_ratio_of(self, node.entity)) {
+                if ratio > 0.0 {
+                    match specified {
+                        (Some(w), None) => specified.1 = Some(((w + extras.0) / ratio - extras.1).max(0.0)),
+                        (None, Some(h)) => specified.0 = Some(((h + extras.1) * ratio - extras.0).max(0.0)),
+                        _ => {}
+                    }
+                }
+            }
             if self.canvases.get(node.entity).is_some_and(|canvas| canvas.ratioless) {
                 specified = (specified.0.or(Some(natural.0)), specified.1.or(Some(natural.1)));
             }
@@ -1055,13 +1100,19 @@ impl HeliumTree<'_, '_> {
             .style
             .aspect_ratio
             .or_else(|| image.filter(|&(w, h)| !ratioless && w > 0.0 && h > 0.0).map(|(w, h)| w / h));
+        // an `aspect-ratio` without `auto` is the ratio of the box that `box-sizing` gives
+        let ratio_extras = if border_box && node.style.aspect_ratio.is_some() && !natural_ratio_of(self, node.entity) {
+            (0.0, 0.0)
+        } else {
+            extras
+        };
         let mut output = compute_leaf_layout(inputs, style, calc, |known, _available| Size {
             width: known.width.unwrap_or_else(|| match (known.height, ratio) {
-                (Some(height), Some(ratio)) => ((height - extras.1).max(0.0) * ratio + extras.0),
+                (Some(height), Some(ratio)) => ((height - ratio_extras.1).max(0.0) * ratio + ratio_extras.0),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),
             }),
             height: known.height.unwrap_or_else(|| match (known.width, ratio) {
-                (Some(width), Some(ratio)) => ((width - extras.0).max(0.0) / ratio + extras.1),
+                (Some(width), Some(ratio)) => ((width - ratio_extras.0).max(0.0) / ratio + ratio_extras.1),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0), |i| i.1),
             }),
         });
@@ -1070,6 +1121,12 @@ impl HeliumTree<'_, '_> {
         }
         output
     }
+}
+
+/// Whether the `aspect-ratio` of a box has `auto` (or is not given): the natural ratio of an
+/// image then is the one of its content box.
+fn natural_ratio_of(tree: &HeliumTree<'_, '_>, entity: Entity) -> bool {
+    tree.computed_values.get(entity).is_none_or(|style| style.box_.aspect_ratio.auto)
 }
 
 /// A place where a line of a paragraph ends, in the cut of the paragraph that the kernel stores:

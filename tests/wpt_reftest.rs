@@ -5,7 +5,7 @@
 //! `helium --dump-layout`: the solid rectangles (backgrounds and borders) and the glyph runs with
 //! their positions. This is independent of how the two documents are structured, which is what
 //! reftests rely on. Following the WPT convention that "red means failure", a test must also not
-//! paint anything pure red.
+//! paint anything pure red that its reference does not paint.
 
 //! Runs vendored web-platform-tests reftests: a test and its `<link rel="match">` reference must
 //! look the same.
@@ -13,7 +13,7 @@
 //! Both documents are turned into PDFs, which `pdftoppm` (poppler-utils) rasterizes at 96 dpi, so
 //! that a pixel is a CSS pixel; the pages must be the same size and no pixel may differ by more
 //! than a little. Following the WPT convention that "red means failure", a test must also not
-//! paint pure red.
+//! paint pure red that its reference does not paint.
 
 mod common;
 
@@ -156,7 +156,7 @@ fn is_blank(pages: &[Page]) -> bool {
 /// Whether the pixel at `index` of `a` is like one of the pixels around it in `b`. The edges of
 /// an image are drawn to whole pixels and the edges of a filled rectangle are antialiased, so the
 /// same box differs by a pixel at its fractional position (the margins of the page are 2.5 cm).
-fn matches_nearby(a: &Page, b: &Page, index: usize) -> bool {
+fn matches_nearby(a: &Page, b: &Page, index: usize, fuzz: u8) -> bool {
     let (x, y) = ((index % a.width) as isize, (index / a.width) as isize);
     let pixel = &a.pixels[index * 3..index * 3 + 3];
     for dy in -1..=1isize {
@@ -166,7 +166,7 @@ fn matches_nearby(a: &Page, b: &Page, index: usize) -> bool {
                 continue;
             }
             let at = (ny as usize * b.width + nx as usize) * 3;
-            if pixel.iter().zip(&b.pixels[at..at + 3]).all(|(p, q)| p.abs_diff(*q) <= FUZZ) {
+            if pixel.iter().zip(&b.pixels[at..at + 3]).all(|(p, q)| p.abs_diff(*q) <= fuzz) {
                 return true;
             }
         }
@@ -174,7 +174,32 @@ fn matches_nearby(a: &Page, b: &Page, index: usize) -> bool {
     false
 }
 
+/// What the test allows to differ, from `<meta name="fuzzy" content="maxDifference=0-52;
+/// totalPixels=0-8250">`: the most that a channel may differ and the number of pixels that may.
+/// (A value for one reference only, `ref.html:maxDifference=...`, is for the reference of the
+/// test, so it counts.)
+fn fuzzy(test: &Path) -> (u8, usize) {
+    let source = std::fs::read_to_string(test).unwrap_or_default();
+    let Some(at) = source.find("name=\"fuzzy\"") else { return (FUZZ, 0) };
+    let tag_start = source[..at].rfind('<').unwrap_or(0);
+    let tag_end = source[at..].find('>').map_or(source.len(), |end| at + end);
+    let tag = &source[tag_start..tag_end];
+    let Some(content) = tag.split("content=\"").nth(1).and_then(|rest| rest.split('"').next()) else {
+        return (FUZZ, 0);
+    };
+    let upper = |key: &str| -> Option<usize> {
+        let value = content.split(key).nth(1)?.trim_start_matches('=');
+        let range: String = value.chars().take_while(|c| c.is_ascii_digit() || *c == '-').collect();
+        range.rsplit('-').next()?.parse().ok()
+    };
+    (
+        upper("maxDifference").map_or(FUZZ, |max| (max.min(255) as u8).max(FUZZ)),
+        upper("totalPixels").unwrap_or(0),
+    )
+}
+
 fn run_reftest(test: &Path, expected: &Result<Vec<Page>, String>) -> Result<(), String> {
+    let (fuzz, allowed) = fuzzy(test);
     let actual = render(test)?;
     let expected = expected.as_ref().map_err(|why| format!("the reference: {}", why))?;
 
@@ -203,16 +228,16 @@ fn run_reftest(test: &Path, expected: &Result<Vec<Page>, String>) -> Result<(), 
         let mut differing = 0;
         let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
         for (index, (p, q)) in a.pixels.chunks(3).zip(b.pixels.chunks(3)).enumerate() {
-            if p.iter().zip(q).any(|(x, y)| x.abs_diff(*y) > FUZZ)
-                && !matches_nearby(a, b, index)
-                && !matches_nearby(b, a, index)
+            if p.iter().zip(q).any(|(x, y)| x.abs_diff(*y) > fuzz)
+                && !matches_nearby(a, b, index, fuzz)
+                && !matches_nearby(b, a, index, fuzz)
             {
                 differing += 1;
                 let (x, y) = (index % a.width, index / a.width);
                 (left, top, right, bottom) = (left.min(x), top.min(y), right.max(x), bottom.max(y));
             }
         }
-        if differing > 0 {
+        if differing > allowed {
             return Err(format!(
                 "page {} differs in {} pixels, within x {}..{} and y {}..{}",
                 number + 1,
@@ -286,7 +311,13 @@ fn wpt_reftests() {
     for (test, result) in tests.iter().zip(results) {
         let name = test_name(test);
         match (result, known_failures.contains(&name)) {
-            (Ok(()), false) | (Err(_), true) => {}
+            (Ok(()), false) => {}
+            // (`WPT_REASONS=1` says why the known failures fail)
+            (Err(why), true) => {
+                if std::env::var_os("WPT_REASONS").is_some() {
+                    eprintln!("KNOWN {}: {}", name, why);
+                }
+            }
             (Err(why), false) => problems.push(format!("FAIL {}: {}", name, why)),
             (Ok(()), true) => problems.push(format!(
                 "UNEXPECTED PASS {} (remove it from tests/wpt/reftest-expectations.txt)",

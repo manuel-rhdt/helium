@@ -230,3 +230,27 @@ fn tables_stay_border_box() {
 "#,
     );
 }
+
+/// `min-content`, `max-content`, `fit-content` and `stretch` as `width` and `height`.
+#[test]
+fn sizing_keywords_of_width_and_height() {
+    check_layout(
+        "keywords",
+        r#"<!DOCTYPE html>
+<style>
+  body { margin: 0 }
+  .g { display: grid; grid-auto-flow: column; width: max-content }
+  .f { display: flex; width: max-content }
+  .g div, .f div, .b div { width: 50px; height: 10px }
+  .b { width: max-content }
+  .st { width: stretch; margin: 0 10px }
+</style>
+<div class="g" data-expected-width="100"><div></div><div></div></div>
+<div class="f" data-expected-width="100"><div></div><div></div></div>
+<div class="b" data-expected-width="50"><div></div></div>
+<div class="b" style="width: fit-content" data-expected-width="50"><div></div></div>
+<div style="width: 200px"><div style="width: fit-content" data-expected-width="50"><div style="width: 50px"></div></div></div>
+<div class="st" data-offset-x="10" data-expected-height="0"></div>
+<div style="height: 100px"><div style="height: stretch" data-expected-height="100"><div style="height: 20px"></div></div></div>"#,
+    );
+}

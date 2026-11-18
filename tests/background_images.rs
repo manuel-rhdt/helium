@@ -115,3 +115,46 @@ fn the_background_of_the_page_and_of_the_canvas_are_painted() {
     let (_, painted) = render(&dir("canvas"), "canvas", &canvas);
     assert_eq!(painted, 1);
 }
+
+/// `background-origin` moves the positioning area: with padding and border, the image is at
+/// another place for each of the boxes, and the shorthand takes the box as the origin.
+#[test]
+fn the_origin_box_positions_the_image() {
+    let image = format!("url(data:image/png;base64,{PNG}) no-repeat");
+    let boxed = |origin: &str| {
+        let (pdf, painted) = render(
+            &dir("origin"),
+            &format!("origin_{origin}"),
+            &page(&format!("padding: 10px; border: 5px solid; background: {image}; background-origin: {origin}")),
+        );
+        assert_eq!(painted, 1);
+        pdf
+    };
+    let (padding, border, content) = (boxed("padding-box"), boxed("border-box"), boxed("content-box"));
+    assert_ne!(padding, border);
+    assert_ne!(padding, content);
+    assert_ne!(border, content);
+    // padding-box is the initial value
+    let (initial, _) = render(&dir("origin"), "origin_initial", &page(&format!("padding: 10px; border: 5px solid; background: {image}")));
+    assert_eq!(initial, padding);
+    // the shorthand: `border-box` is the origin and the clip
+    let (shorthand, _) = render(
+        &dir("origin"),
+        "origin_shorthand",
+        &page(&format!("padding: 10px; border: 5px solid; background: {image} border-box")),
+    );
+    assert_eq!(shorthand, border);
+    // one box is the clip too: this one differs from the origin alone
+    let (clipped, _) = render(
+        &dir("origin"),
+        "origin_clipped",
+        &page(&format!("padding: 10px; border: 5px solid; background: {image} content-box")),
+    );
+    assert_ne!(clipped, content, "the clip is the content box too");
+    let (longhand, _) = render(
+        &dir("origin"),
+        "origin_longhand",
+        &page(&format!("padding: 10px; border: 5px solid; background: {image}; background-origin: border-box")),
+    );
+    assert_eq!(shorthand, longhand);
+}

@@ -1231,6 +1231,23 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     index += 1;
                 }
             }
+            // a space at the end of the paragraph hangs: it is not part of the width of the
+            // last line (nor of the intrinsic width)
+            let count = break_points.len();
+            if count >= 2 {
+                let (before, last) = (break_points[count - 2], break_points[count - 1]);
+                let only_space = before.entity == last.entity
+                    && text_runs
+                        .get(last.entity)
+                        .is_some_and(|run| {
+                            // (a run of white space only follows something else on the line)
+                            !run.text.trim().is_empty()
+                                && run.text.get(before.char_index..).is_some_and(|rest| rest.chars().all(char::is_whitespace))
+                        });
+                if before.space && !before.forced && only_space && before.advance_after == last.advance_before {
+                    break_points[count - 1].advance_before = before.advance_before;
+                }
+            }
         }
     }
 }
@@ -2104,32 +2121,69 @@ impl<'a> System<'a> for LineBoxCreator {
                             });
                             text_cursor = piece_start + piece_width;
                         }
-                        if let Some(background) = run.background.filter(|_| piece_width > Px(0.0) && !flow.is_vertical()) {
-                            // the background of an inline box is the em box of its font
+                        if (run.background.is_some() || run.edges.is_some()) && piece_width > Px(0.0) && !flow.is_vertical() {
+                            // the background of an inline box is the em box of its font, with the
+                            // vertical padding and border
                             let ascent = font.scale_to_px(font.ascent(), run.face.font_size);
                             let descent = Px(0.0) - font.scale_to_px(font.descent(), run.face.font_size);
                             let x = line_pos.x + advance + physical_x;
-                            let middle = line_pos.y + line.baseline + physical_y + (descent - ascent) / 2.0;
-                            entities
-                                .build_entity()
-                                .with(
-                                    components::Position { y: line_pos.y, height: Px(0.0), ..line_pos },
-                                    &mut positions,
-                                )
-                                .with(
-                                    components::VectorGraphics {
-                                        ops: vec![GraphicsOp::Line {
-                                            from_x: x,
-                                            from_y: middle,
-                                            to_x: x + piece_width,
-                                            to_y: middle,
-                                            thickness: ascent + descent,
-                                        }],
-                                        color: Some(background),
-                                    },
-                                    &mut graphics,
-                                )
-                                .build();
+                            let baseline_y = line_pos.y + line.baseline + physical_y;
+                            let (above, below) = run.edges.map_or((Px(0.0), Px(0.0)), |edges| {
+                                (Px(edges.padding_top + edges.border[0].0), Px(edges.padding_bottom + edges.border[2].0))
+                            });
+                            let (top, bottom) = (baseline_y - ascent - above, baseline_y + descent + below);
+                            let mut fill = |from: (Px, Px), to: (Px, Px), thickness: Px, color| {
+                                entities
+                                    .build_entity()
+                                    .with(
+                                        components::Position { y: line_pos.y, height: Px(0.0), ..line_pos },
+                                        &mut positions,
+                                    )
+                                    .with(
+                                        components::VectorGraphics {
+                                            ops: vec![GraphicsOp::Line {
+                                                from_x: from.0,
+                                                from_y: from.1,
+                                                to_x: to.0,
+                                                to_y: to.1,
+                                                thickness,
+                                            }],
+                                            color: Some(color),
+                                        },
+                                        &mut graphics,
+                                    )
+                                    .build();
+                            };
+                            let middle = (top + bottom) / 2.0;
+                            if let Some(background) = run.background {
+                                fill((x, middle), (x + piece_width, middle), bottom - top, background);
+                            }
+                            if let Some(edges) = run.edges {
+                                let [(top_width, top_color), (right_width, right_color), (bottom_width, bottom_color), (left_width, left_color)] =
+                                    edges.border;
+                                if top_width > 0.0 {
+                                    let y = top + Px(top_width / 2.0);
+                                    fill((x, y), (x + piece_width, y), Px(top_width), top_color);
+                                }
+                                if bottom_width > 0.0 {
+                                    let y = bottom - Px(bottom_width / 2.0);
+                                    fill((x, y), (x + piece_width, y), Px(bottom_width), bottom_color);
+                                }
+                                // the border at the start of the box is at the start of the run
+                                let (left_edge, right_edge) = match (edges.start, edges.end, rtl) {
+                                    (true, _, false) | (_, true, true) => (true, false),
+                                    (true, _, true) | (_, true, false) => (false, true),
+                                    _ => (false, false),
+                                };
+                                if left_edge && left_width > 0.0 {
+                                    let at = x + Px(left_width / 2.0);
+                                    fill((at, top), (at, bottom), Px(left_width), left_color);
+                                }
+                                if right_edge && right_width > 0.0 {
+                                    let at = x + piece_width - Px(right_width / 2.0);
+                                    fill((at, top), (at, bottom), Px(right_width), right_color);
+                                }
+                            }
                         }
                         if !run.decoration.is_none() && piece_width > Px(0.0) {
                             let page_pos = components::Position {
@@ -2508,6 +2562,9 @@ pub(super) fn shape_piece_in_flow(
         Some(hyphen) => shape_hyphenated_into(characters, hyphen, font, fonts, at, rtl, &mut shaped),
         None => shape_directed_into(characters, font, fonts, at, rtl, &mut shaped),
     }
+    // (an invisible character can have an advance, from `letter-spacing`: it makes the room for
+    // the edges of an inline box)
+    let invisible_advance: f64 = shaped.iter().filter(|(_, info)| is_invisible(info)).map(|(pos, _)| pos.x_advance.0).sum();
     shaped.retain(|(_, info)| !is_invisible(info));
 
     // Glyphs of characters that `font` has no glyph for come from its fallback fonts. The font
@@ -2574,6 +2631,10 @@ pub(super) fn shape_piece_in_flow(
             advance += word_spacing;
             pen.0 += word_spacing_units.0;
         }
+    }
+    if invisible_advance != 0.0 {
+        advance += font.scale_to_px(FontUnit(invisible_advance), font_size);
+        pen.0 += invisible_advance;
     }
     let piece_end = pen;
 

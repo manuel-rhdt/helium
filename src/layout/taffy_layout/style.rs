@@ -1,6 +1,6 @@
 //! Conversion of helium's computed style to Taffy's [`taffy::Style`].
 
-use crate::style::properties::computed::{
+use crate::style::properties::computed::{SizingKeyword, 
     BoxSizing, ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
     GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize, TrackEntry, Breadth,
 };
@@ -35,14 +35,14 @@ fn length_percentage(value: LengthPercentage) -> TLengthPercentage {
 /// A gap of a grid or flex container: `normal` is no gap.
 fn gap(value: GenericSize) -> TLengthPercentage {
     match value {
-        GenericSize::Auto => TLengthPercentage::length(0.0),
+        GenericSize::Auto | GenericSize::Keyword(_) => TLengthPercentage::length(0.0),
         GenericSize::LengthPercentage(value) => length_percentage(value),
     }
 }
 
 fn length_percentage_auto(value: GenericSize) -> LengthPercentageAuto {
     match value {
-        GenericSize::Auto => LengthPercentageAuto::auto(),
+        GenericSize::Auto | GenericSize::Keyword(_) => LengthPercentageAuto::auto(),
         GenericSize::LengthPercentage(lp) => match lp {
             LengthPercentage::PixelLength(px) => LengthPercentageAuto::length(px.0),
             LengthPercentage::Percentage(p) => LengthPercentageAuto::percent(p.0),
@@ -54,6 +54,12 @@ fn length_percentage_auto(value: GenericSize) -> LengthPercentageAuto {
 fn dimension(value: GenericSize) -> Dimension {
     match value {
         GenericSize::Auto => Dimension::auto(),
+        GenericSize::Keyword(keyword) => match keyword {
+            SizingKeyword::MinContent => Dimension::min_content(),
+            SizingKeyword::MaxContent => Dimension::max_content(),
+            SizingKeyword::FitContent => Dimension::fit_content(),
+            SizingKeyword::Stretch => Dimension::stretch(),
+        },
         GenericSize::LengthPercentage(lp) => match lp {
             LengthPercentage::PixelLength(px) => Dimension::length(px.0),
             LengthPercentage::Percentage(p) => Dimension::percent(p.0),
@@ -102,7 +108,8 @@ pub(super) fn self_alignment(value: SelfAlignment) -> Option<taffy::AlignSelf> {
         SelfAlignment::FlexStart => taffy::AlignItems::FLEX_START,
         SelfAlignment::FlexEnd => taffy::AlignItems::FLEX_END,
         SelfAlignment::Center => taffy::AlignItems::CENTER,
-        SelfAlignment::Baseline => taffy::AlignItems::BASELINE,
+        SelfAlignment::Baseline | SelfAlignment::FirstBaseline(_) => taffy::AlignItems::BASELINE,
+        SelfAlignment::LastBaseline(_) => taffy::AlignItems::END,
     })
 }
 
@@ -354,10 +361,10 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
             bottom: length_percentage(pos.padding_bottom),
         },
         border: Rect {
-            left: TLengthPercentage::length(pos.border_left_width.0),
-            right: TLengthPercentage::length(pos.border_right_width.0),
-            top: TLengthPercentage::length(pos.border_top_width.0),
-            bottom: TLengthPercentage::length(pos.border_bottom_width.0),
+            left: TLengthPercentage::length(pos.used_border_left_width().0),
+            right: TLengthPercentage::length(pos.used_border_right_width().0),
+            top: TLengthPercentage::length(pos.used_border_top_width().0),
+            bottom: TLengthPercentage::length(pos.used_border_bottom_width().0),
         },
         ..taffy::Style::DEFAULT
     }

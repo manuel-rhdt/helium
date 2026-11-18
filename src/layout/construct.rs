@@ -1383,6 +1383,7 @@ impl EntityConstructor {
         let font_size = style.font.font_size.0;
         if font_size > 0.0 {
             fonts.letter_spacing = style.text.letter_spacing.0 / font_size * 1000.0;
+            fonts.word_spacing = style.text.word_spacing.0 / font_size * 1000.0;
         }
         fonts.features = crate::style::properties::font_features::Features::of(&style.font).into();
         if style.text.writing_mode != crate::style::properties::specified::WritingMode::HorizontalTb {
@@ -1442,8 +1443,8 @@ impl EntityConstructor {
                     components::ListMarker { text, face, explicit }
                 });
 
-                if style.box_.display.is_atomic_inline() {
-                    // its contents are a block of their own
+                if style.box_.display.is_atomic_inline() || style.box_.display.is_block_level() {
+                    // its contents are a block of their own, or start on a line of their own
                     self.trim_next_inline_whitespace = true;
                 }
                 let span = (style.box_.display == Display::TableCell)
@@ -1592,10 +1593,12 @@ impl EntityConstructor {
                         &mut self.in_word,
                     );
                     let background = inline_background(&node);
+                    let edges = inline_box_edges(&node);
                     let built = self.build_text_entity(style, transformed.as_deref().unwrap_or(&*text));
-                    if background.is_some() {
+                    if background.is_some() || edges.is_some() {
                         if let Some(run) = self.world.write_storage::<components::TextRun>().get_mut(built.0) {
                             run.background = background;
+                            run.edges = edges;
                         }
                     }
                     built
@@ -1723,6 +1726,7 @@ impl EntityConstructor {
                 baseline,
                 decoration,
                 background: None,
+                edges: None,
                 hyphens,
                 manual_hyphen_points,
                 lang,
@@ -1755,6 +1759,10 @@ impl EntityConstructor {
         if node.style().box_.display.is_atomic_inline() {
             // an inline-block box is content, so the whitespace after it must be kept
             self.trim_next_inline_whitespace = false;
+        }
+        // what follows a block-level box starts a new line, where white space is removed
+        if node.style().box_.display.is_block_level() && !node.style().box_.display.is_atomic_inline() {
+            self.trim_next_inline_whitespace = true;
         }
 
         let is_display_inline = |node: &Node| match node.style().box_.display {
@@ -1798,7 +1806,13 @@ impl EntityConstructor {
         block_formatting_contexts: &mut WriteStorage<BlockFormattingContext>,
         shifts: &mut InlineShifts,
         math_nodes: &specs::ReadStorage<MathNode>,
+        text_runs: &specs::ReadStorage<components::TextRun>,
     ) {
+        // The inline content around a block has no line if it is only the struts of empty inline
+        // boxes.
+        let has_line = |elements: &[Entity]| {
+            elements.iter().any(|entity| text_runs.get(*entity).is_none_or(|run| !run.text.is_empty()))
+        };
         let push_block =
             |ble: &mut Vec<BlockLevelElement>,
              entity,
@@ -1842,6 +1856,9 @@ impl EntityConstructor {
             }
 
             if display.is_block_level() {
+                if !has_line(inline_level_elements) {
+                    inline_level_elements.clear();
+                }
                 if !inline_level_elements.is_empty() {
                     push_block(
                         block_level_elements,
@@ -1886,6 +1903,7 @@ impl EntityConstructor {
                         block_formatting_contexts,
                         shifts,
                         math_nodes,
+                        text_runs,
                     );
                 } else {
                     // a formula is placed on the line as a whole, like an `inline-block`
@@ -1915,6 +1933,7 @@ impl EntityConstructor {
         let mut computed_values = self.world.write_storage::<ComputedValues>();
         let mut shifts = InlineShifts::fetch(&self.world);
         let math_nodes = self.world.read_storage::<MathNode>();
+        let text_runs = self.world.read_storage::<components::TextRun>();
 
         let LayoutEntity(entity) = node.layout_entity().unwrap();
 
@@ -1939,6 +1958,7 @@ impl EntityConstructor {
             &mut block_formatting_contexts,
             &mut shifts,
             &math_nodes,
+            &text_runs,
         );
 
         let has_block_level_elements = block_level_elements
@@ -1977,7 +1997,10 @@ impl EntityConstructor {
         }
 
         // push last anonymous block, should there be one
-        if !inline_level_elements.is_empty() {
+        if !inline_level_elements.is_empty()
+            && (inline_level_elements.iter().any(|entity| text_runs.get(*entity).is_none_or(|run| !run.text.is_empty()))
+                || !has_block_level_elements)
+        {
             let entity = Self::build_anonymous_block(
                 &entities,
                 &mut inline_formatting_contexts,
@@ -2014,6 +2037,54 @@ impl EntityConstructor {
     }
 
     // called on bottom-up traversal
+    /// The runs that make room for the margin, the border and the padding at the start and at the
+    /// end of the line (in the direction of the text) of an inline box. The ones of the border and
+    /// the padding have the background of the box.
+    fn inline_edges<'a>(&mut self, node: &'a impl AbstractNode<'a>) -> (Vec<Entity>, Vec<Entity>) {
+        use crate::style::properties::computed::PixelLength;
+        let style = node.style();
+        if style.box_.display != Display::Inline
+            || style.text.writing_mode != crate::style::properties::specified::WritingMode::HorizontalTb
+        {
+            return (vec![], vec![]);
+        }
+        let position = &style.position;
+        let zero = PixelLength(0.0);
+        let rtl = style.text.direction == crate::style::properties::specified::Direction::Rtl;
+        let (margin_left, margin_right) =
+            (position.margin_left.absolute(zero, zero), position.margin_right.absolute(zero, zero));
+        let (padding_left, padding_right) = (position.padding_left.absolute(zero), position.padding_right.absolute(zero));
+        let (border_left, border_right) = (position.used_border_left_width(), position.used_border_right_width());
+        let (start, end) = if rtl {
+            ((margin_right, padding_right + border_right), (padding_left + border_left, margin_left))
+        } else {
+            ((margin_left, padding_left + border_left), (padding_right + border_right, margin_right))
+        };
+        if start.0 .0 == 0.0 && start.1 .0 == 0.0 && end.0 .0 == 0.0 && end.1 .0 == 0.0 {
+            return (vec![], vec![]);
+        }
+        let own = crate::style::properties::color::color_to_paint(style.background.background_color);
+        let outer = inline_background(node);
+        let inner = if own.alpha() > 0 { Some(own) } else { outer };
+        let mut make = |this: &mut Self, width: PixelLength, background, edges| -> Option<Entity> {
+            if width.0 == 0.0 {
+                return None;
+            }
+            let mut edge_style = style.clone();
+            std::sync::Arc::make_mut(&mut edge_style.text).letter_spacing = width;
+            let entity = this.build_text_entity(edge_style, "\u{2060}").0;
+            if let Some(run) = this.world.write_storage::<components::TextRun>().get_mut(entity) {
+                run.background = background;
+                run.edges = edges;
+                run.decoration = Default::default();
+            }
+            Some(entity)
+        };
+        let start = [make(self, start.0, outer, None), make(self, start.1, inner, edges_of(&style, true, false))];
+        let end = [make(self, end.0, inner, edges_of(&style, false, true)), make(self, end.1, outer, None)];
+        (start.into_iter().flatten().collect(), end.into_iter().flatten().collect())
+    }
+
     fn build_inline_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
         let strut = self.strut(&node.style());
         let mut inline_formatting_context =
@@ -2033,6 +2104,14 @@ impl EntityConstructor {
             if child_style.box_.display.is_atomic_inline() {
                 inline_formatting_context.elements.push(child_entity);
                 self.shift_relatively(child_entity, &[child_entity], &child_style);
+                continue;
+            }
+
+            // A block-level box in an inline box stays a box of its own (its formatting context is
+            // not merged into the line): `build_blocks` splits the inline box around it when the
+            // block that contains them is built.
+            if child_style.box_.display.is_block_level() {
+                inline_formatting_context.elements.push(child_entity);
                 continue;
             }
 
@@ -2064,6 +2143,16 @@ impl EntityConstructor {
             inline_formatting_context
                 .elements
                 .push(self.build_text_entity(node.style(), "").0);
+        }
+
+        // The margin, border and padding at the ends of an inline box take room on the line: they
+        // are runs of a zero-width character that is as wide as they are.
+        {
+            let (start, end) = self.inline_edges(node);
+            if !start.is_empty() {
+                inline_formatting_context.elements.splice(0..0, start);
+            }
+            inline_formatting_context.elements.extend(end);
         }
 
         // `unicode-bidi` (e.g. from the `dir` attribute or `<bdo>`) is implemented by bidi
@@ -2467,6 +2556,52 @@ fn inline_background<'a, N: AbstractNode<'a>>(node: &N) -> Option<crate::style::
         let color = crate::style::properties::color::color_to_paint(style.background.background_color);
         if color.alpha() > 0 {
             return Some(color);
+        }
+        ancestor = parent.parent_node();
+    }
+    None
+}
+
+/// The edges of an inline box, from its style: `None` if it has no border and no vertical padding.
+fn edges_of(style: &ComputedValues, start: bool, end: bool) -> Option<components::InlineBoxEdges> {
+    use crate::style::properties::computed::PixelLength;
+    let position = &style.position;
+    let widths = [
+        position.used_border_top_width(),
+        position.used_border_right_width(),
+        position.used_border_bottom_width(),
+        position.used_border_left_width(),
+    ];
+    let zero = PixelLength(0.0);
+    let (padding_top, padding_bottom) = (position.padding_top.absolute(zero).0, position.padding_bottom.absolute(zero).0);
+    if widths.iter().all(|width| width.0 == 0.0) && padding_top == 0.0 && padding_bottom == 0.0 {
+        return None;
+    }
+    let colors = crate::layout::inline_size::decoration_colors(style).border_color;
+    Some(components::InlineBoxEdges {
+        border: [
+            (widths[0].0, colors.top),
+            (widths[1].0, colors.right),
+            (widths[2].0, colors.bottom),
+            (widths[3].0, colors.left),
+        ],
+        padding_top,
+        padding_bottom,
+        start,
+        end,
+    })
+}
+
+/// The border and the vertical padding of the nearest inline ancestor of a text that has them.
+fn inline_box_edges<'a, N: AbstractNode<'a>>(node: &N) -> Option<components::InlineBoxEdges> {
+    let mut ancestor = node.parent_node();
+    while let Some(parent) = ancestor {
+        let style = parent.style();
+        if !matches!(style.box_.display, Display::Inline) {
+            return None;
+        }
+        if let Some(edges) = edges_of(&style, false, false) {
+            return Some(edges);
         }
         ancestor = parent.parent_node();
     }

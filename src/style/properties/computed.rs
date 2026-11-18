@@ -390,6 +390,17 @@ impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage 
 pub enum GenericSize {
     LengthPercentage(LengthPercentage),
     Auto,
+    /// A sizing keyword of `width` and `height`.
+    Keyword(SizingKeyword),
+}
+
+/// `min-content`, `max-content`, `fit-content` and `stretch`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SizingKeyword {
+    MinContent,
+    MaxContent,
+    FitContent,
+    Stretch,
 }
 
 impl GenericSize {
@@ -430,6 +441,26 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
             }) => GenericSize::LengthPercentage(LengthPercentage::PixelLength(
                 PixelLength::from_val_unit(*value, *unit, FontSizes::of(style)),
             )),
+        }
+    }
+}
+
+impl super::ComputedValue<specified::SizeValue> for GenericSize {
+    fn from_specified(spec: &specified::SizeValue, style: &ComputedValues) -> Self {
+        use specified::SizeValue;
+        match *spec {
+            SizeValue::Auto => GenericSize::Auto,
+            SizeValue::MinContent => GenericSize::Keyword(SizingKeyword::MinContent),
+            SizeValue::MaxContent => GenericSize::Keyword(SizingKeyword::MaxContent),
+            SizeValue::FitContent => GenericSize::Keyword(SizingKeyword::FitContent),
+            SizeValue::Stretch => GenericSize::Keyword(SizingKeyword::Stretch),
+            SizeValue::Percentage(percentage) => percentage.into(),
+            SizeValue::Quantity(quantity) => {
+                <GenericSize as super::ComputedValue<specified::AutoOrQuantityOrPercentage>>::from_specified(
+                    &specified::AutoOrQuantityOrPercentage::Quantity(quantity),
+                    style,
+                )
+            }
         }
     }
 }
@@ -493,7 +524,7 @@ impl super::ComputedValue<specified::NoneOrQuantityOrPercentage> for GenericSize
 impl GenericSize {
     pub fn absolute(self, if_auto: PixelLength, container_size: PixelLength) -> PixelLength {
         match self {
-            GenericSize::Auto => if_auto,
+            GenericSize::Auto | GenericSize::Keyword(_) => if_auto,
             GenericSize::LengthPercentage(lp) => lp.absolute(container_size),
         }
     }
@@ -545,19 +576,22 @@ pub struct Position {
 }
 
 impl Position {
-    fn fixup(&mut self) {
-        if !self.border_top_style.is_visible() {
-            self.border_top_width = PixelLength::default();
-        }
-        if !self.border_bottom_style.is_visible() {
-            self.border_bottom_width = PixelLength::default();
-        }
-        if !self.border_left_style.is_visible() {
-            self.border_left_width = PixelLength::default();
-        }
-        if !self.border_right_style.is_visible() {
-            self.border_right_width = PixelLength::default();
-        }
+    // The widths are kept as they were computed, which is what `inherit` takes: a style of
+    // `none` or `hidden` makes the width that is used 0, but a child that inherits the width
+    // (and has a border style) has it (CSS Backgrounds 3, 4.2: "computed value: absolute length;
+    // 0 if the border style is none or hidden", which the browsers do only for the used value).
+    /// The width of the border at the top that is used: 0 without a (visible) style.
+    pub fn used_border_top_width(&self) -> PixelLength {
+        if self.border_top_style.is_visible() { self.border_top_width } else { PixelLength::default() }
+    }
+    pub fn used_border_bottom_width(&self) -> PixelLength {
+        if self.border_bottom_style.is_visible() { self.border_bottom_width } else { PixelLength::default() }
+    }
+    pub fn used_border_left_width(&self) -> PixelLength {
+        if self.border_left_style.is_visible() { self.border_left_width } else { PixelLength::default() }
+    }
+    pub fn used_border_right_width(&self) -> PixelLength {
+        if self.border_right_style.is_visible() { self.border_right_width } else { PixelLength::default() }
     }
 }
 
@@ -749,7 +783,6 @@ impl ComputedValues {
     }
 
     fn fixup(&mut self) {
-        Arc::make_mut(&mut self.position).fixup();
         if !self.box_.column_rule_style.is_visible() && self.box_.column_rule_width != PixelLength(0.0) {
             Arc::make_mut(&mut self.box_).column_rule_width = PixelLength(0.0);
         }
@@ -799,6 +832,12 @@ pub struct StyleBuilder {
 }
 
 impl StyleBuilder {
+    /// The values of an element that has `all: unset`: inherited properties are inherited, the
+    /// others have their initial value.
+    pub fn unset_values(parent: &ComputedValues) -> ComputedValues {
+        StyleBuilder::new(parent.clone()).new_values
+    }
+
     pub fn new(inherited_values: ComputedValues) -> Self {
         // Here we define which CSS property values are inherited
 
@@ -812,6 +851,7 @@ impl StyleBuilder {
                 text_align: inherited_values.text.text_align,
                 hyphens: inherited_values.text.hyphens,
                 letter_spacing: inherited_values.text.letter_spacing,
+                word_spacing: inherited_values.text.word_spacing,
                 text_transform: inherited_values.text.text_transform,
                 direction: inherited_values.text.direction,
                 writing_mode: inherited_values.text.writing_mode,
@@ -839,7 +879,7 @@ impl StyleBuilder {
                 ..Default::default()
             }),
             // the initial border width is `medium`, which only counts where there is a border
-            // style (see `Position::fixup`); boxes that are not made from elements have none
+            // style (see `Position::used_border_top_width`); boxes that are not made from elements have none
             position: Arc::new(Position {
                 border_top_width: PixelLength(3.0),
                 border_bottom_width: PixelLength(3.0),
@@ -1360,6 +1400,8 @@ pub struct Text {
     pub hyphens: specified::Hyphens,
     /// The extra space after every character; `normal` is 0.
     pub letter_spacing: PixelLength,
+    /// The extra space at every word separator (a space, for one); `normal` is 0.
+    pub word_spacing: PixelLength,
     pub text_transform: specified::TextTransform,
     pub direction: specified::Direction,
     pub writing_mode: specified::WritingMode,
@@ -1425,6 +1467,8 @@ pub struct Background {
     pub background_repeat: Vec<super::background::Repeat>,
     /// The box that the colour and each image are clipped to.
     pub background_clip: Vec<super::specified::BackgroundBox>,
+    /// The box that the images are positioned in.
+    pub background_origin: Vec<super::specified::BackgroundBox>,
 }
 
 impl Default for Background {
@@ -1440,6 +1484,7 @@ impl Default for Background {
             }],
             background_repeat: vec![Default::default()],
             background_clip: vec![Default::default()],
+            background_origin: vec![super::specified::BackgroundBox::PaddingBox],
         }
     }
 }

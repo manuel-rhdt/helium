@@ -95,7 +95,16 @@ impl<'i> PropertyValue<'i> for SpecifiedSize {
             if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
                 return Ok(None);
             }
-            parse_length_percentage(input).map(Some)
+            // (a negative size is invalid)
+            let size = parse_length_percentage(input)?;
+            let negative = match size {
+                QuantityOrPercentage::Quantity(quantity) => quantity.value < 0.0,
+                QuantityOrPercentage::Percentage(percentage) => percentage.0 < 0.0,
+            };
+            if negative {
+                return Err(input.new_error_for_next_token());
+            }
+            Ok(Some(size))
         }
         let width = component(input)?;
         let height = input.try_parse(component).unwrap_or(None);
@@ -225,26 +234,40 @@ impl<'i> PropertyValue<'i> for SpecifiedPosition {
                 }
             }
             _ => {
-                // keyword, optional offset, keyword, optional offset
-                let mut groups = vec![];
+                // keyword, optional offset, keyword, optional offset (`center` has no offset)
+                let mut groups: Vec<(Option<bool>, Edge)> = vec![];
                 let mut rest = items.as_slice();
                 while let Some((&first, tail)) = rest.split_first() {
-                    let Item::Side(side) = first else { return fail(input) };
-                    match tail.split_first() {
-                        Some((&Item::Value(offset), tail)) => {
-                            groups.push(edge(side, Some(offset)));
+                    match first {
+                        Item::Center => {
+                            groups.push((None, center));
                             rest = tail;
                         }
-                        _ => {
-                            groups.push(edge(side, None));
-                            rest = tail;
-                        }
+                        Item::Side(side) => match tail.split_first() {
+                            Some((&Item::Value(offset), tail)) => {
+                                let (horizontal, edge) = edge(side, Some(offset));
+                                groups.push((Some(horizontal), edge));
+                                rest = tail;
+                            }
+                            _ => {
+                                let (horizontal, edge) = edge(side, None);
+                                groups.push((Some(horizontal), edge));
+                                rest = tail;
+                            }
+                        },
+                        Item::Value(_) => return fail(input),
                     }
                 }
                 match groups.as_slice() {
-                    [(true, x), (false, y)] | [(false, y), (true, x)] => {
-                        Ok(SpecifiedPosition { x: *x, y: *y })
-                    }
+                    [(a, first), (b, second)] => match (a, b) {
+                        (Some(true), Some(false)) | (Some(true), None) | (None, Some(false)) => {
+                            Ok(SpecifiedPosition { x: *first, y: *second })
+                        }
+                        (Some(false), Some(true)) | (Some(false), None) | (None, Some(true)) => {
+                            Ok(SpecifiedPosition { x: *second, y: *first })
+                        }
+                        _ => fail(input),
+                    },
                     _ => fail(input),
                 }
             }
@@ -289,6 +312,10 @@ pub struct LayerStyle {
     pub position: SpecifiedPosition,
     pub size: SpecifiedSize,
     pub repeat: Repeat,
+    /// The `<box>` keywords of the layer: the origin, and the clip, which is the origin if only
+    /// one is given.
+    pub origin: Option<super::specified::BackgroundBox>,
+    pub clip: Option<super::specified::BackgroundBox>,
 }
 
 /// Parses the part of a layer of the shorthand that is the position (and size), when the
@@ -391,8 +418,18 @@ pub fn image_tiles(
     if !(width > 0.0 && height > 0.0) {
         return vec![];
     }
-    let xs = axis_tiles(repeat.x, width, &position.x, area.x, area.width);
-    let ys = axis_tiles(repeat.y, height, &position.y, area.y, area.height);
+    let mut xs = axis_tiles(repeat.x, width, &position.x, area.x, area.width);
+    let mut ys = axis_tiles(repeat.y, height, &position.y, area.y, area.height);
+    // With `round` in one axis only, an `auto` size in the other axis follows the rounded size,
+    // so that the image keeps its proportions.
+    // https://www.w3.org/TR/css-backgrounds-3/#the-background-size
+    if let Size::Explicit(auto_width, auto_height) = size {
+        if repeat.x == RepeatStyle::Round && repeat.y != RepeatStyle::Round && auto_height.is_none() {
+            ys = axis_tiles(repeat.y, xs.size * image_height / image_width, &position.y, area.y, area.height);
+        } else if repeat.y == RepeatStyle::Round && repeat.x != RepeatStyle::Round && auto_width.is_none() {
+            xs = axis_tiles(repeat.x, ys.size * image_width / image_height, &position.x, area.x, area.width);
+        }
+    }
     // the starts of the tiles of an axis that touch `from..to`
     let starts = |tiles: &AxisTiles, from: f32, to: f32| -> Vec<f32> {
         if !tiles.repeats {
@@ -515,6 +552,17 @@ mod tests {
         assert_eq!(pos("right 30%").unwrap().x, pct(1.0));
         assert!(pos("left right").is_none());
         assert!(pos("top 10px").is_none());
+    }
+
+    #[test]
+    fn three_values_can_have_center() {
+        let value = pos("left 50px center").unwrap();
+        assert_eq!(value, SpecifiedPosition { x: Edge { from_end: false, offset: px(50.0) }, y: pct(0.5) });
+        let value = pos("center bottom 20px").unwrap();
+        assert_eq!(value, SpecifiedPosition { x: pct(0.5), y: Edge { from_end: true, offset: px(20.0) } });
+        let value = pos("top 10px center").unwrap();
+        assert_eq!(value, SpecifiedPosition { x: pct(0.5), y: Edge { from_end: false, offset: px(10.0) } });
+        assert!(pos("left 10px right").is_none());
     }
 
     #[test]

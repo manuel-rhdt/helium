@@ -141,6 +141,8 @@ pub struct TextFonts {
     /// The `letter-spacing` of the text in 1/1000 em. Optional ligatures are not used if it is
     /// not zero.
     pub letter_spacing: f32,
+    /// The `word-spacing` of the text in 1/1000 em: added to the advance of the word separators.
+    pub word_spacing: f32,
     /// The `text-orientation` of the text if it is set in vertical lines: the characters that
     /// stand upright are shaped with the vertical forms of the font (see
     /// [`crate::layout::writing_mode::is_upright`]).
@@ -163,7 +165,7 @@ pub struct FontRun {
 impl TextFonts {
     /// Fonts for text without known runs: every cluster gets the font chosen for it.
     pub fn without_runs(key: FallbackKey) -> Self {
-        TextFonts { key, runs: empty_runs(), letter_spacing: 0.0, orientation: None, features: empty_features() }
+        TextFonts { key, runs: empty_runs(), letter_spacing: 0.0, word_spacing: 0.0, orientation: None, features: empty_features() }
     }
 
     /// The same fonts for another text than the one they were chosen for: without the runs of
@@ -640,7 +642,7 @@ impl FontResolver {
             runs.clear();
         }
         let runs: Arc<[FontRun]> = if runs.is_empty() { empty_runs() } else { runs.into() };
-        TextFonts { key, runs, letter_spacing: 0.0, orientation: None, features: empty_features() }
+        TextFonts { key, runs, letter_spacing: 0.0, word_spacing: 0.0, orientation: None, features: empty_features() }
     }
 
     /// The characters that could not be rendered with any font.
@@ -1406,6 +1408,7 @@ mod tests {
                 FontRun { start: 10, end: 12, font: 1 },
             ]),
             letter_spacing: 0.0,
+            word_spacing: 0.0,
             orientation: None,
             features: Arc::from([]),
         };

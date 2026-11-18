@@ -14,6 +14,7 @@ vendored: they could only fail, or check nothing (`evaluateStyleChange`, `.style
 `setAttribute('data-expected-...')`, `getComputedStyle`).
 
 * Add a test: copy it from WPT into the same relative path under this directory.
+* A test may allow small differences with `<meta name="fuzzy" content="maxDifference=0-52; totalPixels=0-8250">` (as in WPT); the reftest runner honours it.
 * Known failures live in `expectations.txt`. They must keep failing, so a fix to helium shows up
   as "unexpectedly passes" and the entry gets deleted.
 

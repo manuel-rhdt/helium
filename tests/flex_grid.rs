@@ -176,6 +176,26 @@ fn grid_tracks_and_placement() {
     );
 }
 
+/// `grid-area` is `<row-start> / <column-start> / <row-end> / <column-end>`; what is left out is
+/// `auto`.
+#[test]
+fn grid_area_shorthand() {
+    check_layout(
+        "grid_area",
+        r#"<!DOCTYPE html>
+<style>
+  body { margin: 0; }
+  #grid { display: grid; grid-template-columns: 20px 30px 40px; grid-template-rows: 10px 15px 25px; }
+  #grid div { background: green; }
+</style>
+<div id="grid">
+  <div style="grid-area: 2 / 2 / 4 / 4" data-offset-x="20" data-offset-y="10" data-expected-width="70" data-expected-height="40"></div>
+  <div style="grid-area: 1 / 3" data-offset-x="50" data-offset-y="0" data-expected-width="40" data-expected-height="10"></div>
+  <div style="grid-area: 3" data-offset-x="0" data-offset-y="25" data-expected-height="25"></div>
+</div>"#,
+    );
+}
+
 /// A flex container that does not fit on the rest of a page is moved to the next page as a
 /// whole, with all of its items.
 #[test]

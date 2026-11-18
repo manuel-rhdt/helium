@@ -53,7 +53,7 @@ pub trait CssWideProperties {
 fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
-        "list-style-type", "list-style-position", "white-space", "text-indent", "text-align", "hyphens", "direction",
+        "list-style-type", "list-style-position", "letter-spacing", "word-spacing", "white-space", "text-indent", "text-align", "hyphens", "direction",
         "border-spacing", "border-collapse", "quotes", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
         "math-depth",
     ];
@@ -110,6 +110,7 @@ impl CssWideDeclaration {
     fn is_supported(&self) -> bool {
         let scratch = super::computed::ComputedValues::default();
         self.property.eq_ignore_ascii_case("font")
+            || self.property.eq_ignore_ascii_case("all")
             || PropertyDeclaration::apply_css_wide(
                 &self.property,
                 self.keyword,
@@ -123,6 +124,8 @@ impl CssWideDeclaration {
     pub fn resets_property(&self, name: &str) -> bool {
         self.property.eq_ignore_ascii_case(name)
             || (self.property.eq_ignore_ascii_case("font") && FONT_LONGHANDS.contains(&name))
+            // (`all` resets everything but `direction`, `unicode-bidi` and the custom properties)
+            || (self.property.eq_ignore_ascii_case("all") && name != "direction" && name != "unicode-bidi")
     }
 
     pub fn apply(
@@ -131,7 +134,28 @@ impl CssWideDeclaration {
         parent: &super::computed::ComputedValues,
     ) {
         let initial = super::computed::ComputedValues::default();
-        if self.property.eq_ignore_ascii_case("font") {
+        if self.property.eq_ignore_ascii_case("all") {
+            // every property but `direction`, `unicode-bidi` and the custom properties
+            let source = match self.keyword {
+                CssWide::Inherit => parent.clone(),
+                CssWide::Initial => initial,
+                CssWide::Unset => super::computed::StyleBuilder::unset_values(parent),
+            };
+            let (direction, bidi) = (computed.text.direction, computed.box_.unicode_bidi);
+            let (lang, root_font_size) = (computed.font.lang.clone(), computed.font.root_font_size);
+            computed.box_ = source.box_;
+            computed.position = source.position;
+            computed.font = source.font;
+            computed.text = source.text;
+            computed.background = source.background;
+            computed.page = source.page;
+            computed.math = source.math;
+            std::sync::Arc::make_mut(&mut computed.text).direction = direction;
+            std::sync::Arc::make_mut(&mut computed.box_).unicode_bidi = bidi;
+            let font = std::sync::Arc::make_mut(&mut computed.font);
+            font.lang = lang;
+            font.root_font_size = root_font_size;
+        } else if self.property.eq_ignore_ascii_case("font") {
             for longhand in FONT_LONGHANDS {
                 PropertyDeclaration::apply_css_wide(longhand, self.keyword, computed, parent, &initial);
             }
@@ -307,9 +331,9 @@ pub enum PropertyDeclaration<'a> {
 #[computed = "super::computed::Position"]
 pub enum Position<'a> {
     #[property]
-    Width(AutoOrQuantityOrPercentage),
+    Width(SizeValue),
     #[property]
-    Height(AutoOrQuantityOrPercentage),
+    Height(SizeValue),
     /// https://www.w3.org/TR/CSS22/visudet.html#min-max-widths
     #[property]
     MinWidth(AutoOrQuantityOrPercentage),
@@ -725,6 +749,12 @@ pub enum Box {
     #[shorthand("grid-row-start", method = "start")]
     #[shorthand("grid-row-end", method = "end")]
     GridRow(GridLines),
+    #[property]
+    #[shorthand("grid-row-start", method = "row_start")]
+    #[shorthand("grid-column-start", method = "column_start")]
+    #[shorthand("grid-row-end", method = "row_end")]
+    #[shorthand("grid-column-end", method = "column_end")]
+    GridArea(GridAreaLines),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -742,6 +772,9 @@ pub enum Text {
     /// https://www.w3.org/TR/css-text-3/#letter-spacing-property
     #[property]
     LetterSpacing(NormalOrQuantity),
+    /// https://www.w3.org/TR/css-text-3/#word-spacing-property
+    #[property]
+    WordSpacing(NormalOrQuantity),
     /// https://www.w3.org/TR/css-text-3/#text-transform-property
     #[property]
     TextTransform(TextTransform),
@@ -785,6 +818,9 @@ pub enum Background {
     /// https://www.w3.org/TR/css-backgrounds-3/#background-clip
     #[property]
     BackgroundClip(CommaSeparated<BackgroundBox>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-origin
+    #[property]
+    BackgroundOrigin(CommaSeparated<BackgroundBox>),
     /// https://www.w3.org/TR/css-backgrounds-3/#background-size
     #[property]
     BackgroundSize(CommaSeparated<super::background::SpecifiedSize>),
@@ -794,12 +830,13 @@ pub enum Background {
     /// https://www.w3.org/TR/css-backgrounds-3/#background-repeat
     #[property]
     BackgroundRepeat(CommaSeparated<super::background::Repeat>),
-    /// The shorthand supports the colour, the images with position, size and repeat; not
-    /// `background-origin`, `-clip` or `-attachment`. It resets `background-blend-mode`.
+    /// The shorthand supports the colour, the images with position, size, repeat, origin and clip;
+    /// not `-attachment`. It resets `background-blend-mode`.
     #[property]
     #[shorthand("background-color", method = "color")]
     #[shorthand("background-image", method = "images")]
     #[shorthand("background-blend-mode", method = "blend_modes")]
+    #[shorthand("background-origin", method = "origins")]
     #[shorthand("background-clip", method = "clips")]
     #[shorthand("background-size", method = "sizes")]
     #[shorthand("background-position", method = "positions")]
@@ -1082,6 +1119,34 @@ pub enum SelfAlignment {
     FlexEnd,
     Center,
     Baseline,
+    /// `first baseline`, the same as `baseline`.
+    FirstBaseline(FirstBaselineKeyword),
+    /// `last baseline`: aligns to the end, as a box that shares its baseline with no other does.
+    LastBaseline(LastBaselineKeyword),
+}
+
+/// The keywords `first baseline` and `last baseline`, which are two words.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct FirstBaselineKeyword;
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct LastBaselineKeyword;
+
+impl<'i> PropertyValue<'i> for FirstBaselineKeyword {
+    type Error = StyleParseError;
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        input.expect_ident_matching("first")?;
+        input.expect_ident_matching("baseline")?;
+        Ok(FirstBaselineKeyword)
+    }
+}
+
+impl<'i> PropertyValue<'i> for LastBaselineKeyword {
+    type Error = StyleParseError;
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        input.expect_ident_matching("last")?;
+        input.expect_ident_matching("baseline")?;
+        Ok(LastBaselineKeyword)
+    }
 }
 
 /// The values of `place-content`, `place-items` and `place-self`: the alignment in the block axis
@@ -1721,6 +1786,48 @@ impl<'i> PropertyValue<'i> for GridLines {
     }
 }
 
+/// The value of the `grid-area` shorthand: `<row-start> [ / <column-start> [ / <row-end> [ /
+/// <column-end> ]? ]? ]?`. What is left out is `auto` (there are no line names to copy).
+#[derive(Debug, Copy, Clone)]
+pub struct GridAreaLines {
+    row_start: GridPlacement,
+    column_start: GridPlacement,
+    row_end: GridPlacement,
+    column_end: GridPlacement,
+}
+
+impl GridAreaLines {
+    pub fn row_start(&self) -> GridPlacement {
+        self.row_start
+    }
+    pub fn column_start(&self) -> GridPlacement {
+        self.column_start
+    }
+    pub fn row_end(&self) -> GridPlacement {
+        self.row_end
+    }
+    pub fn column_end(&self) -> GridPlacement {
+        self.column_end
+    }
+}
+
+impl<'i> PropertyValue<'i> for GridAreaLines {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let mut lines = [GridPlacement::Auto; 4];
+        lines[0] = GridPlacement::from_css_property_value(input)?;
+        for line in &mut lines[1..] {
+            if input.try_parse(|i| i.expect_delim('/')).is_err() {
+                break;
+            }
+            *line = GridPlacement::from_css_property_value(input)?;
+        }
+        let [row_start, column_start, row_end, column_end] = lines;
+        Ok(GridAreaLines { row_start, column_start, row_end, column_end })
+    }
+}
+
 /// https://www.w3.org/TR/css-grid-1/#grid-auto-flow-property
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
 pub enum GridAutoFlow {
@@ -1956,6 +2063,29 @@ pub enum QuantityOrPercentage {
     Percentage(Percentage),
 }
 
+/// The value of `width` and `height`: a length, a percentage, `auto` or a sizing keyword.
+/// https://www.w3.org/TR/css-sizing-3/#sizing-values
+#[derive(Debug, Copy, Clone, PropertyValue)]
+pub enum SizeValue {
+    Auto,
+    MinContent,
+    MaxContent,
+    FitContent,
+    Stretch,
+    Quantity(Quantity),
+    Percentage(Percentage),
+}
+
+impl From<AutoOrQuantityOrPercentage> for SizeValue {
+    fn from(value: AutoOrQuantityOrPercentage) -> Self {
+        match value {
+            AutoOrQuantityOrPercentage::Auto => SizeValue::Auto,
+            AutoOrQuantityOrPercentage::Quantity(quantity) => SizeValue::Quantity(quantity),
+            AutoOrQuantityOrPercentage::Percentage(percentage) => SizeValue::Percentage(percentage),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PropertyValue)]
 pub enum AutoOrQuantityOrPercentage {
     Auto,
@@ -1979,7 +2109,7 @@ pub enum TextTransform {
     Capitalize,
 }
 
-/// The value of `letter-spacing`: `normal` or a length.
+/// The value of `letter-spacing` and `word-spacing`: `normal` or a length.
 #[derive(Debug, Copy, Clone, Default, PropertyValue)]
 pub enum NormalOrQuantity {
     #[default]
@@ -2011,12 +2141,45 @@ pub enum BoxSizing {
     BorderBox,
 }
 
-#[derive(Debug, Copy, Clone, PropertyValue)]
+#[derive(Debug, Copy, Clone)]
 pub enum BorderWidth {
     Thin,
     Medium,
     Thick,
     Quantity(Quantity),
+}
+
+impl<'i> PropertyValue<'i> for BorderWidth {
+    type Error = StyleParseError;
+
+    /// `thin | medium | thick | <length [0,∞]>`: a negative length is invalid.
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let start = input.state();
+        if let Ok(ident) = input.expect_ident_cloned() {
+            return match_ignore_ascii_case! { &ident,
+                "thin" => Ok(BorderWidth::Thin),
+                "medium" => Ok(BorderWidth::Medium),
+                "thick" => Ok(BorderWidth::Thick),
+                _ => {
+                    input.reset(&start);
+                    Err(input.new_error_for_next_token())
+                },
+            };
+        }
+        input.reset(&start);
+        let quantity = match Quantity::from_css_property_value(input) {
+            Ok(quantity) => quantity,
+            Err(_) => {
+                input.reset(&start);
+                return Err(input.new_error_for_next_token());
+            }
+        };
+        if quantity.value < 0.0 {
+            input.reset(&start);
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(BorderWidth::Quantity(quantity))
+    }
 }
 
 impl Default for BorderWidth {

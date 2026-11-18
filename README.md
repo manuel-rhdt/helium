@@ -78,7 +78,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 
 ## CSS
 
-- **Box model:** `width`, `height`, `min-`/`max-` width and height, `box-sizing`, `margin`,
+- **Box model:** `width`, `height` (also `min-content`, `max-content`, `fit-content` and `stretch`; not in `min-`/`max-` sizes), `min-`/`max-` width and height, `box-sizing`, `margin`,
   `padding`, `border` (width, color and style, per side), `border-radius`, `top`/`right`/`bottom`/`left`.
   All border styles are painted (`dotted`, `dashed`, `double`, `groove`, `ridge`, `inset`,
   `outset`, `hidden`), except that a border with rounded corners draws `dotted`, `dashed`,
@@ -101,10 +101,10 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `top` and `bottom` move the box after layout, also inline boxes, `inline-block` boxes and formulas, in
   vertical text too; percentages of `left`/`right` in vertical lines count as `auto`), block, inline, flexbox
   (`flex-*` with `flex-flow`, `gap` with one or two values, `justify-*`, `align-*`, `place-*`) and grid (`grid-template-*` and `grid-auto-*` with `repeat()` (a count, `auto-fill` and `auto-fit`), `minmax()` and `fit-content()`,
-  `grid-column`, `grid-row`, also for absolutely positioned children, which are placed in their grid area) layout, tables (`border-collapse`, `border-spacing`).
+  `grid-column`, `grid-row`, `grid-area` (as four lines: no names), also for absolutely positioned children, which are placed in their grid area) layout, tables (`border-collapse`, `border-spacing`).
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
-  `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space` (`normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`), `hyphens`,
+  `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `word-spacing` (a length), `white-space` (`normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`), `hyphens`,
   `direction`, `unicode-bidi`, `list-style-type`, `list-style-position` and the `list-style` shorthand (`<image>`
   markers are not supported; see generated content below).
 - **OpenType features:** `font-feature-settings`, `font-kerning`, and `font-variant` with
@@ -131,15 +131,15 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   split over pages is transformed on its first page only.
 - **Backgrounds:** `background` and `background-color`, `-image` (linear, radial and conic
   gradients, also repeating, and `url()` images: PNG, JPEG and SVG files and `data:` URIs), `-size`
-  (including `cover` and `contain`), `-position`, `-repeat`, `-blend-mode`, `-clip` (`border-box`,
+  (including `cover` and `contain`), `-position`, `-repeat`, `-blend-mode`, `-origin` and `-clip` (`border-box`,
   `padding-box` and `content-box`; boxes with rounded corners are always clipped to the border
   box). A relative URL in a style sheet is relative to the style sheet, and the file has to be
   inside of the directory of the document (or `--resource-root`) like the images of `<img>`. In a
   background with a blend mode, the images are painted over the blended layers, without being
   blended. Text in an SVG image that is a background is set in the system and built-in fonts, not
   in the `@font-face` fonts of the document. The background color of an inline box (`<mark>`, a
-  `<span>`) is painted behind its text over the em box of the font, line by line; its padding,
-  border and background images are not painted (and the padding does not take room).
+  `<span>`) is painted behind its text over the em box of the font plus the vertical padding and border, and the horizontal margin, border and padding at its ends take room on the line
+  (a box that wraps has them at its first and last line only). Borders are drawn solid, whatever their style, and the vertical padding and border do not change the height of the line; background images of inline boxes are not painted. Percentages in the padding and margin of an inline box count as 0, and none of this applies in vertical lines.
 - **Shadows:** `box-shadow` with offsets, blur radius, spread, colour and several shadows. The
   blur is a Gaussian, drawn as a stack of translucent shapes (vector, no raster image). The
   shadow is clipped to the outside of the border box, follows `border-radius`, and is painted

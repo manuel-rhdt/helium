@@ -457,10 +457,27 @@ pub struct TextRun {
     /// The background color of the inline box that the text is in (the nearest ancestor that has
     /// one, up to the block): painted behind the text, over the em box of its font.
     pub background: Option<crate::style::properties::computed::PaintColor>,
+    /// The border and the vertical padding of the inline box that the text is in.
+    pub edges: Option<InlineBoxEdges>,
     pub hyphens: crate::style::properties::specified::Hyphens,
     pub manual_hyphen_points: Vec<usize>,
     /// The language of the text, for shaping, fallback fonts and hyphenation.
     pub lang: crate::style::properties::computed::Language,
+}
+
+/// The border and the padding of an inline box, as far as they are painted behind and around a
+/// piece of its text: the borders at the top and the bottom go over every piece, the one at the
+/// left or the right only over the run at that end of the box.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InlineBoxEdges {
+    /// The width and the color of the borders: top, right, bottom, left.
+    pub border: [(f32, crate::style::properties::computed::PaintColor); 4],
+    pub padding_top: f32,
+    pub padding_bottom: f32,
+    /// This run is the one for the padding and the border at the start (the end) of the box, in
+    /// the direction of the text.
+    pub start: bool,
+    pub end: bool,
 }
 
 impl Component for TextRun {

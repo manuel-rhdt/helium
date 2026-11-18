@@ -192,7 +192,7 @@ impl HeliumTree<'_, '_> {
         let style = self.computed_values.get(self.node(id).entity);
         let (count, width, gap) = style.map_or((None, None, 0.0), |style| {
             let gap = match style.box_.column_gap {
-                GenericSize::Auto => style.font.font_size.0,
+                GenericSize::Auto | GenericSize::Keyword(_) => style.font.font_size.0,
                 GenericSize::LengthPercentage(gap) => gap.absolute(PixelLength(content_width)).0,
             };
             let count = match style.box_.column_count {

@@ -118,10 +118,10 @@ impl HeliumTree<'_, '_> {
         let colors = decoration_colors(style).border_color;
         let position = &style.position;
         match side {
-            Side::Top => (position.border_top_width.0, colors.top, position.border_top_style),
-            Side::Bottom => (position.border_bottom_width.0, colors.bottom, position.border_bottom_style),
-            Side::Left => (position.border_left_width.0, colors.left, position.border_left_style),
-            Side::Right => (position.border_right_width.0, colors.right, position.border_right_style),
+            Side::Top => (position.used_border_top_width().0, colors.top, position.border_top_style),
+            Side::Bottom => (position.used_border_bottom_width().0, colors.bottom, position.border_bottom_style),
+            Side::Left => (position.used_border_left_width().0, colors.left, position.border_left_style),
+            Side::Right => (position.used_border_right_width().0, colors.right, position.border_right_style),
         }
     }
 

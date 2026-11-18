@@ -286,6 +286,23 @@ fn shape_text_into(
     if fonts.letter_spacing != 0.0 {
         apply_letter_spacing(&mut out[start..], text, fonts.letter_spacing, rtl);
     }
+    if fonts.word_spacing != 0.0 {
+        apply_word_spacing(&mut out[start..], text, fonts.word_spacing);
+    }
+}
+
+/// Whether a character is a word separator, which `word-spacing` widens (CSS Text 3, 6.1).
+fn is_word_separator(ch: char) -> bool {
+    matches!(ch, ' ' | '\u{a0}' | '\u{1361}' | '\u{10100}' | '\u{10101}' | '\u{1039f}' | '\u{1091f}')
+}
+
+/// Adds the word spacing to the advance of the glyphs of the word separators of `text`.
+fn apply_word_spacing(glyphs: &mut [(GlyphPosition, GlyphInfo)], text: &str, spacing: f32) {
+    for (position, info) in glyphs.iter_mut() {
+        if text.get(info.cluster as usize..).and_then(|rest| rest.chars().next()).is_some_and(is_word_separator) {
+            position.x_advance.0 += spacing as f64;
+        }
+    }
 }
 
 fn shape_runs(
@@ -711,6 +728,18 @@ mod tests {
 
     fn total(glyphs: &[(GlyphPosition, GlyphInfo)]) -> f64 {
         glyphs.iter().map(|(p, _)| p.x_advance.0).sum()
+    }
+
+    #[test]
+    fn word_spacing_is_added_to_the_spaces_only() {
+        let s = setup("a b c\u{a0}d");
+        let plain = shape("a b c\u{a0}d", &s.font, &s.fonts, Some(0));
+        let mut fonts = s.fonts.clone();
+        fonts.word_spacing = 100.0;
+        let wide = shape("a b c\u{a0}d", &s.font, &fonts, Some(0));
+        assert_eq!(plain.len(), wide.len());
+        // two spaces and a no-break space
+        assert!((total(&wide) - total(&plain) - 300.0).abs() < 1e-6);
     }
 
     #[test]
