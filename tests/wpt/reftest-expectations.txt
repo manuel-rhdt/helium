@@ -317,7 +317,6 @@ css/css-backgrounds/background-position-calc-minmax-001.html
 css/css-backgrounds/background-position-negative-percentage-comparison-002.html
 css/css-backgrounds/background-position-negative-percentage-comparison.html
 css/css-backgrounds/background-position-subpixel-at-border.tentative.html
-css/css-backgrounds/background-position-three-four-values.html
 css/css-backgrounds/background-position/background-position-right-in-body.html
 css/css-backgrounds/background-repeat-round-2.html
 css/css-backgrounds/background-repeat-space-10.html

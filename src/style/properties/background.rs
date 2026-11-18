@@ -234,26 +234,40 @@ impl<'i> PropertyValue<'i> for SpecifiedPosition {
                 }
             }
             _ => {
-                // keyword, optional offset, keyword, optional offset
-                let mut groups = vec![];
+                // keyword, optional offset, keyword, optional offset (`center` has no offset)
+                let mut groups: Vec<(Option<bool>, Edge)> = vec![];
                 let mut rest = items.as_slice();
                 while let Some((&first, tail)) = rest.split_first() {
-                    let Item::Side(side) = first else { return fail(input) };
-                    match tail.split_first() {
-                        Some((&Item::Value(offset), tail)) => {
-                            groups.push(edge(side, Some(offset)));
+                    match first {
+                        Item::Center => {
+                            groups.push((None, center));
                             rest = tail;
                         }
-                        _ => {
-                            groups.push(edge(side, None));
-                            rest = tail;
-                        }
+                        Item::Side(side) => match tail.split_first() {
+                            Some((&Item::Value(offset), tail)) => {
+                                let (horizontal, edge) = edge(side, Some(offset));
+                                groups.push((Some(horizontal), edge));
+                                rest = tail;
+                            }
+                            _ => {
+                                let (horizontal, edge) = edge(side, None);
+                                groups.push((Some(horizontal), edge));
+                                rest = tail;
+                            }
+                        },
+                        Item::Value(_) => return fail(input),
                     }
                 }
                 match groups.as_slice() {
-                    [(true, x), (false, y)] | [(false, y), (true, x)] => {
-                        Ok(SpecifiedPosition { x: *x, y: *y })
-                    }
+                    [(a, first), (b, second)] => match (a, b) {
+                        (Some(true), Some(false)) | (Some(true), None) | (None, Some(false)) => {
+                            Ok(SpecifiedPosition { x: *first, y: *second })
+                        }
+                        (Some(false), Some(true)) | (Some(false), None) | (None, Some(true)) => {
+                            Ok(SpecifiedPosition { x: *second, y: *first })
+                        }
+                        _ => fail(input),
+                    },
                     _ => fail(input),
                 }
             }
@@ -528,6 +542,17 @@ mod tests {
         assert_eq!(pos("right 30%").unwrap().x, pct(1.0));
         assert!(pos("left right").is_none());
         assert!(pos("top 10px").is_none());
+    }
+
+    #[test]
+    fn three_values_can_have_center() {
+        let value = pos("left 50px center").unwrap();
+        assert_eq!(value, SpecifiedPosition { x: Edge { from_end: false, offset: px(50.0) }, y: pct(0.5) });
+        let value = pos("center bottom 20px").unwrap();
+        assert_eq!(value, SpecifiedPosition { x: pct(0.5), y: Edge { from_end: true, offset: px(20.0) } });
+        let value = pos("top 10px center").unwrap();
+        assert_eq!(value, SpecifiedPosition { x: pct(0.5), y: Edge { from_end: false, offset: px(10.0) } });
+        assert!(pos("left 10px right").is_none());
     }
 
     #[test]
