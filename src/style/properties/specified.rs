@@ -794,6 +794,9 @@ pub enum Background {
     /// https://www.w3.org/TR/css-backgrounds-3/#background-clip
     #[property]
     BackgroundClip(CommaSeparated<BackgroundBox>),
+    /// https://www.w3.org/TR/css-backgrounds-3/#background-origin
+    #[property]
+    BackgroundOrigin(CommaSeparated<BackgroundBox>),
     /// https://www.w3.org/TR/css-backgrounds-3/#background-size
     #[property]
     BackgroundSize(CommaSeparated<super::background::SpecifiedSize>),
@@ -803,12 +806,13 @@ pub enum Background {
     /// https://www.w3.org/TR/css-backgrounds-3/#background-repeat
     #[property]
     BackgroundRepeat(CommaSeparated<super::background::Repeat>),
-    /// The shorthand supports the colour, the images with position, size and repeat; not
-    /// `background-origin`, `-clip` or `-attachment`. It resets `background-blend-mode`.
+    /// The shorthand supports the colour, the images with position, size, repeat, origin and clip;
+    /// not `-attachment`. It resets `background-blend-mode`.
     #[property]
     #[shorthand("background-color", method = "color")]
     #[shorthand("background-image", method = "images")]
     #[shorthand("background-blend-mode", method = "blend_modes")]
+    #[shorthand("background-origin", method = "origins")]
     #[shorthand("background-clip", method = "clips")]
     #[shorthand("background-size", method = "sizes")]
     #[shorthand("background-position", method = "positions")]

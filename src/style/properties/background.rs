@@ -95,7 +95,16 @@ impl<'i> PropertyValue<'i> for SpecifiedSize {
             if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
                 return Ok(None);
             }
-            parse_length_percentage(input).map(Some)
+            // (a negative size is invalid)
+            let size = parse_length_percentage(input)?;
+            let negative = match size {
+                QuantityOrPercentage::Quantity(quantity) => quantity.value < 0.0,
+                QuantityOrPercentage::Percentage(percentage) => percentage.0 < 0.0,
+            };
+            if negative {
+                return Err(input.new_error_for_next_token());
+            }
+            Ok(Some(size))
         }
         let width = component(input)?;
         let height = input.try_parse(component).unwrap_or(None);
@@ -289,6 +298,10 @@ pub struct LayerStyle {
     pub position: SpecifiedPosition,
     pub size: SpecifiedSize,
     pub repeat: Repeat,
+    /// The `<box>` keywords of the layer: the origin, and the clip, which is the origin if only
+    /// one is given.
+    pub origin: Option<super::specified::BackgroundBox>,
+    pub clip: Option<super::specified::BackgroundBox>,
 }
 
 /// Parses the part of a layer of the shorthand that is the position (and size), when the

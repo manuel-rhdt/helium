@@ -579,9 +579,24 @@ impl BackgroundShorthand {
         CommaSeparated::new(self.layers.iter().map(|layer| layer.repeat).collect())
     }
 
-    /// The shorthand resets `background-clip` to its initial value.
+    /// The `<box>` of each layer: the origin, `padding-box` if it is not given.
+    pub fn origins(&self) -> CommaSeparated<super::specified::BackgroundBox> {
+        CommaSeparated::new(
+            self.layers
+                .iter()
+                .map(|layer| layer.origin.unwrap_or(super::specified::BackgroundBox::PaddingBox))
+                .collect(),
+        )
+    }
+
+    /// The clip of each layer: the second `<box>`, or the first, or `border-box`.
     pub fn clips(&self) -> CommaSeparated<super::specified::BackgroundBox> {
-        CommaSeparated::new(vec![super::specified::BackgroundBox::BorderBox])
+        CommaSeparated::new(
+            self.layers
+                .iter()
+                .map(|layer| layer.clip.or(layer.origin).unwrap_or(super::specified::BackgroundBox::BorderBox))
+                .collect(),
+        )
     }
 
     /// The shorthand resets `background-blend-mode` to its initial value.
@@ -618,6 +633,16 @@ impl<'i> PropertyValue<'i> for BackgroundShorthand {
                         continue;
                     }
                 }
+                if layer.clip.is_none() {
+                    if let Ok(parsed) = input.try_parse(super::specified::BackgroundBox::from_css_property_value) {
+                        if layer.origin.is_none() {
+                            layer.origin = Some(parsed);
+                        } else {
+                            layer.clip = Some(parsed);
+                        }
+                        continue;
+                    }
+                }
                 if image.is_none() {
                     if let Ok(parsed) = input.try_parse(SpecifiedImage::from_css_property_value) {
                         image = Some(parsed);
@@ -632,7 +657,7 @@ impl<'i> PropertyValue<'i> for BackgroundShorthand {
                 }
                 break;
             }
-            if image.is_none() && color.is_none() && !has_position && !has_repeat {
+            if image.is_none() && color.is_none() && !has_position && !has_repeat && layer.origin.is_none() {
                 return Err(input.new_error_for_next_token());
             }
             images.push(image.unwrap_or(Image::None));

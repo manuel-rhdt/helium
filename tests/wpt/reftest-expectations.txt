@@ -309,10 +309,7 @@ css/css-backgrounds/background-margin-root.html
 css/css-backgrounds/background-margin-transformed-root.html
 css/css-backgrounds/background-margin-will-change-root.html
 css/css-backgrounds/background-multiple-layers-table-cell.html
-css/css-backgrounds/background-origin-004.html
-css/css-backgrounds/background-origin-005.html
 css/css-backgrounds/background-origin-006.html
-css/css-backgrounds/background-origin-008.html
 css/css-backgrounds/background-origin/origin-content-box.html
 css/css-backgrounds/background-origin/origin-content-box_with_radius.html
 css/css-backgrounds/background-origin/origin-padding-box.html
@@ -335,15 +332,12 @@ css/css-backgrounds/background-repeat-space-7.html
 css/css-backgrounds/background-repeat-space-8.html
 css/css-backgrounds/background-repeat-space-9.html
 css/css-backgrounds/background-rounded-image-clip-001.html
-css/css-backgrounds/background-size-021.html
 css/css-backgrounds/background-size-027.html
 css/css-backgrounds/background-size-029.html
 css/css-backgrounds/background-size-043.html
 css/css-backgrounds/background-size-044.html
-css/css-backgrounds/background-size-with-negative-value.html
 css/css-backgrounds/background-size/background-size-near-zero-png.html
 css/css-backgrounds/background-size/background-size-near-zero-svg.html
-css/css-backgrounds/css3-background-origin-content-box.html
 css/css-backgrounds/linear-gradient-currentcolor-first-line.html
 css/css-backgrounds/subpixel-repeat-no-repeat-mix.html
 css/css-cascade/all-prop-initial-visited.html

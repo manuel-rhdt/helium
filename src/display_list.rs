@@ -338,9 +338,14 @@ fn rect_path(rect: Rect) -> Vec<PathSegment> {
     ]
 }
 
+fn cycle<T: Clone>(values: &[T], index: usize, default: T) -> T {
+    if values.is_empty() { default } else { values[index % values.len()].clone() }
+}
+
 /// The gradients in the `background-image` of a style, in the order they are painted (the
-/// first image is on top, so it is painted last). `area` is the padding box, which positions and
-/// sizes the gradients, and `paint` the border box that they are painted into.
+/// first image is on top, so it is painted last). `area` is the padding box, `paint` the border
+/// box and `content` the content box: the boxes that `background-origin` positions and sizes the
+/// images in and `background-clip` clips them to.
 fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect, content: Rect) -> Vec<Layer> {
     use crate::style::properties::specified::BackgroundBox;
     use crate::style::properties::color::color_to_paint;
@@ -353,10 +358,13 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect, content
     };
     let clips = &style.background.background_clip;
     let (area_rect, paint_rect) = (area, paint);
-    let (area, paint) = (size(area), size(paint));
-    fn cycle<T: Clone>(values: &[T], index: usize, default: T) -> T {
-        if values.is_empty() { default } else { values[index % values.len()].clone() }
-    }
+    let origins = &style.background.background_origin;
+    // the box that the image of a layer is positioned in
+    let origin_of = |index: usize| match cycle(origins, index, BackgroundBox::PaddingBox) {
+        BackgroundBox::BorderBox => size(paint_rect),
+        BackgroundBox::PaddingBox => size(area_rect),
+        BackgroundBox::ContentBox => size(content),
+    };
     let modes = &style.background.background_blend_mode;
     style
         .background
@@ -380,7 +388,7 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect, content
                         y: Default::default(),
                     }),
                     cycle(&background.background_repeat, index, Default::default()),
-                    area,
+                    origin_of(index),
                     size(clip),
                 )?;
                 let blend = if modes.is_empty() { BlendMode::Normal } else { modes[index % modes.len()] };
@@ -402,7 +410,7 @@ fn background_gradients(style: &ComputedValues, area: Rect, paint: Rect, content
                         y: Default::default(),
                     }),
                     cycle(&background.background_repeat, index, Default::default()),
-                    area,
+                    origin_of(index),
                     size(clip),
                 );
                 if tiles.is_empty() {

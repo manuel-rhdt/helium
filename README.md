@@ -131,7 +131,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   split over pages is transformed on its first page only.
 - **Backgrounds:** `background` and `background-color`, `-image` (linear, radial and conic
   gradients, also repeating, and `url()` images: PNG, JPEG and SVG files and `data:` URIs), `-size`
-  (including `cover` and `contain`), `-position`, `-repeat`, `-blend-mode`, `-clip` (`border-box`,
+  (including `cover` and `contain`), `-position`, `-repeat`, `-blend-mode`, `-origin` and `-clip` (`border-box`,
   `padding-box` and `content-box`; boxes with rounded corners are always clipped to the border
   box). A relative URL in a style sheet is relative to the style sheet, and the file has to be
   inside of the directory of the document (or `--resource-root`) like the images of `<img>`. In a

@@ -1413,6 +1413,8 @@ pub struct Background {
     pub background_repeat: Vec<super::background::Repeat>,
     /// The box that the colour and each image are clipped to.
     pub background_clip: Vec<super::specified::BackgroundBox>,
+    /// The box that the images are positioned in.
+    pub background_origin: Vec<super::specified::BackgroundBox>,
 }
 
 impl Default for Background {
@@ -1428,6 +1430,7 @@ impl Default for Background {
             }],
             background_repeat: vec![Default::default()],
             background_clip: vec![Default::default()],
+            background_origin: vec![super::specified::BackgroundBox::PaddingBox],
         }
     }
 }
