@@ -45,7 +45,8 @@
   .cols .first { text-indent: 0; }
   .cols i.run { font-style: italic; }
 
-  .eq { display: grid; grid-template-columns: 1fr auto; align-items: center; margin: 6pt 0; text-indent: 0; break-inside: avoid; }
+  /* no break before a display: the line that introduces it goes with it, as in TeX (\predisplaypenalty) */
+  .eq { display: grid; grid-template-columns: 1fr auto; align-items: center; margin: 6pt 0; text-indent: 0; break-inside: avoid; break-before: avoid; }
   .eq math { margin: 0; justify-self: center; }
   .eq .no { font-size: 10pt; padding-left: 6pt; }
 
