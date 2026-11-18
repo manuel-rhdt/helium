@@ -110,6 +110,7 @@ impl CssWideDeclaration {
     fn is_supported(&self) -> bool {
         let scratch = super::computed::ComputedValues::default();
         self.property.eq_ignore_ascii_case("font")
+            || self.property.eq_ignore_ascii_case("all")
             || PropertyDeclaration::apply_css_wide(
                 &self.property,
                 self.keyword,
@@ -123,6 +124,8 @@ impl CssWideDeclaration {
     pub fn resets_property(&self, name: &str) -> bool {
         self.property.eq_ignore_ascii_case(name)
             || (self.property.eq_ignore_ascii_case("font") && FONT_LONGHANDS.contains(&name))
+            // (`all` resets everything but `direction`, `unicode-bidi` and the custom properties)
+            || (self.property.eq_ignore_ascii_case("all") && name != "direction" && name != "unicode-bidi")
     }
 
     pub fn apply(
@@ -131,7 +134,28 @@ impl CssWideDeclaration {
         parent: &super::computed::ComputedValues,
     ) {
         let initial = super::computed::ComputedValues::default();
-        if self.property.eq_ignore_ascii_case("font") {
+        if self.property.eq_ignore_ascii_case("all") {
+            // every property but `direction`, `unicode-bidi` and the custom properties
+            let source = match self.keyword {
+                CssWide::Inherit => parent.clone(),
+                CssWide::Initial => initial,
+                CssWide::Unset => super::computed::StyleBuilder::unset_values(parent),
+            };
+            let (direction, bidi) = (computed.text.direction, computed.box_.unicode_bidi);
+            let (lang, root_font_size) = (computed.font.lang.clone(), computed.font.root_font_size);
+            computed.box_ = source.box_;
+            computed.position = source.position;
+            computed.font = source.font;
+            computed.text = source.text;
+            computed.background = source.background;
+            computed.page = source.page;
+            computed.math = source.math;
+            std::sync::Arc::make_mut(&mut computed.text).direction = direction;
+            std::sync::Arc::make_mut(&mut computed.box_).unicode_bidi = bidi;
+            let font = std::sync::Arc::make_mut(&mut computed.font);
+            font.lang = lang;
+            font.root_font_size = root_font_size;
+        } else if self.property.eq_ignore_ascii_case("font") {
             for longhand in FONT_LONGHANDS {
                 PropertyDeclaration::apply_css_wide(longhand, self.keyword, computed, parent, &initial);
             }

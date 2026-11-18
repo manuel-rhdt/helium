@@ -1443,8 +1443,8 @@ impl EntityConstructor {
                     components::ListMarker { text, face, explicit }
                 });
 
-                if style.box_.display.is_atomic_inline() {
-                    // its contents are a block of their own
+                if style.box_.display.is_atomic_inline() || style.box_.display.is_block_level() {
+                    // its contents are a block of their own, or start on a line of their own
                     self.trim_next_inline_whitespace = true;
                 }
                 let span = (style.box_.display == Display::TableCell)
@@ -1757,6 +1757,10 @@ impl EntityConstructor {
             // an inline-block box is content, so the whitespace after it must be kept
             self.trim_next_inline_whitespace = false;
         }
+        // what follows a block-level box starts a new line, where white space is removed
+        if node.style().box_.display.is_block_level() && !node.style().box_.display.is_atomic_inline() {
+            self.trim_next_inline_whitespace = true;
+        }
 
         let is_display_inline = |node: &Node| match node.style().box_.display {
             Display::Inline => true,
@@ -2034,6 +2038,14 @@ impl EntityConstructor {
             if child_style.box_.display.is_atomic_inline() {
                 inline_formatting_context.elements.push(child_entity);
                 self.shift_relatively(child_entity, &[child_entity], &child_style);
+                continue;
+            }
+
+            // A block-level box in an inline box stays a box of its own (its formatting context is
+            // not merged into the line): `build_blocks` splits the inline box around it when the
+            // block that contains them is built.
+            if child_style.box_.display.is_block_level() {
+                inline_formatting_context.elements.push(child_entity);
                 continue;
             }
 

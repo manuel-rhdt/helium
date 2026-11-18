@@ -784,6 +784,12 @@ pub struct StyleBuilder {
 }
 
 impl StyleBuilder {
+    /// The values of an element that has `all: unset`: inherited properties are inherited, the
+    /// others have their initial value.
+    pub fn unset_values(parent: &ComputedValues) -> ComputedValues {
+        StyleBuilder::new(parent.clone()).new_values
+    }
+
     pub fn new(inherited_values: ComputedValues) -> Self {
         // Here we define which CSS property values are inherited
 
