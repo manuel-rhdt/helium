@@ -8,7 +8,6 @@ css/css-align/abspos/justify-self-static-position-vlr-ltr-vlr.html
 css/css-align/abspos/justify-self-static-position-vrl-ltr-vrl.html
 css/css-align/abspos/table-align-self-stretch.html
 css/css-align/abspos/table-justify-self-stretch.html
-css/css-align/blocks/justify-self-block-in-inline.html
 css/css-flexbox/align-content-vert-001a.html
 css/css-flexbox/align-content-vert-001b.html
 css/css-flexbox/align-content-vert-002.html

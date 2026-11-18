@@ -1231,6 +1231,23 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     index += 1;
                 }
             }
+            // a space at the end of the paragraph hangs: it is not part of the width of the
+            // last line (nor of the intrinsic width)
+            let count = break_points.len();
+            if count >= 2 {
+                let (before, last) = (break_points[count - 2], break_points[count - 1]);
+                let only_space = before.entity == last.entity
+                    && text_runs
+                        .get(last.entity)
+                        .is_some_and(|run| {
+                            // (a run of white space only follows something else on the line)
+                            !run.text.trim().is_empty()
+                                && run.text.get(before.char_index..).is_some_and(|rest| rest.chars().all(char::is_whitespace))
+                        });
+                if before.space && !before.forced && only_space && before.advance_after == last.advance_before {
+                    break_points[count - 1].advance_before = before.advance_before;
+                }
+            }
         }
     }
 }

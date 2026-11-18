@@ -79,7 +79,6 @@ css/CSS2/borders/border-top-width-applies-to-005.xht
 css/CSS2/borders/border-top-width-applies-to-006.xht
 css/CSS2/borders/border-width-applies-to-008.xht
 css/CSS2/borders/shand-border-001.xht
-css/CSS2/box-display/anonymous-box-generation-001.xht
 css/CSS2/box-display/block-in-inline-001.xht
 css/CSS2/box-display/block-in-inline-002.xht
 css/CSS2/box-display/block-in-inline-relpos-001.xht
@@ -376,7 +375,6 @@ css/css-lists/li-value-reversed-023.html
 css/css-lists/li-value-reversed-026.html
 css/css-lists/li-value-reversed-027.html
 css/css-lists/li-value-reversed-028.html
-css/css-lists/list-marker-alignment.html
 css/css-lists/list-marker-paint-order.html
 css/css-lists/list-type-none-style-image.html
 css/css-lists/marker-webkit-text-fill-color.html
