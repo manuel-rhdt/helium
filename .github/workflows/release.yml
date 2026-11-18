@@ -1,8 +1,12 @@
 name: Release
 
-# Builds a fully static (musl) Linux binary and a Windows (MSVC) binary. Pushing a tag like
-# `v0.1.0` publishes them as a GitHub release; running the workflow manually only uploads the
-# binaries as build artifacts.
+# Pushing a tag `vX.Y.Z` builds the four release binaries, attaches them to a draft release and
+# publishes it once every target has been built and smoke-tested; a manual run builds the same
+# four binaries and keeps them as workflow artifacts only.
+#
+# The bundles differ per target, following ripgrep's layout: the same contents (binary, README.md,
+# the DejaVu licence), but a tar.gz on Linux and macOS and a zip on Windows, each with a .sha256
+# next to it.
 on:
   push:
     tags: [ 'v*' ]
@@ -10,110 +14,201 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Emit backtraces on panics, so a failing smoke test says where it failed.
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: Linux (x86_64-musl)
+  version:
+    name: version
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      TARGET: x86_64-unknown-linux-musl
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
     - uses: actions/checkout@v5
-    - name: Install stable toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: x86_64-unknown-linux-musl
-    - name: Cache cargo
-      uses: Swatinem/rust-cache@v2
-    # zig serves as the C/C++ cross compiler: harfbuzz is compiled from its bundled source and
-    # needs a C++ toolchain targeting musl. fontconfig can't be linked statically, so it is
-    # turned off with --no-default-features.
-    - name: Install zig and cargo-zigbuild
-      run: pip install ziglang==0.17.1 cargo-zigbuild==0.24.1
-    - name: Build
-      run: cargo zigbuild --release --locked --no-default-features --target "$TARGET"
-    - name: Check that the binary is static
+    # One job decides the version, so that the builds agree on the asset names. A tag must match
+    # Cargo.toml (`v0.4.2` <-> version = "0.4.2"), otherwise the release would be mislabelled.
+    - name: Read the version
+      id: version
       run: |
-        file "target/$TARGET/release/helium"
-        ! ldd "target/$TARGET/release/helium"
-    - name: Smoke test
-      run: |
-        "target/$TARGET/release/helium" tests/documents/book.html book.pdf
-        test -s book.pdf
-    - name: Package
-      id: package
-      run: |
-        name="helium-${GITHUB_REF_NAME//\//-}-$TARGET"
-        mkdir "$name"
-        cp "target/$TARGET/release/helium" resources/fonts/LICENSE-DejaVu.txt "$name/"
-        tar czf "$name.tar.gz" "$name"
-        sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-        echo "name=$name" >> "$GITHUB_OUTPUT"
-    - uses: actions/upload-artifact@v4
-      with:
-        name: ${{ steps.package.outputs.name }}
-        path: ${{ steps.package.outputs.name }}.tar.gz*
-    - name: Publish release
-      if: startsWith(github.ref, 'refs/tags/v')
+        cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          version="$GITHUB_REF_NAME"
+          if [[ "$version" != "v$cargo_version" ]]; then
+            echo "tag $version does not match Cargo.toml (v$cargo_version)" >&2
+            exit 1
+          fi
+        else
+          version="v$cargo_version-dev"
+        fi
+        echo "version is: $version"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+    - name: Create the draft release
+      if: github.ref_type == 'tag'
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        gh release create "$GITHUB_REF_NAME" --generate-notes \
-          "${{ steps.package.outputs.name }}.tar.gz" "${{ steps.package.outputs.name }}.tar.gz.sha256"
+        gh release create "${{ steps.version.outputs.version }}" --draft --verify-tag \
+          --title "${{ steps.version.outputs.version }}" --generate-notes
 
-  windows:
-    name: Windows (x86_64-msvc)
-    needs: build
-    runs-on: windows-latest
-    permissions:
-      contents: write
+  build:
+    name: build (${{ matrix.target }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        # Fully static, so it runs on any glibc/musl distribution. fontconfig cannot be linked
+        # statically, so it is turned off and installed fonts are found by scanning the font
+        # directories. zig is the C/C++ cross compiler: harfbuzz is built from bundled source.
+        - target: x86_64-unknown-linux-musl
+          os: ubuntu-latest
+          command: zigbuild
+          features: --no-default-features
+        # Dynamically linked against the distribution's fontconfig, which gives the default
+        # generic families and real fallback fonts. Needs libfontconfig at run time.
+        - target: x86_64-unknown-linux-gnu
+          os: ubuntu-latest
+          command: build
+          features: ''
+          packages: libfontconfig1-dev pkg-config
+        # macos-latest is Apple silicon, so this is a native build (no cross toolchain) and the
+        # smoke test runs on the same architecture as the binary.
+        - target: aarch64-apple-darwin
+          os: macos-latest
+          command: build
+          features: ''
+        # MSVC with a static CRT (.cargo/config.toml: +crt-static): one self-contained exe, no
+        # redistributable. harfbuzz is compiled from its bundled source by the MSVC compiler.
+        - target: x86_64-pc-windows-msvc
+          os: windows-latest
+          command: build
+          features: --no-default-features
     env:
-      TARGET: x86_64-pc-windows-msvc
-      # harfbuzz-subset.cc has more sections than MSVC's default object format allows
-      CFLAGS: /bigobj
-      CXXFLAGS: /bigobj
+      TARGET: ${{ matrix.target }}
     steps:
     - uses: actions/checkout@v5
     - name: Install stable toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
-        targets: x86_64-pc-windows-msvc
-    - name: Set up the MSVC environment
-      uses: ilammy/msvc-dev-cmd@v1
+        targets: ${{ matrix.target }}
     - name: Cache cargo
       uses: Swatinem/rust-cache@v2
-    # harfbuzz is compiled from its bundled source and needs the MSVC C++ toolchain. Windows
-    # finds its fonts through fontdb's directory scan, so fontconfig stays off.
-    - name: Build
-      run: cargo build --release --locked --no-default-features --target "$env:TARGET"
-    - name: Check that the binary needs no C runtime DLL
+      with:
+        key: ${{ matrix.target }}
+    - name: Install system packages (Linux)
+      if: matrix.packages != ''
       run: |
-        $deps = dumpbin /dependents "target/$env:TARGET/release/helium.exe"
+        sudo apt-get update
+        sudo apt-get install -y ${{ matrix.packages }}
+    - name: Install zig and cargo-zigbuild (musl)
+      if: matrix.command == 'zigbuild'
+      run: pip install ziglang==0.17.1 cargo-zigbuild==0.24.1
+    - name: Set up the MSVC environment (Windows)
+      if: matrix.target == 'x86_64-pc-windows-msvc'
+      uses: ilammy/msvc-dev-cmd@v1
+    - name: Build (Linux/macOS)
+      if: matrix.target != 'x86_64-pc-windows-msvc'
+      shell: bash
+      run: |
+        cargo ${{ matrix.command }} --release --locked ${{ matrix.features }} --target "$TARGET"
+    # PowerShell for the MSVC-specific steps: Git Bash rewrites values that look like Unix paths
+    # (`/bigobj` -> `C:/Program Files/Git/bigobj`), which cl.exe then rejects.
+    - name: Build (Windows)
+      if: matrix.target == 'x86_64-pc-windows-msvc'
+      shell: pwsh
+      env:
+        # harfbuzz-subset.cc has more sections than MSVC's default object format allows.
+        CFLAGS: /bigobj
+        CXXFLAGS: /bigobj
+      run: cargo build --release --locked --no-default-features --target "$env:TARGET"
+    - name: Find the binary
+      shell: bash
+      run: |
+        if [[ "$TARGET" == *windows* ]]; then
+          bin="target/$TARGET/release/helium.exe"
+        else
+          bin="target/$TARGET/release/helium"
+        fi
+        echo "BIN=$bin" >> "$GITHUB_ENV"
+    - name: Check that the musl binary is static
+      if: matrix.target == 'x86_64-unknown-linux-musl'
+      run: |
+        file "$BIN"
+        ! ldd "$BIN"
+    - name: Check that the Windows binary needs no C runtime DLL
+      if: matrix.target == 'x86_64-pc-windows-msvc'
+      shell: pwsh
+      run: |
+        $deps = dumpbin /dependents "$env:BIN"
         $deps
         if ($deps -match 'VCRUNTIME|MSVCP|ucrtbase\.dll') { throw "the binary still imports the C runtime" }
-    - name: Smoke test
+    - name: Smoke test (Unix)
+      if: matrix.target != 'x86_64-pc-windows-msvc'
+      shell: bash
       run: |
-        & "target/$env:TARGET/release/helium.exe" tests/documents/book.html book.pdf
+        "$BIN" --version
+        "$BIN" tests/documents/book.html book.pdf
+        test -s book.pdf
+    - name: Smoke test (Windows)
+      if: matrix.target == 'x86_64-pc-windows-msvc'
+      shell: pwsh
+      run: |
+        & "$env:BIN" --version
+        & "$env:BIN" tests/documents/book.html book.pdf
         if (-not (Test-Path book.pdf) -or (Get-Item book.pdf).Length -eq 0) { throw "no PDF written" }
-    - name: Package
-      id: package
+    # The archive name carries the target, so a user picks the box they need; the contents are the
+    # same on every target, only the container differs (zip on Windows, tar.gz elsewhere).
+    - name: Package (Unix)
+      if: matrix.os != 'windows-latest'
+      shell: bash
       run: |
-        $name = "helium-" + ($env:GITHUB_REF_NAME -replace '/', '-') + "-$env:TARGET"
+        name="helium-${{ needs.version.outputs.version }}-$TARGET"
+        mkdir "$name"
+        cp "$BIN" README.md resources/fonts/LICENSE-DejaVu.txt "$name/"
+        tar czf "$name.tar.gz" "$name"
+        shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+        echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+        echo "ASSET_SUM=$name.tar.gz.sha256" >> "$GITHUB_ENV"
+    - name: Package (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        $name = "helium-${{ needs.version.outputs.version }}-$env:TARGET"
         New-Item -ItemType Directory "$name" | Out-Null
-        Copy-Item "target/$env:TARGET/release/helium.exe", "resources/fonts/LICENSE-DejaVu.txt" "$name"
+        Copy-Item "$env:BIN", "README.md", "resources/fonts/LICENSE-DejaVu.txt" "$name"
         Compress-Archive -Path "$name" -DestinationPath "$name.zip"
-        $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
-        "$hash  $name.zip" | Out-File -FilePath "$name.zip.sha256" -Encoding ascii -NoNewline
-        "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "$((Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower())  $name.zip" |
+          Out-File -FilePath "$name.zip.sha256" -Encoding ascii -NoNewline
+        "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "ASSET_SUM=$name.zip.sha256" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
     - uses: actions/upload-artifact@v4
       with:
-        name: ${{ steps.package.outputs.name }}
-        path: ${{ steps.package.outputs.name }}.zip*
-    - name: Upload to the release
-      if: startsWith(github.ref, 'refs/tags/v')
+        name: helium-${{ matrix.target }}
+        path: |
+          ${{ env.ASSET }}
+          ${{ env.ASSET_SUM }}
+        if-no-files-found: error
+    - name: Upload to the draft release
+      if: github.ref_type == 'tag'
       env:
         GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: gh release upload "${{ needs.version.outputs.version }}" "$ASSET" "$ASSET_SUM" --clobber
+
+  publish:
+    name: publish release
+    needs: [ version, build ]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+    # Only a fully built set of four binaries is published; a failed target leaves the release in
+    # draft, so helium-studio (which picks the latest release) never sees a partial one.
+    - env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        gh release upload "$env:GITHUB_REF_NAME" "${{ steps.package.outputs.name }}.zip" "${{ steps.package.outputs.name }}.zip.sha256" --clobber
+        gh release edit "${{ needs.version.outputs.version }}" --draft=false \
+          --repo "${{ github.repository }}"
