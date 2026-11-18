@@ -600,8 +600,8 @@ mod tests {
             repeating: false,
             interpolation: Default::default(),
             stops: vec![
-                Stop { color: PaintColor::srgb(255, 0, 0, 255), positions: vec![] },
-                Stop { color: PaintColor::srgb(0, 0, 255, 255), positions: vec![] },
+                Stop { color: PaintColor::srgb(255, 0, 0, 255), positions: vec![], missing: [false; 3] },
+                Stop { color: PaintColor::srgb(0, 0, 255, 255), positions: vec![], missing: [false; 3] },
             ],
         }
     }

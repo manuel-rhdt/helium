@@ -169,6 +169,12 @@ fn rec2020_gamma24_components(xyz: [f64; 3]) -> [f64; 3] {
     multiply(&XYZ_TO_REC2020, xyz).map(|linear| linear.clamp(0.0, 1.0).powf(1.0 / 2.4))
 }
 
+/// The ICC space of the colours that sRGB cannot hold (Rec. 2020 primaries, gamma 2.4), written once for the
+/// document.
+fn wide_color_space(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>) -> Result<lemon_pdf::color_space::IccBasedColorSpace, Error> {
+    Ok(context.pdf_context.icc_color_space("rec2020-gamma24", lemon_pdf::icc::rec2020_gamma24_profile, 3, Some(StreamFilter::Deflate))?)
+}
+
 /// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is in an ICC
 /// space of sRGB, written once for the document: CSS chooses its colours deliberately, and the file
 /// says in which space they are, whatever a viewer takes the device to be. (Device colours, which images
@@ -192,7 +198,7 @@ fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: P
         }
         PaintColor::Xyz(color) => color.components().map(f64::from),
     };
-    let space = context.pdf_context.icc_color_space("rec2020-gamma24", lemon_pdf::icc::rec2020_gamma24_profile, 3, Some(StreamFilter::Deflate))?;
+    let space = wide_color_space(context)?;
     let space = context.add_color_space(space);
     let components = rec2020_gamma24_components(xyz).map(|value| (value * 100_000.0).round() / 100_000.0);
     if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) }

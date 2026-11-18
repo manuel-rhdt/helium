@@ -91,10 +91,9 @@ fn the_color_is_under_the_gradient() {
 
 #[test]
 fn unsupported_gradients_are_ignored() {
-    // a colour hint, a single stop and an unknown function are not valid here
+    // a colour hint and an unknown function are not valid here
     for (name, image) in [
         ("hint", "linear-gradient(red, 30%, blue)"),
-        ("single", "linear-gradient(red)"),
         ("unknown", "diagonal-gradient(red, blue)"),
     ] {
         let pdf = render(name, &box_with(&format!("background: #fed {}", image)));
@@ -102,6 +101,13 @@ fn unsupported_gradients_are_ignored() {
         // the whole declaration is invalid, so there is no background colour either
         assert_eq!(count(&pdf, "sh"), 0);
     }
+}
+
+#[test]
+fn a_single_colour_stop_is_a_valid_gradient() {
+    // (CSS Images 4: the list has one colour stop at least; the gradient is that colour all over)
+    let pdf = render("single", &box_with("background: #fed linear-gradient(red)"));
+    assert_eq!(shading_types(&pdf), [2]);
 }
 
 #[test]

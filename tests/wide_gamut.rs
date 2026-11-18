@@ -123,6 +123,44 @@ fn opacity_and_alpha_keep_the_wide_color() {
 }
 
 #[test]
+fn a_gradient_with_wide_colors_is_in_the_wide_profile() {
+    let pdf = render("gradient_wide", "<div style=\"height:100px;background:linear-gradient(color(display-p3 1 0 0), color(display-p3 0 1 0))\"></div>");
+    assert!(pdf.contains("/ShadingType 2"), "{pdf}");
+    assert!(pdf.contains("/ColorSpace [ /ICCBased"), "{pdf}");
+    assert!(!pdf.contains("/ColorSpace /DeviceRGB"), "{pdf}");
+    assert_eq!(profiles(&pdf), 2, "the wide profile and the sRGB one");
+}
+
+#[test]
+fn a_radial_gradient_with_wide_colors_is_in_the_wide_profile() {
+    let pdf = render("gradient_radial", "<div style=\"height:100px;background:radial-gradient(color(display-p3 0 1 0), color(rec2020 1 0 0))\"></div>");
+    assert!(pdf.contains("/ShadingType 3"), "{pdf}");
+    assert!(pdf.contains("/ColorSpace [ /ICCBased"), "{pdf}");
+}
+
+#[test]
+fn a_gradient_inside_of_srgb_keeps_its_device_colors() {
+    let pdf = render("gradient_srgb", "<div style=\"height:100px;background:linear-gradient(red, blue)\"></div>");
+    assert!(pdf.contains("/ColorSpace /DeviceRGB"), "{pdf}");
+    assert!(!pdf.contains("/ColorSpace [ /ICCBased"), "{pdf}");
+    assert_eq!(profiles(&pdf), 1, "only the sRGB profile");
+}
+
+#[test]
+fn a_mix_of_wide_colors_is_still_wide() {
+    let pdf = render("mix_wide", "<p style=\"background: color-mix(in oklab, color(display-p3 1 0 0), color(display-p3 0 1 0))\">x</p>");
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
+    assert!(!fills.is_empty(), "{pdf}");
+    assert_eq!(profiles(&pdf), 2, "the wide profile, not clipped to the sRGB one");
+}
+
+#[test]
+fn a_mix_of_colors_of_srgb_stays_in_srgb() {
+    let pdf = render("mix_srgb", "<p style=\"background: color-mix(in srgb, red, blue)\">x</p>");
+    assert_eq!(profiles(&pdf), 1, "{pdf}");
+}
+
+#[test]
 fn the_layout_dump_names_the_space_of_a_wide_color() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join("wide_dump.html");
