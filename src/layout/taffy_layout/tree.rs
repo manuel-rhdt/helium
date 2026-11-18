@@ -428,7 +428,23 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
                     _ => return None,
                 })
             };
-            let justify = resolve(style.box_.justify_self, true);
+            let mut justify = resolve(style.box_.justify_self, true);
+            // In a vertical flow with `direction: rtl` the inline axis runs upwards: `start` is at
+            // the bottom (the sides that `resolve` gave are physical already).
+            if !flex_or_grid && container_flow.is_vertical() && container_rtl {
+                let flip = |value: SelfAlignment| match value {
+                    SelfAlignment::Start => SelfAlignment::End,
+                    SelfAlignment::End => SelfAlignment::Start,
+                    value => value,
+                };
+                justify = match style.box_.justify_self {
+                    SelfAlignment::Start | SelfAlignment::End => Some(flip(style.box_.justify_self)),
+                    SelfAlignment::LastBaseline(_) => Some(SelfAlignment::Start),
+                    SelfAlignment::Baseline | SelfAlignment::FirstBaseline(_) if self.node(child).style.position == taffy::Position::Absolute => Some(SelfAlignment::End),
+                    SelfAlignment::SelfStart | SelfAlignment::SelfEnd => justify.map(flip),
+                    _ => justify,
+                };
+            }
             let align = if flex_or_grid || self.node(child).style.position == taffy::Position::Absolute { resolve(style.box_.align_self, false) } else { None };
             if justify.is_some() || align.is_some() {
                 updates.push((child, justify, align));
