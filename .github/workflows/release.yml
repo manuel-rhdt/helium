@@ -72,6 +72,9 @@ jobs:
       contents: write
     env:
       TARGET: x86_64-pc-windows-msvc
+      # harfbuzz-subset.cc has more sections than MSVC's default object format allows
+      CFLAGS: /bigobj
+      CXXFLAGS: /bigobj
     steps:
     - uses: actions/checkout@v5
     - name: Install stable toolchain
