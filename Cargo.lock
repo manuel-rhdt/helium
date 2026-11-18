@@ -261,7 +261,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote 1.0.47",
- "syn 3.0.10",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -487,7 +487,7 @@ dependencies = [
 [[package]]
 name = "formel"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/formel.git?branch=claude%2Fjolly-hopper-ye2nli#2d6ee26bdc9b3b898ed03be18be4aab16072eefb"
+source = "git+https://github.com/manuel-rhdt/formel.git?branch=master#c01a4838ba451837c855707c83857657a222e0ed"
 dependencies = [
  "bitflags 2.13.2",
  "rustybuzz",
