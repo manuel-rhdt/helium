@@ -55,7 +55,6 @@ css/css-grid/alignment/grid-self-alignment-positioned-items-with-margin-border-p
 css/css-grid/alignment/grid-self-alignment-positioned-items-with-margin-border-padding-009.html
 css/css-grid/alignment/grid-self-alignment-positioned-items-with-margin-border-padding-010.html
 css/css-grid/alignment/grid-self-alignment-positioned-items-with-margin-border-padding-016.html
-css/css-grid/grid-definition/grid-auto-explicit-rows-001.html
 css/css-grid/grid-items/grid-items-percentage-paddings-015.html
 css/css-grid/layout-algorithm/grid-find-fr-size-gutters-002.html
 css/css-grid/layout-algorithm/grid-intrinsic-size-with-orthogonal-items.html

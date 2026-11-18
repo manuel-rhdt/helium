@@ -1027,6 +1027,16 @@ impl HeliumTree<'_, '_> {
                 to_content(size(style.size.width, parent.width), extras.0),
                 to_content(size(style.size.height, parent.height), extras.1),
             );
+            // an `aspect-ratio` without `auto` is the ratio of the border box in a `border-box`
+            if let (true, Some(ratio), false) = (border_box, node.style.aspect_ratio, natural_ratio_of(self, node.entity)) {
+                if ratio > 0.0 {
+                    match specified {
+                        (Some(w), None) => specified.1 = Some(((w + extras.0) / ratio - extras.1).max(0.0)),
+                        (None, Some(h)) => specified.0 = Some(((h + extras.1) * ratio - extras.0).max(0.0)),
+                        _ => {}
+                    }
+                }
+            }
             if self.canvases.get(node.entity).is_some_and(|canvas| canvas.ratioless) {
                 specified = (specified.0.or(Some(natural.0)), specified.1.or(Some(natural.1)));
             }
@@ -1074,13 +1084,19 @@ impl HeliumTree<'_, '_> {
             .style
             .aspect_ratio
             .or_else(|| image.filter(|&(w, h)| !ratioless && w > 0.0 && h > 0.0).map(|(w, h)| w / h));
+        // an `aspect-ratio` without `auto` is the ratio of the box that `box-sizing` gives
+        let ratio_extras = if border_box && node.style.aspect_ratio.is_some() && !natural_ratio_of(self, node.entity) {
+            (0.0, 0.0)
+        } else {
+            extras
+        };
         let mut output = compute_leaf_layout(inputs, style, calc, |known, _available| Size {
             width: known.width.unwrap_or_else(|| match (known.height, ratio) {
-                (Some(height), Some(ratio)) => ((height - extras.1).max(0.0) * ratio + extras.0),
+                (Some(height), Some(ratio)) => ((height - ratio_extras.1).max(0.0) * ratio + ratio_extras.0),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),
             }),
             height: known.height.unwrap_or_else(|| match (known.width, ratio) {
-                (Some(width), Some(ratio)) => ((width - extras.0).max(0.0) / ratio + extras.1),
+                (Some(width), Some(ratio)) => ((width - ratio_extras.0).max(0.0) / ratio + ratio_extras.1),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0), |i| i.1),
             }),
         });
@@ -1089,6 +1105,12 @@ impl HeliumTree<'_, '_> {
         }
         output
     }
+}
+
+/// Whether the `aspect-ratio` of a box has `auto` (or is not given): the natural ratio of an
+/// image then is the one of its content box.
+fn natural_ratio_of(tree: &HeliumTree<'_, '_>, entity: Entity) -> bool {
+    tree.computed_values.get(entity).is_none_or(|style| style.box_.aspect_ratio.auto)
 }
 
 /// A place where a line of a paragraph ends, in the cut of the paragraph that the kernel stores:

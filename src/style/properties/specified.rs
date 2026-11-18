@@ -725,6 +725,12 @@ pub enum Box {
     #[shorthand("grid-row-start", method = "start")]
     #[shorthand("grid-row-end", method = "end")]
     GridRow(GridLines),
+    #[property]
+    #[shorthand("grid-row-start", method = "row_start")]
+    #[shorthand("grid-column-start", method = "column_start")]
+    #[shorthand("grid-row-end", method = "row_end")]
+    #[shorthand("grid-column-end", method = "column_end")]
+    GridArea(GridAreaLines),
 }
 
 #[derive(Debug, Clone, ParseDeclaration)]
@@ -1746,6 +1752,48 @@ impl<'i> PropertyValue<'i> for GridLines {
             GridPlacement::Auto
         };
         Ok(GridLines { start, end })
+    }
+}
+
+/// The value of the `grid-area` shorthand: `<row-start> [ / <column-start> [ / <row-end> [ /
+/// <column-end> ]? ]? ]?`. What is left out is `auto` (there are no line names to copy).
+#[derive(Debug, Copy, Clone)]
+pub struct GridAreaLines {
+    row_start: GridPlacement,
+    column_start: GridPlacement,
+    row_end: GridPlacement,
+    column_end: GridPlacement,
+}
+
+impl GridAreaLines {
+    pub fn row_start(&self) -> GridPlacement {
+        self.row_start
+    }
+    pub fn column_start(&self) -> GridPlacement {
+        self.column_start
+    }
+    pub fn row_end(&self) -> GridPlacement {
+        self.row_end
+    }
+    pub fn column_end(&self) -> GridPlacement {
+        self.column_end
+    }
+}
+
+impl<'i> PropertyValue<'i> for GridAreaLines {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let mut lines = [GridPlacement::Auto; 4];
+        lines[0] = GridPlacement::from_css_property_value(input)?;
+        for line in &mut lines[1..] {
+            if input.try_parse(|i| i.expect_delim('/')).is_err() {
+                break;
+            }
+            *line = GridPlacement::from_css_property_value(input)?;
+        }
+        let [row_start, column_start, row_end, column_end] = lines;
+        Ok(GridAreaLines { row_start, column_start, row_end, column_end })
     }
 }
 
