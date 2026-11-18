@@ -40,6 +40,14 @@ css/css-lists/foo-counter-reversed-009b.html
 # block-in-inline tests); it passed while the inside marker was drawn outside
 css/css-lists/inside-marker-with-block-in-inline.html
 
+# An inline-table without a width does not shrink-wrap to the width of its block child. It passed
+# while .xht files were read by the HTML parser, which left `&gt;` in the style sheet (an invalid
+# selector) and so ignored every rule; as XML the rules apply.
+css/CSS2/normal-flow/inline-table-width-002a.xht
+
+# Their references paint the background of an inline box (now painted); the tests need a column group background, opacity groups and attr()
+css/CSS2/box-display/display-012.xht
+
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-001.xht
 css/CSS2/borders/border-003.xht
@@ -116,6 +124,7 @@ css/CSS2/box-display/containing-block-023.xht
 css/CSS2/box-display/display-005.xht
 css/CSS2/box-display/display-006.xht
 css/CSS2/box-display/display-007.xht
+css/CSS2/box-display/display-013.xht
 css/CSS2/box-display/display-014.xht
 css/CSS2/box-display/inline-text-after-block-in-inline-margin.html
 css/CSS2/box-display/multiple-block-in-inlines-margins-collapse.html
@@ -222,10 +231,6 @@ css/CSS2/normal-flow/inline-replaced-width-014.xht
 css/CSS2/normal-flow/inline-table-002a.xht
 css/CSS2/normal-flow/inline-table-002b.xht
 css/CSS2/normal-flow/inline-table-valign-001.xht
-# An inline-table without a width does not shrink-wrap to the width of its block child. It passed
-# while .xht files were read by the HTML parser, which left `&gt;` in the style sheet (an invalid
-# selector) and so ignored every rule; as XML the rules apply.
-css/CSS2/normal-flow/inline-table-width-002a.xht
 css/CSS2/normal-flow/inline-table-zorder-003.xht
 css/CSS2/normal-flow/inline-table-zorder-004.xht
 css/CSS2/normal-flow/inline-table-zorder-005.xht
@@ -249,7 +254,6 @@ css/CSS2/normal-flow/root-box-001.xht
 css/CSS2/normal-flow/table-in-inline-001.xht
 css/CSS2/normal-flow/width-applies-to-006.xht
 css/CSS2/normal-flow/width-inherit-001.xht
-css/CSS2/visudet/height-computed-002.xht
 css/CSS2/visudet/height-percentage-003a.xht
 css/CSS2/visudet/replaced-elements-all-auto.html
 css/CSS2/visudet/replaced-elements-height-20.html
@@ -288,7 +292,6 @@ css/css-backgrounds/background-clip/clip-border-area-rounded.html
 css/css-backgrounds/background-clip/clip-border-area-solid.html
 css/css-backgrounds/background-clip/clip-border-area-text.html
 css/css-backgrounds/background-clip/clip-border-shape-table-part-background.html
-css/css-backgrounds/background-clip/clip-text-background-table-cell.html
 css/css-backgrounds/background-clip/clip-text-blend-mode.html
 css/css-backgrounds/background-clip/clip-text-constrain-geometry.html
 css/css-backgrounds/background-clip/clip-text-flex.html
@@ -302,7 +305,6 @@ css/css-backgrounds/background-clip/clip-text-relative-child.html
 css/css-backgrounds/background-clip/clip-text-stacking-context-child.html
 css/css-backgrounds/background-clip/clip-text-text-decorations.html
 css/css-backgrounds/background-clip/clip-text-text-emphasis.html
-css/css-backgrounds/background-clip_padding-box.html
 css/css-backgrounds/background-color-body-propagation-004.html
 css/css-backgrounds/background-color-body-propagation-005.html
 css/css-backgrounds/background-color-body-propagation-007.html
@@ -330,14 +332,7 @@ css/css-backgrounds/background-position-negative-percentage-comparison.html
 css/css-backgrounds/background-position-subpixel-at-border.tentative.html
 css/css-backgrounds/background-position-three-four-values.html
 css/css-backgrounds/background-position/background-position-right-in-body.html
-css/css-backgrounds/background-repeat-round-1a.html
-css/css-backgrounds/background-repeat-round-1b.html
-css/css-backgrounds/background-repeat-round-1c.html
-css/css-backgrounds/background-repeat-round-1d.html
-css/css-backgrounds/background-repeat-round-1e.html
 css/css-backgrounds/background-repeat-round-2.html
-css/css-backgrounds/background-repeat-round-3.html
-css/css-backgrounds/background-repeat-round-4.html
 css/css-backgrounds/background-repeat-space-10.html
 css/css-backgrounds/background-repeat-space-1a.html
 css/css-backgrounds/background-repeat-space-1b.html
@@ -358,7 +353,6 @@ css/css-backgrounds/background-size-044.html
 css/css-backgrounds/background-size-with-negative-value.html
 css/css-backgrounds/background-size/background-size-near-zero-png.html
 css/css-backgrounds/background-size/background-size-near-zero-svg.html
-css/css-backgrounds/css3-background-clip-content-box.html
 css/css-backgrounds/css3-background-origin-content-box.html
 css/css-backgrounds/linear-gradient-currentcolor-first-line.html
 css/css-backgrounds/subpixel-repeat-no-repeat-mix.html
@@ -383,8 +377,11 @@ css/css-color/color-mix-currentcolor-001.html
 css/css-color/color-mix-currentcolor-002.html
 css/css-color/color-mix-currentcolor-003.html
 css/css-color/color-mix-currentcolor-nested-for-color-property.html
+css/css-color/color-mix-currentcolor-visited.html
+css/css-color/color-svg-visited.html
 css/css-color/composited-filters-under-opacity.html
 css/css-color/currentcolor-004.html
+css/css-color/currentcolor-visited-fallback.html
 css/css-color/hsl-009.html
 css/css-color/hsl-010.html
 css/css-color/hsl-011.html
@@ -392,9 +389,6 @@ css/css-color/lch-009.html
 css/css-color/lch-010.html
 css/css-color/oklch-009.html
 css/css-color/oklch-010.html
-css/css-color/predefined-011.html
-css/css-color/predefined-012.html
-css/css-color/rec2020-001.html
 css/css-color/relative-currentcolor-a98rgb-01.html
 css/css-color/relative-currentcolor-displayp3-01.html
 css/css-color/relative-currentcolor-hsl-01.html
@@ -412,23 +406,48 @@ css/css-color/relative-currentcolor-rgb-02.html
 css/css-color/relative-currentcolor-xyzd50-01.html
 css/css-color/relative-currentcolor-xyzd65-01.html
 css/css-color/t31-color-currentColor-b.xht
-css/css-color/t41-html4-keywords-a.xht
-css/css-color/t421-rgb-func-int-a.xht
-css/css-color/t421-rgb-func-pct-a.xht
-css/css-color/t421-rgb-hex3-a.xht
-css/css-color/t421-rgb-hex6-a.xht
-css/css-color/t421-rgb-values-meaning-b.xht
-css/css-color/t422-rgba-func-int-a.xht
-css/css-color/t422-rgba-func-pct-a.xht
-css/css-color/t422-rgba-values-meaning-b.xht
-css/css-color/t424-hsl-h-rotating-b.xht
-css/css-color/t424-hsl-values-b-1.html
-css/css-color/t424-hsl-values-b-10.html
-css/css-color/t424-hsl-values-b-3.html
-css/css-color/t424-hsl-values-b-4.html
-css/css-color/t425-hsla-h-rotating-b.xht
-css/css-color/t425-hsla-values-b.xht
-css/css-color/t43-svg-keywords-a.xht
+css/css-color/t32-opacity-offscreen-multiple-boxes-1-c.xht
+css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.xht
+css/css-images/cross-fade-basic.html
+css/css-images/cross-fade-cross-origin-orientation.sub.html
+css/css-images/cross-fade-natural-size-gradients.html
+css/css-images/cross-fade-natural-size-image-and-gradient.html
+css/css-images/cross-fade-natural-size.html
+css/css-images/cross-fade-premultiplied-alpha.html
+css/css-images/cross-fade-target-alpha.html
+css/css-images/css-image-fallbacks-and-annotations.html
+css/css-images/css-image-fallbacks-and-annotations002.html
+css/css-images/css-image-fallbacks-and-annotations003.html
+css/css-images/css-image-fallbacks-and-annotations004.html
+css/css-images/css-image-fallbacks-and-annotations005.html
+css/css-images/gradient-border-box.html
+css/css-images/gradient-content-box.html
+css/css-images/gradient/display-p3-linear-gradient.html
+css/css-images/gradient/gradient-analogous-missing-components-001.html
+css/css-images/gradient/gradient-analogous-missing-components-004.html
+css/css-images/gradient/gradient-none-interpolation.html
+css/css-images/gradient/linear-gradient-relative-currentcolor-stop.html
+css/css-images/image-color-basic.html
+css/css-images/image-color-cross-fade.html
+css/css-images/image-color-layered.html
+css/css-images/image-light-dark.html
+css/css-images/infinite-radial-gradient-refcrash.html
+css/css-images/multiple-position-color-stop-radial.html
+css/css-images/normalization-conic-degenerate.html
+css/css-images/normalization-linear-degenerate.html
+css/css-images/normalization-radial-4.html
+css/css-images/normalization-radial-degenerate.html
+css/css-images/object-fit-none-svg-width-only.html
+css/css-images/object-fit-svg-no-natural-dimensions.html
+css/css-images/object-view-box-contain-intrinsic-size.html
+css/css-images/object-view-box-size-containment.html
+css/css-images/object-view-box-svg-img-no-size.html
+css/css-images/radial-gradient-container-relative-units-001.html
+css/css-images/radial-gradient-container-relative-units-002.html
+css/css-images/radial-gradient-container-relative-units-003.html
+css/css-images/radial-gradient-container-relative-units-004.html
+css/css-images/svg-script-is-ignored.html
+css/css-images/tiled-radial-gradients.html
 css/css-lists/counter-reset-reversed-display-none.html
 css/css-lists/counter-reset-reversed-list-item-start.html
 css/css-lists/counter-reset-reversed-list-item.html
@@ -490,6 +509,9 @@ css/css-values/attr-namespace-case-sensitivity.xhtml
 css/css-values/attr-namespace-non-existing.html
 css/css-values/attr-namespace-valid.xhtml
 css/css-values/attr-notype-fallback.html
+css/css-values/attr-style-sharing-1.html
+css/css-values/attr-style-sharing-2.html
+css/css-values/attr-style-sharing-3.html
 css/css-values/attr-style-sharing-4.html
 css/css-values/calc-size/calc-size-flex-008.html
 css/css-values/calc-size/calc-size-flex-009.html
@@ -524,12 +546,3 @@ css/mediaqueries/negation-001.html
 css/mediaqueries/prefers-color-scheme-svg-as-image.html
 css/mediaqueries/scripting-print-noscript.html
 css/mediaqueries/scripting-print-script.html
-
-# Their references paint the background of an inline box (now painted); the tests need a column group background, opacity groups and attr()
-css/CSS2/box-display/display-012.xht
-css/CSS2/box-display/display-013.xht
-css/css-color/t32-opacity-offscreen-multiple-boxes-1-c.xht
-css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.xht
-css/css-values/attr-style-sharing-1.html
-css/css-values/attr-style-sharing-2.html
-css/css-values/attr-style-sharing-3.html

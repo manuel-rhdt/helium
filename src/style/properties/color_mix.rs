@@ -10,6 +10,7 @@ use super::color::{
     D50_WHITE, Rgb, apply, color_to_paint, d50_to_d65, lab_to_xyz, oklab_to_srgb, srgb_decode, srgb_encode, to_u8,
     xyz_to_srgb,
 };
+use cssparser::color::PredefinedColorSpace;
 use cssparser::{Parser, Token};
 use cssparser_color::{Color, RgbaLegacy, hsl_to_rgb, hwb_to_rgb};
 
@@ -289,7 +290,9 @@ const D65_TO_D50: [[f32; 3]; 3] = [
 fn arc(method: HueMethod, mut first: f32, mut second: f32) -> (f32, f32) {
     first = first.rem_euclid(360.0);
     second = second.rem_euclid(360.0);
+    // (the same hue, which goes through the conversion to a colour and back, is the same up to rounding)
     let delta = second - first;
+    let delta = if delta.abs() < 1e-3 { 0.0 } else { delta };
     match method {
         HueMethod::Shorter => {
             if delta > 180.0 {
@@ -325,17 +328,134 @@ fn mix(space: Space, method: HueMethod, first: Color, second: Color, w1: f32, w2
     if matches!(first, Color::CurrentColor) || matches!(second, Color::CurrentColor) {
         return Err(());
     }
-    // (the colours are mixed in sRGB, whatever their gamut: a colour outside of it is clipped to
-    // it first, which the README says of `color-mix()` and the spaces with a wide gamut)
-    let components = |c: super::computed::PaintColor| {
-        let c = c.clip_to_srgb();
-        [f32::from(c.red) / 255.0, f32::from(c.green) / 255.0, f32::from(c.blue) / 255.0, f32::from(c.alpha) / 255.0]
-    };
-    let [r, g, b, alpha] = blend(space, method, components(color_to_paint(first)), components(color_to_paint(second)), w1, w2);
-    Ok(Color::Rgba(RgbaLegacy::new(to_u8(r), to_u8(g), to_u8(b), (alpha * alpha_scale).clamp(0.0, 1.0))))
+    // The colours are mixed in the space of the mix, from the channels they have: those of a colour
+    // outside of sRGB are outside of 0 to 1 and nothing is clipped.
+    let components = |c: Color| super::computed::PaintColor::to_extended_srgb(color_to_paint(c));
+    let [r, g, b, alpha] = blend(space, method, components(first), components(second), w1, w2);
+    let alpha = (alpha * alpha_scale).clamp(0.0, 1.0);
+    if [r, g, b].iter().all(|channel| (-0.001..=1.001).contains(channel)) {
+        Ok(Color::Rgba(RgbaLegacy::new(to_u8(r), to_u8(g), to_u8(b), alpha)))
+    } else {
+        // a colour that sRGB cannot hold: its channels as a `color(srgb ...)`, which keeps them
+        Ok(Color::ColorFunction(cssparser_color::ColorFunction::new(
+            PredefinedColorSpace::Srgb,
+            Some(r),
+            Some(g),
+            Some(b),
+            Some(alpha),
+        )))
+    }
 }
 
-/// The point at `t` (0 to 1) on the way from `first` to `second` (sRGB, 0 to 1, with alpha as the
+/// The kinds of components that carry over between colour spaces when one is missing (CSS Color 4, 12.2:
+/// the analogous components).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Kind {
+    Red,
+    Green,
+    Blue,
+    X,
+    Y,
+    Z,
+    Lightness,
+    A,
+    B,
+    /// chroma and saturation
+    Colorfulness,
+    Hue,
+    Whiteness,
+    Blackness,
+}
+
+impl Space {
+    fn kinds(self) -> [Kind; 3] {
+        use Kind::*;
+        match self {
+            Space::Srgb | Space::SrgbLinear => [Red, Green, Blue],
+            Space::XyzD65 | Space::XyzD50 => [X, Y, Z],
+            Space::Hsl => [Hue, Colorfulness, Lightness],
+            Space::Hwb => [Hue, Whiteness, Blackness],
+            Space::Lab | Space::Oklab => [Lightness, A, B],
+            Space::Lch | Space::Oklch => [Lightness, Colorfulness, Hue],
+        }
+    }
+}
+
+/// Which of the components of `space` are missing (`none`) in `color`, because the colour has a component
+/// that is analogous to them and that one is missing. A missing component that is not analogous to
+/// one of the space is 0 there, and so it is not missing.
+pub fn missing_components(space: Space, color: &Color) -> [bool; 3] {
+    use Kind::*;
+    let (kinds, missing): ([Kind; 3], [bool; 3]) = match color {
+        Color::Hsl(c) => ([Hue, Colorfulness, Lightness], [c.hue.is_none(), c.saturation.is_none(), c.lightness.is_none()]),
+        Color::Hwb(c) => ([Hue, Whiteness, Blackness], [c.hue.is_none(), c.whiteness.is_none(), c.blackness.is_none()]),
+        Color::Lab(c) => ([Lightness, A, B], [c.lightness.is_none(), c.a.is_none(), c.b.is_none()]),
+        Color::Oklab(c) => ([Lightness, A, B], [c.lightness.is_none(), c.a.is_none(), c.b.is_none()]),
+        Color::Lch(c) => ([Lightness, Colorfulness, Hue], [c.lightness.is_none(), c.chroma.is_none(), c.hue.is_none()]),
+        Color::Oklch(c) => ([Lightness, Colorfulness, Hue], [c.lightness.is_none(), c.chroma.is_none(), c.hue.is_none()]),
+        Color::ColorFunction(c) => {
+            let kinds = match c.color_space {
+                PredefinedColorSpace::XyzD50 | PredefinedColorSpace::XyzD65 => [X, Y, Z],
+                _ => [Red, Green, Blue],
+            };
+            (kinds, [c.c1.is_none(), c.c2.is_none(), c.c3.is_none()])
+        }
+        _ => return [false; 3],
+    };
+    let wanted = space.kinds();
+    let mut result = [false; 3];
+    for (index, kind) in wanted.iter().enumerate() {
+        result[index] = kinds.iter().zip(missing).any(|(k, m)| m && k == kind);
+    }
+    result
+}
+
+/// The stops of a gradient (with the index of the stop that each comes from) with the components that are missing in some of them: each stop that has
+/// missing components becomes two stops at the same place, one with the values of the stop before for
+/// the missing components and one with the values of the stop after (CSS Color 4, 12.3: the transitions on
+/// both sides are interpolated as if the component had the value of the neighbour). Where the neighbour has
+/// none either, the value is 0. The colours are sRGB with alpha, the result too.
+pub fn fill_missing(how: Interpolation, stops: &[([f32; 4], [bool; 3])]) -> Vec<(usize, [f32; 4])> {
+    let components = |color: [f32; 4]| to_space(how.space, [color[0], color[1], color[2]]).0;
+    let hue = how.space.hue();
+    let rebuilt = |values: [f32; 3], alpha: f32| {
+        let [r, g, b] = from_space(how.space, values);
+        [r, g, b, alpha]
+    };
+    let mut result = Vec::with_capacity(stops.len());
+    for (index, &(color, missing)) in stops.iter().enumerate() {
+        if !missing.iter().any(|&m| m) {
+            result.push((index, color));
+            continue;
+        }
+        let own = components(color);
+        let from = |neighbour: Option<&([f32; 4], [bool; 3])>| {
+            let mut values = own;
+            for component in 0..3 {
+                if missing[component] {
+                    values[component] = match neighbour {
+                        Some((other, other_missing)) if !other_missing[component] => {
+                            let (values, hue_of) = to_space(how.space, [other[0], other[1], other[2]]);
+                            hue.filter(|&h| h == component).and_then(|_| hue_of).unwrap_or(values[component])
+                        }
+                        // the stop is the first or the last one, or the neighbour misses it too
+                        Some(_) => 0.0,
+                        None => own[component],
+                    };
+                }
+            }
+            rebuilt(values, color[3])
+        };
+        let before = index.checked_sub(1).map(|i| &stops[i]);
+        let after = stops.get(index + 1);
+        // (the first stop has no transition before it, nor does the last one after it)
+        result.push((index, if before.is_some() { from(before) } else { from(after) }));
+        result.push((index, if after.is_some() { from(after) } else { from(before) }));
+    }
+    result
+}
+
+/// The point at `t` (0 to 1) on the way from `first` to `second` (sRGB, 0 to 1 and beyond for colours that sRGB cannot hold, with alpha as the
 /// fourth component) when the colours are interpolated as `how` says.
 pub fn interpolate(how: Interpolation, first: [f32; 4], second: [f32; 4], t: f32) -> [f32; 4] {
     blend(how.space, how.method, first, second, 1.0 - t, t)
@@ -369,7 +489,7 @@ fn blend(space: Space, method: HueMethod, first: [f32; 4], second: [f32; 4], w1:
         }
     }
     let [r, g, b] = from_space(space, out);
-    [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0), alpha.clamp(0.0, 1.0)]
+    [r, g, b, alpha.clamp(0.0, 1.0)]
 }
 
 #[cfg(test)]
@@ -445,5 +565,24 @@ mod tests {
         assert!(mixed("color-mix(in srgb longer hue, red, blue)").is_none());
         assert!(mixed("color-mix(red, blue)").is_none());
         assert!(mixed("color-mix(in srgb, red 0%, blue 0%)").is_none());
+    }
+
+    #[test]
+    fn a_missing_component_takes_the_value_of_each_neighbour() {
+        let srgb = Interpolation::default();
+        let color = |css: &str| Color::parse(&mut Parser::new(css)).unwrap();
+        let stop = |css: &str| {
+            let c = color(css);
+            (super::super::computed::PaintColor::to_extended_srgb(color_to_paint(c)), missing_components(srgb.space, &c))
+        };
+        let filled = fill_missing(srgb, &[stop("color(srgb 0.5 0 0)"), stop("color(srgb none 0.5 0.5)"), stop("color(srgb 1 1 1)")]);
+        let reds: Vec<f32> = filled.iter().map(|(_, c)| c[0]).collect();
+        // the first red is the one of the stop before and the second the one of the stop after
+        assert_eq!(filled.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [0, 1, 1, 2]);
+        assert!((reds[1] - 0.5).abs() < 1e-2 && (reds[2] - 1.0).abs() < 1e-2, "{reds:?}");
+        // a missing component of a colour that has no analogous one in the space is 0, not missing
+        assert_eq!(missing_components(Space::Srgb, &color("hsl(60 none 50%)")), [false; 3]);
+        assert_eq!(missing_components(Space::Oklch, &color("lch(50 none 30)")), [false, true, false]);
+        assert_eq!(missing_components(Space::Oklch, &color("oklab(none 0.1 0.1)")), [true, false, false]);
     }
 }

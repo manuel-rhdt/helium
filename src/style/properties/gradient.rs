@@ -183,6 +183,8 @@ pub struct Stop<L, C> {
     pub color: C,
     /// A stop with two positions is two stops with the same colour.
     pub positions: Vec<StopPosition<L>>,
+    /// The components that are missing (`none`) in the colour space that the colours are interpolated in.
+    pub missing: [bool; 3],
 }
 
 /// The parsed value of `background-image`.
@@ -274,7 +276,6 @@ fn parse_gradient<'i>(
             (GradientKind::Conic(conic), how)
         }
     };
-    let interpolation = interpolation.unwrap_or_default();
     let conic = matches!(kind, GradientKind::Conic(_));
 
     let mut stops = vec![];
@@ -284,10 +285,32 @@ fn parse_gradient<'i>(
             break;
         }
     }
-    if !input.is_exhausted() || stops.len() < 2 {
+    if !input.is_exhausted() || stops.is_empty() {
         return Err(input.new_error_for_next_token());
     }
+    // Without an `in <space>` the colours are interpolated in Oklab, except those of the legacy sRGB
+    // syntaxes, which are in gamma-encoded sRGB (CSS Color 4, 13.3): that is when every stop is one of them.
+    let interpolation = interpolation.unwrap_or_else(|| default_interpolation(&stops));
+    for stop in &mut stops {
+        stop.missing = super::color_mix::missing_components(interpolation.space, &stop.color);
+    }
     Ok(Gradient { kind, repeating, interpolation, stops })
+}
+
+/// Whether a colour has one of the legacy sRGB syntaxes: hex, a name, `rgb()`, `hsl()` or `hwb()` (with
+/// alpha too). `currentcolor` has the colour of the element, which is not known here; it counts as one.
+fn is_legacy_syntax(color: &Color) -> bool {
+    matches!(color, Color::CurrentColor | Color::Rgba(_) | Color::Hsl(_) | Color::Hwb(_))
+}
+
+/// How the colours of a gradient are interpolated when the gradient does not say: in sRGB for legacy
+/// sRGB colours only (what the web has always done), else in Oklab (CSS Color 4, 13.3).
+fn default_interpolation<L>(stops: &[Stop<L, Color>]) -> Interpolation {
+    if stops.iter().all(|stop| is_legacy_syntax(&stop.color)) {
+        Interpolation::default()
+    } else {
+        Interpolation { space: super::color_mix::Space::Oklab, ..Interpolation::default() }
+    }
 }
 
 fn parse_angle<'i>(input: &mut Parser<'i>) -> ParseResult<f32> {
@@ -545,7 +568,7 @@ fn parse_stop<'i>(
             Err(_) => break,
         }
     }
-    Ok(Stop { color, positions })
+    Ok(Stop { color, positions, missing: [false; 3] })
 }
 
 /// The shorthand `background`: `<bg-layer>#? , <final-bg-layer>` where a layer is an image,
@@ -697,6 +720,7 @@ impl Gradient<QuantityOrPercentage, Color> {
             .iter()
             .map(|stop| Stop {
                 color: stop.color,
+                missing: stop.missing,
                 positions: stop
                     .positions
                     .iter()
@@ -728,6 +752,7 @@ impl Gradient<LengthPercentage, Color> {
                         color => color_to_paint(color),
                     },
                     positions: stop.positions.clone(),
+                    missing: stop.missing,
                 })
                 .collect(),
         }
@@ -782,6 +807,13 @@ pub struct Resolved {
     /// Set when the gradient is one tile that is repeated: `geometry` and `paint` are then
     /// relative to the top left corner of the tile.
     pub tiling: Option<Tiling>,
+}
+
+impl Resolved {
+    /// Whether a stop has a colour that sRGB cannot hold (its channels are outside of 0 to 1).
+    pub fn has_wide_colors(&self) -> bool {
+        self.stops.iter().any(is_wide)
+    }
 }
 
 /// A gradient that is a tile that repeats, in pixels in the space of the page (y pointing
@@ -903,7 +935,7 @@ impl ResolvedGradient {
             }
         };
 
-        let stops = resolve_stop_offsets(&self.stops, length, matches!(self.kind, GradientKind::Conic(_)));
+        let stops = resolve_stop_offsets(&self.stops, length, matches!(self.kind, GradientKind::Conic(_)), self.interpolation);
         let stops = if self.repeating {
             repeat_stops(stops)
         } else {
@@ -921,6 +953,7 @@ fn resolve_stop_offsets(
     stops: &[Stop<LengthPercentage, PaintColor>],
     length: f32,
     conic: bool,
+    how: Interpolation,
 ) -> Vec<(f32, PaintColor)> {
     let to_offset = |position: &StopPosition<LengthPercentage>| match position {
         StopPosition::Angle(degrees) => degrees / 360.0,
@@ -929,13 +962,13 @@ fn resolve_stop_offsets(
     };
 
     // a stop with two positions is two stops
-    let mut list: Vec<(Option<f32>, PaintColor)> = vec![];
+    let mut list: Vec<(Option<f32>, PaintColor, [bool; 3])> = vec![];
     for stop in stops {
         match stop.positions.as_slice() {
-            [] => list.push((None, stop.color)),
+            [] => list.push((None, stop.color, stop.missing)),
             positions => {
                 for position in positions {
-                    list.push((Some(to_offset(position)), stop.color));
+                    list.push((Some(to_offset(position)), stop.color, stop.missing));
                 }
             }
         }
@@ -949,7 +982,7 @@ fn resolve_stop_offsets(
     }
     // an offset smaller than an earlier one is raised to it
     let mut highest = f32::NEG_INFINITY;
-    for (offset, _) in list.iter_mut() {
+    for (offset, _, _) in list.iter_mut() {
         if let Some(offset) = offset {
             if *offset < highest {
                 *offset = highest;
@@ -975,7 +1008,15 @@ fn resolve_stop_offsets(
             entry.0 = Some(before + (after - before) * (n + 1) as f32 / count);
         }
     }
-    list.into_iter().map(|(offset, color)| (offset.unwrap(), color)).collect()
+    if !list.iter().any(|entry| entry.2.iter().any(|&m| m)) {
+        return list.into_iter().map(|(offset, color, _)| (offset.unwrap(), color)).collect();
+    }
+    // the missing components take the values of the neighbours
+    let colors: Vec<([f32; 4], [bool; 3])> = list.iter().map(|entry| (entry.1.to_extended_srgb(), entry.2)).collect();
+    super::color_mix::fill_missing(how, &colors)
+        .into_iter()
+        .map(|(index, color)| (list[index].0.unwrap(), PaintColor::from_extended_srgb([color[0], color[1], color[2]], color[3])))
+        .collect()
 }
 
 /// Repeats the stops over the range `0..=1`.
@@ -988,11 +1029,9 @@ fn repeat_stops(stops: Vec<(f32, PaintColor)>) -> Vec<(f32, PaintColor)> {
     if !(period > 0.0) || !(last_copy - first_copy < MAX_REPEATS) {
         // all stops at the same position, or too many to be told apart: the average colour
         let n = stops.len().max(1) as f32;
-        // (the mean of the colours, in sRGB)
-        let mean = |channel: fn(&SrgbColor) -> u8| {
-            (stops.iter().map(|s| f32::from(channel(&s.1.clip_to_srgb()))).sum::<f32>() / n).round() as u8
-        };
-        let color = PaintColor::srgb(mean(|c| c.red), mean(|c| c.green), mean(|c| c.blue), mean(|c| c.alpha));
+        // (the mean of the colours, in sRGB, with the channels that a colour outside of it has)
+        let mean = |channel: usize| stops.iter().map(|s| s.1.to_extended_srgb()[channel]).sum::<f32>() / n;
+        let color = PaintColor::from_extended_srgb([mean(0), mean(1), mean(2)], mean(3));
         return vec![(0.0, color)];
     }
     let mut repeated = Vec::with_capacity(stops.len() * (last_copy - first_copy + 1.0) as usize);
@@ -1005,10 +1044,14 @@ fn repeat_stops(stops: Vec<(f32, PaintColor)>) -> Vec<(f32, PaintColor)> {
 }
 
 fn rgba_components(color: PaintColor) -> [f32; 4] {
-    // (the colours of a gradient are interpolated in sRGB for now)
-    let color = color.clip_to_srgb();
-    let channel = |value: u8| f32::from(value) / 255.0;
-    [channel(color.red), channel(color.green), channel(color.blue), channel(color.alpha)]
+    // (the colours of a gradient are interpolated in sRGB, from the channels that a colour outside of it
+    // has: they are outside of 0 to 1 and nothing is clipped here)
+    color.to_extended_srgb()
+}
+
+/// Whether a stop has a colour that sRGB cannot hold.
+fn is_wide(stop: &ResolvedStop) -> bool {
+    stop.color[..3].iter().any(|channel| !(-0.001..=1.001).contains(channel))
 }
 
 /// Interpolates premultiplied colours.
@@ -1091,7 +1134,9 @@ const SPACE_STOPS: usize = 4096;
 /// the colours that the gradient has in its colour space: in sRGB only the transitions between
 /// opacities need them (premultiplied interpolation), in another space every transition does.
 fn with_steps(stops: &[ResolvedStop], how: Interpolation) -> Vec<ResolvedStop> {
-    if how.space == super::color_mix::Space::Srgb {
+    // (the transitions of a gradient with a colour outside of sRGB are cut into steps too: the shading
+    // of the PDF interpolates in the space of its profile and not in sRGB)
+    if how.space == super::color_mix::Space::Srgb && !stops.iter().any(is_wide) {
         return with_premultiplied_steps(stops);
     }
     let transitions = stops
@@ -1155,6 +1200,24 @@ mod tests {
             Some(Image::Gradient(gradient)) => gradient,
             other => panic!("{css:?} parsed as {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_default_space_is_srgb_for_legacy_colours_and_oklab_for_the_others() {
+        let space = |css| gradient(css).interpolation.space;
+        use super::super::color_mix::Space;
+        // hex, names, rgb(), hsl() and hwb(), also with alpha, and currentcolor
+        assert_eq!(space("linear-gradient(red, #00f)"), Space::Srgb);
+        assert_eq!(space("linear-gradient(rgb(255 0 0 / 50%), hsl(120 100% 50%), hwb(0 0% 0%), transparent)"), Space::Srgb);
+        assert_eq!(space("linear-gradient(currentcolor, white)"), Space::Srgb);
+        // any other syntax, also one that is sRGB, makes it Oklab, and so does a mix with a legacy one
+        assert_eq!(space("linear-gradient(color(srgb 1 0 0), blue)"), Space::Oklab);
+        assert_eq!(space("linear-gradient(red, color(display-p3 0 1 0))"), Space::Oklab);
+        assert_eq!(space("radial-gradient(lab(50 40 30), oklch(0.6 0.2 120))"), Space::Oklab);
+        assert_eq!(space("conic-gradient(red, lch(50 50 50))"), Space::Oklab);
+        // what the gradient says wins
+        assert_eq!(space("linear-gradient(in srgb, color(display-p3 1 0 0), color(display-p3 0 1 0))"), Space::Srgb);
+        assert_eq!(space("linear-gradient(in lab, red, blue)"), Space::Lab);
     }
 
     #[test]
@@ -1238,12 +1301,18 @@ mod tests {
 
     #[test]
     fn invalid_gradients_are_rejected() {
-        assert!(parse("linear-gradient(red)").is_none());
         assert!(parse("linear-gradient()").is_none());
         assert!(parse("linear-gradient(red, 50%, blue)").is_none(), "colour hints are unsupported");
         assert!(parse("linear-gradient(red 10deg, blue)").is_none());
         assert!(parse("foo-gradient(red, blue)").is_none());
         assert!(parse("conic-gradient(red 10px, blue)").is_none());
+    }
+
+    #[test]
+    fn a_single_colour_stop_is_a_gradient() {
+        // (CSS Images 4: the colour list has one stop at least)
+        assert_eq!(gradient("linear-gradient(to right in oklch, red 50%)").stops.len(), 1);
+        assert_eq!(gradient("radial-gradient(blue)").stops.len(), 1);
     }
 
     #[test]
@@ -1316,7 +1385,7 @@ mod tests {
     const BOX: BoxSize = BoxSize { x: 10.0, y: 20.0, width: 200.0, height: 100.0 };
 
     fn stop(color: PaintColor, positions: &[LengthPercentage]) -> Stop<LengthPercentage, PaintColor> {
-        Stop { color, positions: positions.iter().cloned().map(StopPosition::Length).collect() }
+        Stop { color, positions: positions.iter().cloned().map(StopPosition::Length).collect(), missing: [false; 3] }
     }
 
     fn linear(direction: LinearDirection, stops: Vec<Stop<LengthPercentage, PaintColor>>) -> ResolvedGradient {
@@ -1540,8 +1609,8 @@ mod tests {
             repeating: false,
             interpolation: Default::default(),
             stops: vec![
-                Stop { color: RED, positions: vec![StopPosition::Angle(90.0)] },
-                Stop { color: BLUE, positions: vec![StopPosition::Length(pct(0.75))] },
+                Stop { color: RED, positions: vec![StopPosition::Angle(90.0)], missing: [false; 3] },
+                Stop { color: BLUE, positions: vec![StopPosition::Length(pct(0.75))], missing: [false; 3] },
             ],
         };
         let resolved = g.resolve(BOX, BOX).unwrap();

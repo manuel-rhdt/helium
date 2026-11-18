@@ -113,16 +113,11 @@ fn prophoto_decode(encoded: f32) -> f32 {
     }
 }
 
-/// The `rec2020` transfer function.
+/// The `rec2020` transfer function: the display-referred pure power of 2.4 of Rec. ITU-R BT.1886 (with a
+/// black lift of 0 and a gain of 1), defined over the extended range (CSS Color 4: Issue 12574; before, the
+/// camera OETF of BT.2020 was used).
 fn rec2020_decode(encoded: f32) -> f32 {
-    const ALPHA: f32 = 1.099_296_8;
-    const BETA: f32 = 0.018_053_969;
-    let abs = encoded.abs();
-    if abs < BETA * 4.5 {
-        encoded / 4.5
-    } else {
-        encoded.signum() * ((abs + ALPHA - 1.0) / ALPHA).powf(1.0 / 0.45)
-    }
+    encoded.abs().powf(2.4) * encoded.signum()
 }
 
 /// CIELAB (D50) to XYZ, https://drafts.csswg.org/css-color-4/#lab-to-xyz.
@@ -207,6 +202,36 @@ fn from_linear(linear: Rgb, alpha: Option<f32>) -> PaintColor {
         return PaintColor::DisplayP3(DisplayP3Color::new(r, g, b, alpha));
     }
     PaintColor::Xyz(XyzColor::new(xyz[0], xyz[1], xyz[2], alpha))
+}
+
+/// The colour as sRGB with the channels that it has, which are outside of 0 to 1 for a colour that sRGB
+/// cannot hold ("extended" sRGB, the encoding of CSS Color 4 without the clipping), and the alpha
+/// from 0 to 1.
+pub(super) fn to_extended_srgb(color: PaintColor) -> [f32; 4] {
+    let alpha = f32::from(color.alpha()) / 255.0;
+    match color {
+        PaintColor::Srgb(c) => [f32::from(c.red) / 255.0, f32::from(c.green) / 255.0, f32::from(c.blue) / 255.0, alpha],
+        PaintColor::DisplayP3(c) => {
+            let [r, g, b] = c.components();
+            let linear = xyz_to_srgb(apply(&P3_TO_XYZ, [srgb_decode(r), srgb_decode(g), srgb_decode(b)]));
+            [srgb_encode(linear[0]), srgb_encode(linear[1]), srgb_encode(linear[2]), alpha]
+        }
+        PaintColor::Xyz(c) => {
+            let linear = xyz_to_srgb(c.components());
+            [srgb_encode(linear[0]), srgb_encode(linear[1]), srgb_encode(linear[2]), alpha]
+        }
+    }
+}
+
+/// The colour with these extended sRGB channels (see [`to_extended_srgb`]) and alpha (0 to 1): sRGB if
+/// that holds it, else a wider space, so that nothing is clipped.
+pub(super) fn from_extended_srgb([r, g, b]: Rgb, alpha: f32) -> PaintColor {
+    from_linear([srgb_decode(r), srgb_decode(g), srgb_decode(b)], Some(alpha.clamp(0.0, 1.0)))
+}
+
+/// CIE XYZ (D65) of a colour with extended sRGB channels.
+pub(super) fn extended_srgb_to_xyz([r, g, b]: Rgb) -> Rgb {
+    apply(&SRGB_TO_XYZ, [srgb_decode(r), srgb_decode(g), srgb_decode(b)])
 }
 
 /// Display P3 to sRGB with the channels clipped: [`PaintColor::clip_to_srgb`].
