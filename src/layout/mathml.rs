@@ -140,8 +140,8 @@ fn math_computed_style(style: &ComputedValues) -> MathComputedStyle {
         font_size: style.font.font_size.0,
         math_depth: style.math.depth(),
         math_style: match style.math.math_style {
-            MathStyle::Display => formel::host::MathStyle::Normal,
-            MathStyle::Inline => formel::host::MathStyle::Compact,
+            MathStyle::Normal => formel::host::MathStyle::Normal,
+            MathStyle::Compact => formel::host::MathStyle::Compact,
         },
         math_shift: match style.math.math_shift {
             computed::MathShift::Normal => MathShift::Normal,

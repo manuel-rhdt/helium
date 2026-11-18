@@ -2471,8 +2471,8 @@ fn math_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
     };
     let mut css = String::new();
     match attribute("displaystyle").as_deref() {
-        Some("true") => css.push_str("-helium-math-style: display;"),
-        Some("false") => css.push_str("-helium-math-style: inline;"),
+        Some("true") => css.push_str("math-style: normal;"),
+        Some("false") => css.push_str("math-style: compact;"),
         _ => {}
     }
     if let Some(level) = attribute("scriptlevel") {

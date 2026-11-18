@@ -876,7 +876,7 @@ impl StyleBuilder {
     fn resolve_math_depth(&mut self) {
         let resolved = match self.new_values.math.math_depth {
             MathDepth::AutoAdd => {
-                self.parent_math_depth + i32::from(self.parent_math_style == MathStyle::Inline)
+                self.parent_math_depth + i32::from(self.parent_math_style == MathStyle::Compact)
             }
             MathDepth::Add(n) => self.parent_math_depth.saturating_add(n),
             MathDepth::Absolute(n) => n,
@@ -1668,15 +1668,15 @@ mod math_depth_tests {
     #[test]
     fn auto_add_uses_inherited_math_style() {
         // inherited math-style is `display` (normal): no change
-        let display = root("-helium-math-style: display");
+        let display = root("math-style: normal");
         assert_eq!(child(&display, "math-depth: auto-add").math.depth(), 0);
         // inherited math-style is `inline` (compact): +1
-        let compact = root("-helium-math-style: inline");
+        let compact = root("math-style: compact");
         assert_eq!(child(&compact, "math-depth: auto-add").math.depth(), 1);
         // the element's own math-style must not influence its own auto-add,
         // regardless of declaration order
         assert_eq!(
-            child(&display, "-helium-math-style: inline; math-depth: auto-add")
+            child(&display, "math-style: compact; math-depth: auto-add")
                 .math
                 .depth(),
             0
@@ -1684,7 +1684,7 @@ mod math_depth_tests {
         assert_eq!(
             child(
                 &compact,
-                "math-depth: auto-add; -helium-math-style: display"
+                "math-depth: auto-add; math-style: normal"
             )
             .math
             .depth(),

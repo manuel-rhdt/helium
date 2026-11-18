@@ -340,3 +340,19 @@ fn table_cells_have_padding() {
         bare
     );
 }
+
+#[test]
+fn annotation_xml_is_not_rendered() {
+    // an HTML integration point: its content is parsed as HTML, but it is annotation, not content
+    let dump = dump(
+        "annotation_xml",
+        r#"<style>body { margin: 0 }</style>
+           <p style="margin: 0"><math><semantics><mi>x</mi><annotation-xml encoding="text/html"><img id="a" width="20" height="20" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Crect width='20' height='20'/%3E%3C/svg%3E"></annotation-xml></semantics></math></p>"#,
+    );
+    let img = find(&dump["document"], "a");
+    assert!(
+        img.map_or(true, |img| img["border_box"].is_null()),
+        "the image in annotation-xml was laid out: {:?}",
+        img
+    );
+}
