@@ -82,7 +82,6 @@ css/CSS2/borders/shand-border-001.xht
 css/CSS2/box-display/anonymous-box-generation-001.xht
 css/CSS2/box-display/block-in-inline-001.xht
 css/CSS2/box-display/block-in-inline-002.xht
-css/CSS2/box-display/block-in-inline-followed-by-empty-span.html
 css/CSS2/box-display/block-in-inline-relpos-001.xht
 css/CSS2/box-display/block-in-inline-self-collapsing-only-child.html
 css/CSS2/box-display/containing-block-020.xht
@@ -144,9 +143,7 @@ css/CSS2/margin-padding-clear/padding-shorthand-004.xht
 css/CSS2/normal-flow/block-formatting-contexts-004.xht
 css/CSS2/normal-flow/block-in-inline-align-001.html
 css/CSS2/normal-flow/block-in-inline-align-last-001.html
-css/CSS2/normal-flow/block-in-inline-empty-003.xht
 css/CSS2/normal-flow/block-in-inline-first-line-002.html
-css/CSS2/normal-flow/block-in-inline-whitespace-001a.xht
 css/CSS2/normal-flow/block-non-replaced-height-005.xht
 css/CSS2/normal-flow/block-non-replaced-width-004.xht
 css/CSS2/normal-flow/block-replaced-height-002.xht

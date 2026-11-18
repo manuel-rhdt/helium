@@ -1803,7 +1803,13 @@ impl EntityConstructor {
         block_formatting_contexts: &mut WriteStorage<BlockFormattingContext>,
         shifts: &mut InlineShifts,
         math_nodes: &specs::ReadStorage<MathNode>,
+        text_runs: &specs::ReadStorage<components::TextRun>,
     ) {
+        // The inline content around a block has no line if it is only the struts of empty inline
+        // boxes.
+        let has_line = |elements: &[Entity]| {
+            elements.iter().any(|entity| text_runs.get(*entity).is_none_or(|run| !run.text.is_empty()))
+        };
         let push_block =
             |ble: &mut Vec<BlockLevelElement>,
              entity,
@@ -1847,6 +1853,9 @@ impl EntityConstructor {
             }
 
             if display.is_block_level() {
+                if !has_line(inline_level_elements) {
+                    inline_level_elements.clear();
+                }
                 if !inline_level_elements.is_empty() {
                     push_block(
                         block_level_elements,
@@ -1891,6 +1900,7 @@ impl EntityConstructor {
                         block_formatting_contexts,
                         shifts,
                         math_nodes,
+                        text_runs,
                     );
                 } else {
                     // a formula is placed on the line as a whole, like an `inline-block`
@@ -1920,6 +1930,7 @@ impl EntityConstructor {
         let mut computed_values = self.world.write_storage::<ComputedValues>();
         let mut shifts = InlineShifts::fetch(&self.world);
         let math_nodes = self.world.read_storage::<MathNode>();
+        let text_runs = self.world.read_storage::<components::TextRun>();
 
         let LayoutEntity(entity) = node.layout_entity().unwrap();
 
@@ -1944,6 +1955,7 @@ impl EntityConstructor {
             &mut block_formatting_contexts,
             &mut shifts,
             &math_nodes,
+            &text_runs,
         );
 
         let has_block_level_elements = block_level_elements
@@ -1982,7 +1994,10 @@ impl EntityConstructor {
         }
 
         // push last anonymous block, should there be one
-        if !inline_level_elements.is_empty() {
+        if !inline_level_elements.is_empty()
+            && (inline_level_elements.iter().any(|entity| text_runs.get(*entity).is_none_or(|run| !run.text.is_empty()))
+                || !has_block_level_elements)
+        {
             let entity = Self::build_anonymous_block(
                 &entities,
                 &mut inline_formatting_contexts,
