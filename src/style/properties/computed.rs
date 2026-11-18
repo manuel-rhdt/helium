@@ -528,19 +528,22 @@ pub struct Position {
 }
 
 impl Position {
-    fn fixup(&mut self) {
-        if !self.border_top_style.is_visible() {
-            self.border_top_width = PixelLength::default();
-        }
-        if !self.border_bottom_style.is_visible() {
-            self.border_bottom_width = PixelLength::default();
-        }
-        if !self.border_left_style.is_visible() {
-            self.border_left_width = PixelLength::default();
-        }
-        if !self.border_right_style.is_visible() {
-            self.border_right_width = PixelLength::default();
-        }
+    // The widths are kept as they were computed, which is what `inherit` takes: a style of
+    // `none` or `hidden` makes the width that is used 0, but a child that inherits the width
+    // (and has a border style) has it (CSS Backgrounds 3, 4.2: "computed value: absolute length;
+    // 0 if the border style is none or hidden", which the browsers do only for the used value).
+    /// The width of the border at the top that is used: 0 without a (visible) style.
+    pub fn used_border_top_width(&self) -> PixelLength {
+        if self.border_top_style.is_visible() { self.border_top_width } else { PixelLength::default() }
+    }
+    pub fn used_border_bottom_width(&self) -> PixelLength {
+        if self.border_bottom_style.is_visible() { self.border_bottom_width } else { PixelLength::default() }
+    }
+    pub fn used_border_left_width(&self) -> PixelLength {
+        if self.border_left_style.is_visible() { self.border_left_width } else { PixelLength::default() }
+    }
+    pub fn used_border_right_width(&self) -> PixelLength {
+        if self.border_right_style.is_visible() { self.border_right_width } else { PixelLength::default() }
     }
 }
 
@@ -732,7 +735,6 @@ impl ComputedValues {
     }
 
     fn fixup(&mut self) {
-        Arc::make_mut(&mut self.position).fixup();
         if !self.box_.column_rule_style.is_visible() && self.box_.column_rule_width != PixelLength(0.0) {
             Arc::make_mut(&mut self.box_).column_rule_width = PixelLength(0.0);
         }
@@ -822,7 +824,7 @@ impl StyleBuilder {
                 ..Default::default()
             }),
             // the initial border width is `medium`, which only counts where there is a border
-            // style (see `Position::fixup`); boxes that are not made from elements have none
+            // style (see `Position::used_border_top_width`); boxes that are not made from elements have none
             position: Arc::new(Position {
                 border_top_width: PixelLength(3.0),
                 border_bottom_width: PixelLength(3.0),

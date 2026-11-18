@@ -80,9 +80,6 @@ css/CSS2/borders/border-top-width-025.xht
 css/CSS2/borders/border-top-width-080.xht
 css/CSS2/borders/border-top-width-applies-to-005.xht
 css/CSS2/borders/border-top-width-applies-to-006.xht
-css/CSS2/borders/border-width-010.xht
-css/CSS2/borders/border-width-011.xht
-css/CSS2/borders/border-width-012.xht
 css/CSS2/borders/border-width-applies-to-008.xht
 css/CSS2/borders/shand-border-001.xht
 css/CSS2/box-display/anonymous-box-generation-001.xht

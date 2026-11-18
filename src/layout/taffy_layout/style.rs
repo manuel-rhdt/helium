@@ -355,10 +355,10 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
             bottom: length_percentage(pos.padding_bottom),
         },
         border: Rect {
-            left: TLengthPercentage::length(pos.border_left_width.0),
-            right: TLengthPercentage::length(pos.border_right_width.0),
-            top: TLengthPercentage::length(pos.border_top_width.0),
-            bottom: TLengthPercentage::length(pos.border_bottom_width.0),
+            left: TLengthPercentage::length(pos.used_border_left_width().0),
+            right: TLengthPercentage::length(pos.used_border_right_width().0),
+            top: TLengthPercentage::length(pos.used_border_top_width().0),
+            bottom: TLengthPercentage::length(pos.used_border_bottom_width().0),
         },
         ..taffy::Style::DEFAULT
     }

@@ -17,10 +17,10 @@ pub fn calculate_padding_and_border(container_size: Px, style: &ComputedValues) 
     let position = &style.position;
     let mut deco = decoration_colors(style);
 
-    deco.border.top = position.border_top_width;
-    deco.border.bottom = position.border_bottom_width;
-    deco.border.left = position.border_left_width;
-    deco.border.right = position.border_right_width;
+    deco.border.top = position.used_border_top_width();
+    deco.border.bottom = position.used_border_bottom_width();
+    deco.border.left = position.used_border_left_width();
+    deco.border.right = position.used_border_right_width();
 
     deco.padding.top = position.padding_top.absolute(container_size);
     deco.padding.bottom = position.padding_bottom.absolute(container_size);

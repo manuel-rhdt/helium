@@ -2087,12 +2087,45 @@ pub enum BoxSizing {
     BorderBox,
 }
 
-#[derive(Debug, Copy, Clone, PropertyValue)]
+#[derive(Debug, Copy, Clone)]
 pub enum BorderWidth {
     Thin,
     Medium,
     Thick,
     Quantity(Quantity),
+}
+
+impl<'i> PropertyValue<'i> for BorderWidth {
+    type Error = StyleParseError;
+
+    /// `thin | medium | thick | <length [0,∞]>`: a negative length is invalid.
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        let start = input.state();
+        if let Ok(ident) = input.expect_ident_cloned() {
+            return match_ignore_ascii_case! { &ident,
+                "thin" => Ok(BorderWidth::Thin),
+                "medium" => Ok(BorderWidth::Medium),
+                "thick" => Ok(BorderWidth::Thick),
+                _ => {
+                    input.reset(&start);
+                    Err(input.new_error_for_next_token())
+                },
+            };
+        }
+        input.reset(&start);
+        let quantity = match Quantity::from_css_property_value(input) {
+            Ok(quantity) => quantity,
+            Err(_) => {
+                input.reset(&start);
+                return Err(input.new_error_for_next_token());
+            }
+        };
+        if quantity.value < 0.0 {
+            input.reset(&start);
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(BorderWidth::Quantity(quantity))
+    }
 }
 
 impl Default for BorderWidth {
