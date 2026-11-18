@@ -418,8 +418,18 @@ pub fn image_tiles(
     if !(width > 0.0 && height > 0.0) {
         return vec![];
     }
-    let xs = axis_tiles(repeat.x, width, &position.x, area.x, area.width);
-    let ys = axis_tiles(repeat.y, height, &position.y, area.y, area.height);
+    let mut xs = axis_tiles(repeat.x, width, &position.x, area.x, area.width);
+    let mut ys = axis_tiles(repeat.y, height, &position.y, area.y, area.height);
+    // With `round` in one axis only, an `auto` size in the other axis follows the rounded size,
+    // so that the image keeps its proportions.
+    // https://www.w3.org/TR/css-backgrounds-3/#the-background-size
+    if let Size::Explicit(auto_width, auto_height) = size {
+        if repeat.x == RepeatStyle::Round && repeat.y != RepeatStyle::Round && auto_height.is_none() {
+            ys = axis_tiles(repeat.y, xs.size * image_height / image_width, &position.y, area.y, area.height);
+        } else if repeat.y == RepeatStyle::Round && repeat.x != RepeatStyle::Round && auto_width.is_none() {
+            xs = axis_tiles(repeat.x, ys.size * image_width / image_height, &position.x, area.x, area.width);
+        }
+    }
     // the starts of the tiles of an axis that touch `from..to`
     let starts = |tiles: &AxisTiles, from: f32, to: f32| -> Vec<f32> {
         if !tiles.repeats {
