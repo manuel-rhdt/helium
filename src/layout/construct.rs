@@ -1383,6 +1383,7 @@ impl EntityConstructor {
         let font_size = style.font.font_size.0;
         if font_size > 0.0 {
             fonts.letter_spacing = style.text.letter_spacing.0 / font_size * 1000.0;
+            fonts.word_spacing = style.text.word_spacing.0 / font_size * 1000.0;
         }
         fonts.features = crate::style::properties::font_features::Features::of(&style.font).into();
         if style.text.writing_mode != crate::style::properties::specified::WritingMode::HorizontalTb {

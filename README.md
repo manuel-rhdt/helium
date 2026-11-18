@@ -104,7 +104,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `grid-column`, `grid-row`, `grid-area` (as four lines: no names), also for absolutely positioned children, which are placed in their grid area) layout, tables (`border-collapse`, `border-spacing`).
 - **Text:** `font` and its longhands (`font-family`, `font-style`, numeric and keyword
   `font-weight`, `font-size`, `line-height`), `color`, `text-align` (including `justify`),
-  `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `white-space` (`normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`), `hyphens`,
+  `text-indent`, `text-decoration`, `text-transform`, `letter-spacing`, `word-spacing` (a length), `white-space` (`normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`), `hyphens`,
   `direction`, `unicode-bidi`, `list-style-type`, `list-style-position` and the `list-style` shorthand (`<image>`
   markers are not supported; see generated content below).
 - **OpenType features:** `font-feature-settings`, `font-kerning`, and `font-variant` with

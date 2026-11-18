@@ -41,8 +41,6 @@ css/css-lists/foo-counter-reversed-009b.html
 css/css-lists/inside-marker-with-block-in-inline.html
 
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
-css/CSS2/borders/border-001.xht
-css/CSS2/borders/border-003.xht
 css/CSS2/borders/border-005.xht
 css/CSS2/borders/border-006.xht
 css/CSS2/borders/border-008.xht

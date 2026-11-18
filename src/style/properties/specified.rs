@@ -53,7 +53,7 @@ pub trait CssWideProperties {
 fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
-        "list-style-type", "list-style-position", "white-space", "text-indent", "text-align", "hyphens", "direction",
+        "list-style-type", "list-style-position", "letter-spacing", "word-spacing", "white-space", "text-indent", "text-align", "hyphens", "direction",
         "border-spacing", "border-collapse", "quotes", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
         "math-depth",
     ];
@@ -748,6 +748,9 @@ pub enum Text {
     /// https://www.w3.org/TR/css-text-3/#letter-spacing-property
     #[property]
     LetterSpacing(NormalOrQuantity),
+    /// https://www.w3.org/TR/css-text-3/#word-spacing-property
+    #[property]
+    WordSpacing(NormalOrQuantity),
     /// https://www.w3.org/TR/css-text-3/#text-transform-property
     #[property]
     TextTransform(TextTransform),
@@ -2055,7 +2058,7 @@ pub enum TextTransform {
     Capitalize,
 }
 
-/// The value of `letter-spacing`: `normal` or a length.
+/// The value of `letter-spacing` and `word-spacing`: `normal` or a length.
 #[derive(Debug, Copy, Clone, Default, PropertyValue)]
 pub enum NormalOrQuantity {
     #[default]

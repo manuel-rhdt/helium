@@ -797,6 +797,7 @@ impl StyleBuilder {
                 text_align: inherited_values.text.text_align,
                 hyphens: inherited_values.text.hyphens,
                 letter_spacing: inherited_values.text.letter_spacing,
+                word_spacing: inherited_values.text.word_spacing,
                 text_transform: inherited_values.text.text_transform,
                 direction: inherited_values.text.direction,
                 writing_mode: inherited_values.text.writing_mode,
@@ -1345,6 +1346,8 @@ pub struct Text {
     pub hyphens: specified::Hyphens,
     /// The extra space after every character; `normal` is 0.
     pub letter_spacing: PixelLength,
+    /// The extra space at every word separator (a space, for one); `normal` is 0.
+    pub word_spacing: PixelLength,
     pub text_transform: specified::TextTransform,
     pub direction: specified::Direction,
     pub writing_mode: specified::WritingMode,
