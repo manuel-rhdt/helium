@@ -7,16 +7,17 @@
 use super::{
     FontMap,
     components::{
-        ContainingBlock, Decoration, GraphicsOp, IntrinsicSize, MathBox, MathNode, NO_CLUSTER, PieceKind,
-        Paragraph, Position, TextOperator, TransformMatrix, VectorGraphics, ZIndex,
+        ContainingBlock, Decoration, GraphicsOp, ImageBox, IntrinsicSize, MathBox, MathNode, MathSegment,
+        NO_CLUSTER, PieceKind, Paragraph, Position, TextOperator, TransformMatrix, VectorGraphics, ZIndex,
     },
     inline_size::calculate_padding_and_border,
     text::font::GlyphIndex,
 };
 use formel::{
     host::{
-        Direction, Edges, Fragment, LayoutCollector, MathComputedStyle, MathShift, MathTree,
-        NodeKind, NodeLayout, OperatorOverrides, Rect, default_operator_overrides, layout_math,
+        Direction, Edges, ForeignMetrics, Fragment, LayoutCollector, MathComputedStyle,
+        MathLayoutHost, MathShift, MathTree, NodeKind, NodeLayout, OperatorOverrides, Rect,
+        TokenSegment, default_operator_overrides, layout_math,
     },
     shaper::Shaper,
 };
@@ -36,6 +37,7 @@ use PixelLength as Px;
 struct EcsMathTree<'a, 'world> {
     nodes: &'a ReadStorage<'world, MathNode>,
     styles: &'a ReadStorage<'world, ComputedValues>,
+    images: &'a ReadStorage<'world, ImageBox>,
     /// One shaper per font face, by font name.
     fonts: HashMap<String, Rc<Shaper<'a>>>,
 }
@@ -44,6 +46,7 @@ impl<'a, 'world> EcsMathTree<'a, 'world> {
     fn new(
         nodes: &'a ReadStorage<'world, MathNode>,
         styles: &'a ReadStorage<'world, ComputedValues>,
+        images: &'a ReadStorage<'world, ImageBox>,
         font_map: &'a FontMap,
     ) -> Self {
         let mut fonts = HashMap::new();
@@ -59,6 +62,7 @@ impl<'a, 'world> EcsMathTree<'a, 'world> {
         EcsMathTree {
             nodes,
             styles,
+            images,
             fonts,
         }
     }
@@ -102,6 +106,19 @@ impl<'a> MathTree for EcsMathTree<'a, '_> {
         self.node(node).text.as_deref().map(Cow::Borrowed)
     }
 
+    fn token_content(&self, node: Entity) -> Option<Vec<TokenSegment<Entity>>> {
+        let segments = self.node(node).segments.as_ref()?;
+        Some(
+            segments
+                .iter()
+                .map(|segment| match segment {
+                    MathSegment::Text(text) => TokenSegment::Text(text.clone()),
+                    MathSegment::Foreign(entity) => TokenSegment::Foreign(*entity),
+                })
+                .collect(),
+        )
+    }
+
     fn attribute(&self, node: Entity, name: &str) -> Option<Cow<'_, str>> {
         self.node(node)
             .attributes
@@ -122,6 +139,85 @@ impl<'a> MathTree for EcsMathTree<'a, '_> {
             }
         }
         overrides
+    }
+}
+
+impl EcsMathTree<'_, '_> {
+    /// The margin box of foreign content. Only replaced content is laid out: an image is as big
+    /// as its `width` and `height` say, else as its intrinsic size (keeping the ratio when only
+    /// one of them is given), and sits on the baseline with its bottom margin edge. Padding and
+    /// border of the image are not taken into account. Anything else has no size.
+    fn foreign_metrics(&self, entity: Entity) -> ForeignMetrics {
+        use computed::GenericSize;
+        let (Some(image), Some(style)) = (self.images.get(entity), self.styles.get(entity)) else {
+            return ForeignMetrics::default();
+        };
+        let (natural_width, natural_height) = (image.width, image.height);
+        let ratio = if natural_height > 0.0 { natural_width / natural_height } else { 0.0 };
+        let specified = |size: GenericSize| {
+            (!matches!(size, GenericSize::Auto)).then(|| size.absolute(Px(0.0), Px(0.0)).0.max(0.0))
+        };
+        let (width, height) = match (specified(style.position.width), specified(style.position.height)) {
+            (Some(width), Some(height)) => (width, height),
+            (Some(width), None) if ratio > 0.0 => (width, width / ratio),
+            (None, Some(height)) => (height * ratio, height),
+            _ => (natural_width, natural_height),
+        };
+        let deco = calculate_padding_and_border(Px(0.0), style);
+        let margin_left = style.position.margin_left.absolute(Px(0.0), Px(0.0)).0;
+        let margin_right = style.position.margin_right.absolute(Px(0.0), Px(0.0)).0;
+        ForeignMetrics {
+            width: margin_left + width + margin_right,
+            ascent: deco.margin.top.0 + height,
+            descent: deco.margin.bottom.0,
+        }
+    }
+}
+
+/// The math tree with a host that lays out foreign content, and collects the layouts.
+struct EcsMathHost<'a, 'world> {
+    collector: LayoutCollector<EcsMathTree<'a, 'world>>,
+}
+
+impl<'a> MathTree for EcsMathHost<'a, '_> {
+    type NodeId = Entity;
+    type Font = Rc<Shaper<'a>>;
+
+    fn kind(&self, node: Entity) -> NodeKind {
+        self.collector.kind(node)
+    }
+    fn children(&self, node: Entity) -> impl Iterator<Item = Entity> {
+        self.collector.children(node)
+    }
+    fn child_count(&self, node: Entity) -> usize {
+        self.collector.child_count(node)
+    }
+    fn style(&self, node: Entity) -> MathComputedStyle {
+        self.collector.style(node)
+    }
+    fn font(&self, node: Entity) -> Self::Font {
+        self.collector.font(node)
+    }
+    fn text(&self, node: Entity) -> Option<Cow<'_, str>> {
+        self.collector.text(node)
+    }
+    fn token_content(&self, node: Entity) -> Option<Vec<TokenSegment<Entity>>> {
+        self.collector.token_content(node)
+    }
+    fn attribute(&self, node: Entity, name: &str) -> Option<Cow<'_, str>> {
+        self.collector.attribute(node, name)
+    }
+    fn operator_overrides(&self, node: Entity) -> OperatorOverrides {
+        self.collector.operator_overrides(node)
+    }
+}
+
+impl MathLayoutHost for EcsMathHost<'_, '_> {
+    fn layout_foreign(&mut self, node: Entity) -> ForeignMetrics {
+        self.collector.tree.foreign_metrics(node)
+    }
+    fn set_layout(&mut self, node: Entity, layout: NodeLayout) {
+        self.collector.set_layout(node, layout)
     }
 }
 
@@ -170,6 +266,7 @@ impl<'world> System<'world> for MathFormat {
         WriteStorage<'world, Position>,
         ReadStorage<'world, MathNode>,
         ReadStorage<'world, ComputedValues>,
+        ReadStorage<'world, ImageBox>,
         WriteStorage<'world, IntrinsicSize>,
         WriteStorage<'world, MathBox>,
         WriteStorage<'world, ContainingBlock>,
@@ -183,6 +280,7 @@ impl<'world> System<'world> for MathFormat {
             mut positions,
             math_nodes,
             computed_values,
+            images,
             mut intrinsic_sizes,
             mut math_boxes,
             mut parents,
@@ -198,10 +296,16 @@ impl<'world> System<'world> for MathFormat {
             return;
         }
 
-        let tree = EcsMathTree::new(&math_nodes, &computed_values, &font_map);
         for root in roots {
-            let mut collector = LayoutCollector::new(&tree);
-            let root_layout = layout_math(&mut collector, root);
+            let mut host = EcsMathHost {
+                collector: LayoutCollector::new(EcsMathTree::new(
+                    &math_nodes,
+                    &computed_values,
+                    &images,
+                    &font_map,
+                )),
+            };
+            let root_layout = layout_math(&mut host, root);
 
             intrinsic_sizes
                 .insert(
@@ -216,7 +320,7 @@ impl<'world> System<'world> for MathFormat {
 
             // Walk the tree top-down to turn the parent-relative locations into offsets from
             // the `<math>` box.
-            let mut layouts = collector.layouts;
+            let mut layouts = host.collector.layouts;
             let mut nodes = Vec::with_capacity(layouts.len());
             let mut stack = vec![(root, 0.0f32, 0.0f32)];
             while let Some((entity, parent_x, parent_y)) = stack.pop() {
@@ -253,7 +357,8 @@ impl<'world> System<'world> for MathFormat {
                 }
 
                 // reversed, so that the nodes come out in tree order
-                for &child in math_nodes.get(entity).unwrap().children.iter().rev() {
+                let children: Vec<Entity> = math_nodes.get(entity).unwrap().child_entities().collect();
+                for child in children.into_iter().rev() {
                     stack.push((child, x, y));
                 }
                 nodes.push((entity, Px(x), Px(y), layout));

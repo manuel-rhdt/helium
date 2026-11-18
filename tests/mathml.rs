@@ -356,3 +356,97 @@ fn annotation_xml_is_not_rendered() {
         img
     );
 }
+
+const RED_40X30: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='30'%3E%3Crect width='40' height='30' fill='%23c33'/%3E%3C/svg%3E";
+
+fn box_of(dump: &Value, id: &str) -> [f64; 4] {
+    let b = &find(&dump["document"], id).unwrap_or_else(|| panic!("no element with id {}", id))["border_box"];
+    ["x", "y", "width", "height"].map(|key| b[key].as_f64().unwrap())
+}
+
+fn formula(name: &str, math: &str) -> Value {
+    dump(
+        name,
+        &format!(
+            r#"<style>body {{ margin: 0 }}</style><p style="margin: 0"><math id="m" display="inline">{}</math></p>"#,
+            math
+        ),
+    )
+}
+
+#[test]
+fn an_image_in_mtext_is_laid_out_in_the_formula() {
+    let without = formula("img_none", "<mi>x</mi><mtext></mtext><mi>y</mi>");
+    let with = formula(
+        "img_mtext",
+        &format!(r#"<mi>x</mi><mtext><img id="i" src="{}"></mtext><mi>y</mi>"#, RED_40X30),
+    );
+    let [_, _, width_without, _] = box_of(&without, "m");
+    let [math_x, math_y, width, height] = box_of(&with, "m");
+    let [x, y, image_width, image_height] = box_of(&with, "i");
+    // the formula is as wide as the image makes it, and as high
+    assert!((width - width_without - 40.0).abs() < 0.01, "{} {}", width, width_without);
+    assert!(height >= 30.0 - 0.01, "height: {}", height);
+    assert!((image_width - 40.0).abs() < 0.01 && (image_height - 30.0).abs() < 0.01);
+    // the image is inside of the formula, between x and y
+    assert!(x > math_x && x + image_width < math_x + width, "x: {}, math: {}", x, math_x);
+    assert!(y >= math_y - 0.01 && y + image_height <= math_y + height + 0.01);
+}
+
+#[test]
+fn the_image_stands_on_the_baseline_between_text() {
+    let with = formula(
+        "img_text",
+        &format!(r#"<mtext id="t">ab<img id="i" src="{}">cd</mtext>"#, RED_40X30),
+    );
+    let text_only = formula("img_text_only", r#"<mtext id="t">abcd</mtext>"#);
+    let [t_x, _, t_width, _] = box_of(&with, "t");
+    let [i_x, i_y, _, i_height] = box_of(&with, "i");
+    let [_, _, plain_width, _] = box_of(&text_only, "t");
+    // the image is somewhere in the middle of the text
+    assert!(i_x > t_x && i_x < t_x + t_width - 1.0, "i: {}, t: {} + {}", i_x, t_x, t_width);
+    assert!((t_width - plain_width - 40.0).abs() < 0.5, "{} {}", t_width, plain_width);
+    // its bottom edge is the baseline of the token, and the text is on it
+    let baseline = i_y + i_height;
+    let glyph_ys: Vec<f64> = math_glyph_ys(&with);
+    assert!(!glyph_ys.is_empty());
+    for glyph_y in glyph_ys {
+        assert!((glyph_y - baseline).abs() < 0.5, "glyph: {}, baseline: {}", glyph_y, baseline);
+    }
+}
+
+fn math_glyph_ys(dump: &Value) -> Vec<f64> {
+    let mut ys = Vec::new();
+    for run in dump["paint"]["text"].as_array().unwrap() {
+        for op in run["ops"].as_array().unwrap() {
+            if op["op"] == "transform" {
+                ys.push(op["matrix"][5].as_f64().unwrap());
+            }
+        }
+    }
+    ys
+}
+
+#[test]
+fn an_image_in_mi_and_its_css_size() {
+    let sized = formula(
+        "img_css",
+        &format!(r#"<mi><img id="i" style="width: 20px" src="{}"></mi>"#, RED_40X30),
+    );
+    let [_, _, width, height] = box_of(&sized, "i");
+    // the ratio of the image is kept when only one side is given
+    assert!((width - 20.0).abs() < 0.01 && (height - 15.0).abs() < 0.01, "{} x {}", width, height);
+    let [_, _, math_width, _] = box_of(&sized, "m");
+    assert!((math_width - 20.0).abs() < 0.01, "math: {}", math_width);
+}
+
+#[test]
+fn other_html_in_a_token_is_left_out() {
+    let plain = formula("html_plain", "<mtext>ab</mtext>");
+    let with_span = formula(
+        "html_span",
+        r#"<mtext>a<span id="s" style="border: 1px solid; padding: 2px">zzz</span>b</mtext>"#,
+    );
+    assert_eq!(box_of(&plain, "m")[2], box_of(&with_span, "m")[2]);
+    assert!(find(&with_span["document"], "s").unwrap()["border_box"].is_null());
+}

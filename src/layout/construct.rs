@@ -1,4 +1,4 @@
-use super::components::{self, BlockLevelElement, LayoutEntity, MathNode, Position, RootNode};
+use super::components::{self, BlockLevelElement, LayoutEntity, MathNode, MathSegment, Position, RootNode};
 use super::inline::InlineFormattingContext;
 use super::margin_boxes::{MarginBoxes, PageCounterOps, ResolvedMarginBox};
 use super::pages::{self, PageContext};
@@ -2119,20 +2119,40 @@ impl EntityConstructor {
 
         let math_nodes = WriteStorage::<MathNode>::fetch(&self.world);
         let text_runs = WriteStorage::<TextRun>::fetch(&self.world);
+        let images = self.world.read_storage::<components::ImageBox>();
         let mut children = Vec::new();
         let mut raw_text = String::new();
+        // the text and the foreign content of a token, in order
+        let mut pieces: Vec<Result<String, Entity>> = Vec::new();
+        let mut piece_text = String::new();
         for child in node.children() {
             let Some(LayoutEntity(child_entity)) = child.layout_entity() else {
                 continue;
             };
             if let Some(text_run) = text_runs.get(child_entity) {
                 raw_text.push_str(&text_run.text);
-            } else if math_nodes.contains(child_entity) {
-                children.push(child_entity);
+                piece_text.push_str(&text_run.text);
+            } else if let Some(child_node) = math_nodes.get(child_entity) {
+                if is_token && child_node.kind == NodeKind::Foreign {
+                    // only replaced content (an image) is laid out inside a token; other HTML
+                    // is left out
+                    if images.contains(child_entity) {
+                        if !piece_text.is_empty() {
+                            pieces.push(Ok(std::mem::take(&mut piece_text)));
+                        }
+                        pieces.push(Err(child_entity));
+                    }
+                } else {
+                    children.push(child_entity);
+                }
             }
         }
+        if !piece_text.is_empty() {
+            pieces.push(Ok(piece_text));
+        }
+        let has_foreign = pieces.iter().any(Result::is_err);
 
-        let text = is_token.then(|| {
+        let transform = |raw_text: &str| {
             let is_mi = kind == NodeKind::Math(MathElement::Mi);
             let is_mo = kind == NodeKind::Math(MathElement::Mo);
             // By default, an `mi` is only italic if it consists of a single character, longer
@@ -2147,8 +2167,18 @@ impl EntityConstructor {
             };
             let text = raw_text.adapt_to_family(Some(variant.into()));
             text.replace_anomalous_characters(is_mo)
+        };
+        let text = is_token.then(|| transform(&raw_text));
+        let segments = has_foreign.then(|| {
+            pieces
+                .into_iter()
+                .map(|piece| match piece {
+                    Ok(text) => MathSegment::Text(transform(&text)),
+                    Err(entity) => MathSegment::Foreign(entity),
+                })
+                .collect::<Vec<_>>()
         });
-        drop((math_nodes, text_runs));
+        drop((math_nodes, text_runs, images));
 
         self.world
             .write_storage::<MathNode>()
@@ -2159,6 +2189,7 @@ impl EntityConstructor {
                     children,
                     text,
                     attributes,
+                    segments,
                     font_name,
                 },
             )
