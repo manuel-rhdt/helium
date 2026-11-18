@@ -474,6 +474,12 @@ math, math * {
   font-size: math;
 }
 
+/* TeX puts \nulldelimiterspace (1.2pt at 10pt, i.e. 0.12em) on both sides of a fraction, so
+   that a following `e^x` doesn't touch the fraction rule. MathML Core only has 1px here. */
+mfrac {
+  padding-inline: 0.12em;
+}
+
 /* Script level changes, after MathML Core's user agent stylesheet. */
 mfrac > * {
   math-depth: auto-add;

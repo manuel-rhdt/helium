@@ -231,3 +231,33 @@ fn multi_letter_identifiers_are_upright_unless_a_variant_is_given() {
         3
     );
 }
+
+#[test]
+fn fractions_have_tex_like_space_on_both_sides() {
+    // In TeX a fraction is flanked by \nulldelimiterspace (0.12em), so `\frac{a}{b}e^x` does not
+    // touch the fraction rule. The glyph after the fraction must move by 2 * 0.12em when the padding
+    // is present, compared to a fraction whose padding is removed.
+    let x_of_e = |name: &str, style: &str| {
+        let dump = dump(
+            name,
+            &format!(
+                r#"<style>body {{ margin: 0 }} {}</style>
+                   <p style="margin: 0"><math><mfrac><mi>a</mi><mi>b</mi></mfrac><msup><mi>e</mi><mi>x</mi></msup></math></p>"#,
+                style
+            ),
+        );
+        let xs = math_glyph_xs(&dump);
+        assert_eq!(xs.len(), 4, "expected a, b, e and x: {:?}", xs);
+        // glyph order is a, b, e, x
+        xs[2]
+    };
+    let padded = x_of_e("mfrac_padded", "");
+    let bare = x_of_e("mfrac_bare", "mfrac { padding-inline: 0 }");
+    // the font size is 16px
+    assert!(
+        (padded - bare - 2.0 * 0.12 * 16.0).abs() < 0.05,
+        "padded: {}, bare: {}",
+        padded,
+        bare
+    );
+}
