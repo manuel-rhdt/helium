@@ -352,11 +352,9 @@ impl Drop for NodeData {
         pending.extend(self.links.next.take());
         pending.extend(self.links.first_child.take());
         while let Some(node) = pending.pop() {
-            // if somebody else still holds the node, dropping our reference is not recursive
             if let Ok(mut node) = Rc::try_unwrap(node) {
                 pending.extend(node.links.next.take());
                 pending.extend(node.links.first_child.take());
-                // `node` now has no strong links left, so its own `drop` does not recurse
             }
         }
     }
