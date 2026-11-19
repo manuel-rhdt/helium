@@ -48,6 +48,18 @@ fn a_comment_next_to_the_head_is_not_a_box() {
 }
 
 #[test]
+fn a_megabyte_of_comments_does_not_overflow_the_stack() {
+    // dropping the DOM used to recurse once per sibling
+    let html = format!("<p>text</p>{}", "<!---->".repeat(150_000));
+    let dump = render("many_comments", &html);
+    assert_eq!(painted_runs(&dump), 1);
+    // and one comment of a megabyte
+    let html = format!("<p>text</p><!--{}--><p>more</p>", "a".repeat(1 << 20));
+    let dump = render("big_comment", &html);
+    assert_eq!(painted_runs(&dump), 2);
+}
+
+#[test]
 fn a_comment_between_blocks_is_not_a_box() {
     let dump = render(
         "comment_between_blocks",
