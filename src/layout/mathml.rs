@@ -39,7 +39,7 @@ struct EcsMathTree<'a, 'world> {
     styles: &'a ReadStorage<'world, ComputedValues>,
     images: &'a ReadStorage<'world, ImageBox>,
     /// One shaper per font face, by font name.
-    fonts: HashMap<String, Rc<Shaper<'a>>>,
+    fonts: Rc<HashMap<String, Rc<Shaper<'a>>>>,
 }
 
 impl<'a, 'world> EcsMathTree<'a, 'world> {
@@ -47,18 +47,8 @@ impl<'a, 'world> EcsMathTree<'a, 'world> {
         nodes: &'a ReadStorage<'world, MathNode>,
         styles: &'a ReadStorage<'world, ComputedValues>,
         images: &'a ReadStorage<'world, ImageBox>,
-        font_map: &'a FontMap,
+        fonts: Rc<HashMap<String, Rc<Shaper<'a>>>>,
     ) -> Self {
-        let mut fonts = HashMap::new();
-        for node in nodes.join() {
-            fonts.entry(node.font_name.clone()).or_insert_with(|| {
-                let font = &font_map[&node.font_name];
-                Rc::new(
-                    Shaper::from_slice(font.data.as_slice(), font.index)
-                        .expect("the math font has a MATH table"),
-                )
-            });
-        }
         EcsMathTree {
             nodes,
             styles,
@@ -140,6 +130,23 @@ impl<'a> MathTree for EcsMathTree<'a, '_> {
         }
         overrides
     }
+}
+
+fn build_math_fonts<'a>(
+    nodes: &ReadStorage<'_, MathNode>,
+    font_map: &'a FontMap,
+) -> Rc<HashMap<String, Rc<Shaper<'a>>>> {
+    let mut fonts = HashMap::new();
+    for node in nodes.join() {
+        fonts.entry(node.font_name.clone()).or_insert_with(|| {
+            let font = &font_map[&node.font_name];
+            Rc::new(
+                Shaper::from_slice(font.data.as_slice(), font.index)
+                    .expect("the math font has a MATH table"),
+            )
+        });
+    }
+    Rc::new(fonts)
 }
 
 impl EcsMathTree<'_, '_> {
@@ -314,13 +321,14 @@ impl<'world> System<'world> for MathFormat {
             return;
         }
 
+        let fonts = build_math_fonts(&math_nodes, &font_map);
         for root in roots {
             let mut host = EcsMathHost {
                 collector: LayoutCollector::new(EcsMathTree::new(
                     &math_nodes,
                     &computed_values,
                     &images,
-                    &font_map,
+                    fonts.clone(),
                 )),
             };
             let root_layout = layout_math(&mut host, root);
