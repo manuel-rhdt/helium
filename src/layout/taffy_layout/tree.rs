@@ -5,7 +5,7 @@
 //! the measure functions access to the inline formatting contexts.
 
 use specs::{Entity, ReadStorage, WriteStorage};
-use std::collections::HashMap;
+use helium_paginate::FxHashMap as HashMap;
 use std::rc::Rc;
 use taffy::geometry::{Line, Point, Size};
 use taffy::style::{AvailableSpace, Position};

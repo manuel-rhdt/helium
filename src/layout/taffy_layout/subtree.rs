@@ -37,7 +37,7 @@
 
 use super::tree::{HeliumTree, calc};
 use crate::layout::inline::InlineFormattingContext;
-use std::collections::HashMap;
+use helium_paginate::FxHashMap as HashMap;
 use std::rc::Rc;
 use taffy::geometry::{Line, Size};
 use taffy::style::AvailableSpace;
@@ -213,7 +213,7 @@ impl HeliumTree<'_, '_> {
         };
 
         // the paragraphs with `inline-block` boxes go back to what they were
-        let mut inline_contexts = HashMap::new();
+        let mut inline_contexts = HashMap::default();
         if !kept.is_empty() {
             for Kept { id, .. } in &kept {
                 let entity = self.node(*id).entity;

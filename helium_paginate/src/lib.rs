@@ -12,6 +12,7 @@
 mod columns;
 mod flow;
 mod graph;
+mod hash;
 mod kernel;
 pub mod paragraph;
 mod service;
@@ -25,6 +26,7 @@ pub use service::{ContainerFloat, Fragment, GalleyFlow, GalleyService, LayoutSer
 pub use graph::{shortest_path, Graph, Path, PageEdge, PageGraph, PageKey};
 pub use solver::{balance, ColumnCost, CssCost, CssObjective, ExactSolver, FullestFirst, Objective, Solver, TallestColumn};
 pub use service::ParLine;
+pub use hash::{FxBuildHasher, FxHashMap, FxHashSet};
 pub use token::{BreakToken, ContainerCut, Cut, Position};
 
 #[cfg(test)]

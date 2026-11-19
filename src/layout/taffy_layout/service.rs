@@ -19,7 +19,7 @@ use super::tree::{HeliumTree, LineCut, lines_from, lines_until, variants_from};
 use crate::layout::inline::InlineFormattingContext;
 use crate::style::properties::computed::PixelLength;
 use helium_paginate::{BoxRef, ContainerCut, Cut, Fragment, Item, LayoutService, NodeRef, ParId, ParLine};
-use std::collections::HashMap;
+use helium_paginate::FxHashMap as HashMap;
 use std::rc::Rc;
 use taffy::geometry::Size;
 use taffy::style::AvailableSpace;
@@ -108,14 +108,14 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             tree,
             flow,
             icb_height,
-            galleys: HashMap::new(),
-            lines: HashMap::new(),
-            variants: HashMap::new(),
-            subtrees: HashMap::new(),
-            subtree_lines: HashMap::new(),
-            subtree_variants: HashMap::new(),
-            fragments: HashMap::new(),
-            floats: HashMap::new(),
+            galleys: HashMap::default(),
+            lines: HashMap::default(),
+            variants: HashMap::default(),
+            subtrees: HashMap::default(),
+            subtree_lines: HashMap::default(),
+            subtree_variants: HashMap::default(),
+            fragments: HashMap::default(),
+            floats: HashMap::default(),
         }
     }
 
@@ -158,8 +158,8 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                 &self.flow.items[span.start as usize..span.end as usize]
             }
         };
-        let mut extents = HashMap::new();
-        let mut lines = HashMap::new();
+        let mut extents = HashMap::default();
+        let mut lines = HashMap::default();
         for item in items {
             match *item {
                 Item::Box { node } | Item::Gap { node } => {
@@ -207,7 +207,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             return Rc::from(vec![]);
         };
         // (the cache of the box tree does not know which boxes the context was sized for)
-        let mut own_cache = HashMap::new();
+        let mut own_cache = HashMap::default();
         let cache = if inline_context.is_some() { &mut own_cache } else { &mut tree.lines };
         let from = from.map(LineCut::of);
         let (line_width, indent) = (PixelLength(line_width), PixelLength(indent));
@@ -266,7 +266,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         let Some(ifc) = ifc else {
             return vec![Rc::from(vec![])];
         };
-        let mut own_cache = HashMap::new();
+        let mut own_cache = HashMap::default();
         let cache = if inline_context.is_some() { &mut own_cache } else { &mut tree.lines };
         variants_from(
             cache,

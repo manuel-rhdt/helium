@@ -20,7 +20,8 @@
 use crate::kernel::{Kernel, PageFill, PageStart};
 use crate::token::BreakToken;
 use crate::PageKind;
-use std::collections::{BTreeMap, HashMap};
+use crate::hash::FxHashMap as HashMap;
+use std::collections::BTreeMap;
 use std::hash::Hash;
 
 /// A graph that is searched for the cheapest path from its start to one of its ends.
@@ -87,7 +88,7 @@ where
 {
     let start = graph.start();
     let start_key = graph.key(&start);
-    let mut entries: HashMap<G::Key, Entry<G, C>> = HashMap::new();
+    let mut entries: HashMap<G::Key, Entry<G, C>> = HashMap::default();
     let start_rank = graph.rank(start_key);
     entries.insert(
         start_key,

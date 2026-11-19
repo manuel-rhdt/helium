@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::hash::FxHashMap as HashMap;
 
 /// Where a page starts, as a handle that is cheap to copy, compare and store.
 ///

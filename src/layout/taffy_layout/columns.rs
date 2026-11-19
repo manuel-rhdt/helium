@@ -35,7 +35,7 @@ use helium_paginate::{
     BoxRef, BreakLevel, ContainerCut, Cut, Item, Kernel, LayoutService, NodeRef, PageSpec, PageTable,
     ParId, ParLine, Position, Problem, balance, plan_fragment,
 };
-use std::collections::HashMap;
+use helium_paginate::FxHashMap as HashMap;
 use std::rc::Rc;
 use taffy::geometry::{Line, Size};
 use taffy::style::AvailableSpace;
@@ -428,7 +428,7 @@ impl HeliumTree<'_, '_> {
 
     /// The layouts of the boxes that Taffy has just laid out in the window.
     fn snapshot(&self, id: NodeId) -> HashMap<NodeId, Snap> {
-        let mut snaps = HashMap::new();
+        let mut snaps = HashMap::default();
         let mut stack = vec![id];
         while let Some(id) = stack.pop() {
             let node = self.node(id);
