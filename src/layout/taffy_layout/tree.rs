@@ -1108,11 +1108,11 @@ impl HeliumTree<'_, '_> {
         };
         let mut output = compute_leaf_layout(inputs, style, calc, |known, _available| Size {
             width: known.width.unwrap_or_else(|| match (known.height, ratio) {
-                (Some(height), Some(ratio)) => ((height - ratio_extras.1).max(0.0) * ratio + ratio_extras.0),
+                (Some(height), Some(ratio)) => ((height - ratio_extras.1).max(0.0) * ratio + ratio_extras.0 - extras.0).max(0.0),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),
             }),
             height: known.height.unwrap_or_else(|| match (known.width, ratio) {
-                (Some(width), Some(ratio)) => ((width - ratio_extras.0).max(0.0) / ratio + ratio_extras.1),
+                (Some(width), Some(ratio)) => ((width - ratio_extras.0).max(0.0) / ratio + ratio_extras.1 - extras.1).max(0.0),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0), |i| i.1),
             }),
         });

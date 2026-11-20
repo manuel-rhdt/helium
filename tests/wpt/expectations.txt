@@ -17,7 +17,6 @@ css/css-flexbox/alignment/multiline-align-self.html
 css/css-flexbox/flex-aspect-ratio-img-column-011.html
 css/css-flexbox/flex-aspect-ratio-img-column-017.html
 css/css-flexbox/flex-aspect-ratio-img-row-005.html
-css/css-flexbox/flex-aspect-ratio-img-row-013.html
 css/css-flexbox/flex-base-size-ignores-min-max-width-003.html
 css/css-flexbox/flex-basis-014.html
 css/css-flexbox/flex-container-max-content-002.tentative.html
