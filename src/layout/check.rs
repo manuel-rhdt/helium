@@ -19,8 +19,6 @@ const TOLERANCE: f32 = 1.0;
 const UNSUPPORTED: &[&str] = &[
     "data-total-x",
     "data-total-y",
-    "data-expected-client-width",
-    "data-expected-client-height",
     "data-expected-scroll-width",
     "data-expected-scroll-height",
     "data-expected-display",
@@ -104,6 +102,18 @@ fn offset(node: &DomRef, world: &World) -> Option<(f32, f32)> {
     Some((x - geometry.margin.left.0, y - geometry.margin.top.0))
 }
 
+/// Whether the element is an inline box that is not a replaced element: its `clientWidth` and
+/// `clientHeight` are zero.
+fn is_plain_inline(node: &DomRef, tag: &str) -> bool {
+    const REPLACED: &[&str] = &[
+        "img", "svg", "canvas", "video", "audio", "iframe", "object", "embed", "input", "select",
+        "textarea", "button", "math", "meter", "progress",
+    ];
+    !REPLACED.contains(&tag)
+        && crate::tree::NodeData::style(node)
+            .is_some_and(|style| style.box_.display == crate::style::properties::specified::Display::Inline)
+}
+
 fn visit(node: &DomRef, world: &World, report: &mut CheckReport, path: &mut Vec<String>) {
     if let ParsedData::Element(element) = &node.html_data {
         path.push(element.name.local.to_string());
@@ -160,12 +170,22 @@ fn check_element(
         let expected: f32 = match value.trim().parse() {
             Ok(v) => v,
             Err(_) => {
+                // (a keyword, such as `default` for the size that a control has by default)
                 report
-                    .failures
+                    .unsupported
                     .push(format!("{}: {}=\"{}\" is not a number", path, name, value));
                 continue;
             }
         };
+        let client = matches!(name.as_str(), "data-expected-client-width" | "data-expected-client-height");
+        if client && is_plain_inline(node, &element.name.local) {
+            // (an inline box has no box of its own here)
+            report.checked += 1;
+            if expected.abs() >= TOLERANCE {
+                report.failures.push(format!("{}: {} expected {} but got 0", path, name, expected));
+            }
+            continue;
+        }
         let (pos, deco) = match &boxes {
             Some(b) => *b,
             None => {
@@ -205,6 +225,15 @@ fn check_element(
                     + deco.padding.bottom.0
                     + deco.border.top.0
                     + deco.border.bottom.0
+            }
+            // clientWidth/clientHeight: the padding box (there are no scrollbars), zero for an
+            // inline box, which browsers do not report for replaced elements
+            "data-expected-client-width" | "data-expected-client-height" => {
+                if name == "data-expected-client-width" {
+                    pos.width.0 + deco.padding.left.0 + deco.padding.right.0
+                } else {
+                    pos.height.0 + deco.padding.top.0 + deco.padding.bottom.0
+                }
             }
             "data-expected-padding-top" => deco.padding.top.0,
             "data-expected-padding-bottom" => deco.padding.bottom.0,
