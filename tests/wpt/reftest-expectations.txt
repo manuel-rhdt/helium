@@ -152,7 +152,6 @@ css/CSS2/normal-flow/block-non-replaced-height-005.xht
 css/CSS2/normal-flow/block-non-replaced-width-004.xht
 css/CSS2/normal-flow/block-replaced-height-002.xht
 css/CSS2/normal-flow/block-replaced-height-006.xht
-css/CSS2/normal-flow/block-replaced-width-002.xht
 css/CSS2/normal-flow/blocks-018.xht
 css/CSS2/normal-flow/blocks-019.xht
 css/CSS2/normal-flow/cross-domain-iframe-paint-order.sub.html
@@ -162,7 +161,6 @@ css/CSS2/normal-flow/inline-block-replaced-height-006.xht
 css/CSS2/normal-flow/inline-block-replaced-height-009.xht
 css/CSS2/normal-flow/inline-block-replaced-width-002.xht
 css/CSS2/normal-flow/inline-block-replaced-width-007.xht
-css/CSS2/normal-flow/inline-block-replaced-width-008.xht
 css/CSS2/normal-flow/inline-block-valign-001.xht
 css/CSS2/normal-flow/inline-block-valign-002.xht
 css/CSS2/normal-flow/inline-block-zorder-004.xht
@@ -172,7 +170,6 @@ css/CSS2/normal-flow/inline-replaced-height-006.xht
 css/CSS2/normal-flow/inline-replaced-height-009.xht
 css/CSS2/normal-flow/inline-replaced-width-002.xht
 css/CSS2/normal-flow/inline-replaced-width-008.xht
-css/CSS2/normal-flow/inline-replaced-width-009.xht
 css/CSS2/normal-flow/inline-replaced-width-014.xht
 css/CSS2/normal-flow/inline-table-002a.xht
 css/CSS2/normal-flow/inline-table-002b.xht
@@ -451,3 +448,10 @@ css/mediaqueries/negation-001.html
 css/mediaqueries/prefers-color-scheme-svg-as-image.html
 css/mediaqueries/scripting-print-noscript.html
 css/mediaqueries/scripting-print-script.html
+
+# The svg is 300px wide (the size of a replaced box without a size, as in browsers) in a box of
+# 288px: it fills the line, and the white space after it, before the block `div`, goes to a line of
+# its own that is as high as the line height, instead of being removed at the end of the line. The
+# same happens with an `img` that is as wide as the box.
+css/CSS2/normal-flow/inline-block-replaced-width-003.xht
+css/CSS2/normal-flow/inline-replaced-width-003.xht

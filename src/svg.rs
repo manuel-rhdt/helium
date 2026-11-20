@@ -400,9 +400,13 @@ impl SvgWriter {
         &mut self,
         context: &mut DocumentContext<'_>,
         tree: &usvg::Tree,
+        unscaled: bool,
     ) -> Result<FormReference> {
         let size = tree.size();
-        let bbox = [Pt(0.0), Pt(0.0), Pt(f64::from(size.width())), Pt(f64::from(size.height()))];
+        // (the viewport of an element without a `viewBox` is the box that it is in, which the
+        // page clips to: the form does not cut at the size of its attributes)
+        let (width, height) = if unscaled { (1.0e5, 1.0e5) } else { (size.width(), size.height()) };
+        let bbox = [Pt(0.0), Pt(0.0), Pt(f64::from(width)), Pt(f64::from(height))];
         let filter = self.filter;
         // the addresses of the objects of an earlier tree may be used again
         self.tilings.clear();

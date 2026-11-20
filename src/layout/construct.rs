@@ -203,6 +203,14 @@ impl FlowConstructor {
             &self.stylesheet_base_dir,
             &self.entity_constructor.fonts,
             style.font.font_size.0,
+            match &node.html_data {
+                ParsedData::Element(element) => !element
+                    .attributes
+                    .borrow()
+                    .iter()
+                    .any(|(name, _)| (*name.local).eq_ignore_ascii_case("viewBox")),
+                _ => false,
+            },
         ) {
             Ok(image) => {
                 if let crate::image::LoadedImage::Svg(svg) = &image {
@@ -1471,13 +1479,30 @@ impl EntityConstructor {
                 let is_image = canvas.is_some()
                     || svg.is_some()
                     || element_data.name == QualName::new(None, ns!(html), local_name!("img"));
+                let has = |wanted: &str| {
+                    element_data
+                        .attributes
+                        .borrow()
+                        .iter()
+                        .any(|(name, _)| (*name.local).eq_ignore_ascii_case(wanted))
+                };
+                // an `<svg>` element with neither a `viewBox` nor both sizes has no ratio: the
+                // side that has no length is 300 or 150 pixels, whatever the other one is
+                let svg_ratioless = svg.is_some() && !has("viewBox") && !(has("width") && has("height"));
+                let svg_size = svg.as_ref().map(|svg| svg.size());
                 let image = match svg {
                     Some(svg) => {
                         let (width, height) = svg.size();
+                        let ratio_only = has("viewBox")
+                            && !has("width")
+                            && !has("height")
+                            && width > 0.0
+                            && height > 0.0;
                         Some(components::ImageBox {
                             image: Arc::new(svg),
                             width,
                             height,
+                            ratio_only,
                         })
                     }
                     None => is_image.then(|| self.image_of(element_data)).flatten(),
@@ -1511,6 +1536,12 @@ impl EntityConstructor {
                     self.world
                         .write_storage::<components::CanvasSize>()
                         .insert(entity.0, components::CanvasSize { width, height, ratioless })
+                        .unwrap();
+                }
+                if let (true, Some((width, height)), None) = (svg_ratioless, svg_size, canvas) {
+                    self.world
+                        .write_storage::<components::CanvasSize>()
+                        .insert(entity.0, components::CanvasSize { width, height, ratioless: true })
                         .unwrap();
                 }
                 if let Some(span) = span {
@@ -1658,6 +1689,7 @@ impl EntityConstructor {
             image,
             width,
             height,
+            ratio_only: false,
         })
     }
 

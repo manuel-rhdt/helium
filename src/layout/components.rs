@@ -1039,6 +1039,10 @@ pub struct ImageBox {
     /// `height` attributes ask for.
     pub width: f32,
     pub height: f32,
+    /// The image has a ratio (the one of `width` to `height`) but no size of its own: an `<svg>`
+    /// element with a `viewBox` and no `width` and `height`. Its width is then the one that is
+    /// available, and zero when the box is sized by its content.
+    pub ratio_only: bool,
 }
 
 impl Component for ImageBox {

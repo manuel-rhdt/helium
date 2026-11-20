@@ -155,6 +155,25 @@ fn add(
                     }
                 }
             }
+            if inherited.is_some() {
+                // An `<svg>` element in a page without a `viewBox` has no ratio: a side without
+                // a length is 300 by 150 pixels (CSS Sizing 3, 5.1), not the 100 by 100 pixels
+                // that usvg uses for an image file.
+                let has = |attributes: &[AttributeData], name: &str| {
+                    attributes.iter().any(|a| a.namespace.is_none() && &*a.name == name)
+                };
+                if !has(&attributes, "viewBox") {
+                    for (name, value) in [("width", "300"), ("height", "150")] {
+                        if !has(&attributes, name) {
+                            attributes.push(AttributeData {
+                                namespace: None,
+                                name: Arc::from(name),
+                                value: Arc::from(value),
+                            });
+                        }
+                    }
+                }
+            }
             let css = declarations(node, styles);
             let foreign = &*element.name.local == "foreignObject";
             let handle = foreign.then(|| {
