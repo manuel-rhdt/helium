@@ -104,3 +104,17 @@ fn a_column_is_at_least_as_wide_as_its_col() {
     // the cell is wider than the column element, so it wins
     assert!(close(width(&dump, "a"), 80.0), "{}", width(&dump, "a"));
 }
+
+#[test]
+fn a_table_is_not_narrower_than_its_columns_need() {
+    // CSS 2.1 17.5.2.2: the used width is the larger of `width` and the minimum width
+    let dump = dump(
+        "min_width",
+        "<table id=a style='width:1px'><tr><td><div style='width:250px'>x</div></td></tr></table>\
+         <table id=b style='width:500px'><tr><td><div style='width:250px'>x</div></td></tr></table>",
+    );
+    // the table is as wide as the 250px box
+    assert!(close(width(&dump, "a"), 250.0), "{}", width(&dump, "a"));
+    // a width that is wide enough stays
+    assert!(close(width(&dump, "b"), 500.0), "{}", width(&dump, "b"));
+}

@@ -46,9 +46,9 @@ test and its `-ref` file next to each other to see what a failing reftest looks 
 
 The tests are static ones (no script apart from `checkLayout`) of the directories `css/CSS2`
 (borders, box-display, margin-padding-clear, normal-flow, visudet), `css-values`, `css-cascade`,
-`mediaqueries`, `css-backgrounds`, `css-box`, `css-lists` and `css-color` (reftests), and of
-`css-flexbox`, `css-grid`, `css-align`, `css-sizing`, `css-tables`, `css-position` and `css-text`
-(only the `checkLayout` tests). The license is in `LICENSE.md`. Most of them fail: the lists of
+`mediaqueries`, `css-backgrounds`, `css-box`, `css-lists`, `css-color` and `css-tables` (reftests), and
+of `css-flexbox`, `css-grid`, `css-align`, `css-sizing`, `css-tables`, `css-position` and `css-text`
+(the `checkLayout` tests). The license is in `LICENSE.md`. Most of them fail: the lists of
 known failures are the work to do, and `WPT_UPDATE_EXPECTATIONS=1 cargo test --test wpt --test
 wpt_reftest` writes them again from what the tests do now (the reasons that were written by hand
 stay). The tests are run on all cores. `WPT_ROOT=<dir>` runs the tests of another directory, such

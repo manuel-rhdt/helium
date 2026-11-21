@@ -601,6 +601,44 @@ impl HeliumTree<'_, '_> {
                 inputs.known_dimensions.width = Some(shrink_to_fit(min, max, available));
             }
         }
+        // A table is never narrower than its columns need (CSS 2.1 17.5.2.2: the used width is
+        // the larger of the `width` and the minimum width of the table): a `width` that is too
+        // small leaves the columns at their minimum.
+        if inputs.known_dimensions.width.is_none() && !self.node(id).style.size.width.is_auto() {
+            let measure = |tree: &mut Self, inputs: LayoutInput| {
+                compute_grid_layout(
+                    tree,
+                    id,
+                    LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        axis: RequestedAxis::Horizontal,
+                        ..inputs
+                    },
+                )
+                .size
+                .width
+            };
+            let specified = measure(self, inputs);
+            let min = measure(
+                self,
+                LayoutInput {
+                    // (the sizes of the style are the ones that are being limited)
+                    sizing_mode: SizingMode::ContentSize,
+                    known_dimensions: Size::NONE,
+                    available_space: Size {
+                        width: AvailableSpace::MinContent,
+                        height: AvailableSpace::MaxContent,
+                    },
+                    ..inputs
+                },
+            );
+            // (a minimum that is wider than the container is not trusted: the percentages in the
+            // table may have been taken of the container)
+            let fits = inputs.parent_size.width.is_none_or(|container| min <= container);
+            if min > specified && fits {
+                inputs.known_dimensions.width = Some(min);
+            }
+        }
         let output = compute_grid_layout(self, id, inputs);
         if inputs.run_mode == RunMode::PerformLayout {
             self.mirror_children(id, output.size.width, inputs.parent_size.width);
