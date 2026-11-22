@@ -21,7 +21,7 @@ pub use super::color_mix::Interpolation;
 use super::color_mix::parse_interpolation;
 use super::background::{parse_position_and_size, LayerStyle, Repeat, SpecifiedPosition, SpecifiedSize};
 use super::computed::{ComputedValues, LengthPercentage, PaintColor, PixelLength, SrgbColor};
-use super::specified::{CommaSeparated, ComputedValue, PropertyValue, QuantityOrPercentage};
+use super::specified::{CommaSeparated, ComputedValue, Percentage, PropertyValue, QuantityOrPercentage};
 use crate::style::parse::StyleParseError;
 
 type ParseResult<T> = Result<T, ParseError<StyleParseError>>;
@@ -314,6 +314,9 @@ fn default_interpolation<L>(stops: &[Stop<L, Color>]) -> Interpolation {
 }
 
 fn parse_angle<'i>(input: &mut Parser<'i>) -> ParseResult<f32> {
+    if let Ok(degrees) = super::calc::parse_angle(input) {
+        return Ok(degrees);
+    }
     let token = input.next()?.clone();
     match token {
         Token::Dimension { value, ref unit, .. } => {
@@ -554,10 +557,14 @@ fn parse_stop<'i>(
                 if let Ok(angle) = input.try_parse(parse_angle) {
                     return Ok(StopPosition::Angle(angle));
                 }
+                // a math function may add angles and percentages of the full turn
+                if let Ok(angle) = super::calc::parse_angle_percentage(input, 360.0) {
+                    return Ok(StopPosition::Angle(angle));
+                }
                 // a percentage is a fraction of the full turn, a length is not allowed
-                match parse_length_percentage(input)? {
-                    value @ QuantityOrPercentage::Percentage(_) => Ok(StopPosition::Length(value)),
-                    QuantityOrPercentage::Quantity(_) => Err(input.new_error_for_next_token()),
+                match input.try_parse(Percentage::from_css_property_value) {
+                    Ok(value) => Ok(StopPosition::Length(QuantityOrPercentage::Percentage(value))),
+                    Err(_) => Err(input.new_error_for_next_token()),
                 }
             } else {
                 parse_length_percentage(input).map(StopPosition::Length)

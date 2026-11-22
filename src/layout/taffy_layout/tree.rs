@@ -4,6 +4,7 @@
 //! every layout. Taffy's low-level traits are implemented on [`HeliumTree`], which also gives
 //! the measure functions access to the inline formatting contexts.
 
+use crate::style::properties::calc::Calc;
 use specs::{Entity, ReadStorage, WriteStorage};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -687,8 +688,11 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
 
 // --- layout of the leaves ---
 
-pub(super) fn calc(_val: *const (), _basis: f32) -> f32 {
-    0.0
+/// The value of a `calc()` of a Taffy style, with percentages of `basis`: the pointers are those
+/// of [`Calc::as_ptr`], from `style::length_percentage`.
+pub(super) fn calc(val: *const (), basis: f32) -> f32 {
+    // SAFETY: helium gives Taffy no other `calc()` pointers, and calculations are never freed
+    unsafe { Calc::from_ptr(val) }.resolve(basis)
 }
 
 impl HeliumTree<'_, '_> {
@@ -909,7 +913,7 @@ impl HeliumTree<'_, '_> {
             let definite_width = known.width.or(available.width.into_option());
             let indent = match (text_indent, definite_width) {
                 (Some(indent), Some(width)) => indent.absolute(PixelLength(width)),
-                (Some(indent), None) => indent.length().unwrap_or_default(),
+                (Some(indent), None) => indent.without_percentages(),
                 (None, _) => PixelLength(0.0),
             };
             let (min, max) = ifc.intrinsic_widths(indent);
@@ -1412,6 +1416,10 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
 
     fn get_core_container_style(&self, id: NodeId) -> Self::CoreContainerStyle<'_> {
         self.active_style(id)
+    }
+
+    fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
+        calc(val, basis)
     }
 
     fn set_unrounded_layout(&mut self, id: NodeId, layout: &Layout) {

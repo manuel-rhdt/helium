@@ -5,7 +5,7 @@ use cssparser::{match_ignore_ascii_case, ParseError, Parser};
 
 use super::computed::{ComputedValues, LengthPercentage, PixelLength};
 use super::gradient::{parse_length_percentage, parse_side, BoxSize, Position, Resolved, ResolvedGradient, Side, Tiling};
-use super::specified::{CommaSeparated, ComputedValue, Percentage, PropertyValue, QuantityOrPercentage};
+use super::specified::{CommaSeparated, NonNegative, ComputedValue, Percentage, PropertyValue, QuantityOrPercentage};
 use crate::style::parse::StyleParseError;
 
 type ParseResult<T> = Result<T, ParseError<StyleParseError>>;
@@ -96,12 +96,8 @@ impl<'i> PropertyValue<'i> for SpecifiedSize {
                 return Ok(None);
             }
             // (a negative size is invalid)
-            let size = parse_length_percentage(input)?;
-            let negative = match size {
-                QuantityOrPercentage::Quantity(quantity) => quantity.value < 0.0,
-                QuantityOrPercentage::Percentage(percentage) => percentage.0 < 0.0,
-            };
-            if negative {
+            let size = parse_length_percentage(input)?.non_negative();
+            if size.is_negative() {
                 return Err(input.new_error_for_next_token());
             }
             Ok(Some(size))
@@ -283,17 +279,7 @@ impl ComputedValue<CommaSeparated<SpecifiedPosition>> for Vec<Position<LengthPer
                 return offset;
             }
             // `right 10px` is 100% - 10px
-            match offset {
-                LengthPercentage::PixelLength(length) => LengthPercentage::Both {
-                    length: PixelLength(-length.0),
-                    percentage: Percentage(1.0),
-                },
-                LengthPercentage::Percentage(Percentage(p)) => LengthPercentage::Percentage(Percentage(1.0 - p)),
-                LengthPercentage::Both { length, percentage: Percentage(p) } => LengthPercentage::Both {
-                    length: PixelLength(-length.0),
-                    percentage: Percentage(1.0 - p),
-                },
-            }
+            offset.complement()
         };
         specified
             .elements()

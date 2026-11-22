@@ -35,4 +35,3 @@ word-wrap:
 @supports
 @import
 var(
-calc(

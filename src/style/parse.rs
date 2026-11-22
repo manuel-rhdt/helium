@@ -1330,11 +1330,13 @@ pub(crate) fn parse_property<'i>(
     PropertyDeclaration::parse_declaration(name, input)
 }
 
-/// The properties whose lengths must not be negative.
+/// The properties whose lengths (or numbers) must not be negative. The math functions in their
+/// values are clamped instead, by `#[non_negative]` (see `specified::NonNegative`).
 fn is_non_negative_property(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name == "padding"
         || name == "border-width"
+        || matches!(name.as_str(), "line-height" | "flex" | "flex-grow" | "flex-shrink" | "border-spacing")
         || name.starts_with("padding-")
         || (name.starts_with("border-") && name.ends_with("-width"))
         || matches!(
