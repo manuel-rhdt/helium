@@ -146,3 +146,49 @@ fn the_width_of_a_border_box_cell_includes_its_padding() {
     assert!(close(width(&dump, "a"), 60.0), "{}", width(&dump, "a"));
     assert!(close(width(&dump, "b"), 100.0), "{}", width(&dump, "b"));
 }
+
+#[test]
+fn table_layout_fixed_takes_the_widths_from_the_first_row_and_not_from_the_contents() {
+    // CSS 2.1 17.5.2.1: the first row gives the columns with a width, the others share the rest
+    // equally; the contents of the cells do not matter
+    let dump = dump(
+        "fixed",
+        "<table style='table-layout:fixed;width:300px'>\
+         <tr><td id=a style='width:100px'>x</td><td id=b>y</td><td id=c>z</td></tr>\
+         <tr><td><div style='width:250px'>wide</div></td><td id=d style='width:10px'>v</td><td>w</td></tr>\
+         </table>",
+    );
+    assert!(close(width(&dump, "a"), 100.0), "{}", width(&dump, "a"));
+    // (a width in a later row is not used)
+    assert!(close(width(&dump, "b"), 100.0), "{}", width(&dump, "b"));
+    assert!(close(width(&dump, "c"), 100.0), "{}", width(&dump, "c"));
+    assert!(close(width(&dump, "d"), 100.0), "{}", width(&dump, "d"));
+}
+
+#[test]
+fn a_fixed_table_is_as_wide_as_its_columns_but_not_as_its_contents() {
+    let dump = dump(
+        "fixed_width",
+        "<table id=a style='table-layout:fixed;width:50px'><tr>\
+         <td style='width:80px'><div style='width:300px'>x</div></td><td style='width:70px'>y</td></tr></table>\
+         <table id=b style='table-layout:fixed;width:1px'><tr><td><div style='width:300px'>x</div></td></tr></table>\
+         <table id=c style='table-layout:auto;width:1px'><tr><td><div style='width:300px'>x</div></td></tr></table>",
+    );
+    // the widths of the columns, 80 and 70
+    assert!(close(width(&dump, "a"), 150.0), "{}", width(&dump, "a"));
+    // no width for the column: the content does not make it wider than the table
+    assert!(close(width(&dump, "b"), 1.0), "{}", width(&dump, "b"));
+    // as against the automatic layout
+    assert!(close(width(&dump, "c"), 300.0), "{}", width(&dump, "c"));
+}
+
+#[test]
+fn a_col_width_beats_the_width_of_a_cell_in_a_fixed_table() {
+    let dump = dump(
+        "fixed_col",
+        "<table style='table-layout:fixed;width:200px'><col style='width:50px'><col>\
+         <tr><td id=a style='width:150px'>x</td><td id=b>y</td></tr></table>",
+    );
+    assert!(close(width(&dump, "a"), 50.0), "{}", width(&dump, "a"));
+    assert!(close(width(&dump, "b"), 150.0), "{}", width(&dump, "b"));
+}

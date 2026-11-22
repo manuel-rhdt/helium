@@ -613,6 +613,9 @@ pub enum Box {
     /// https://www.w3.org/TR/css-sizing-3/#box-sizing
     #[property]
     BoxSizing(BoxSizing),
+    /// https://www.w3.org/TR/CSS22/tables.html#width-layout
+    #[property]
+    TableLayout(TableLayout),
 
     // Generated content: https://www.w3.org/TR/css-content-3/ and
     // https://www.w3.org/TR/css-lists-3/#auto-numbering
@@ -1086,6 +1089,16 @@ pub enum FlexDirection {
     RowReverse,
     Column,
     ColumnReverse,
+}
+
+/// https://www.w3.org/TR/CSS22/tables.html#width-layout
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum TableLayout {
+    /// The widths of the columns come from the contents of the cells.
+    #[default]
+    Auto,
+    /// The widths of the columns come from the width of the table and the first row.
+    Fixed,
 }
 
 /// https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property

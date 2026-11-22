@@ -5,7 +5,7 @@ use super::specified::{
     self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue, MathFamily, MathOperatorForm,
 };
 pub use super::specified::{
-    BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle,
+    BoxSizing, ContentAlignment, Display, TableLayout, FlexDirection, FlexWrap, FontFamily, FontStyle,
     GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, Break, BreakInside, BookmarkLabel, BookmarkLevel, BookmarkState, Float, FloatReference,
     Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
@@ -1116,6 +1116,7 @@ pub struct Box {
     pub vertical_align: VerticalAlign,
     pub aspect_ratio: specified::AspectRatio,
     pub box_sizing: BoxSizing,
+    pub table_layout: TableLayout,
 
     /// What replaces the content of a `::before` or `::after` pseudo-element.
     pub content: super::generated::Content,
@@ -1179,6 +1180,7 @@ impl Default for Box {
             vertical_align: Default::default(),
             aspect_ratio: Default::default(),
             box_sizing: Default::default(),
+            table_layout: Default::default(),
             content: Default::default(),
             counter_reset: Default::default(),
             counter_increment: Default::default(),
