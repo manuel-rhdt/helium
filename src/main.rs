@@ -112,7 +112,17 @@ pub enum Error {
 }
 
 fn main() -> Result<(), Error> {
-    env_logger::init();
+    // The report of what goes into the PDF (pages, fonts, colour profiles) is shown by default;
+    // `RUST_LOG` overrides this, e.g. `RUST_LOG=info` for the timings or `RUST_LOG=warn` to silence it.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,helium::pdf=info"))
+        .format(|buf, record| {
+            use std::io::Write;
+            match record.level() {
+                log::Level::Info => writeln!(buf, "{}", record.args()),
+                level => writeln!(buf, "{}: {}", level.to_string().to_lowercase(), record.args()),
+            }
+        })
+        .init();
 
     let opt = Options::from_args();
     if opt.no_tags && opt.pdfa.is_some_and(|level| level.needs_tags()) {

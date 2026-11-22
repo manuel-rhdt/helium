@@ -77,6 +77,17 @@ impl MarkedContent {
     }
 }
 
+thread_local! {
+    static REPORTED_PROFILES: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
+}
+
+/// Logs that an ICC profile is embedded, once per profile however often it is used.
+fn report_icc_profile(key: &str, description: impl FnOnce() -> String) {
+    if REPORTED_PROFILES.with(|seen| seen.borrow_mut().insert(key.to_owned())) {
+        log::info!("Embedded ICC profile: {}", description());
+    }
+}
+
 type PageContext<'p, 'c, 'b> = lemon_pdf::content::PageContext<'p, 'c, 'b>;
 
 /// How an image is embedded: raster images as an image XObject, SVG images as a form.
@@ -172,6 +183,7 @@ fn rec2020_gamma24_components(xyz: [f64; 3]) -> [f64; 3] {
 /// The ICC space of the colours that sRGB cannot hold (Rec. 2020 primaries, gamma 2.4), written once for the
 /// document.
 fn wide_color_space(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>) -> Result<lemon_pdf::color_space::IccBasedColorSpace, Error> {
+    report_icc_profile("rec2020-gamma24", || "Rec. 2020 primaries, gamma 2.4 (colors outside of sRGB)".to_owned());
     Ok(context.pdf_context.icc_color_space("rec2020-gamma24", lemon_pdf::icc::rec2020_gamma24_profile, 3, Some(StreamFilter::Deflate))?)
 }
 
@@ -187,6 +199,7 @@ fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: P
     let xyz = match color {
         PaintColor::Srgb(color) => {
             let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
+            report_icc_profile("srgb", || "sRGB (colors and default RGB space)".to_owned());
             let space = context.pdf_context.icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
             let space = context.add_color_space(space);
             let components = [channel(color.red), channel(color.green), channel(color.blue)];
@@ -704,9 +717,15 @@ fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::Ra
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     profile.hash(&mut hasher);
-    let key = format!("image-profile-{:016x}-{}", hasher.finish(), profile.len());
+    let profile_len = profile.len();
+    let key = format!("image-profile-{:016x}-{}", hasher.finish(), profile_len);
     match context.icc_color_space(&key, || profile, i64::from(components), Some(StreamFilter::Deflate)) {
-        Ok(space) => image.with_icc_profile(space),
+        Ok(space) => {
+            report_icc_profile(&key, || {
+                format!("{}-component profile of an image ({} bytes)", components, profile_len)
+            });
+            image.with_icc_profile(space)
+        }
         Err(error) => {
             log::warn!("the ICC profile of an image cannot be written: {error}");
             image
@@ -825,7 +844,7 @@ pub fn write_pdf(
         // before the file is made, so that there is none if there is an error
         check_pdfa_images(&mut print_pages)?;
     }
-    let file = BufWriter::new(File::create(output_path)?);
+    let file = BufWriter::new(File::create(&output_path)?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
 
     let structure = std::mem::take(&mut print_pages.structure);
@@ -888,6 +907,8 @@ pub fn write_pdf(
     if pdfa.is_some() {
         // device colours (everything that is painted) are sRGB, which the output intent says
         use lemon_pdf::output_intent::{OutputIntentDesc, OutputIntentSubtype};
+        report_icc_profile("srgb", || "sRGB (colors and default RGB space)".to_owned());
+        log::info!("Embedded PDF/A output intent: sRGB IEC61966-2.1");
         context.add_output_intent(
             OutputIntentDesc {
                 subtype: OutputIntentSubtype::PdfA,
@@ -917,8 +938,9 @@ pub fn write_pdf(
     let mut font_map = HashMap::new();
     for (font_name, glyphs) in usage.fonts() {
         let Some(font) = print_pages.font_map.get(font_name) else { continue };
-        log::info!("Embedding font {} into PDF file.", font_name);
-        let font = font::embed_into_pdf(font, glyphs, &mut context, !no_filter)?;
+        let embedded = font::embed_into_pdf(font, glyphs, &mut context, !no_filter)?;
+        log::info!("Embedded font {} ({} glyphs)", font.postscript_name, glyphs.glyphs().len());
+        let font = embedded;
         font_map.insert(font_name.to_owned(), font);
     }
 
@@ -969,7 +991,7 @@ pub fn write_pdf(
         embed_images(&mut context, &mut page.display_list, &mut images, &mut svg_writer);
     }
 
-    log::info!("Write {} pages.", print_pages.pages.len());
+    let page_count = print_pages.pages.len();
 
     for (page_index, mut print_page) in print_pages.pages.into_iter().enumerate() {
         let mut page = Page::new();
@@ -1006,6 +1028,7 @@ pub fn write_pdf(
         page.add_content(&mut context, filter, |page_context| {
             // device colours (and images and shadings, which have only those) are sRGB, in every
             // viewer, instead of whatever the viewer takes the device to be
+            report_icc_profile("srgb", || "sRGB (colors and default RGB space)".to_owned());
             let srgb = page_context
                 .pdf_context
                 .icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
@@ -1130,6 +1153,12 @@ pub fn write_pdf(
         recorder.finish(&mut context, &page_references)?;
     }
     context.finish()?;
+    log::info!(
+        "Wrote {} page{} to {}",
+        page_count,
+        if page_count == 1 { "" } else { "s" },
+        output_path.display()
+    );
 
     Ok(())
 }
