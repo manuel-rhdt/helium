@@ -1297,12 +1297,12 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                     && text_runs
                         .get(last.entity)
                         .is_some_and(|run| {
-                            // (a run of white space only follows something else on the line)
-                            !run.text.trim_matches(is_breakable_space).is_empty()
-                                && run.text.get(before.char_index..).is_some_and(|rest| rest.chars().all(is_breakable_space))
+                            run.text.get(before.char_index..).is_some_and(|rest| rest.chars().all(is_breakable_space))
                         });
                 if before.space && !before.forced && only_space && before.advance_after == last.advance_before {
                     break_points[count - 1].advance_before = before.advance_before;
+                    // (a break in front of the space would only leave a line without content)
+                    break_points.remove(count - 2);
                 }
             }
         }
@@ -1819,8 +1819,19 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                         }) => (width, baseline, height),
                         _ => continue,
                     };
-                    let _ = width;
-                    if offset.0 + EPSILON < from.advance_after.0
+                    if width.0 == 0.0 {
+                        // A box without width is on no line by its position (it is where the
+                        // line ends as well as where it starts): the line is the one that has it.
+                        let on_line = ifc.element_span(from, to).is_some_and(|(start, end)| {
+                            ifc.elements
+                                .iter()
+                                .position(|&element| element == atom)
+                                .is_some_and(|index| (start..=end).contains(&index))
+                        });
+                        if !on_line {
+                            continue;
+                        }
+                    } else if offset.0 + EPSILON < from.advance_after.0
                         || offset.0 >= to.advance_before.0 - EPSILON
                     {
                         continue;

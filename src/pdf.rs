@@ -83,7 +83,7 @@ type PageContext<'p, 'c, 'b> = lemon_pdf::content::PageContext<'p, 'c, 'b>;
 enum Embedded {
     Raster(IndirectReference<lemon_pdf::image::ImageXObject>),
     /// An SVG image as a form, with its size.
-    Svg(lemon_pdf::form::FormReference, f32, f32),
+    Svg(lemon_pdf::form::FormReference, f32, f32, bool),
 }
 
 /// The opacity (`ca` and `CA`) that is set in the graphics state of the content stream being
@@ -491,14 +491,17 @@ fn paint_item(
                             Pt::from(rect.height),
                         )?;
                     }
-                    Embedded::Svg(form, width, height) => {
+                    Embedded::Svg(form, width, height, unscaled) => {
                         // like `object-fit: contain`: the SVG keeps its proportions
-                        // and is centered in the box
+                        // and is centered in the box (an element without a `viewBox` keeps its
+                        // scale and the corner, and what is outside of the box is clipped)
                         let (box_w, box_h) = (rect.width.0, rect.height.0);
-                        let scale = (box_w / width).min(box_h / height);
+                        let scale = if unscaled { 1.0 } else { (box_w / width).min(box_h / height) };
+                        let (free_w, free_h) =
+                            if unscaled { (0.0, 0.0) } else { (box_w - width * scale, box_h - height * scale) };
                         // layout is in pixels, the PDF in points
-                        let x = Pt::from(rect.x + PixelLength((box_w - width * scale) / 2.0));
-                        let y = Pt::from(page_height - rect.y - PixelLength((box_h - height * scale) / 2.0));
+                        let x = Pt::from(rect.x + PixelLength(free_w / 2.0));
+                        let y = Pt::from(page_height - rect.y - PixelLength(free_h / 2.0));
                         let scale = f64::from(Pt::from(PixelLength(scale)).0);
                         let key = page_context.add_xobject(form);
                         page_context.save_graphics_state()?;
@@ -735,8 +738,8 @@ fn embed_images(
                 })
                 .map(Embedded::Raster),
             crate::image::LoadedImage::Svg(svg) => svg_writer
-                .write(context, &svg.tree)
-                .map(|form| Embedded::Svg(form, svg.tree.size().width(), svg.tree.size().height()))
+                .write(context, &svg.tree, svg.unscaled)
+                .map(|form| Embedded::Svg(form, svg.tree.size().width(), svg.tree.size().height(), svg.unscaled))
                 .map_err(|error| error.to_string()),
         };
         match embedded {
