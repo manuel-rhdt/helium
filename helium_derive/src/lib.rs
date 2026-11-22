@@ -10,7 +10,7 @@ use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{Data, DataEnum, Field, Fields, FieldsUnnamed, LitStr, Variant};
 
-#[proc_macro_derive(ParseDeclaration, attributes(property, ua_property, computed, shorthand, spec))]
+#[proc_macro_derive(ParseDeclaration, attributes(property, ua_property, non_negative, computed, shorthand, spec))]
 pub fn parse_declaration_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
@@ -78,6 +78,14 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
             _ => panic!("Variant must not contain named fields.")
         };
         if variant_attribute.is_some() {
+            // `#[non_negative]`: the math functions of the value are clamped to non-negative
+            // values (CSS Values 4, 10.12), by the `NonNegative` trait, which must be in scope
+            let non_negative = attrs.iter().any(|attr| attr.path.is_ident("non_negative"));
+            let restrict = if non_negative {
+                quote! { .map(NonNegative::non_negative) }
+            } else {
+                quote! {}
+            };
             let shorthands = parse_shorthands(&attrs);
             let shorthands_names = shorthands.iter().map(|sh| sh.property_name.value()).collect::<Vec<_>>();
 
@@ -137,7 +145,7 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
 
             quote! {
                 if name.eq_ignore_ascii_case(#property_name) {
-                    return <#parser_ty as PropertyValue>::from_css_property_value(input).map(#name::#ident);
+                    return <#parser_ty as PropertyValue>::from_css_property_value(input)#restrict.map(#name::#ident);
                 }
             }
         } else {

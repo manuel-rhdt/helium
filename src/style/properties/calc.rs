@@ -199,6 +199,11 @@ impl Calc {
         self.0.range
     }
 
+    /// The same calculation, clamped to another range.
+    pub fn with_range(self, range: Range) -> Calc {
+        if self.0.range == range { self } else { Calc::new(self.0.node.clone(), range) }
+    }
+
     /// The pointer that Taffy holds for a `calc()` value.
     pub fn as_ptr(self) -> *const () {
         self.0 as *const Expr as *const ()
@@ -658,25 +663,6 @@ impl Expected {
 }
 
 // --- parsing ---
-
-thread_local! {
-    static RANGE: std::cell::Cell<Range> = const { std::cell::Cell::new(Range::All) };
-}
-
-/// Parses with the range that the property being parsed allows, for the math functions whose
-/// type of value is used by properties of different ranges (`<length-percentage>` is the value of
-/// `padding` and of `margin`).
-pub fn with_range<R>(range: Range, parse: impl FnOnce() -> R) -> R {
-    let previous = RANGE.with(|r| r.replace(range));
-    let result = parse();
-    RANGE.with(|r| r.set(previous));
-    result
-}
-
-/// The range of the property that is being parsed.
-pub fn current_range() -> Range {
-    RANGE.with(|r| r.get())
-}
 
 /// Whether a function is a math function.
 pub fn is_math_function(name: &str) -> bool {

@@ -332,18 +332,24 @@ pub enum PropertyDeclaration<'a> {
 #[computed = "super::computed::Position"]
 pub enum Position<'a> {
     #[property]
+    #[non_negative]
     Width(SizeValue),
     #[property]
+    #[non_negative]
     Height(SizeValue),
     /// https://www.w3.org/TR/CSS22/visudet.html#min-max-widths
     #[property]
+    #[non_negative]
     MinWidth(AutoOrQuantityOrPercentage),
     #[property]
+    #[non_negative]
     MaxWidth(NoneOrQuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/visudet.html#min-max-heights
     #[property]
+    #[non_negative]
     MinHeight(AutoOrQuantityOrPercentage),
     #[property]
+    #[non_negative]
     MaxHeight(NoneOrQuantityOrPercentage),
 
     /// Offsets of positioned boxes.
@@ -387,6 +393,7 @@ pub enum Position<'a> {
     MarginRight(AutoOrQuantityOrPercentage),
 
     #[property]
+    #[non_negative]
     #[shorthand("padding-top", method = "top")]
     #[shorthand("padding-bottom", method = "bottom")]
     #[shorthand("padding-left", method = "left")]
@@ -396,27 +403,36 @@ pub enum Position<'a> {
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-top
     #[property]
+    #[non_negative]
     PaddingTop(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-bottom
     #[property]
+    #[non_negative]
     PaddingBottom(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-left
     #[property]
+    #[non_negative]
     PaddingLeft(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-right
     #[property]
+    #[non_negative]
     PaddingRight(QuantityOrPercentage),
 
     /// https://www.w3.org/TR/css-backgrounds-3/#border-radius
     #[property]
+    #[non_negative]
     BorderTopLeftRadius(QuantityOrPercentage),
     #[property]
+    #[non_negative]
     BorderTopRightRadius(QuantityOrPercentage),
     #[property]
+    #[non_negative]
     BorderBottomRightRadius(QuantityOrPercentage),
     #[property]
+    #[non_negative]
     BorderBottomLeftRadius(QuantityOrPercentage),
     #[property]
+    #[non_negative]
     #[shorthand("border-top-left-radius", method = "top_left")]
     #[shorthand("border-top-right-radius", method = "top_right")]
     #[shorthand("border-bottom-right-radius", method = "bottom_right")]
@@ -511,8 +527,10 @@ pub enum Font {
     #[property]
     FontWeight(FontWeight),
     #[property]
+    #[non_negative]
     FontSize(FontSize),
     #[property]
+    #[non_negative]
     LineHeight(LineHeight),
     /// https://www.w3.org/TR/css-fonts-4/#font-feature-settings-prop
     #[property]
@@ -618,12 +636,16 @@ pub enum Box {
     #[shorthand("flex-wrap", method = "wrap")]
     FlexFlow(FlexFlowShorthand),
     #[property]
+    #[non_negative]
     FlexGrow(f32),
     #[property]
+    #[non_negative]
     FlexShrink(f32),
     #[property]
+    #[non_negative]
     FlexBasis(AutoOrQuantityOrPercentage),
     #[property]
+    #[non_negative]
     #[shorthand("flex-grow", method = "grow")]
     #[shorthand("flex-shrink", method = "shrink")]
     #[shorthand("flex-basis", method = "basis")]
@@ -647,10 +669,12 @@ pub enum Box {
     #[property]
     AlignSelf(SelfAlignment),
     #[property]
+    #[non_negative]
     RowGap(Gap),
     /// Also the gap between the columns of a multi-column container.
     /// https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
     #[property]
+    #[non_negative]
     ColumnGap(Gap),
     /// `place-content: <align-content> <justify-content>?`
     #[property]
@@ -669,18 +693,22 @@ pub enum Box {
     PlaceSelf(PlaceSelfShorthand),
     /// `gap: <row-gap> <column-gap>?` (the one value is for both)
     #[property]
+    #[non_negative]
     #[shorthand("row-gap", method = "row")]
     #[shorthand("column-gap", method = "column")]
     Gap(GapShorthand),
     /// The names that `gap` and its longhands had in the grid layout module.
     #[property]
+    #[non_negative]
     #[shorthand("row-gap", method = "row")]
     #[shorthand("column-gap", method = "column")]
     GridGap(GapShorthand),
     #[property]
+    #[non_negative]
     #[shorthand("row-gap", method = "clone")]
     GridRowGap(Gap),
     #[property]
+    #[non_negative]
     #[shorthand("column-gap", method = "clone")]
     GridColumnGap(Gap),
 
@@ -793,6 +821,7 @@ pub enum Text {
     /// Inherited like `hyphens`, so it lives in the same style struct.
     /// https://www.w3.org/TR/CSS22/tables.html#separated-borders
     #[property]
+    #[non_negative]
     BorderSpacing(BorderSpacing),
     /// Inherited like `border-spacing`.
     /// https://www.w3.org/TR/CSS22/tables.html#borders
@@ -2067,8 +2096,8 @@ impl<'i> PropertyValue<'i> for Percentage {
     }
 }
 
-/// A math function (`calc()`, `min()`, ...) whose value is a `<length>`. It is clamped to the
-/// range of the property that is being parsed.
+/// A math function (`calc()`, `min()`, ...) whose value is a `<length>`. It may be negative,
+/// unless the property makes it [`NonNegative`].
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct CalcLength(pub Calc);
 
@@ -2076,7 +2105,7 @@ impl<'i> PropertyValue<'i> for CalcLength {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
-        calc::parse(input, calc::Expected::Length, calc::current_range()).map(CalcLength)
+        calc::parse(input, calc::Expected::Length, calc::Range::All).map(CalcLength)
     }
 }
 
@@ -2086,8 +2115,8 @@ impl CalcLength {
     }
 }
 
-/// A math function whose value is a `<length-percentage>`. It is clamped to the range of the
-/// property that is being parsed.
+/// A math function whose value is a `<length-percentage>`. It may be negative, unless the
+/// property makes it [`NonNegative`].
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct CalcLengthPercentage(pub Calc);
 
@@ -2095,13 +2124,113 @@ impl<'i> PropertyValue<'i> for CalcLengthPercentage {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
-        calc::parse(input, calc::Expected::LengthPercentage, calc::current_range()).map(CalcLengthPercentage)
+        calc::parse(input, calc::Expected::LengthPercentage, calc::Range::All).map(CalcLengthPercentage)
     }
 }
 
 impl CalcLengthPercentage {
     pub fn computed(&self, style: &super::computed::ComputedValues) -> super::computed::LengthPercentage {
         self.0.to_length_percentage(super::computed::FontSizes::of(style))
+    }
+}
+
+/// The values of the properties that do not allow negative values, marked `#[non_negative]`:
+/// their math functions are clamped to non-negative values when they are used (a negative
+/// literal is not valid, which `parse_property` checks).
+/// https://drafts.csswg.org/css-values-4/#calc-range
+pub trait NonNegative {
+    fn non_negative(self) -> Self;
+}
+
+impl NonNegative for CalcLength {
+    fn non_negative(self) -> Self {
+        CalcLength(self.0.with_range(calc::Range::NonNegative))
+    }
+}
+
+impl NonNegative for CalcLengthPercentage {
+    fn non_negative(self) -> Self {
+        CalcLengthPercentage(self.0.with_range(calc::Range::NonNegative))
+    }
+}
+
+/// A number, which is only negative if it comes from a math function (the negative literals
+/// are not valid where this is used).
+impl NonNegative for f32 {
+    fn non_negative(self) -> Self {
+        self.max(0.0)
+    }
+}
+
+/// Implements [`NonNegative`] for an enum whose only math function is its `Calc` variant.
+macro_rules! non_negative_calc_variant {
+    ($($ty:ident),*) => {$(
+        impl NonNegative for $ty {
+            fn non_negative(self) -> Self {
+                match self {
+                    $ty::Calc(calc) => $ty::Calc(calc.non_negative()),
+                    other => other,
+                }
+            }
+        }
+    )*};
+}
+
+non_negative_calc_variant!(
+    Length,
+    QuantityOrPercentage,
+    SizeValue,
+    AutoOrQuantityOrPercentage,
+    NoneOrQuantityOrPercentage,
+    Gap,
+    FontSize
+);
+
+impl<'a, T: NonNegative + Clone> NonNegative for List<'a, T>
+where
+    [T]: ToOwned<Owned = Vec<T>>,
+{
+    fn non_negative(self) -> Self {
+        List { elements: Cow::Owned(self.elements.into_owned().into_iter().map(T::non_negative).collect()) }
+    }
+}
+
+impl NonNegative for LineHeight {
+    fn non_negative(self) -> Self {
+        match self {
+            LineHeight::QuantityOrPercentage(value) => LineHeight::QuantityOrPercentage(value.non_negative()),
+            LineHeight::Number(number) => LineHeight::Number(number.non_negative()),
+            LineHeight::Normal => LineHeight::Normal,
+        }
+    }
+}
+
+impl NonNegative for FlexShorthand {
+    fn non_negative(self) -> Self {
+        FlexShorthand { grow: self.grow.non_negative(), shrink: self.shrink.non_negative(), basis: self.basis.non_negative() }
+    }
+}
+
+impl NonNegative for BorderRadiusShorthand {
+    fn non_negative(self) -> Self {
+        BorderRadiusShorthand {
+            top_left: self.top_left.non_negative(),
+            top_right: self.top_right.non_negative(),
+            bottom_right: self.bottom_right.non_negative(),
+            bottom_left: self.bottom_left.non_negative(),
+        }
+    }
+}
+
+impl NonNegative for GapShorthand {
+    fn non_negative(self) -> Self {
+        GapShorthand { row: self.row.non_negative(), column: self.column.non_negative() }
+    }
+}
+
+impl NonNegative for BorderSpacing {
+    fn non_negative(self) -> Self {
+        BorderSpacing { horizontal: self.horizontal.non_negative(), vertical: self.vertical.non_negative() }
     }
 }
 
@@ -2758,8 +2887,7 @@ impl<'i> PropertyValue<'i> for f32 {
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         if let Ok(value) = calc::parse_number(input, calc::Expected::Number) {
-            // clamped to the range of the property being parsed (`flex-grow` is not negative)
-            return Ok(if calc::current_range() == calc::Range::NonNegative { value.max(0.0) } else { value });
+            return Ok(value);
         }
         let token = input.next()?;
         match token {

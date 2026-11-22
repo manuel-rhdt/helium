@@ -106,6 +106,30 @@ fn a_negative_result_is_clamped_where_the_property_is_not_negative() {
 }
 
 #[test]
+fn non_negative_shorthands_logical_properties_and_numbers() {
+    // the range comes with the property, also through shorthands and logical properties; a
+    // negative literal is not valid where a math function is clamped
+    let b = boxes(
+        "non_negative_kinds",
+        "<div style='width:400px'>\
+           <div id=a style='padding:calc(10px - 50%) 0;padding-inline-start:calc(20px - 100%);width:100px;height:10px'></div>\
+           <div id=b style='inline-size:calc(100px - 100%);block-size:10px'></div>\
+         </div>\
+         <div style='display:flex;width:400px'>\
+           <div id=f1 style='flex:calc(-1) 1 0px;height:10px'></div>\
+           <div id=f2 style='flex-grow:1;flex-grow:-1;flex-basis:0;height:10px'></div>\
+         </div>\
+         <div id=l style='font:10px/calc(-2) Ahem;line-height:calc(1 + 1)'>X</div>",
+    );
+    assert_eq!((b["a"].2, b["a"].3), (100.0, 10.0));
+    assert_eq!(b["b"].2, 0.0);
+    // `flex-grow: calc(-1)` is 0; `flex-grow: -1` is ignored, so the item takes all the space
+    assert_eq!(b["f1"].2, 0.0);
+    assert_eq!(b["f2"].2, 400.0);
+    assert_eq!(b["l"].3, 20.0);
+}
+
+#[test]
 fn positioned_and_grid_boxes() {
     let b = boxes(
         "positioned_grid",

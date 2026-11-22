@@ -1470,11 +1470,7 @@ pub struct BorderSpacing {
 
 impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
     fn from_specified(spec: &specified::BorderSpacing, style: &ComputedValues) -> Self {
-        // a math function is clamped: the spacing is not negative
-        BorderSpacing {
-            horizontal: spec.horizontal.to_px(style).max(PixelLength(0.0)),
-            vertical: spec.vertical.to_px(style).max(PixelLength(0.0)),
-        }
+        BorderSpacing { horizontal: spec.horizontal.to_px(style), vertical: spec.vertical.to_px(style) }
     }
 }
 
