@@ -763,6 +763,25 @@ fn embed_images(
         };
         match embedded {
             Ok(embedded) => {
+                match &**image {
+                    crate::image::LoadedImage::Raster(raster) => {
+                        let format = if raster.data.starts_with(&[0xFF, 0xD8]) { "JPEG" } else { "PNG" };
+                        log::info!(
+                            "Embedded image: {} {}x{} px, {} bytes",
+                            format,
+                            raster.width,
+                            raster.height,
+                            raster.data.len()
+                        );
+                    }
+                    crate::image::LoadedImage::Svg(svg) => {
+                        log::info!(
+                            "Embedded image: SVG {}x{} px",
+                            svg.tree.size().width(),
+                            svg.tree.size().height()
+                        );
+                    }
+                }
                 images.insert(key, embedded);
             }
             Err(error) => log::warn!("cannot embed an image: {}", error),
