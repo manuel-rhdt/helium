@@ -300,7 +300,47 @@ fn operator<'i>(input: &mut Parser<'i>) -> Result<Operator> {
     }
 }
 
+/// A math function as the value of a media feature: a length in pixels (with the font-relative
+/// units of the initial font, as for the other lengths here), or a number, which may be the
+/// numerator of a ratio.
+fn math_function<'i>(input: &mut Parser<'i>) -> Option<f64> {
+    use super::properties::calc::{self, Expected, Range};
+    use super::properties::computed::{FontSizes, PixelLength, viewport};
+    let sizes = FontSizes {
+        font: PixelLength(16.0),
+        root: PixelLength(16.0),
+        ex: PixelLength(8.0),
+        ch: PixelLength(8.0),
+        viewport: viewport(),
+        vertical: false,
+    };
+    if let Ok(length) = calc::parse(input, Expected::Length, Range::All) {
+        return Some(length.to_px(sizes).0 as f64);
+    }
+    let value = calc::parse(input, Expected::Number, Range::All).ok()?.to_number(sizes);
+    let ratio = input.try_parse(|input| {
+        input.expect_delim('/')?;
+        number(input)
+    });
+    Some(match ratio {
+        Ok(denominator) if denominator != 0.0 => (value / denominator) as f64,
+        Ok(_) => f64::INFINITY,
+        Err(_) => value as f64,
+    })
+}
+
+/// A `<number>`, which may be a math function.
+fn number<'i>(input: &mut Parser<'i>) -> Result<f32> {
+    if let Ok(value) = super::properties::calc::parse_number(input, super::properties::calc::Expected::Number) {
+        return Ok(value);
+    }
+    Ok(input.expect_number()?)
+}
+
 fn operand<'i>(input: &mut Parser<'i>) -> Result<Operand> {
+    if let Some(value) = math_function(input) {
+        return Ok(Operand::Value(Value::Number(value)));
+    }
     let token = input.next()?.clone();
     match token {
         Token::Ident(ident) => Ok(Operand::Name(ident.to_ascii_lowercase())),
@@ -308,7 +348,7 @@ fn operand<'i>(input: &mut Parser<'i>) -> Result<Operand> {
             // a ratio: `16/9`
             let ratio = input.try_parse(|input| {
                 input.expect_delim('/')?;
-                input.expect_number()
+                number(input)
             });
             Ok(Operand::Value(Value::Number(match ratio {
                 Ok(denominator) if denominator != 0.0 => (value / denominator) as f64,
@@ -460,6 +500,18 @@ mod tests {
         assert!(matches("(700px <= width <= 800px)"));
         assert!(matches("(width = 800px)"));
         assert!(matches("(height >= 1000px) and (width < 1000px)"));
+    }
+
+    #[test]
+    fn math_functions() {
+        // the page is 800px by 1000px, `rem` is 16px
+        assert!(matches("(min-width: calc(1px - 1px))"));
+        assert!(matches("(width = calc(50rem))"));
+        assert!(matches("(width > calc(1px * (1 + sign(16px - 1rem))))"));
+        assert!(!matches("(width > min(900px, 100rem))"));
+        assert!(matches("(min-aspect-ratio: calc(3/4))"));
+        assert!(matches("(aspect-ratio = calc(8 * sign(17px - 1rem)) / calc(10))"));
+        assert!(matches("(grid: calc(2 * sign(16px - 1rem)))"));
     }
 
     #[test]

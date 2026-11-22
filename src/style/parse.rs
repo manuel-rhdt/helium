@@ -1327,7 +1327,28 @@ pub(crate) fn parse_property<'i>(
             return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(StyleParseError::InvalidValue) });
         }
     }
-    PropertyDeclaration::parse_declaration(name, input)
+    let range = calc_range(&name);
+    super::properties::calc::with_range(range, || PropertyDeclaration::parse_declaration(name, input))
+}
+
+/// The range that a math function in the value of a property is clamped to: the values of
+/// the properties that do not allow negative lengths or numbers (as literals, these are not
+/// valid; a math function that is out of range is clamped instead). The shorthands are
+/// included if all their longhands are such properties (`font` is `font-size` and
+/// `line-height` for the math functions).
+fn calc_range(name: &str) -> super::properties::calc::Range {
+    use super::properties::calc::Range;
+    let name = name.to_ascii_lowercase();
+    let non_negative = is_non_negative_property(&name)
+        || (name.starts_with("border-") && name.ends_with("radius"))
+        || matches!(
+            name.as_str(),
+            "font" | "font-size" | "line-height" | "gap" | "row-gap" | "column-gap" | "grid-gap"
+                | "grid-row-gap" | "grid-column-gap" | "columns" | "column-width" | "column-rule-width"
+                | "border-spacing" | "background-size" | "flex" | "flex-basis" | "flex-grow"
+                | "flex-shrink" | "outline-width" | "aspect-ratio"
+        );
+    if non_negative { Range::NonNegative } else { Range::All }
 }
 
 /// The properties whose lengths must not be negative.

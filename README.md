@@ -246,6 +246,20 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   inherited when the parent has none of that name); `counter-reset: reversed()` and `<ol
   reversed>`, which are only in the editor's draft, are not supported.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
+- **Math functions** (CSS Values 4): `calc()`, `min()`, `max()`, `clamp()` (with `none`),
+  `round()` (`nearest`, `up`, `down`, `to-zero`), `mod()`, `rem()`, `sin()`, `cos()`, `tan()`,
+  `asin()`, `acos()`, `atan()`, `atan2()`, `pow()`, `sqrt()`, `hypot()`, `log()`, `exp()`,
+  `abs()`, `sign()` and the constants `e`, `pi`, `infinity`, `-infinity` and `NaN`, nested and
+  with `var()`, wherever a length, a length-percentage, a number, an integer or an angle is
+  accepted (sizes, margins, padding, insets, borders, radii, gaps, grid tracks, flex, fonts,
+  `line-height`, `vertical-align`, `text-indent`, spacing, shadows, transforms, gradients,
+  backgrounds, counters, `opacity` and media queries). They are type-checked as the
+  specification says, with typed arithmetic (`calc(1em * 1em / 1px)` is a length); a value that
+  is out of the range of its property is clamped (`padding: calc(50% - 10em)` is never
+  negative), `NaN` is 0 and infinity is the largest length. A percentage that is not just added
+  to a length (`min(100%, 40em)`) is kept until layout knows what it refers to. Not supported:
+  `<time>`, `<frequency>` and `<resolution>` values, and a number that divides relative lengths
+  (`calc(1em / 1px)`) except in media queries.
 - **Cascade:** selectors (`selectors` crate, with `:is()` and `:where()`), `inherit`, `initial`,
   `unset`.
 - **Nesting:** style rules and `@media` blocks inside style rules, with `&` or with relative
@@ -362,7 +376,7 @@ checks what a program can check, and not for example whether the reading order m
 ## Not supported
 
 Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`,
-`@supports`, `@import`, `calc()`, `overflow`, `float: left`/`right`, `position:
+`@supports`, `@import`, `overflow`, `float: left`/`right`, `position:
 fixed`/`sticky`, `z-index`, `text-shadow`, inset shadows,
 `outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form

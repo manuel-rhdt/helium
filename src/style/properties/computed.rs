@@ -180,6 +180,12 @@ thread_local! {
     static VIEWPORT: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((793.7, 1123.0)) };
 }
 
+/// The size of the page area that `vw`, `vh`, `vmin` and `vmax` are relative to.
+pub fn viewport() -> (PixelLength, PixelLength) {
+    let (width, height) = VIEWPORT.with(|viewport| viewport.get());
+    (PixelLength(width), PixelLength(height))
+}
+
 /// Sets the size of the page area that `vw`, `vh`, `vmin` and `vmax` are relative to.
 pub fn set_viewport(width: f32, height: f32) {
     VIEWPORT.with(|viewport| viewport.set((width.max(0.0), height.max(0.0))));
@@ -313,10 +319,15 @@ impl Div<f32> for PixelLength {
 pub enum LengthPercentage {
     PixelLength(PixelLength),
     Percentage(Percentage),
+    /// `length + percentage`, the computed value of a math function such as `calc(100% - 2em)`.
     Both {
         length: PixelLength,
         percentage: Percentage,
     },
+    /// Any other math function with a percentage, such as `min(100%, 40em)`, or a sum that is
+    /// clamped to the range of its property (`padding: calc(50% - 10px)` is not negative). Its
+    /// lengths are in pixels.
+    Calc(super::calc::Calc),
 }
 
 impl Default for LengthPercentage {
@@ -362,6 +373,26 @@ impl LengthPercentage {
             LengthPercentage::PixelLength(len) => len,
             LengthPercentage::Percentage(percentage) => container_size * percentage,
             LengthPercentage::Both { length, percentage } => length + container_size * percentage,
+            LengthPercentage::Calc(calc) => PixelLength(calc.resolve(container_size.0)),
+        }
+    }
+
+    /// The value with no size for percentages to refer to: the length, with percentages as 0.
+    pub fn without_percentages(self) -> PixelLength {
+        self.absolute(PixelLength(0.0))
+    }
+
+    /// `100% - self`, the offset from the far edge of a box (`background-position: right 10px`).
+    pub fn complement(self) -> LengthPercentage {
+        match self {
+            LengthPercentage::PixelLength(length) => {
+                LengthPercentage::Both { length: -length, percentage: Percentage(1.0) }
+            }
+            LengthPercentage::Percentage(Percentage(p)) => LengthPercentage::Percentage(Percentage(1.0 - p)),
+            LengthPercentage::Both { length, percentage: Percentage(p) } => {
+                LengthPercentage::Both { length: -length, percentage: Percentage(1.0 - p) }
+            }
+            LengthPercentage::Calc(calc) => LengthPercentage::Calc(calc.complement()),
         }
     }
 }
@@ -381,6 +412,7 @@ impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage 
                 ))
             }
             QuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
+            QuantityOrPercentage::Calc(calc) => calc.computed(style),
         }
     }
 }
@@ -435,6 +467,7 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
         match spec {
             specified::AutoOrQuantityOrPercentage::Auto => GenericSize::Auto,
             specified::AutoOrQuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
+            specified::AutoOrQuantityOrPercentage::Calc(calc) => GenericSize::LengthPercentage(calc.computed(style)),
             specified::AutoOrQuantityOrPercentage::Quantity(specified::Quantity {
                 value,
                 unit,
@@ -455,6 +488,7 @@ impl super::ComputedValue<specified::SizeValue> for GenericSize {
             SizeValue::FitContent => GenericSize::Keyword(SizingKeyword::FitContent),
             SizeValue::Stretch => GenericSize::Keyword(SizingKeyword::Stretch),
             SizeValue::Percentage(percentage) => percentage.into(),
+            SizeValue::Calc(calc) => GenericSize::LengthPercentage(calc.computed(style)),
             SizeValue::Quantity(quantity) => {
                 <GenericSize as super::ComputedValue<specified::AutoOrQuantityOrPercentage>>::from_specified(
                     &specified::AutoOrQuantityOrPercentage::Quantity(quantity),
@@ -471,6 +505,7 @@ impl super::ComputedValue<specified::Gap> for GenericSize {
         match spec {
             specified::Gap::Normal => GenericSize::Auto,
             specified::Gap::Percentage(percentage) => (*percentage).into(),
+            specified::Gap::Calc(calc) => GenericSize::LengthPercentage(calc.computed(style)),
             specified::Gap::Quantity(specified::Quantity { value, unit }) => {
                 GenericSize::LengthPercentage(LengthPercentage::PixelLength(PixelLength::from_val_unit(
                     *value,
@@ -494,6 +529,7 @@ impl super::ComputedValue<specified::ColumnWidth> for ColumnWidth {
     fn from_specified(spec: &specified::ColumnWidth, style: &ComputedValues) -> Self {
         match spec {
             specified::ColumnWidth::Auto => ColumnWidth::Auto,
+            specified::ColumnWidth::Calc(calc) => ColumnWidth::Length(calc.to_px(style)),
             specified::ColumnWidth::Quantity(specified::Quantity { value, unit }) => {
                 ColumnWidth::Length(PixelLength::from_val_unit(*value, *unit, FontSizes::of(style)))
             }
@@ -511,6 +547,7 @@ impl super::ComputedValue<specified::NoneOrQuantityOrPercentage> for GenericSize
         match spec {
             specified::NoneOrQuantityOrPercentage::None => GenericSize::Auto,
             specified::NoneOrQuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
+            specified::NoneOrQuantityOrPercentage::Calc(calc) => GenericSize::LengthPercentage(calc.computed(style)),
             specified::NoneOrQuantityOrPercentage::Quantity(specified::Quantity {
                 value,
                 unit,
@@ -1416,6 +1453,7 @@ impl ComputedValue<specified::NormalOrQuantity> for PixelLength {
     fn from_specified(spec: &specified::NormalOrQuantity, style: &ComputedValues) -> Self {
         match spec {
             specified::NormalOrQuantity::Normal => PixelLength(0.0),
+            specified::NormalOrQuantity::Calc(calc) => calc.to_px(style),
             specified::NormalOrQuantity::Quantity(q) => {
                 PixelLength::from_val_unit(q.value, q.unit, FontSizes::of(style))
             }
@@ -1432,12 +1470,10 @@ pub struct BorderSpacing {
 
 impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
     fn from_specified(spec: &specified::BorderSpacing, style: &ComputedValues) -> Self {
-        let length = |q: specified::Quantity| {
-            PixelLength::from_val_unit(q.value, q.unit, FontSizes::of(style))
-        };
+        // a math function is clamped: the spacing is not negative
         BorderSpacing {
-            horizontal: length(spec.horizontal),
-            vertical: length(spec.vertical),
+            horizontal: spec.horizontal.to_px(style).max(PixelLength(0.0)),
+            vertical: spec.vertical.to_px(style).max(PixelLength(0.0)),
         }
     }
 }

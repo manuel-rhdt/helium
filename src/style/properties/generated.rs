@@ -147,9 +147,14 @@ impl<'i> PropertyValue<'i> for CounterList {
         while !input.is_exhausted() {
             let name = counter_name(input)?;
             let value = input
-                .try_parse(|input| match input.next()? {
-                    Token::Number { int_value: Some(value), .. } => Ok(*value),
-                    _ => invalid(),
+                .try_parse(|input| {
+                    if let Ok(value) = super::calc::parse_integer(input) {
+                        return Ok(value);
+                    }
+                    match input.next()? {
+                        Token::Number { int_value: Some(value), .. } => Ok(*value),
+                        _ => invalid(),
+                    }
                 })
                 .ok();
             counters.push((name, value));

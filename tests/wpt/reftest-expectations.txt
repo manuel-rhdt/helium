@@ -44,6 +44,63 @@ css/CSS2/normal-flow/inline-table-width-002a.xht
 # Their references paint the background of an inline box (now painted); the tests need a column group background, opacity groups and attr()
 css/CSS2/box-display/display-012.xht
 
+# needs colour hints (a bare position between two colours) in conic-gradient(); the math functions of its stops work
+css/css-images/conic-gradient-calc-angle-percentage.html
+
+# needs sibling-index() (CSS Values 5)
+css/css-images/conic-gradient-color-with-sibling-index.html
+
+# needs sibling-index() (CSS Values 5)
+css/css-images/linear-gradient-body-sibling-index.html
+
+# needs sibling-index() (CSS Values 5)
+css/css-images/linear-gradient-sibling-index.html
+
+# needs the cap unit (calc() only made it run)
+css/css-values/cap-unit-001.html
+
+# needs @font-face (calc() only made it run)
+css/css-values/ch-unit-016.html
+
+# needs @font-face (calc() only made it run)
+css/css-values/ch-unit-018.html
+
+# needs @font-face (calc() only made it run)
+css/css-values/ch-unit-019.html
+
+# needs the ic unit (calc() only made it run)
+css/css-values/ic-unit-013.html
+
+# needs the ic unit (calc() only made it run)
+css/css-values/ic-unit-014.html
+
+# needs the ic unit (calc() only made it run)
+css/css-values/ic-unit-015.html
+
+# needs the ic unit (calc() only made it run)
+css/css-values/ic-unit-016.html
+
+# needs @counter-style
+css/css-values/negative-calc-to-non-negative-integer.html
+
+# fails like vh-support.html: the box is sized by the page area, the root background covers the page margins too
+css/css-values/vh-calc-support-pct.html
+
+# fails like vh-support.html: the box is sized by the page area, the root background covers the page margins too
+css/css-values/vh-calc-support.html
+
+# @media screen does not match: helium is print media
+css/mediaqueries/mq-calc-008.html
+
+# needs <resolution> (dppx) in math functions
+css/mediaqueries/mq-calc-resolution.html
+
+# @media screen does not match: helium is print media
+css/mediaqueries/mq-calc-sign-function-003.html
+
+# needs <resolution> (dppx) in math functions
+css/mediaqueries/mq-calc-sign-function-004.html
+
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-005.xht
 css/CSS2/borders/border-006.xht
@@ -263,9 +320,6 @@ css/css-backgrounds/background-origin-006.html
 css/css-backgrounds/background-origin/origin-content-box.html
 css/css-backgrounds/background-origin/origin-content-box_with_radius.html
 css/css-backgrounds/background-origin/origin-padding-box.html
-css/css-backgrounds/background-position-calc-minmax-001.html
-css/css-backgrounds/background-position-negative-percentage-comparison-002.html
-css/css-backgrounds/background-position-negative-percentage-comparison.html
 css/css-backgrounds/background-position-subpixel-at-border.tentative.html
 css/css-backgrounds/background-position/background-position-right-in-body.html
 css/css-backgrounds/background-size-043.html

@@ -28,6 +28,9 @@ fn zero() -> QuantityOrPercentage {
 }
 
 fn angle<'i>(input: &mut Parser<'i>) -> ParseResult<f32> {
+    if let Ok(degrees) = super::calc::parse_angle(input) {
+        return Ok(degrees);
+    }
     let token = input.next()?.clone();
     match token {
         Token::Dimension { value, ref unit, .. } => match_ignore_ascii_case! { unit,
@@ -46,6 +49,14 @@ fn length<'i>(input: &mut Parser<'i>) -> ParseResult<QuantityOrPercentage> {
     QuantityOrPercentage::from_css_property_value(input)
 }
 
+/// A `<number>`, which may be a math function.
+fn number<'i>(input: &mut Parser<'i>) -> ParseResult<f32> {
+    if let Ok(value) = super::calc::parse_number(input, super::calc::Expected::Number) {
+        return Ok(value);
+    }
+    Ok(input.expect_number()?)
+}
+
 fn function<'i>(input: &mut Parser<'i>) -> ParseResult<TransformFunction> {
     let name = input.expect_function()?.clone();
     input.parse_nested_block(|input| {
@@ -58,12 +69,12 @@ fn function<'i>(input: &mut Parser<'i>) -> ParseResult<TransformFunction> {
             "translatex" => TransformFunction::Translate(length(input)?, zero()),
             "translatey" => TransformFunction::Translate(zero(), length(input)?),
             "scale" => {
-                let x = input.expect_number()?;
-                let y = if input.try_parse(|i| i.expect_comma()).is_ok() { input.expect_number()? } else { x };
+                let x = number(input)?;
+                let y = if input.try_parse(|i| i.expect_comma()).is_ok() { number(input)? } else { x };
                 TransformFunction::Scale(x, y)
             },
-            "scalex" => TransformFunction::Scale(input.expect_number()?, 1.0),
-            "scaley" => TransformFunction::Scale(1.0, input.expect_number()?),
+            "scalex" => TransformFunction::Scale(number(input)?, 1.0),
+            "scaley" => TransformFunction::Scale(1.0, number(input)?),
             "rotate" => TransformFunction::Rotate(angle(input)?),
             "skew" => {
                 let x = angle(input)?;
@@ -78,7 +89,7 @@ fn function<'i>(input: &mut Parser<'i>) -> ParseResult<TransformFunction> {
                     if i > 0 {
                         input.expect_comma()?;
                     }
-                    *value = input.expect_number()?;
+                    *value = number(input)?;
                 }
                 TransformFunction::Matrix(m)
             },
@@ -224,6 +235,7 @@ impl Transform {
         let resolve = |value: QuantityOrPercentage, reference: f32| match value {
             QuantityOrPercentage::Quantity(q) => PixelLength::from_val_unit(q.value, q.unit, font_size).0,
             QuantityOrPercentage::Percentage(p) => p.0 * reference,
+            QuantityOrPercentage::Calc(calc) => calc.0.to_px_with_basis(font_size, PixelLength(reference)).0,
         };
         let mut m = IDENTITY;
         for function in &self.0 {
