@@ -56,6 +56,9 @@ pub struct InlineFormattingContext {
     /// of `elements` because they do not take part in inline layout.
     pub absolutes: Vec<Entity>,
     pub break_points: Vec<BreakPoint>,
+    /// The no-break spaces where lines wrap, by advance: justification stretches and shrinks
+    /// them like the spaces of the break points, but a line cannot break there.
+    pub ties: Vec<Tie>,
     pub lines: Vec<Line>,
     /// The `inline-block` boxes in `elements` and the advance at which they start. Before the
     /// boxes are measured they have no width.
@@ -129,6 +132,7 @@ impl InlineFormattingContext {
             elements,
             absolutes,
             break_points: vec![],
+            ties: vec![],
             lines: vec![],
             atom_offsets: vec![],
             direction: style.text.direction,
@@ -205,7 +209,7 @@ impl InlineFormattingContext {
                         text_run.text.len()
                     };
                     if entity == to_break.entity && to_break.space && start < end {
-                        end = start + text_run.text[start..end].trim_end().len();
+                        end = start + text_run.text[start..end].trim_end_matches(is_breakable_space).len();
                     }
                     if start >= end {
                         continue;
@@ -271,7 +275,8 @@ impl InlineFormattingContext {
                             && bp.advance_before >= start
                             && bp.advance_before < end
                     })
-                    .count();
+                    .count()
+                    + self.ties_in(start, end).len();
                 Some((run, end - start + word_spacing * num_spaces as f32))
             })
             .collect();
@@ -443,9 +448,13 @@ impl InlineFormattingContext {
             // and, like TeX's \raggedright, a finite stretch of 2em at the end of every line, so
             // lines are balanced by the same algorithm without ever being squeezed.
             let glue = if justified {
+                // (and the no-break spaces of the line, which are not break points)
+                let ties = self.ties_in(breakpoints[from].advance_after, breakpoints[to].advance_before);
                 helium_paginate::paragraph::GlueTotals {
-                    stretch: end_glue.stretch - start_glue.stretch,
-                    shrink: end_glue.shrink - start_glue.shrink,
+                    stretch: end_glue.stretch - start_glue.stretch
+                        + ties.iter().map(|tie| f64::from(tie.stretch.0)).sum::<f64>(),
+                    shrink: end_glue.shrink - start_glue.shrink
+                        + ties.iter().map(|tie| f64::from(tie.shrink.0)).sum::<f64>(),
                 }
             } else {
                 let font_size = text_runs
@@ -540,11 +549,22 @@ impl InlineFormattingContext {
             + self.break_points[to_break].hyphen_width
     }
 
+    /// The gaps that justification stretches on the line between two break points: the spaces
+    /// and inter-letter breaks inside it, and the no-break spaces.
     fn space_count(&self, from_break: usize, to_break: usize) -> usize {
+        let (from, to) = (self.break_points[from_break], self.break_points[to_break]);
         self.break_points[from_break + 1..to_break]
             .iter()
             .filter(|break_point| break_point.space || break_point.inter_letter)
             .count()
+            + self.ties_in(from.advance_after, to.advance_before).len()
+    }
+
+    /// The no-break spaces whose advance is in `start..end`.
+    fn ties_in(&self, start: Px, end: Px) -> &[Tie] {
+        let first = self.ties.partition_point(|tie| tie.advance < start);
+        let last = self.ties.partition_point(|tie| tie.advance < end).max(first);
+        &self.ties[first..last]
     }
 
     /// The `inter_letter` break points inside `piece` of a line, as byte offsets into the
@@ -671,6 +691,13 @@ impl InlineFormattingContext {
             bp.advance_before += shift;
             bp.advance_after += shift;
         }
+        for tie in &mut self.ties {
+            let element = position(tie.entity).unwrap_or(0);
+            tie.advance += atoms
+                .iter()
+                .filter(|&&(atom, _)| atom < element)
+                .fold(Px(0.0), |sum, &(_, width)| sum + width);
+        }
         // The runs are shifted by the boxes in front of them; the run of a box itself gets its
         // width.
         let width_of_atoms = |include: &dyn Fn(usize) -> bool| {
@@ -722,6 +749,18 @@ pub struct BreakPoint {
     pub penalty: i32,
 }
 
+/// A no-break space (see `is_no_break_space`): a gap between words that justification stretches
+/// and shrinks like a space (CSS Text 3 counts U+00A0 among the word separators), where the line
+/// cannot break, like a tie (`~`) of TeX.
+#[derive(Debug, Copy, Clone)]
+pub struct Tie {
+    pub entity: Entity,
+    /// The advance (like those of the break points) in front of the space.
+    pub advance: Px,
+    pub stretch: Px,
+    pub shrink: Px,
+}
+
 // TODO: test this
 impl<'a> System<'a> for FindPossibleLineBreaks {
     type SystemData = (
@@ -741,6 +780,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
         for InlineFormattingContext {
             elements,
             break_points,
+            ties,
             atom_offsets,
             direction,
             plaintext,
@@ -749,6 +789,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             ..
         } in (&mut inline_formatting_contexts).join()
         {
+            ties.clear();
             // an empty block (e.g. `<div></div>`) has an inline formatting context without content
             if elements.is_empty() {
                 continue;
@@ -857,6 +898,14 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                     let run = spaces.get_or_insert((advance.px(), Px(0.0), Px(0.0)));
                                     run.1 += Px(size / 2000.0);
                                     run.2 += Px(size / 3000.0);
+                                } else if wraps && text_run.text[cluster..].starts_with(is_no_break_space) {
+                                    let size = position.x_advance.0 as f32 * text_run.face.font_size.0;
+                                    ties.push(Tie {
+                                        entity,
+                                        advance: advance.px(),
+                                        stretch: Px(size / 2000.0),
+                                        shrink: Px(size / 3000.0),
+                                    });
                                 }
                                 glyph_widths.push((cluster, width));
                                 advance += width;
@@ -977,6 +1026,15 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                 penalty: 0,
                             })
                         } else {
+                            if wraps && cur_char.starts_with(is_no_break_space) {
+                                let size = pos.x_advance.0 as f32 * text_run.face.font_size.0;
+                                ties.push(Tie {
+                                    entity,
+                                    advance: advance.px(),
+                                    stretch: Px(size / 2000.0),
+                                    shrink: Px(size / 3000.0),
+                                });
+                            }
                             advance += font.scale_to_px(pos.x_advance, text_run.face.font_size);
                         }
                     }
@@ -1213,6 +1271,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             break_points.sort_by_key(|break_point| {
                 (element_order(break_point.entity), break_point.char_index)
             });
+            ties.sort_by(|a, b| a.advance.0.total_cmp(&b.advance.0));
             // A break behind a box is redundant if a space follows it directly.
             let is_atom = |entity: Entity| atom_offsets.iter().any(|&(atom, _)| atom == entity);
             let mut index = 0;
@@ -1412,10 +1471,13 @@ fn break_opportunities_between_letters(
 /// line is justified. The no-break spaces (U+00A0, U+2007 FIGURE SPACE and U+202F NARROW NO-BREAK
 /// SPACE, class GL of UAX #14) are white space for Unicode and `char::is_whitespace`, but glue the
 /// words on both sides together.
-// TODO: CSS Text 3 counts U+00A0 among the word separators, which stretch in justified text; here
-// only the spaces that are break points stretch.
+/// They stretch in justified text all the same, as [`Tie`]s.
 fn is_breakable_space(ch: char) -> bool {
-    ch.is_whitespace() && !matches!(ch, '\u{a0}' | '\u{2007}' | '\u{202f}')
+    ch.is_whitespace() && !is_no_break_space(ch)
+}
+
+fn is_no_break_space(ch: char) -> bool {
+    matches!(ch, '\u{a0}' | '\u{2007}' | '\u{202f}')
 }
 
 /// Whether a justified line is stretched at the break opportunity at `index` of `text`: when
@@ -1770,7 +1832,8 @@ impl<'a> System<'a> for PlaceInlineBlocks {
                             (point.space || point.inter_letter)
                                 && point.advance_before.0 < offset.0 - EPSILON
                         })
-                        .count();
+                        .count()
+                        + ifc.ties_in(from.advance_after, Px(offset.0 - EPSILON)).len();
                     let along = (offset - from.advance_after) + word_spacing * spaces as f32;
                     let (x, y) = place(along, baseline, height);
                     let (dx, dy) = shift(atom);
