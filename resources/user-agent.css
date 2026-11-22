@@ -249,13 +249,6 @@ sup {
   font-size: smaller;
 }
 
-ruby {
-  display: ruby;
-}
-rt {
-  display: ruby-text;
-}
-
 :link {
   color: #0000ee;
 }
@@ -269,17 +262,6 @@ rt {
 :link,
 :visited {
   text-decoration: underline;
-  cursor: pointer;
-}
-a:link[rel~="help"],
-a:visited[rel~="help"],
-area:link[rel~="help"],
-area:visited[rel~="help"] {
-  cursor: help;
-}
-
-:focus {
-  outline: auto;
 }
 
 progress,
