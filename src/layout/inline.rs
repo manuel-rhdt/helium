@@ -787,7 +787,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             for index in (0..elements.len().saturating_sub(1)).rev() {
                 let later = elements[index + 1];
                 content_after[index] = content_after[index + 1]
-                    || text_runs.get(later).is_some_and(|run| !run.text.trim().is_empty())
+                    || text_runs.get(later).is_some_and(|run| !run.text.trim_matches(is_breakable_space).is_empty())
                     || intrinsic_sizes.get(later).is_some()
                     || computed_values
                         .get(later)
@@ -848,7 +848,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                             ) {
                                 let cluster = segment_start + info.cluster as usize;
                                 let width = font.scale_to_px(position.x_advance, text_run.face.font_size);
-                                let is_space = wraps && text_run.text[cluster..].starts_with(char::is_whitespace);
+                                let is_space = wraps && text_run.text[cluster..].starts_with(is_breakable_space);
                                 if !is_space && let Some(run) = spaces.take() {
                                     push_spaces(run, cluster, advance);
                                 }
@@ -950,15 +950,13 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         // text: one in front of more content (an inline-level box, more text)
                         // is not.
                         let ends_run =
-                            cur_char.trim_start().is_empty() && !content_after[index];
-                        if cur_char.starts_with(|chr: char| chr.is_whitespace())
-                            && (wraps || ends_run)
-                        {
+                            cur_char.trim_start_matches(is_breakable_space).is_empty() && !content_after[index];
+                        if cur_char.starts_with(is_breakable_space) && (wraps || ends_run) {
                             let advance_before = advance;
                             advance += font.scale_to_px(pos.x_advance, text_run.face.font_size);
                             let advance_after = advance;
 
-                            let ws_len = cur_char.len() - cur_char.trim_start().len();
+                            let ws_len = cur_char.len() - cur_char.trim_start_matches(is_breakable_space).len();
 
                             break_points.push(BreakPoint {
                                 entity,
@@ -1241,8 +1239,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                         .get(last.entity)
                         .is_some_and(|run| {
                             // (a run of white space only follows something else on the line)
-                            !run.text.trim().is_empty()
-                                && run.text.get(before.char_index..).is_some_and(|rest| rest.chars().all(char::is_whitespace))
+                            !run.text.trim_matches(is_breakable_space).is_empty()
+                                && run.text.get(before.char_index..).is_some_and(|rest| rest.chars().all(is_breakable_space))
                         });
                 if before.space && !before.forced && only_space && before.advance_after == last.advance_before {
                     break_points[count - 1].advance_before = before.advance_before;
@@ -1405,9 +1403,19 @@ fn break_opportunities_between_letters(
     SEGMENTER
         .segment_str(text)
         .filter(move |&index| {
-            index > 0 && index < text.len() && !text[..index].ends_with(char::is_whitespace)
+            index > 0 && index < text.len() && !text[..index].ends_with(is_breakable_space)
         })
         .peekable()
+}
+
+/// Whether a line may break after a white space character, as a space that stretches when the
+/// line is justified. The no-break spaces (U+00A0, U+2007 FIGURE SPACE and U+202F NARROW NO-BREAK
+/// SPACE, class GL of UAX #14) are white space for Unicode and `char::is_whitespace`, but glue the
+/// words on both sides together.
+// TODO: CSS Text 3 counts U+00A0 among the word separators, which stretch in justified text; here
+// only the spaces that are break points stretch.
+fn is_breakable_space(ch: char) -> bool {
+    ch.is_whitespace() && !matches!(ch, '\u{a0}' | '\u{2007}' | '\u{202f}')
 }
 
 /// Whether a justified line is stretched at the break opportunity at `index` of `text`: when
