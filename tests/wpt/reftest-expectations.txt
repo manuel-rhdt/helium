@@ -420,7 +420,6 @@ css/css-tables/subpixel-collapsed-borders-003.html
 css/css-tables/table-cell-percent-height-row-groups-print.html
 css/css-tables/table-cell-percent-height-rowspan-fragmented-print.html
 css/css-tables/table-cell-tiny-width-excess-width-distribution.html
-css/css-tables/table-cell-width-0-excess-width-distribution.html
 css/css-tables/table-intrinsic-size-001.html
 css/css-tables/table-intrinsic-size-002.html
 css/css-tables/table-intrinsic-size-003.html

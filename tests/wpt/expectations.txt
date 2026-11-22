@@ -74,7 +74,6 @@ css/css-tables/absolute-tables-height-quirks-001.html
 css/css-tables/column-track-merging.html
 css/css-tables/fractional-percent-width.html
 css/css-tables/percent-width-ignored-001.tentative.html
-css/css-tables/percent-width-ignored-002.tentative.html
 css/css-tables/percent-width-ignored-003.tentative.html
 css/css-tables/tentative/caption.html
 css/css-tables/tentative/colspan-redistribution.html
