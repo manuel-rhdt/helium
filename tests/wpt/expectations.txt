@@ -77,7 +77,6 @@ css/css-tables/percent-width-ignored-001.tentative.html
 css/css-tables/percent-width-ignored-003.tentative.html
 css/css-tables/tentative/caption.html
 css/css-tables/tentative/colspan-redistribution.html
-css/css-tables/tentative/column-widths.html
 css/css-tables/tentative/element-sizing.html
 css/css-tables/tentative/rowspan-height-redistribution.html
 css/css-tables/tentative/table-rows-with-zero-columns.html

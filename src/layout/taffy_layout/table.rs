@@ -17,7 +17,7 @@
 //!
 //! `vertical-align` in cells puts their contents at the top, in the middle or at the bottom (see
 //! [`HeliumTree::align_cell_content`]); `baseline` counts as `top`, the baselines of the cells
-//! in a row are not aligned. Not supported yet: `table-layout: fixed` and `caption-side`. Grid tracks share extra width equally
+//! in a row are not aligned. Not supported yet: `caption-side`. Grid tracks share extra width equally
 //! instead of in proportion to their contents. `border-collapse: collapse` is resolved in
 //! [`super::collapse`].
 //!
@@ -70,6 +70,11 @@ pub(super) struct TableStructure {
     column_lengths: Vec<Option<f32>>,
     /// The cells that are in one column only, for each column.
     column_cells: Vec<Vec<NodeId>>,
+    /// The widths of the columns for `table-layout: fixed`: from the `<col>` element of the
+    /// column, or else from the cell of the first row. A length is of the whole column; a cell
+    /// that spans columns gives each of them its part.
+    fixed_lengths: Vec<Option<f32>>,
+    fixed_percents: Vec<Option<f32>>,
 }
 
 /// A box of a table that a page break can come in front of or behind: a caption, a row group or
@@ -377,12 +382,29 @@ impl HeliumTree<'_, '_> {
                 }
             }
         }
+        let mut fixed_lengths: Vec<Option<f32>> = vec![None; structure.columns];
+        let mut fixed_percents: Vec<Option<f32>> = vec![None; structure.columns];
         for &(cell, row, column, rows, columns) in &placements {
             let mut extras = self.inline_extras(cell);
             // a `width` or `height` of a `border-box` cell is the one of the box with the padding
             // and the border
             if self.node(cell).style.box_sizing == taffy::BoxSizing::BorderBox {
                 extras = Size { width: 0.0, height: 0.0 };
+            }
+            if row == 0 {
+                let share = columns.max(1) as f32;
+                let width = self.computed_values.get(self.node(cell).entity).map(|s| s.position.width);
+                for index in column..(column + columns).min(fixed_lengths.len()) {
+                    match width {
+                        Some(GenericSize::LengthPercentage(LengthPercentage::PixelLength(px))) => {
+                            fixed_lengths[index].get_or_insert((px.0 + extras.width) / share);
+                        }
+                        Some(GenericSize::LengthPercentage(LengthPercentage::Percentage(percent))) => {
+                            fixed_percents[index].get_or_insert(percent.0 / share);
+                        }
+                        _ => {}
+                    }
+                }
             }
             if columns == 1 {
                 let track = &mut column_tracks[column];
@@ -417,6 +439,19 @@ impl HeliumTree<'_, '_> {
         let mut index = 0;
         for column in table_columns.columns {
             let span = usize::from(column.span.max(1));
+            for position in index..(index + span).min(fixed_lengths.len()) {
+                match column.width {
+                    Some(GenericSize::LengthPercentage(LengthPercentage::PixelLength(px))) => {
+                        fixed_lengths[position] = Some(px.0);
+                        fixed_percents[position] = None;
+                    }
+                    Some(GenericSize::LengthPercentage(LengthPercentage::Percentage(percent))) => {
+                        fixed_percents[position] = Some(percent.0);
+                        fixed_lengths[position] = None;
+                    }
+                    _ => {}
+                }
+            }
             for track in column_tracks.iter_mut().skip(index).take(span) {
                 match column.width {
                     Some(GenericSize::LengthPercentage(LengthPercentage::PixelLength(px))) => {
@@ -474,6 +509,8 @@ impl HeliumTree<'_, '_> {
 
         structure.column_percents = column_tracks.iter().map(|track| track.percent).collect();
         structure.column_lengths = column_tracks.iter().map(|track| track.length).collect();
+        structure.fixed_lengths = fixed_lengths;
+        structure.fixed_percents = fixed_percents;
         structure.column_cells = vec![vec![]; structure.columns];
         for &(cell, _, column, _, columns) in &placements {
             if columns == 1 {
@@ -594,6 +631,14 @@ impl HeliumTree<'_, '_> {
     /// https://www.w3.org/TR/CSS22/tables.html#auto-table-layout
     pub(super) fn compute_table_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
         let mut inputs = inputs;
+        if self.is_fixed_layout(id) {
+            let output = self.compute_fixed_table_layout(id, inputs);
+            if inputs.run_mode == RunMode::PerformLayout {
+                self.mirror_children(id, output.size.width, inputs.parent_size.width);
+                self.place_table_parts(id);
+            }
+            return output;
+        }
         // The columns with a percentage: they make the table as wide as they need to get their
         // share (CSS Tables 3, 3.3, "percentage columns").
         let percent = self.percent_columns(id, inputs);
@@ -681,6 +726,98 @@ impl HeliumTree<'_, '_> {
             self.place_table_parts(id);
         }
         output
+    }
+
+    /// Whether the table has `table-layout: fixed` and a width: without a width the table is
+    /// laid out by its contents (CSS 2.1, 17.5.2.1).
+    fn is_fixed_layout(&self, id: NodeId) -> bool {
+        use crate::style::properties::specified::TableLayout;
+        let node = self.node(id);
+        node.table.as_ref().is_some_and(|structure| structure.rows > 0 && structure.columns > 0)
+            && !node.style.size.width.is_auto()
+            && self
+                .computed_values
+                .get(node.entity)
+                .is_some_and(|style| style.box_.table_layout == TableLayout::Fixed)
+    }
+
+    /// The layout of a table with `table-layout: fixed`: the widths of the columns are those of
+    /// the `<col>` elements and of the cells of the first row, and the columns that have none
+    /// share what is left of the width of the table. The contents of the cells do not matter.
+    /// https://www.w3.org/TR/CSS22/tables.html#fixed-table-layout
+    fn compute_fixed_table_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        let mut inputs = inputs;
+        let (lengths, percents) = match self.node(id).table.as_ref() {
+            Some(structure) => (structure.fixed_lengths.clone(), structure.fixed_percents.clone()),
+            None => return compute_grid_layout(self, id, inputs),
+        };
+        let count = lengths.len();
+        // the spacing between the columns and at the edges, and the borders and padding
+        let spacing = self.node(id).style.gap.width.into_raw().value().max(0.0);
+        let extras = spacing * (count + 1) as f32 + self.inline_extras(id).width;
+        // the width of the table that the style gives
+        let specified = match inputs.known_dimensions.width {
+            Some(width) => width,
+            None => {
+                compute_grid_layout(
+                    self,
+                    id,
+                    LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        axis: RequestedAxis::Horizontal,
+                        ..inputs
+                    },
+                )
+                .size
+                .width
+            }
+        };
+        // the table is as wide as its columns with a width (and the spacing) need at least
+        let given: f32 = lengths.iter().flatten().sum();
+        let width = if inputs.known_dimensions.width.is_some() {
+            specified
+        } else {
+            specified.max(given + extras)
+        };
+        let space = (width - extras).max(0.0);
+        // the widths of the columns
+        let mut widths: Vec<Option<f32>> = (0..count)
+            .map(|index| match (lengths[index], percents[index]) {
+                (Some(length), _) => Some(length),
+                (None, Some(percent)) => Some(percent * space),
+                _ => None,
+            })
+            .collect();
+        let used: f32 = widths.iter().flatten().sum();
+        let free = space - used;
+        let auto = widths.iter().filter(|width| width.is_none()).count();
+        if auto > 0 {
+            // the columns without a width share what is left equally
+            let each = free.max(0.0) / auto as f32;
+            for width in widths.iter_mut().filter(|width| width.is_none()) {
+                *width = Some(each);
+            }
+        } else if free > 0.0 {
+            // the extra width is distributed over the columns, in proportion to their widths
+            if used > 0.0 {
+                for width in widths.iter_mut().flatten() {
+                    *width += *width / used * free;
+                }
+            } else {
+                for width in widths.iter_mut().flatten() {
+                    *width += free / count as f32;
+                }
+            }
+        }
+        let node = self.node_mut(id);
+        for (index, width) in widths.into_iter().enumerate() {
+            // (the first track is the empty one at the edge)
+            if let Some(track) = node.style.grid_template_columns.get_mut(index + 1) {
+                *track = length(width.unwrap_or(0.0));
+            }
+        }
+        inputs.known_dimensions.width = Some(width);
+        compute_grid_layout(self, id, inputs)
     }
 
     /// The columns of a table that have a percentage: with the width that the table needs for
