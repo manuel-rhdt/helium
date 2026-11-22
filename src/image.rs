@@ -24,6 +24,9 @@ pub enum LoadedImage {
 /// An SVG image.
 pub struct SvgImage {
     pub tree: usvg::Tree,
+    /// The `<svg>` element of a page has no `viewBox`: a box of another size than the one of its
+    /// attributes only changes the viewport, the contents are neither scaled nor moved.
+    pub unscaled: bool,
 }
 
 impl std::fmt::Debug for SvgImage {
@@ -49,7 +52,7 @@ impl LoadedImage {
         }
         let text = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&data);
         if text.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'<') {
-            return parse_svg(&data, base_dir, fonts).map(|tree| LoadedImage::Svg(SvgImage { tree }));
+            return parse_svg(&data, base_dir, fonts).map(|tree| LoadedImage::Svg(SvgImage { tree, unscaled: false }));
         }
         Err("only JPEG, PNG and SVG images are supported".to_owned())
     }
@@ -110,12 +113,13 @@ pub fn svg_from_dom(
     base_dir: &Path,
     fonts: &Arc<FontContext>,
     font_size: f32,
+    unscaled: bool,
 ) -> Result<LoadedImage, String> {
     let mut options = svg_options(base_dir, fonts);
     options.font_size = font_size;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| usvg::Tree::from_xml(document, &options)))
         .map_err(|_| "the SVG image could not be processed".to_owned())?
-        .map(|tree| LoadedImage::Svg(SvgImage { tree }))
+        .map(|tree| LoadedImage::Svg(SvgImage { tree, unscaled }))
         .map_err(|error| format!("invalid SVG image: {}", error))
 }
 

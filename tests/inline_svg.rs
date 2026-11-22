@@ -93,8 +93,9 @@ fn the_size_comes_from_the_view_box_or_from_css() {
         ),
     );
     assert_eq!(r.svgs.len(), 2, "{}", r.log);
-    assert_close(r.svgs[0][2], 30.0);
-    assert_close(r.svgs[0][3], 15.0);
+    // a ratio without a size: as wide as the line (the page is 260pt wide)
+    assert_close(r.svgs[0][2], 260.0);
+    assert_close(r.svgs[0][3], 130.0);
     // the other side follows the proportions
     assert_close(r.svgs[1][2], 60.0);
     assert_close(r.svgs[1][3], 30.0);
@@ -194,12 +195,13 @@ fn the_contents_of_an_svg_are_not_laid_out() {
 }
 
 #[test]
-fn an_svg_without_a_size_is_as_big_as_its_contents() {
-    // no `width`, `height` or `viewBox`: the parser takes the bounding box of the contents
+fn an_svg_without_a_size_or_a_view_box_is_300_by_150() {
+    // no `width`, `height` or `viewBox`: the size that CSS gives a replaced box without one
+    // (not the bounding box of the contents), 300 by 150 pixels
     let r = render("no_size", &format!("{PAGE}<svg><rect width=\"10\" height=\"10\"/></svg>"));
     assert_eq!(r.svgs.len(), 1, "{}", r.log);
-    assert_close(r.svgs[0][2], 7.5);
-    assert_close(r.svgs[0][3], 7.5);
+    assert_close(r.svgs[0][2], 225.0);
+    assert_close(r.svgs[0][3], 112.5);
 }
 
 #[test]

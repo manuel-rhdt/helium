@@ -440,3 +440,37 @@ fn tagged_documents_are_marked() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+#[test]
+fn check_layout_evaluates_client_sizes() -> Result<(), Box<dyn std::error::Error>> {
+    // clientWidth/clientHeight: the padding box, and zero for an inline box
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("check_layout_client.html");
+    let output = dir.join("check_layout_client.pdf");
+    std::fs::write(
+        &input,
+        "<div style='width:50px;height:20px;padding:3px 4px;border:5px solid' \
+         data-expected-client-width='58' data-expected-client-height='26'></div>\
+         <p><span data-expected-client-width='0'>inline</span></p>",
+    )?;
+    common::helium()?
+        .arg("--check-layout")
+        .arg(&input)
+        .arg(&output)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("3 expectations").or(predicate::str::contains("checked 3")));
+
+    std::fs::write(
+        &input,
+        "<div style='width:50px' data-expected-client-width='51'></div>",
+    )?;
+    common::helium()?
+        .arg("--check-layout")
+        .arg(&input)
+        .arg(&output)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("data-expected-client-width expected 51 but got 50"));
+    Ok(())
+}

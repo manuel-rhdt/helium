@@ -791,7 +791,11 @@ impl HeliumTree<'_, '_> {
             },
             vertical_margins_are_collapsible: Line::FALSE,
         };
-        let width = if width_is_auto {
+        // (a replaced box with a ratio but no size of its own fills the line, CSS 2.1 10.3.4)
+        let ratio_only = self.images.get(self.node(atom).entity).is_some_and(|image| image.ratio_only);
+        let width = if width_is_auto && ratio_only {
+            Some(available)
+        } else if width_is_auto {
             let min = self
                 .compute_child_layout(atom, size_input(AvailableSpace::MinContent))
                 .size
@@ -1019,7 +1023,8 @@ impl HeliumTree<'_, '_> {
         let to_content = |value: Option<f32>, extra: f32| {
             value.map(|value| if border_box { (value - extra).max(0.0) } else { value })
         };
-        let limits = image.filter(|_| !node.flow.is_vertical()).map(|natural| {
+        let ratio_only = self.images.get(node.entity).is_some_and(|image| image.ratio_only);
+        let limits = image.filter(|_| !node.flow.is_vertical() && !ratio_only).map(|natural| {
             // an `aspect-ratio` that is not `auto` replaces the ratio of the image
             let natural = match node.style.aspect_ratio {
                 Some(ratio) if ratio > 0.0 => (natural.0, natural.0 / ratio),
@@ -1106,13 +1111,24 @@ impl HeliumTree<'_, '_> {
         } else {
             extras
         };
-        let mut output = compute_leaf_layout(inputs, style, calc, |known, _available| Size {
+        let mut output = compute_leaf_layout(inputs, style, calc, |known, available| Size {
             width: known.width.unwrap_or_else(|| match (known.height, ratio) {
-                (Some(height), Some(ratio)) => ((height - ratio_extras.1).max(0.0) * ratio + ratio_extras.0),
+                (Some(height), Some(ratio)) => ((height - ratio_extras.1).max(0.0) * ratio + ratio_extras.0 - extras.0).max(0.0),
+                // a ratio without a size takes the width that is there (none for a box that is
+                // sized by its content)
+                _ if ratio_only => available
+                    .width
+                    .into_option()
+                    .or(inputs.parent_size.width)
+                    .unwrap_or(0.0)
+                    .max(0.0),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),
             }),
             height: known.height.unwrap_or_else(|| match (known.width, ratio) {
-                (Some(width), Some(ratio)) => ((width - ratio_extras.0).max(0.0) / ratio + ratio_extras.1),
+                (Some(width), Some(ratio)) => ((width - ratio_extras.0).max(0.0) / ratio + ratio_extras.1 - extras.1).max(0.0),
+                (None, Some(ratio)) if ratio_only => {
+                    available.width.into_option().or(inputs.parent_size.width).unwrap_or(0.0).max(0.0) / ratio
+                }
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0), |i| i.1),
             }),
         });

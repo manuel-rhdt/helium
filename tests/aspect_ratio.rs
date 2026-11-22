@@ -183,3 +183,41 @@ fn limits_apply_to_the_box_that_box_sizing_names() {
     assert_eq!(size(&dump, "a").0, 200.0);
     assert_eq!(size(&dump, "a").1, 200.0);
 }
+
+#[test]
+fn a_stretched_image_with_a_border_gets_its_width_from_the_height_without_the_border_twice() {
+    // The width of the content box is the stretched height (the ratio is 1); the border on the
+    // right comes on top of it once.
+    let dump = layout(
+        "stretched_border",
+        &format!(
+            "<div style='display:flex;width:0;height:120px'>\
+             <img id=a src='{0}' style='border-right:10px solid;margin-bottom:20px'></div>\
+             <div style='display:flex;width:0;height:120px'>\
+             <img id=b src='{0}' style='border-right:10px solid'></div>",
+            image()
+        ),
+    );
+    assert_eq!(size(&dump, "a"), (110.0, 100.0));
+    assert_eq!(size(&dump, "b"), (130.0, 120.0));
+}
+
+#[test]
+fn an_svg_element_has_a_size_of_300_by_150_unless_a_view_box_gives_a_ratio() {
+    let dump = layout(
+        "svg_sizes",
+        "<svg id=a></svg><svg id=b width=40></svg><svg id=c height=40></svg>\
+         <svg id=d width=40 height=20></svg><svg id=e height=40 viewBox='0 0 4 1'></svg>\
+         <div style='width:200px'><svg id=f viewBox='0 0 4 1'></svg></div>\
+         <svg id=g style='height:45px'></svg>",
+    );
+    assert_eq!(size(&dump, "a"), (300.0, 150.0));
+    assert_eq!(size(&dump, "b"), (40.0, 150.0));
+    assert_eq!(size(&dump, "c"), (300.0, 40.0));
+    assert_eq!(size(&dump, "d"), (40.0, 20.0));
+    assert_eq!(size(&dump, "e"), (160.0, 40.0));
+    // a viewBox alone is a ratio: the width of the line, the height from it
+    assert_eq!(size(&dump, "f"), (200.0, 50.0));
+    // without a viewBox there is no ratio either
+    assert_eq!(size(&dump, "g"), (300.0, 45.0));
+}
