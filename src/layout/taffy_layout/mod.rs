@@ -1300,11 +1300,15 @@ impl<'a> Writer<'a, '_> {
     }
 
     /// The header rows that the page repeats at the top of a table that it goes on in, and their
-    /// height: the page starts behind the header (and behind the break that follows it).
+    /// height: the page starts behind the header (and behind the break that follows it), and the
+    /// header is not more than a quarter of the page.
     fn repeat_of(&self, table: NodeId) -> Option<(NodeId, f32)> {
         let (header, _) = self.headers.get(&table)?;
         let span = self.node(*header).span.as_ref()?;
-        (self.window.start > span.end).then(|| (*header, self.layout_of(*header).size.height))
+        let height = self.layout_of(*header).size.height;
+        // (not more than a quarter of the page, as the kernel has it)
+        (self.window.start > span.end && f64::from(height) * 4.0 <= f64::from(self.block_size))
+            .then(|| (*header, height))
     }
 
     /// The footer rows that the page repeats behind the last row of a table that it ends in, and

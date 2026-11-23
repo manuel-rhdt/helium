@@ -122,3 +122,24 @@ fn the_room_of_the_header_is_kept_where_a_page_starts_inside_of_a_row_that_is_sp
         assert!(y + height <= 150.0 + 0.01, "a box on page {page} is below the page: {y} + {height}");
     }
 }
+
+#[test]
+fn a_header_of_more_than_a_quarter_of_the_page_is_not_repeated() {
+    // 50 pixels are more than a quarter of 140: the header is on the first page only, and the
+    // pages that go on have all their room for the rows (7 rows of 20 on a page)
+    let dump = dump("tall_header", &table(50, 20, 18));
+    let header = painted(&dump, BLUE);
+    assert_eq!(header.len(), 1, "{header:?}");
+    let green = painted(&dump, GREEN);
+    assert_eq!(green.len(), 18, "{green:?}");
+    let on_second = green.iter().filter(|&&(page, ..)| page == 1).count();
+    assert_eq!(on_second, 6, "a page with no header and a footer of 20 has room for 6 rows: {green:?}");
+}
+
+#[test]
+fn a_header_of_a_quarter_of_the_page_is_repeated() {
+    // 35 pixels are a quarter of 140
+    let dump = dump("quarter_header", &table(35, 20, 18));
+    let pages = pages(&painted(&dump, GREEN));
+    assert_eq!(painted(&dump, BLUE).len(), pages.len());
+}

@@ -85,7 +85,8 @@ Limits of this, in order of importance:
   the page where it starts. Pinning the columns is step 6 of "Order of work" (the test
   `the_columns_of_a_table_stay_the_ones_of_the_page_where_it_starts` is ignored until then).
   The header rows of a table (the first `thead`, if only captions are in front of it) are
-  repeated at the top of every page that goes on inside of the table. The kernel reserves their
+  repeated at the top of every page that goes on inside of the table, if the header is not more
+  than a quarter of the page. The kernel reserves their
   height there (`Problem::repeats`, `PageFill::repeated`, the page starts behind the break that
   follows the header), and the writer paints the rows again, as parts of the boxes
   (`Writer::repeating`), with no element of their own in the structure tree: their text belongs to the cells of the
@@ -124,8 +125,7 @@ Limits of this, in order of importance:
   of the cut or than `widows` behind it are fragments with a violation, which the pages avoid like
   the ones of the paragraphs of the flow. Not done: a cell that spans rows (`rowspan`) is not
   split, nor a row behind or in front of one; a nested table or a flex or grid container in a cell
-  is one piece; the header and footer rows are not split (and the header is repeated whatever
-  its height, where the spec repeats it up to a quarter of the page); a table on pages of
+  is one piece; the header and footer rows are not split; a table on pages of
   different widths is cut by the offsets of the last width that the layout service was asked
   about.
 - **Multi-column containers.** A container with columns whose height is the one of its content

@@ -595,6 +595,10 @@ impl<'a> Kernel<'a> {
         if let Some(first_item) = first_item {
             for repeat in problem.repeats.iter().filter(|repeat| !repeat.footer && repeat.from < first_item && first_item < repeat.to) {
                 let extent = self.service.extent(repeat.node, spec.inline_size);
+                // (a header of more than a quarter of the page is not repeated, CSS Tables 3, 6.2)
+                if extent * 4.0 > f64::from(spec.block_size) {
+                    continue;
+                }
                 first_label.used += extent;
                 first_label.repeated += extent;
             }
