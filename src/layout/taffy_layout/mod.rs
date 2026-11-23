@@ -14,6 +14,7 @@ mod columns;
 mod flow;
 mod paginate;
 mod replaced;
+mod rows;
 mod service;
 mod style;
 mod subtree;
@@ -22,6 +23,7 @@ mod tree;
 mod window;
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use specs::{Entities, Entity, ReadStorage, World, WorldExt, WriteStorage};
 use taffy::geometry::{Point, Size};
@@ -190,6 +192,10 @@ impl TaffyBlockLayout {
             page_margins.rtl,
             self.page_height.0 > 0.0,
             self.shrink_wrap,
+            (
+                (self.page_width - self.margin.left - self.margin.right).0.max(0.0),
+                (self.page_height - self.margin.top - self.margin.bottom).0.max(0.0),
+            ),
         ));
         tree.flow = Some(flow.clone());
 
@@ -464,6 +470,8 @@ impl TaffyBlockLayout {
                 rules: &mut rules,
                 line_stats: &mut line_stats,
                 paragraphs_log: report.as_ref().map(|_| &mut paragraphs_log),
+                clip: None,
+                row: None,
             };
             // The floats at the top of the page, in order, then the text below them, then the floats
             // at the bottom, which end at the bottom of the content area of the page (the order
@@ -672,6 +680,23 @@ struct Writer<'a, 'w> {
     line_stats: &'a mut LineStats,
     /// What is written of the paragraphs of the page, if the choices of the pages are reported.
     paragraphs_log: Option<&'a mut Vec<serde_json::Value>>,
+    /// The part of the page (its top and its bottom) that a table row split over pages shows,
+    /// while the boxes in it are written: what is outside of it is on another page.
+    clip: Option<(f32, f32)>,
+    /// The row that is being written, if it is split over pages: its cuts and the part of it that
+    /// the page has, from which the cells find theirs.
+    row: Option<RowOnPage>,
+}
+
+/// A table row split over pages, on one page.
+#[derive(Clone)]
+struct RowOnPage {
+    cuts: Rc<rows::RowCuts>,
+    /// The cuts at the start and at the end of the part on the page.
+    start: u32,
+    end: u32,
+    /// Where the part starts on the page.
+    top: f32,
 }
 
 /// A rule between two columns: a filled rectangle.
@@ -770,6 +795,39 @@ impl<'a> Writer<'a, '_> {
         z: i64,
         z_base: i64,
     ) -> Result<(), String> {
+        // A table row that the page has a part of: the part is between two cuts, and the row is
+        // written whole, above the page where it starts in it.
+        let node = self.node(id);
+        let part = (self.clip.is_none()
+            && self.group_stack.is_empty()
+            && node.columns.is_none()
+            && node.content == Content::Blocks
+            && (self.window.start_container == Some(id) || self.window.end_container == Some(id)))
+        .then(|| window::row_part(self.window, node, id))
+        .flatten();
+        let (clip_before, row_before) = (self.clip, self.row.take());
+        if let (Some(part), Some(cuts)) = (part, node.row_cuts.clone()) {
+            let (start, end) = self.window.row_cut_offsets(id);
+            let top = origin.y + part.top;
+            self.clip = Some((top, top + part.height));
+            self.row = Some(RowOnPage { start: start.unwrap_or(0), end: end.unwrap_or(cuts.height), cuts, top });
+        } else {
+            self.row = row_before.clone();
+        }
+        let written = self.write_box_in(id, origin, parent_flow, z, z_base);
+        self.clip = clip_before;
+        self.row = row_before;
+        written
+    }
+
+    fn write_box_in(
+        &mut self,
+        id: NodeId,
+        origin: Point<f32>,
+        parent_flow: Flow,
+        z: i64,
+        z_base: i64,
+    ) -> Result<(), String> {
         let node = self.node(id);
         let entity = node.entity;
         let layout = self.layout_of(id);
@@ -777,6 +835,8 @@ impl<'a> Writer<'a, '_> {
         let in_flow_box = node.span.as_ref().filter(|span| !span.anchored && self.group_stack.is_empty());
         let open_start = in_flow_box.is_some_and(|span| self.window.cut_at_start(id, span));
         let open_end = in_flow_box.is_some_and(|span| self.window.cut_at_end(id, span));
+        // the part of the page that a row split over pages shows (the boxes of a group are not)
+        let clip = if self.group_stack.is_empty() { self.clip } else { None };
         // A table or a row group is laid out as a whole: the part on the page is cut from it.
         let table_part = node
             .span
@@ -800,6 +860,24 @@ impl<'a> Writer<'a, '_> {
         if let Some(cut) = cut_height {
             height = cut;
         }
+        // A box that is outside of the part of a row on the page is on another page; one that is
+        // across its edge goes on there.
+        const EDGE: f32 = 0.01;
+        let (mut clip_start, mut clip_end) = (false, false);
+        if let Some((visible_top, visible_bottom)) = clip {
+            let (top, bottom) = (origin.y, origin.y + height);
+            let outside = if bottom - top <= EDGE {
+                top < visible_top - EDGE || top >= visible_bottom - EDGE
+            } else {
+                bottom <= visible_top + EDGE || top >= visible_bottom - EDGE
+            };
+            if outside {
+                return Ok(());
+            }
+            clip_start = top < visible_top - EDGE;
+            clip_end = bottom > visible_bottom + EDGE;
+        }
+        let (open_start, open_end) = (open_start || clip_start, open_end || clip_end);
         let margin = parent_flow.edges_to_physical(layout.margin);
         let border = parent_flow.edges_to_physical(layout.border);
         let padding = parent_flow.edges_to_physical(layout.padding);
@@ -814,10 +892,20 @@ impl<'a> Writer<'a, '_> {
         let content_y = origin.y + border.top + padding.top;
         let content_width = width - (border.left + border.right) - (padding.left + padding.right);
         let content_height = height - (border.top + border.bottom) - (padding.top + padding.bottom);
+        // what is written of the box: the edges of the part of a row on the page have no padding
+        // and no border
+        let (rec_y, rec_height) = match clip {
+            Some((visible_top, visible_bottom)) => {
+                let top = if clip_start { visible_top } else { content_y };
+                let bottom = if clip_end { visible_bottom } else { content_y + content_height };
+                (top, (bottom - top).max(0.0))
+            }
+            None => (content_y, content_height),
+        };
         if self.repeating {
             self.repeated.insert(entity);
         } else if !open_start {
-            self.set_position(entity, content_x, content_y, content_width, content_height, z);
+            self.set_position(entity, content_x, rec_y, content_width, rec_height, z);
         }
 
         let mut decoration = self
@@ -835,6 +923,14 @@ impl<'a> Writer<'a, '_> {
         decoration.border = edges(border);
         decoration.padding = edges(padding);
         decoration.collapsed = node.collapsed;
+        if clip_start {
+            decoration.border.top = PixelLength(0.0);
+            decoration.padding.top = PixelLength(0.0);
+        }
+        if clip_end {
+            decoration.border.bottom = PixelLength(0.0);
+            decoration.padding.bottom = PixelLength(0.0);
+        }
         // A box that goes on over the page break has no border and padding at the break (they are
         // not in its layout) and no rounded corners there.
         if open_start {
@@ -862,14 +958,14 @@ impl<'a> Writer<'a, '_> {
             // The part of a box that goes on on the next page reaches the bottom of the content
             // area of its page, also where the content on the page ends above it.
             let fragment_height = if open_end {
-                content_height.max(self.page_bottom - content_y)
+                rec_height.max(self.page_bottom - rec_y)
             } else {
-                content_height
+                rec_height
             };
             self.fragments.entry(entity).or_default().push(Fragment {
                 position: Position {
                     x: PixelLength(content_x),
-                    y: PixelLength(content_y),
+                    y: PixelLength(rec_y),
                     width: PixelLength(content_width.max(0.0)),
                     height: PixelLength(fragment_height.max(0.0)),
                     z: ZIndex(z),
@@ -894,8 +990,23 @@ impl<'a> Writer<'a, '_> {
             }
         }
 
-        // the content of a table cell that `vertical-align` moves down
-        let shift = self.shift_of(id);
+        // the content of a table cell that `vertical-align` moves down, and the one of a cell of a
+        // row that is split over pages, which starts where its part of the row does
+        let (cell_shift, content_clip) = match (&self.row, self.group_stack.is_empty()) {
+            (Some(row), true) => match row.cuts.cell_part(id, row.start, row.end) {
+                Some((shift, until)) => (
+                    rows::dequantize(shift),
+                    Some((row.top, until.map_or(f32::INFINITY, |until| row.top + rows::dequantize(until)))),
+                ),
+                None => (0.0, None),
+            },
+            _ => (0.0, None),
+        };
+        let shift = self.shift_of(id) + cell_shift;
+        let clip_of_row = self.clip;
+        if let Some(visible) = content_clip {
+            self.clip = Some(visible);
+        }
         let kid_shift = shift - cut_top;
         let columns = node.columns.as_ref().and_then(|columns| columns.layouts.as_ref());
         match content {
@@ -913,14 +1024,18 @@ impl<'a> Writer<'a, '_> {
                 )?;
             }
             Content::Blocks if table_part.is_some() => {
+                // (the rows that are cut are higher than their part of the layout: the boxes
+                // behind them are moved down)
+                let mut extra = 0.0;
                 for &child in &table_part.unwrap().kids {
                     if !self.in_window(child) {
                         continue;
                     }
                     let mut child_origin = frame.child_origin(&self.layout_of(child));
-                    child_origin.y += kid_shift + self.part_top(child);
+                    child_origin.y += kid_shift + self.part_top(child) + extra;
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
+                    extra += window::part_extra(self.nodes, self.window, child);
                 }
             }
             Content::Blocks => {
@@ -976,15 +1091,18 @@ impl<'a> Writer<'a, '_> {
                     self.window = window_before;
                     written?;
                 }
+                let mut extra = 0.0;
                 for child in parts {
                     let mut child_origin = frame.child_origin(&self.layout_of(child));
-                    child_origin.y += kid_shift + repeat_height + if table_part.is_some() { self.part_top(child) } else { 0.0 };
+                    child_origin.y += kid_shift + repeat_height + extra + if table_part.is_some() { self.part_top(child) } else { 0.0 };
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
+                    extra += window::part_extra(self.nodes, self.window, child);
                 }
             }
         }
 
+        self.clip = clip_of_row;
         if anchored {
             self.group_stack.pop();
         }
@@ -1254,6 +1372,27 @@ impl<'a> Writer<'a, '_> {
                 log.push(entry);
             }
         }
+        // The lines of a paragraph in a row that is split over pages: the ones that are on the
+        // part of the row on the page, which are what the page has of the paragraph.
+        let clip = if self.group_stack.is_empty() { self.clip } else { None };
+        let mut kept_y: Vec<f32> = vec![];
+        let mut first_line_kept = true;
+        let mut offset = content_offset.1;
+        let mut kept = vec![];
+        for (index, line) in measured.into_iter().enumerate() {
+            let (_, py, _, ph) = frame.to_physical((0.0, offset, 1.0, line.height.0));
+            // (the cuts are in 1/64 pixel, and a line is not less than a pixel high)
+            let visible = clip.is_none_or(|(top, bottom)| py >= top - 0.1 && py + ph <= bottom + 0.1);
+            if index == 0 {
+                first_line_kept = visible;
+            }
+            if visible {
+                kept_y.push(offset);
+                kept.push(line);
+            }
+            offset += line.height.0;
+        }
+        let measured = kept;
         let first = ifc.push_lines(measured, self.entities);
         let align = ifc.resolved_text_align();
         let indent_offset = ifc.indent_offset(PixelLength(indent)).0;
@@ -1268,10 +1407,9 @@ impl<'a> Writer<'a, '_> {
             })
             .collect();
 
-        let mut y = content_offset.1;
         let mut line_boxes: Vec<[f32; 4]> = vec![];
         for (index, (line_entity, height, advance)) in lines.into_iter().enumerate() {
-            let (x0, w0) = if index == 0 {
+            let (x0, w0) = if index == 0 && first_line_kept {
                 (content_offset.0 + indent_offset, width - indent)
             } else {
                 (content_offset.0, width)
@@ -1282,11 +1420,11 @@ impl<'a> Writer<'a, '_> {
                 TextAlign::Center => (x0 + (w0 - advance) / 2.0, advance),
                 TextAlign::Justify => (x0, w0),
             };
+            let y = kept_y[index];
             let (px, py, pw, ph) = frame.to_physical((x, y, w, height));
             line_boxes.push([px, py, pw, ph]);
             self.set_position(line_entity, px, py, pw, ph, z);
             self.emit(BlockLevelElement::Leaf(line_entity));
-            y += height;
         }
         // (where the lines are, for the report of the choices of the pages)
         if let Some(entry) = self.paragraphs_log.as_mut().and_then(|log| log.last_mut()) {

@@ -478,6 +478,8 @@ fn choose(
         scope: Some(id),
         start_container: None,
         end_container: None,
+        start_offset: None,
+        end_offset: None,
     };
     if inner.items.is_empty() {
         return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![], variants: vec![], used: vec![], floats: vec![] };

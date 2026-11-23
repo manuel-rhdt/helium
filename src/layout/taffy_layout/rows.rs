@@ -1,0 +1,343 @@
+//! Table rows that are split over pages.
+//!
+//! A row is one box of the flow, unless it may be taller than a page: then it is a container item
+//! (`Item::Container`), the fragments of which the layout service finds ([`row_fragments`]). A row
+//! is laid out whole with the table, and what is on a page is a part of it. The part is between
+//! two *cuts*, offsets from the top of the row, measured in 1/64 pixel (the cut of the container
+//! in the flow, `ContainerCut`).
+//!
+//! The cells of a row go on side by side, and each is cut where its own lines end: a piece of a
+//! cell (a line of text, or a box that is not split) is on the fragment that its bottom is in,
+//! so that no piece is cut in two, and a line across a cut goes on the next page, at its top, with
+//! what follows it. A cell is therefore moved on its page by how much its first piece on the
+//! page is above the cut ([`RowCuts::cell_origin`]), and the fragment is as high as its highest
+//! cell ([`RowCuts::used`]). The fragments follow from the cuts alone, whatever the cuts before
+//! them were.
+
+use super::tree::{Content, HeliumTree, lines_from};
+use helium_paginate::{BreakKind, ContainerCut, Fragment};
+use taffy::tree::NodeId;
+
+/// The resolution of the cuts: an offset is a multiple of 1/64 pixel.
+pub(super) const QUANT: f32 = 64.0;
+
+/// The offset in 1/64 pixel.
+pub(super) fn quantize(y: f32) -> u32 {
+    (y.max(0.0) * QUANT).round() as u32
+}
+
+/// The offset in pixels.
+pub(super) fn dequantize(offset: u32) -> f32 {
+    offset as f32 / QUANT
+}
+
+/// The pieces of a cell that no cut may be in, by their top and their bottom from the top of the
+/// row, in the order of their bottoms.
+#[derive(Debug, Clone)]
+pub(super) struct CellUnits {
+    pub node: NodeId,
+    pub units: Vec<(u32, u32)>,
+}
+
+/// Where a row can be cut, for one width.
+#[derive(Debug, Clone, Default)]
+pub(super) struct RowCuts {
+    /// The height of the row.
+    pub height: u32,
+    pub cells: Vec<CellUnits>,
+    /// The offsets that a fragment can end at, in growing order, without the end of the row: the
+    /// bottoms of the pieces of the cells.
+    pub candidates: Vec<u32>,
+}
+
+impl RowCuts {
+    /// Where the part of a cell that starts at the cut `offset` starts: the top of its first
+    /// piece that ends behind the cut. That is above the cut where a line is across it. At the
+    /// start of the row it is the top of the row (the padding of the cell is part of it).
+    pub fn cell_origin(&self, cell: &CellUnits, offset: u32) -> Option<u32> {
+        if offset == 0 {
+            return Some(0);
+        }
+        let first = cell.units.partition_point(|&(_, bottom)| bottom <= offset);
+        cell.units.get(first).map(|&(top, _)| top.min(offset))
+    }
+
+    /// The height of the fragment from the cut `start` to the cut `end` (the end of the row is
+    /// `height`): the highest of the parts of the cells, each from where it starts to the bottom of
+    /// its last piece that ends before the cut. The fragment that ends the row is as high as what
+    /// is left of the row, from the part of a cell that starts highest.
+    pub fn used(&self, start: u32, end: u32) -> u32 {
+        if end >= self.height {
+            let highest = self.cells.iter().filter_map(|cell| self.cell_origin(cell, start)).min();
+            return self.height.saturating_sub(highest.unwrap_or(start));
+        }
+        let mut used = 0;
+        for cell in &self.cells {
+            let Some(origin) = self.cell_origin(cell, start) else {
+                continue;
+            };
+            let last = cell.units.partition_point(|&(_, bottom)| bottom <= end);
+            // the pieces that end in (start, end]
+            let first = cell.units.partition_point(|&(_, bottom)| bottom <= start);
+            if last > first {
+                used = used.max(cell.units[last - 1].1.saturating_sub(origin));
+            }
+        }
+        used
+    }
+
+    /// The part of a cell that is on the fragment from `start` to `end`, as how far the cell is
+    /// moved down (to start where the fragment does) and where the part ends, from the top of the
+    /// part of the row on the page (`None`: it goes to the end of the row).
+    pub fn cell_part(&self, node: NodeId, start: u32, end: u32) -> Option<(u32, Option<u32>)> {
+        let cell = self.cells.iter().find(|cell| cell.node == node)?;
+        let shift = match self.cell_origin(cell, start) {
+            Some(origin) => start.saturating_sub(origin),
+            None => 0,
+        };
+        let until = (end < self.height).then(|| end.saturating_sub(start) + shift);
+        Some((shift, until))
+    }
+}
+
+impl HeliumTree<'_, '_> {
+    /// Where the row can be cut, as it is laid out now.
+    pub(super) fn row_cuts(&mut self, row: NodeId) -> RowCuts {
+        let height = quantize(self.node(row).layout.size.height);
+        let mut cells = vec![];
+        let mut candidates = vec![];
+        for cell in self.node(row).children.clone() {
+            let (hidden, top) = {
+                let node = self.node(cell);
+                (
+                    node.style.display == taffy::Display::None
+                        || node.style.position == taffy::Position::Absolute,
+                    node.layout.location.y,
+                )
+            };
+            if hidden {
+                continue;
+            }
+            let mut found: Vec<(f32, f32)> = vec![];
+            self.collect_units(cell, top, &mut found);
+            let mut units: Vec<(u32, u32)> = found
+                .into_iter()
+                .map(|(top, bottom)| (quantize(top), quantize(bottom)))
+                .filter(|&(top, bottom)| bottom > top)
+                .collect();
+            units.sort_by_key(|&(top, bottom)| (bottom, top));
+            candidates.extend(units.iter().map(|&(_, bottom)| bottom).filter(|&bottom| bottom > 0 && bottom < height));
+            cells.push(CellUnits { node: cell, units });
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        RowCuts { height, cells, candidates }
+    }
+
+    /// The pieces of the content of a box that no cut may be in, by their top and their bottom
+    /// from the top of the row: the lines of the paragraphs, and the boxes that are not split.
+    /// `top` is where the border box of the box is.
+    fn collect_units(&mut self, id: NodeId, top: f32, units: &mut Vec<(f32, f32)>) {
+        let (layout, content, entity, shift, whole, hidden) = {
+            let node = self.node(id);
+            let whole = node.columns.is_some()
+                || node.orthogonal
+                || node.flow.is_vertical()
+                || !node.style.size.height.is_auto()
+                || matches!(node.style.display, taffy::Display::Flex | taffy::Display::Grid);
+            let hidden = node.style.display == taffy::Display::None
+                || node.style.position == taffy::Position::Absolute;
+            (node.layout, node.content, node.entity, node.content_shift, whole, hidden)
+        };
+        if hidden {
+            return;
+        }
+        let bottom = top + layout.size.height;
+        match content {
+            Content::Replaced | Content::Table => units.push((top, bottom)),
+            _ if whole => units.push((top, bottom)),
+            Content::Inline => {
+                let (line_width, indent) = super::service::paragraph_width(self, id);
+                let heights: Vec<f32> = {
+                    let tree = &mut *self;
+                    match tree.inline_ctxs.get(entity) {
+                        Some(ifc) => lines_from(
+                            &mut tree.lines,
+                            ifc,
+                            entity.id(),
+                            None,
+                            crate::style::properties::computed::PixelLength(line_width),
+                            crate::style::properties::computed::PixelLength(indent),
+                            tree.text_runs,
+                            tree.intrinsic_sizes,
+                            tree.aligns,
+                        )
+                        .iter()
+                        .map(|line| line.height.0)
+                        .collect(),
+                        None => vec![],
+                    }
+                };
+                let mut y = top + layout.border.top + layout.padding.top + shift;
+                for height in heights {
+                    units.push((y, y + height));
+                    y += height;
+                }
+            }
+            Content::Blocks => {
+                // (the place of a child is from the border box of its parent: the padding and the
+                // border are in it)
+                let origin = top + shift;
+                for child in self.node(id).children.clone() {
+                    let child_top = origin + self.node(child).layout.location.y;
+                    self.collect_units(child, child_top, units);
+                }
+            }
+        }
+    }
+}
+
+/// The fragments that a row can have when it starts at `from` and `available` is what is left
+/// of the page, in the order of growing content: the row cut at every place that fits, or else
+/// at the first one, and the rest of it if that fits. A row that is not taller than a page is
+/// not cut: it is the one fragment that is the row (and, where it does not fit, it is a page
+/// break in front of the row that the page takes instead).
+pub(super) fn row_fragments(
+    cuts: &RowCuts,
+    from: Option<ContainerCut>,
+    available: f64,
+    page_height: f32,
+) -> Vec<Fragment> {
+    let start = from.map_or(0, |cut| cut.item);
+    let fragment = |end: Option<u32>| Fragment {
+        end: end.map(|offset| ContainerCut::at_item(offset as usize)),
+        used: f64::from(dequantize(cuts.used(start, end.unwrap_or(cuts.height)))),
+        end_kind: BreakKind::Allowed,
+        orphan_violation: false,
+        widow_violation: false,
+        avoid_violation: false,
+    };
+    let whole = fragment(None);
+    // a row that fits on a page is not split
+    if from.is_none() && dequantize(cuts.height) <= page_height {
+        return vec![whole];
+    }
+    let mut found: Vec<Fragment> = cuts
+        .candidates
+        .iter()
+        .copied()
+        .filter(|&offset| offset > start)
+        .map(|offset| fragment(Some(offset)))
+        .collect();
+    found.push(whole);
+    // the content grows with the end of the fragment (the fragments that end where a piece does,
+    // and what a cell goes on with from the cut, can be a little less than the one before)
+    found.sort_by(|left, right| left.used.total_cmp(&right.used));
+    let fitting = found.iter().take_while(|fragment| fragment.used <= available + 1.0e-3).count();
+    if fitting == 0 {
+        found.truncate(1);
+        return found;
+    }
+    // (a few of the largest are enough: the pages choose among the ends that fill the page best)
+    const MOST: usize = 12;
+    let first = fitting.saturating_sub(MOST);
+    found[first..fitting].to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cell(index: usize, units: &[(f32, f32)]) -> CellUnits {
+        CellUnits {
+            node: NodeId::from(index),
+            units: units.iter().map(|&(top, bottom)| (quantize(top), quantize(bottom))).collect(),
+        }
+    }
+
+    /// Two cells that have a line of 10 and of 17 pixels.
+    fn two_cells() -> RowCuts {
+        let tens: Vec<(f32, f32)> = (0..30).map(|line| (line as f32 * 10.0, (line + 1) as f32 * 10.0)).collect();
+        let seventeens: Vec<(f32, f32)> = (0..17).map(|line| (line as f32 * 17.0, (line + 1) as f32 * 17.0)).collect();
+        let cells = vec![cell(1, &tens), cell(2, &seventeens)];
+        let mut candidates: Vec<u32> = cells
+            .iter()
+            .flat_map(|cell| cell.units.iter().map(|&(_, bottom)| bottom))
+            .filter(|&bottom| bottom < quantize(300.0))
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+        RowCuts { height: quantize(300.0), cells, candidates }
+    }
+
+    #[test]
+    fn a_row_that_fits_a_page_is_one_fragment() {
+        let fragments = row_fragments(&two_cells(), None, 30.0, 400.0);
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].end, None);
+        assert_eq!(fragments[0].used, 300.0);
+    }
+
+    #[test]
+    fn a_line_across_a_cut_goes_on_the_next_fragment_at_its_top() {
+        let row = two_cells();
+        // cut at 100: the lines of the first cell end there; the second cell has a line from 85
+        // to 102 across it, which is on the next fragment
+        let cut = quantize(100.0);
+        let second = &row.cells[1];
+        assert_eq!(row.cell_origin(second, cut), Some(quantize(85.0)));
+        assert_eq!(row.cell_part(NodeId::from(2usize), 0, cut), Some((0, Some(cut))));
+        // the second cell is moved down by 15 to start at the cut, and it has 100 - 0 + 15 of room
+        let (shift, until) = row.cell_part(NodeId::from(2usize), cut, quantize(200.0)).unwrap();
+        assert_eq!(dequantize(shift), 15.0);
+        assert_eq!(until.map(dequantize), Some(115.0));
+        // the fragment is as high as the cell that needs most: the lines of the second cell that
+        // end in (100, 200] are the ones that end at 119, 136, 153, 170 and 187, from 85
+        assert_eq!(dequantize(row.used(cut, quantize(200.0))), 187.0 - 85.0);
+        // the first fragment has what ends before the cut, from the top
+        assert_eq!(dequantize(row.used(0, cut)), 100.0);
+    }
+
+    #[test]
+    fn every_piece_is_on_one_fragment() {
+        let row = two_cells();
+        let cuts = [0, quantize(100.0), quantize(200.0), row.height];
+        for cell in &row.cells {
+            for &(_, bottom) in &cell.units {
+                let on: Vec<_> = cuts
+                    .windows(2)
+                    .filter(|pair| bottom > pair[0] && bottom <= pair[1])
+                    .collect();
+                assert_eq!(on.len(), 1, "piece ending at {bottom}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_tall_row_is_cut_where_it_fits() {
+        let row = two_cells();
+        let fragments = row_fragments(&row, None, 120.0, 140.0);
+        assert!(fragments.len() >= 2);
+        assert!(fragments.iter().all(|fragment| fragment.used <= 120.0));
+        assert!(fragments.iter().all(|fragment| fragment.end.is_some()));
+    }
+
+    #[test]
+    fn the_last_fragment_ends_the_row() {
+        let row = two_cells();
+        let last = row_fragments(&row, Some(ContainerCut::at_item(quantize(290.0) as usize)), 140.0, 140.0);
+        assert_eq!(last.len(), 1);
+        assert_eq!(last[0].end, None);
+        // (the second cell has a line from 272 to 289 across the cut at 290... no: it ends at 289)
+        assert!(last[0].used > 0.0 && last[0].used <= 20.0, "{}", last[0].used);
+    }
+
+    #[test]
+    fn nothing_that_fits_is_the_least_that_can_be_placed() {
+        let cells = vec![cell(1, &[(0.0, 200.0)])];
+        let row = RowCuts { height: quantize(300.0), cells, candidates: vec![quantize(200.0)] };
+        let fragments = row_fragments(&row, None, 100.0, 140.0);
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].used, 200.0);
+    }
+}

@@ -76,8 +76,9 @@ Limits of this, in order of importance:
 - **Paragraphs are rigid.** There are no profiles and no joint optimisation (step 5). A paragraph
   that continues on a page of another width is broken again from the cut on, without the state of
   the line breaker.
-- **Monolithic containers.** Flex and grid containers and table rows are never split. A table is
-  split between rows, but it is laid out as a whole, again for the width of every page that it
+- **Monolithic containers.** Flex and grid containers are never split. A table is split between
+  rows, and a table row that is taller than a page is split too (see "Table rows that are split").
+  A table is laid out as a whole, again for the width of every page that it
   is on (the window shows Taffy all its cells, and the galley of each width lays out all of
   it). The rows of a page are therefore laid out for that page and the paginator counts them
   so, but the columns of a table follow the width of each page instead of staying the ones of
@@ -93,6 +94,27 @@ Limits of this, in order of importance:
   the source is laid out first but not repeated.
   A box with a `height` is not split either (a minimum height is dropped for a box that is
   cut).
+- **Table rows that are split.** A row that may be taller than a page is a container item
+  (`Item::Container`) of the flow, like a multi-column container, and the layout service finds its
+  fragments (`rows.rs`). The row is laid out whole with the table, as before, and the page has a
+  part of it. The cuts are offsets from the top of the row in 1/64 pixel, which is the cut of the
+  container (`ContainerCut::item`); there is one number for the whole row, whatever the number of
+  its cells. Each cell is cut where its own pieces end: a line of text, or a box that is not
+  split (a replaced box, a nested table, a flex or grid container, a box with a `height`), is on
+  the fragment its bottom is in. A cell with a line across the cut goes on with that line, at
+  its top, on the next page, so each cell is moved down by how far its first line on the page is
+  above the cut, and the fragment is as high as its highest cell. Nothing in a fragment depends on
+  the earlier cuts (a piece is on the fragment that its bottom is in), so the cut is the only
+  state that the kernel keeps. The writer (`write_box`) writes the row whole above the page, shifted
+  up by the start of the part, and clips what it writes to the part (`Writer::clip`): boxes outside
+  of it are not written, the ones across it are written as parts with no padding and border at the
+  cut, and the lines of a paragraph are the ones in the part. A row that fits a page is one
+  fragment, and a row is only a container item if the text in its cells is estimated to take half a
+  page or more (`row_may_split`), so most rows are the boxes that they were. Not done: a cell that
+  spans rows (`rowspan`) is not split, nor a row behind or in front of one; a nested table or a
+  flex or grid container in a cell is one piece; the header rows are not split; a table on pages of
+  different widths is cut by the offsets of the last width that the layout service was asked about;
+  and there are no `orphans` and `widows` for the lines of the cells.
 - **Multi-column containers.** A container with columns whose height is the one of its content
   is split over pages. One that has a `height`, `max-height`, `min-height` or `aspect-ratio`, one
   inside of another container with columns, a flex or grid container or a table cell, and any in a
