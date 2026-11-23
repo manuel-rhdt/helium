@@ -400,12 +400,20 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 ## PDF output
 
 PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from the HTML
-(headings, paragraphs, lists, tables, links, figures, formulas) and the PDF/UA identifier;
+(headings, paragraphs, lists, tables, links, figures, formulas, and tables of contents) and the PDF/UA identifier;
 document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels (the `-helium-page-label` of the `@page` rules, which is not in CSS: `auto` takes the style of the one `counter(page)` that the headers and footers of the page have between them, and the decimal number if there are none or several, `none` the decimal number, or `"A-" counter(page, upper-roman)` a prefix and the style of the number; the text around a counter in a header or footer is never a prefix); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
 from the elements with a `bookmark-level` (UA default: `h1` to `h6` and `role=heading` with `aria-level`; entries nest by level, elements that are not displayed are left out), with `bookmark-label` (strings, `content()`, `attr()`) and `bookmark-state`; `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
 groups for `opacity`.
+
+A table of contents is tagged as one (ISO 32000-1, 14.8.4.3) if it has the role `doc-toc` (DPUB-ARIA,
+`<nav role="doc-toc">`): it is a `TOC`, its `<li>` are `TOCI`, a list in an item is a `TOC` of its
+own after the item (its sub-entries), and a link in an item is a `Reference` that holds the `Link`.
+The number of an item is its `Lbl`. A list directly in the table is not a structure element, and
+block-level `<p>`, `<div>` and `<a>` in it are items, so a table of contents that is not a list
+works too. The `leader()` of an entry is an artifact. The page numbers (`target-counter()`) are
+text of the item.
 
 ### Conformance
 

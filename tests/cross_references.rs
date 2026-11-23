@@ -104,3 +104,27 @@ fn nested_counters_are_joined_and_a_missing_target_is_empty() {
     assert!(has(&texts, "[1.2]"), "{texts:?}");
     assert!(has(&texts, "{}"), "{texts:?}");
 }
+
+#[test]
+fn a_table_of_contents_is_tagged_as_one() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("xref_tagged.html");
+    let output = dir.join("xref_tagged.pdf");
+    std::fs::write(
+        &input,
+        r##"<style>ol { list-style: none } a::after { content: leader('.') target-counter(attr(href), page) }
+        h1 { break-before: page }</style>
+        <nav role="doc-toc"><ol><li><a href="#a">One</a><ol><li><a href="#b">Sub</a></li></ol></li></ol></nav>
+        <h1 id="a">One</h1><h2 id="b">Sub</h2>"##,
+    )
+    .unwrap();
+    let status = common::helium().unwrap().arg("--no-compression").arg(&input).arg(&output).status().unwrap();
+    assert!(status.success());
+    let pdf = String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(output).unwrap())).into_owned();
+    // a table of contents, two nested ones (the table and the list of the sub-entries), and
+    // an item for each entry that holds a reference to the link
+    let items = pdf.matches("/S /TOCI").count();
+    // ("/S /TOC" is also the start of "/S /TOCI")
+    assert_eq!((pdf.matches("/S /TOC").count() - items, items), (2, 2));
+    assert_eq!(pdf.matches("/S /Reference").count(), 2);
+}

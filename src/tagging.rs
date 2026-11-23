@@ -124,7 +124,7 @@ enum Mapping {
 fn is_grouping(role: &str) -> bool {
     matches!(
         role,
-        "Document" | "Part" | "Art" | "Sect" | "Div" | "BlockQuote" | "NonStruct"
+        "Document" | "Part" | "Art" | "Sect" | "Div" | "BlockQuote" | "NonStruct" | "TOC"
     )
 }
 
@@ -218,6 +218,8 @@ fn map_aria_role(role: &str, element: &ElementData) -> Option<Mapping> {
         "region" | "navigation" | "complementary" | "banner" | "contentinfo" => {
             Mapping::Role("Sect")
         }
+        // DPUB-ARIA: a table of contents (ISO 32000-1, 14.8.4.3: `TOC`, whose items are `TOCI`)
+        "doc-toc" => Mapping::Role("TOC"),
         _ => return None,
     })
 }
@@ -287,6 +289,12 @@ fn map_element(element: &ElementData, style: &ComputedValues) -> Mapping {
         }
     };
     Mapping::Role(role)
+}
+
+/// Whether the element is a link (`<a href>`, or with the role `link`).
+fn mapping_is_link(element: &ElementData, _style: &ComputedValues) -> bool {
+    (&*element.name.local == "a" && attribute(element, "href").is_some())
+        || attribute(element, "role").is_some_and(|role| role.split_whitespace().next() == Some("link"))
 }
 
 fn list_numbering(list_style_type: &ListStyleType) -> &'static str {
@@ -460,9 +468,75 @@ impl Builder {
                     Mapping::Role(role) => role,
                 };
 
+                // The parts of a table of contents: `<li>` is a `TOCI`, a list directly in the
+                // table is not a structure element, and one in an item is a `TOC` of its own
+                // after the item (the list of its sub-entries); a link in an item is a
+                // `Reference` that holds the `Link`.
+                let parent_role = self.tree.nodes[parent as usize].role;
+                let mut role = role;
+                if parent_role == "TOC" {
+                    match role {
+                        "L" => {
+                            for child in TreeLinked::children(dom) {
+                                self.walk(&child, parent, &element_lang, link);
+                            }
+                            return;
+                        }
+                        "LI" => role = "TOCI",
+                        // (the entries of a table of contents that is not a list)
+                        "P" | "Div" => role = "TOCI",
+                        "Link" if !inline => role = "TOCI",
+                        _ => {}
+                    }
+                } else if parent_role == "TOCI" && role == "L" {
+                    let table = self.tree.nodes[parent as usize].parent.unwrap_or(0);
+                    let nested = self.add_node(table, "TOC", false);
+                    for child in TreeLinked::children(dom) {
+                        self.walk(&child, nested, &element_lang, link);
+                    }
+                    return;
+                }
+                if role == "Link" && parent_role == "TOCI" {
+                    // the link in an item: `Reference` > `Link`
+                    let reference = self.add_node(parent, "Reference", true);
+                    let link_node = self.add_node(reference, "Link", true);
+                    if lang_changed && !element_lang.is_empty() {
+                        self.tree.nodes[link_node as usize].lang = Some(element_lang.clone());
+                    }
+                    self.describe(link_node, dom, element, &style);
+                    for child in TreeLinked::children(dom) {
+                        self.walk(&child, link_node, &element_lang, Some(link_node));
+                    }
+                    return;
+                }
+                let is_link = mapping_is_link(element, &style);
                 let node = self.add_node(parent, role, inline);
                 if lang_changed && !element_lang.is_empty() {
                     self.tree.nodes[node as usize].lang = Some(element_lang.clone());
+                }
+                if role == "TOCI" {
+                    // the marker of a list item is its label
+                    if &*element.name.local == "li" {
+                        let marker = style.font.list_style_type.marker_text(1).is_some();
+                        if let (true, Some(entity)) = (marker, entity) {
+                            let label = self.add_node(node, "Lbl", false);
+                            self.add_content(label, entity);
+                        }
+                    }
+                    // a link that is the item (`<a>` as a block in the table) or is in it
+                    if is_link && !matches!(&*element.name.local, "li") {
+                        let reference = self.add_node(node, "Reference", true);
+                        let link_node = self.add_node(reference, "Link", true);
+                        self.describe(link_node, dom, element, &style);
+                        for child in TreeLinked::children(dom) {
+                            self.walk(&child, link_node, &element_lang, Some(link_node));
+                        }
+                        return;
+                    }
+                    for child in TreeLinked::children(dom) {
+                        self.walk(&child, node, &element_lang, link);
+                    }
+                    return;
                 }
                 self.describe(node, dom, element, &style);
 
@@ -935,6 +1009,56 @@ mod tests {
         )
         .unwrap();
         (*specs::WorldExt::read_resource::<StructureTree>(&world)).clone()
+    }
+
+    #[test]
+    fn a_table_of_contents_is_a_toc_of_items_with_references() {
+        // ISO 32000-1, 14.8.4.3: `TOC` holds `TOCI` and, for the sub-entries of an item, a `TOC`
+        // after it; the link of an item is a `Reference` that holds the `Link`
+        let tree = structure(
+            "<style>ol { list-style: none }</style>\
+             <nav role=\"doc-toc\"><ol><li><a href=\"#a\">A</a><ol><li><a href=\"#b\">B</a></li></ol></li>\
+             <li><a href=\"#c\">C</a></li></ol></nav>\
+             <h1 id=a>A</h1><h1 id=b>B</h1><h1 id=c>C</h1>",
+        );
+        assert_eq!(
+            tree.outline(),
+            "Document\n  TOC\n    TOCI\n      Reference\n        Link #1\n    TOC\n      TOCI\n        Reference\n          Link #1\n    TOCI\n      Reference\n        Link #1\n  H1 #1\n  H1 #1\n  H1 #1\n"
+        );
+    }
+
+    #[test]
+    fn the_entries_of_a_table_of_contents_that_is_not_a_list_are_items() {
+        let tree = structure(
+            "<style>a, p { display: block }</style><div role=\"doc-toc\"><h2>Contents</h2>\
+             <a href=\"#a\">A <span>one</span></a><p>Plain entry</p></div><h1 id=a>A</h1>",
+        );
+        assert_eq!(
+            tree.outline(),
+            "Document\n  TOC\n    H2 #1\n    TOCI\n      Reference\n        Link #2\n    TOCI #1\n  H1 #1\n"
+        );
+    }
+
+    #[test]
+    fn a_list_that_is_not_a_table_of_contents_stays_a_list() {
+        let tree = structure("<nav><ol><li><a href=\"#a\">A</a></li></ol></nav><h1 id=a>A</h1>");
+        assert_eq!(
+            tree.outline(),
+            "Document\n  Sect\n    L ListNumbering=Decimal\n      LI\n        Lbl #1\n        LBody\n          Link #1\n  H1 #1\n"
+        );
+    }
+
+    #[test]
+    fn the_number_of_an_item_of_a_table_of_contents_is_its_label() {
+        let tree = structure("<nav role=\"doc-toc\"><ol><li><a href=\"#a\">A</a></li></ol></nav><h1 id=a>A</h1>");
+        assert_eq!(tree.outline(), "Document\n  TOC\n    TOCI\n      Lbl #1\n      Reference\n        Link #1\n  H1 #1\n");
+    }
+
+    #[test]
+    fn the_link_of_an_item_keeps_its_text_for_the_annotation() {
+        let tree = structure("<nav role=\"doc-toc\"><ol><li><a href=\"#a\">Chapter  one</a></li></ol></nav><h1 id=a>A</h1>");
+        let link = tree.nodes.iter().find(|node| node.role == "Link").unwrap();
+        assert_eq!(link.link_text.as_deref(), Some("Chapter one"));
     }
 
     #[test]
