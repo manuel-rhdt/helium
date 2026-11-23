@@ -284,6 +284,18 @@ pub fn page_label_ranges(world: &specs::World) -> Vec<PageLabelRange> {
     ranges
 }
 
+/// The value of the `page` counter on every page of the laid out document.
+pub fn page_counter_values(world: &specs::World) -> Vec<i64> {
+    use specs::{Join, WorldExt};
+
+    let margin_boxes = world.read_resource::<MarginBoxes>();
+    let pages = world.read_resource::<Pages>();
+    let page_margins = world.read_resource::<PageMargins>();
+    let positions = world.read_storage::<Position>();
+    let num_pages = (&positions).join().map(|pos| pos.page + 1).max().unwrap_or(0);
+    margin_boxes.page_numbers(&pages, num_pages, page_margins.rtl)
+}
+
 /// Creates the paragraphs of the margin boxes of every page.
 pub struct MarginBoxPaint;
 

@@ -24,11 +24,45 @@ pub enum ContentItem {
     /// `attr(name, fallback)`: the value of an attribute of the originating element, or the
     /// fallback string (empty if there is none) if the element has no such attribute.
     Attr(String, Option<String>),
+    /// `target-counter(target, name, style)`: the value that the counter had at the element that
+    /// the link `target` points at (CSS GCPM 3). The counter `page` is the page number.
+    TargetCounter(LinkTarget, String, CounterStyle),
+    /// `target-counters(target, name, separator, style)`
+    TargetCounters(LinkTarget, String, String, CounterStyle),
+    /// `target-text(target)`: the text of the element that the link points at.
+    TargetText(LinkTarget),
     OpenQuote,
     CloseQuote,
     /// Like `open-quote` and `close-quote`, but without a quotation mark.
     NoOpenQuote,
     NoCloseQuote,
+}
+
+/// The link that `target-counter()` and its relatives follow: an `attr()` of the originating
+/// element that holds a URL (`attr(href)`), or a `url()` that is written out.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LinkTarget {
+    Attr(String),
+    Url(String),
+}
+
+impl LinkTarget {
+    fn parse<'i>(input: &mut Parser<'i>) -> Result<LinkTarget, ParseError<StyleParseError>> {
+        if let Ok(url) = input.try_parse(|input| input.expect_url()) {
+            return Ok(LinkTarget::Url(url.to_string()));
+        }
+        if let Ok(string) = input.try_parse(|input| input.expect_string_cloned()) {
+            return Ok(LinkTarget::Url(string.to_string()));
+        }
+        input.expect_function_matching("attr")?;
+        input.parse_nested_block(|input| {
+            let name = input.expect_ident()?.to_string();
+            // `attr(href url)`: the type that says the value is a URL is accepted
+            let _ = input.try_parse(|input| input.expect_ident_matching("url"));
+            input.expect_exhausted()?;
+            Ok(LinkTarget::Attr(name))
+        })
+    }
 }
 
 /// The value of `content`.
@@ -106,6 +140,33 @@ impl<'i> PropertyValue<'i> for Content {
                         let style = counter_style(input)?;
                         input.expect_exhausted()?;
                         Ok(ContentItem::Counters(name, separator, style))
+                    })?,
+                    "target-counter" => input.parse_nested_block(|input| {
+                        let target = LinkTarget::parse(input)?;
+                        input.expect_comma()?;
+                        let name = counter_name(input)?;
+                        let style = counter_style(input)?;
+                        input.expect_exhausted()?;
+                        Ok(ContentItem::TargetCounter(target, name, style))
+                    })?,
+                    "target-counters" => input.parse_nested_block(|input| {
+                        let target = LinkTarget::parse(input)?;
+                        input.expect_comma()?;
+                        let name = counter_name(input)?;
+                        input.expect_comma()?;
+                        let separator = input.expect_string()?.to_string();
+                        let style = counter_style(input)?;
+                        input.expect_exhausted()?;
+                        Ok(ContentItem::TargetCounters(target, name, separator, style))
+                    })?,
+                    "target-text" => input.parse_nested_block(|input| {
+                        let target = LinkTarget::parse(input)?;
+                        // `content` is the default and the only one that is supported
+                        if input.try_parse(|input| input.expect_comma()).is_ok() {
+                            input.expect_ident_matching("content")?;
+                        }
+                        input.expect_exhausted()?;
+                        Ok(ContentItem::TargetText(target))
                     })?,
                     "attr" => input.parse_nested_block(|input| {
                         let name = input.expect_ident()?.to_string();

@@ -239,12 +239,25 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `<menu>` start and `<ol start>` and `<li value>` set; the number of the marker is the value of
   that counter, so `counter-increment: list-item` and the like change it. Not supported: `content`
   on elements (e.g. `content: url()` on an `<a>`), `::first-line` and `::first-letter`,
-  `target-counter()`, and `list-style-image`. Counters in `@page` margin boxes are only `page`
+  and `list-style-image`. Counters in `@page` margin boxes are only `page`
   and `pages`. A counter value stays within a 32 bit integer (an increment that would leave the
   range is not made), and a name that is repeated in one `counter-*` property counts every time.
   The behaviour is the one of the published CSS Lists 3 (a counter of the previous sibling is only
   inherited when the parent has none of that name); `counter-reset: reversed()` and `<ol
   reversed>`, which are only in the editor's draft, are not supported.
+  Cross-references (CSS GCPM 3): `target-counter(target, name, style)`, `target-counters(target,
+  name, separator, style)` and `target-text(target)` read the counter and the text content of the
+  element that a link points at, which may come after the reference (a table of contents). The
+  `target` is `attr(href)` (or another attribute, with or without the `url` type) or a `url()` or
+  string; only the fragment (`#id`) is followed. The counter `page` is the page number (the value
+  of the `page` counter on the page where the element starts, in the given style). `target-text()`
+  has no second argument but `content`; its text leaves out generated content and elements that are
+  not displayed, and white space is collapsed. A target that does not exist (or has no page)
+  gives nothing. The page of a target is known after pagination, so a document that reads any of
+  these is laid out again with what the previous layout found, until the page numbers stop
+  changing, but at most five times (the last layout is the result, with a warning, if they do
+  not settle). A document without them is laid out once. Not supported: `target-text()` with
+  `before`, `after` and `first-letter`, and `leader()`.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
 - **Math functions** (CSS Values 4): `calc()`, `min()`, `max()`, `clamp()` (with `none`),
   `round()` (`nearest`, `up`, `down`, `to-zero`), `mod()`, `rem()`, `sin()`, `cos()`, `tan()`,

@@ -11,6 +11,7 @@ pub mod margin_boxes;
 mod mathml;
 pub mod normal_formatting;
 pub mod pages;
+pub mod references;
 mod relative_positioning;
 mod taffy_layout;
 pub use taffy_layout::{report_pagination, take_pagination_report};
@@ -182,6 +183,24 @@ pub fn collect_named_destinations(world: &mut World, dom: &DomRef) {
     world.write_resource::<NamedDestinations>().0 = destinations;
 }
 
+/// The targets of the cross-references of a document that is laid out: the counters and text
+/// that the construction recorded, and the page counter on the page of each element. Must run
+/// after [`collect_named_destinations`].
+fn found_references(world: &World, recorded: RecordedTargets) -> FoundReferences {
+    let numbers = margin_boxes::page_counter_values(world);
+    let destinations = world.read_resource::<NamedDestinations>();
+    let RecordedTargets { counters, mut text, .. } = recorded;
+    let targets = counters
+        .into_iter()
+        .map(|(id, counters)| {
+            let page = destinations.0.get(&id).and_then(|destination| numbers.get(destination.page).copied());
+            let text = text.remove(&id).unwrap_or_default();
+            (id, references::Target { counters, text, page })
+        })
+        .collect();
+    FoundReferences { used: true, references: references::References(targets) }
+}
+
 /// Collects the elements with a `bookmark-level` (by default `h1` to `h6`) for the outline of the
 /// PDF.
 ///
@@ -285,6 +304,109 @@ pub fn layout(
     crop: bool,
     stylesheet_base_dir: &Path,
 ) -> Result<LayoutContext, String> {
+    layout_with_references(dom, device, crop, stylesheet_base_dir, Default::default())
+}
+
+/// What a layout found out about the targets of cross-references, in the layout context.
+#[derive(Debug, Default)]
+pub struct FoundReferences {
+    /// Whether the document reads targets (`target-counter()` and the like) at all.
+    pub used: bool,
+    pub references: references::References,
+}
+
+/// The most layouts of one document that its cross-references are given.
+const MAX_REFERENCE_PASSES: usize = 5;
+
+/// Lays a document out, and again if its `target-counter()` and the like read page numbers that
+/// the previous layout got wrong: the numbers (and so the text, and maybe the pages) of one
+/// layout are the input of the next, until they do not change. `parse` makes the DOM, which a
+/// layout changes (it adds the generated content), so every layout gets a new one.
+///
+/// The numbers need not settle (a reference can move its own target to another page and back):
+/// after [`MAX_REFERENCE_PASSES`] layouts the last one is the result.
+pub fn layout_resolved(
+    parse: &dyn Fn() -> Result<DomRef, String>,
+    device: Device,
+    crop: bool,
+    stylesheet_base_dir: &Path,
+) -> Result<(DomRef, LayoutContext), String> {
+    let mut known = std::rc::Rc::new(references::References::default());
+    for pass in 1.. {
+        let dom = parse()?;
+        let context = layout_with_references(dom.clone(), device, crop, stylesheet_base_dir, known.clone())?;
+        let found = std::mem::take(&mut *context.write_resource::<FoundReferences>());
+        if !found.used || found.references == *known {
+            return Ok((dom, context));
+        }
+        if pass >= MAX_REFERENCE_PASSES {
+            log::warn!("The page numbers of the cross-references did not settle after {pass} layouts");
+            return Ok((dom, context));
+        }
+        known = std::rc::Rc::new(found.references);
+    }
+    unreachable!()
+}
+
+/// What the layout of the content knows about the elements with an `id`, from the construction.
+struct RecordedTargets {
+    used: bool,
+    counters: std::collections::HashMap<String, std::collections::HashMap<String, Vec<i64>>>,
+    text: std::collections::HashMap<String, String>,
+}
+
+/// The text content of the elements with an `id`: generated content and elements that are not
+/// displayed do not count, and white space is collapsed.
+fn collect_target_text(dom: &DomRef) -> std::collections::HashMap<String, String> {
+    use crate::parser::ParsedData;
+    use html5ever::{local_name, ns, QualName};
+
+    fn text_of(node: &DomRef, out: &mut String) {
+        for child in crate::tree::TreeLinked::children(node) {
+            match &child.html_data {
+                ParsedData::Text(text) => out.push_str(&text.borrow()),
+                ParsedData::Element(data) => {
+                    if data.pseudo_element().is_some() {
+                        continue;
+                    }
+                    if crate::tree::NodeData::style(&child)
+                        .is_some_and(|style| style.box_.display == crate::style::properties::computed::Display::None)
+                    {
+                        continue;
+                    }
+                    text_of(&child, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    fn walk(node: &DomRef, out: &mut std::collections::HashMap<String, String>) {
+        if let ParsedData::Element(data) = &node.html_data {
+            let id = data.attributes.borrow().get(&QualName::new(None, ns!(), local_name!("id"))).map(|a| a.value.to_string());
+            if let Some(id) = id.filter(|id| !id.is_empty()) {
+                if !out.contains_key(&id) {
+                    let mut text = String::new();
+                    text_of(node, &mut text);
+                    out.insert(id, text.split_whitespace().collect::<Vec<_>>().join(" "));
+                }
+            }
+        }
+        for child in crate::tree::TreeLinked::children(node) {
+            walk(&child, out);
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    walk(dom, &mut out);
+    out
+}
+
+pub fn layout_with_references(
+    dom: DomRef,
+    device: Device,
+    crop: bool,
+    stylesheet_base_dir: &Path,
+    known: std::rc::Rc<references::References>,
+) -> Result<LayoutContext, String> {
     // here we set the layout passes
     let world = World::new();
 
@@ -320,9 +442,15 @@ pub fn layout(
             height.0 - margin(style.position.margin_top, width) - margin(style.position.margin_bottom, width),
         );
     }
+    flow_constructor.set_known_references(known);
     dom.traverse(&mut flow_constructor);
     flow_constructor.ensure_root();
     info!("TIMED: construct {:?}", time_before.elapsed());
+    let recorded = RecordedTargets {
+        used: flow_constructor.uses_references,
+        counters: std::mem::take(&mut flow_constructor.recorded_counters),
+        text: if flow_constructor.uses_references { collect_target_text(&dom) } else { Default::default() },
+    };
 
     // dom.serialize_dot_graph(&mut std::fs::File::create("graph.dot").unwrap())
     //     .unwrap();
@@ -423,6 +551,7 @@ pub fn layout(
     layout_context.insert(Hyperlinks::default());
     layout_context.insert(Outline::default());
     layout_context.insert(NamedDestinations::default());
+    layout_context.insert(FoundReferences::default());
 
     layout_context.register::<components::IntrinsicSize>();
     layout_context.register::<components::ContainingBlock>();
@@ -510,6 +639,10 @@ pub fn layout(
     resolve_hyperlink_destinations(&mut layout_context, &dom);
     collect_outline(&mut layout_context, &dom);
     collect_named_destinations(&mut layout_context, &dom);
+    if recorded.used {
+        let found = found_references(&layout_context, recorded);
+        *layout_context.write_resource::<FoundReferences>() = found;
+    }
     let labels = margin_boxes::page_label_ranges(&layout_context);
     layout_context.insert(margin_boxes::PageLabels(labels));
 

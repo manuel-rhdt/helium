@@ -84,6 +84,14 @@ pub struct FlowConstructor {
     island_root: Option<(DomRef, f32, f32)>,
     /// The counters and quotation marks, which follow the traversal of the tree.
     counters: super::counters::CounterState,
+    /// What the previous layout found out about the targets of `target-counter()` and the like.
+    known: std::rc::Rc<super::references::References>,
+    /// The counters at every element with an `id` (the first with that `id`), in scope at the
+    /// start of its content.
+    pub recorded_counters: HashMap<String, HashMap<String, Vec<i64>>>,
+    /// Whether the content of some element reads a target that the document has to be laid out
+    /// again for.
+    pub uses_references: bool,
 }
 
 impl FlowConstructor {
@@ -118,6 +126,12 @@ impl FlowConstructor {
             .insert(entity, components::ElementAlign(step));
     }
 
+    /// Gives the constructor what a previous layout found out about the targets of
+    /// `target-counter()`, `target-counters()` and `target-text()`.
+    pub fn set_known_references(&mut self, known: std::rc::Rc<super::references::References>) {
+        self.known = known;
+    }
+
     pub fn new(world: World, stylesheet_base_dir: PathBuf) -> Self {
         Self::with_styles(world, stylesheet_base_dir, Default::default())
     }
@@ -133,6 +147,9 @@ impl FlowConstructor {
             islands: vec![],
             island_root: None,
             counters: Default::default(),
+            known: Default::default(),
+            recorded_counters: HashMap::new(),
+            uses_references: false,
         }
     }
 
@@ -438,6 +455,28 @@ impl FlowConstructor {
                         None => text.push_str(fallback.as_deref().unwrap_or("")),
                     }
                 }
+                ContentItem::TargetCounter(target, name, counter_style) => {
+                    self.uses_references = true;
+                    let values = self.target_of(origin, target).and_then(|id| self.known.counter_values(&id, name));
+                    if let Some(value) = values.and_then(|values| values.last().copied()) {
+                        text.push_str(&super::counters::format_counter(value, *counter_style));
+                    }
+                }
+                ContentItem::TargetCounters(target, name, separator, counter_style) => {
+                    self.uses_references = true;
+                    let values = self.target_of(origin, target).and_then(|id| self.known.counter_values(&id, name));
+                    if let Some(values) = values {
+                        let values: Vec<String> =
+                            values.into_iter().map(|value| super::counters::format_counter(value, *counter_style)).collect();
+                        text.push_str(&values.join(separator));
+                    }
+                }
+                ContentItem::TargetText(target) => {
+                    self.uses_references = true;
+                    if let Some(id) = self.target_of(origin, target) {
+                        text.push_str(self.known.text(&id).unwrap_or(""));
+                    }
+                }
                 ContentItem::OpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, true)),
                 ContentItem::NoOpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, false)),
                 ContentItem::CloseQuote => text.push_str(&self.counters.close_quote(&style.text.quotes, &lang, true)),
@@ -448,6 +487,24 @@ impl FlowConstructor {
             pieces.push(ContentPiece::Text(text));
         }
         pieces
+    }
+
+    /// The `id` that the link of `target` points at, for the element `origin`.
+    fn target_of(
+        &self,
+        origin: Option<&crate::tree::ElementRef>,
+        target: &crate::style::properties::generated::LinkTarget,
+    ) -> Option<String> {
+        use crate::style::properties::generated::LinkTarget;
+        let url = match target {
+            LinkTarget::Url(url) => url.clone(),
+            LinkTarget::Attr(name) => {
+                let key = QualName::new(None, ns!(), html5ever::LocalName::from(name.to_ascii_lowercase()));
+                let attributes = origin?.attributes.borrow();
+                attributes.get(&key)?.value.to_string()
+            }
+        };
+        super::references::References::fragment(&url).map(str::to_owned)
     }
 
     /// The text of the `content` (the images do not count), as the text of a marker.
@@ -635,6 +692,18 @@ impl FlowConstructor {
             }
         }
         self.counters.enter(parent, style, hints);
+        if let ParsedData::Element(data) = &node.html_data {
+            let id = data
+                .attributes
+                .borrow()
+                .get(&QualName::new(None, ns!(), local_name!("id")))
+                .map(|attribute| attribute.value.to_string())
+                .filter(|id| !id.is_empty());
+            if let Some(id) = id {
+                let snapshot = self.counters.snapshot();
+                self.recorded_counters.entry(id).or_insert(snapshot);
+            }
+        }
     }
 
     /// Computes the style of the node, and before that the one of its ancestors, if they do not
