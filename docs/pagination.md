@@ -76,23 +76,58 @@ Limits of this, in order of importance:
 - **Paragraphs are rigid.** There are no profiles and no joint optimisation (step 5). A paragraph
   that continues on a page of another width is broken again from the cut on, without the state of
   the line breaker.
-- **Monolithic containers.** Flex and grid containers and table rows are never split. A table is
-  split between rows, but it is laid out as a whole, again for the width of every page that it
+- **Monolithic containers.** Flex and grid containers are never split. A table is split between
+  rows, and a table row that is taller than a page is split too (see "Table rows that are split").
+  A table is laid out as a whole, again for the width of every page that it
   is on (the window shows Taffy all its cells, and the galley of each width lays out all of
   it). The rows of a page are therefore laid out for that page and the paginator counts them
   so, but the columns of a table follow the width of each page instead of staying the ones of
   the page where it starts. Pinning the columns is step 6 of "Order of work" (the test
   `the_columns_of_a_table_stay_the_ones_of_the_page_where_it_starts` is ignored until then).
   The header rows of a table (the first `thead`, if only captions are in front of it) are
-  repeated at the top of every page that goes on inside of the table. The kernel reserves their
+  repeated at the top of every page that goes on inside of the table, if the header is not more
+  than a quarter of the page. The kernel reserves their
   height there (`Problem::repeats`, `PageFill::repeated`, the page starts behind the break that
   follows the header), and the writer paints the rows again, as parts of the boxes
   (`Writer::repeating`), with no element of their own in the structure tree: their text belongs to the cells of the
   header (the content of a tagged element may be on several pages). The gap between the header and
   the first row (`border-spacing`) is not repeated, and a header that comes after the rows in
-  the source is laid out first but not repeated.
+  the source is laid out first but not repeated. The room of the header is kept on a page that
+  starts inside of a row that is split over pages, too. The footer rows of a table (the first
+  `tfoot`, which is laid out last) are repeated directly behind the last row of every page that
+  ends inside of the table, as CSS Tables 3 (6.2) has it, if the footer is not more than a quarter
+  of the page (`Repeat::footer`): the kernel adds the room of the footer to a page that ends in
+  front of it (`PageFill::repeated`), and the writer writes the rows again, as parts of the boxes,
+  behind the part of the table that is on the page, where what goes on on the next page ends at
+  the top of the footer. The page that has the footer has it where it is, once.
   A box with a `height` is not split either (a minimum height is dropped for a box that is
   cut).
+- **Table rows that are split.** A row that may be taller than a page is a container item
+  (`Item::Container`) of the flow, like a multi-column container, and the layout service finds its
+  fragments (`rows.rs`). The row is laid out whole with the table, as before, and the page has a
+  part of it. The cuts are offsets from the top of the row in 1/64 pixel, which is the cut of the
+  container (`ContainerCut::item`); there is one number for the whole row, whatever the number of
+  its cells. Each cell is cut where its own pieces end: a line of text, or a box that is not
+  split (a replaced box, a nested table, a flex or grid container, a box with a `height`), is on
+  the fragment its bottom is in. A cell with a line across the cut goes on with that line, at
+  its top, on the next page, so each cell is moved down by how far its first line on the page is
+  above the cut, and the fragment is as high as its highest cell. Nothing in a fragment depends on
+  the earlier cuts (a piece is on the fragment that its bottom is in), so the cut is the only
+  state that the kernel keeps. The writer (`write_box`) writes the row whole above the page, shifted
+  up by the start of the part, and clips what it writes to the part (`Writer::clip`): boxes outside
+  of it are not written, the ones across it are written as parts with no padding and border at the
+  cut, and the lines of a paragraph are the ones in the part. A row that is at most half as high as
+  the page, and as wide, is kept whole, as CSS Tables 3 (6.1) has it; the other rows are "freely
+  fragmentable": the page takes as much of them as fits, so a long row does not leave the room
+  below the rows in front of it empty. A row is only a container item if the text in its cells is
+  estimated to take a quarter of a page or more (`row_may_split`), so most rows are the boxes that
+  they were. The cuts inside a paragraph of a cell that leave fewer lines than `orphans` in front
+  of the cut or than `widows` behind it are fragments with a violation, which the pages avoid like
+  the ones of the paragraphs of the flow. Not done: a cell that spans rows (`rowspan`) is not
+  split, nor a row behind or in front of one; a nested table or a flex or grid container in a cell
+  is one piece; the header and footer rows are not split; a table on pages of
+  different widths is cut by the offsets of the last width that the layout service was asked
+  about.
 - **Multi-column containers.** A container with columns whose height is the one of its content
   is split over pages. One that has a `height`, `max-height`, `min-height` or `aspect-ratio`, one
   inside of another container with columns, a flex or grid container or a table cell, and any in a

@@ -162,6 +162,15 @@ impl HeliumTree<'_, '_> {
         None
     }
 
+    /// The row group of a table that is repeated behind the last row of every page that ends
+    /// inside of the table: the first `table-footer-group`, which is laid out last in the table.
+    pub(super) fn repeated_footer(&self, table: NodeId) -> Option<NodeId> {
+        let span = self.node(table).span.as_ref()?;
+        let last = *span.kids.last()?;
+        let has_rows = self.node(last).span.as_ref().is_some_and(|span| !span.kids.is_empty());
+        (self.display(last) == Display::TableFooterGroup && has_rows).then_some(last)
+    }
+
     fn display(&self, id: NodeId) -> Display {
         self.computed_values
             .get(self.node(id).entity)

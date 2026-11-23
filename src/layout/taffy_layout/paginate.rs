@@ -301,5 +301,13 @@ pub(super) fn window(
             Position::InContainer { item, .. } => Some(paragraph(item)),
             _ => None,
         },
+        start_offset: match start {
+            Position::InContainer { cut, .. } => Some(cut.item),
+            _ => None,
+        },
+        end_offset: match end {
+            Position::InContainer { cut, .. } => Some(cut.item),
+            _ => None,
+        },
     }
 }

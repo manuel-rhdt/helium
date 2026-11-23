@@ -33,6 +33,8 @@ struct Galley {
     lines: HashMap<NodeId, (f32, f32)>,
     /// The containers that are split over pages.
     containers: HashMap<NodeId, ContainerEdges>,
+    /// Where the rows that may be split over pages can be cut.
+    rows: HashMap<NodeId, Rc<super::rows::RowCuts>>,
 }
 
 /// What a container that is split over pages is in a galley: the width of its content box, and the
@@ -345,7 +347,27 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                 _ => None,
             })
             .collect();
-        let galley = Rc::new(Galley { extents, lines, containers });
+        // (the layout of the boxes is the one of this width: the next galley replaces it)
+        let row_nodes: Vec<NodeId> = self
+            .flow
+            .items
+            .iter()
+            .filter_map(|item| match *item {
+                Item::Container { node, .. } => Some(NodeId::from(node.0 as usize)),
+                _ => None,
+            })
+            .filter(|&id| tree.node(id).columns.is_none())
+            .collect();
+        let rows: HashMap<NodeId, Rc<super::rows::RowCuts>> = row_nodes
+            .into_iter()
+            .map(|id| {
+                let cuts = Rc::new(tree.row_cuts(id));
+                // (the page is written with the cuts of the last width that was laid out)
+                tree.node_mut(id).row_cuts = Some(cuts.clone());
+                (id, cuts)
+            })
+            .collect();
+        let galley = Rc::new(Galley { extents, lines, containers, rows });
         self.galleys.insert(key, galley.clone());
         galley
     }
@@ -353,7 +375,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
 
 /// The width and the indent that the lines of a paragraph were broken for in the layout that the
 /// tree has: the ones that the measure function was given, or else the width of its content box.
-fn paragraph_width(tree: &HeliumTree, node: NodeId) -> (f32, f32) {
+pub(super) fn paragraph_width(tree: &HeliumTree, node: NodeId) -> (f32, f32) {
     tree.node(node).measured.unwrap_or_else(|| {
         let layout = &tree.node(node).layout;
         let edges = layout.border.horizontal_axis_sum() + layout.padding.horizontal_axis_sum();
@@ -472,6 +494,14 @@ impl LayoutService for TreeService<'_, '_, '_> {
             return fragments.clone();
         }
         let id = NodeId::from(container.0 as usize);
+        // a table row that is split over pages
+        let row = self.galley(page_inline).rows.get(&id).cloned();
+        if let Some(cuts) = row {
+            let fragments: Rc<[Fragment]> =
+                Rc::from(super::rows::row_fragments(&cuts, from, available, (page_inline, self.icb_height)));
+            self.fragments.insert(key, fragments.clone());
+            return fragments;
+        }
         let edges = *self.galley(page_inline).containers.get(&id).expect("the container is in the flow");
         // (the padding and the border at the top are the first fragment's)
         let top = if from.is_none() { edges.top } else { 0.0 };

@@ -62,6 +62,10 @@ pub(super) struct Window {
     /// item of the flow, so its span says nothing about them.
     pub start_container: Option<NodeId>,
     pub end_container: Option<NodeId>,
+    /// Where the fragments of the containers that start and end the page are cut (the cut of a
+    /// container: for a table row, the offset in 1/64 pixel from its top).
+    pub start_offset: Option<u32>,
+    pub end_offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -98,7 +102,17 @@ impl Window {
             scope: None,
             start_container: None,
             end_container: None,
+            start_offset: None,
+            end_offset: None,
         }
+    }
+
+    /// The cuts of a table row at the start and at the end of the window: the offsets in 1/64
+    /// pixel, from the top of the row, that it is cut at (`None`: not cut there).
+    pub fn row_cut_offsets(&self, id: NodeId) -> (Option<u32>, Option<u32>) {
+        let start = (self.start_container == Some(id)).then_some(self.start_offset).flatten();
+        let end = (self.end_container == Some(id)).then_some(self.end_offset).flatten();
+        (start, end)
     }
 
     /// Whether a box that spans the items `start..end` has items in front of the window.
@@ -350,11 +364,60 @@ impl HeliumTree<'_, '_> {
     }
 }
 
-/// The part of a table or a row group that is in the window, as the top and the bottom of the
-/// fragment relative to the top of the box. `full` is the height of the box as a whole.
-pub(super) fn table_fragment(nodes: &[Node], window: &Window, node: &Node, full: f32) -> (f32, f32) {
+/// The part of a table row that a window has, if the row is split over pages.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct RowPart {
+    /// Where the part starts, from the top of the row.
+    pub top: f32,
+    /// Where the part ends in the layout of the row as a whole.
+    pub bottom: f32,
+    /// How high the part is on the page: more than `bottom - top` where a cell goes on with a
+    /// line that was across the cut.
+    pub height: f32,
+}
+
+impl RowPart {
+    /// By how much the part is higher than the part of the layout of the row that it is.
+    pub fn extra(&self) -> f32 {
+        self.height - (self.bottom - self.top)
+    }
+}
+
+/// The part of a table row that the window has, or `None` if the row is whole in it (or is not
+/// split over pages).
+pub(super) fn row_part(window: &Window, node: &Node, id: NodeId) -> Option<RowPart> {
+    let cuts = node.row_cuts.as_ref()?;
+    let (start, end) = window.row_cut_offsets(id);
+    if start.is_none() && end.is_none() {
+        return None;
+    }
+    let (start, end) = (start.unwrap_or(0), end.unwrap_or(cuts.height));
+    Some(RowPart {
+        top: super::rows::dequantize(start),
+        bottom: super::rows::dequantize(end.min(cuts.height)),
+        height: super::rows::dequantize(cuts.used(start, end)),
+    })
+}
+
+/// The part of a kid of a table or of a row group that is in the window: where it starts and ends
+/// in the layout of the table, relative to the kid, and by how much it is higher on the page.
+fn kid_part(nodes: &[Node], window: &Window, id: NodeId) -> (f32, f32, f32) {
+    let kid = &nodes[usize::from(id)];
+    let height = kid.layout.size.height;
+    if kid.span.as_ref().is_some_and(|span| !span.split && !span.kids.is_empty()) {
+        let (top, bottom, extra) = fragment_parts(nodes, window, kid, height);
+        (top, bottom, extra)
+    } else if let Some(part) = row_part(window, kid, id) {
+        (part.top, part.bottom, part.extra())
+    } else {
+        (0.0, height, 0.0)
+    }
+}
+
+/// [`table_fragment`] and by how much the rows that are cut make it higher.
+fn fragment_parts(nodes: &[Node], window: &Window, node: &Node, full: f32) -> (f32, f32, f32) {
     let Some(span) = node.span.as_ref() else {
-        return (0.0, full);
+        return (0.0, full, 0.0);
     };
     let in_window = |id: &NodeId| {
         nodes[usize::from(*id)]
@@ -362,27 +425,37 @@ pub(super) fn table_fragment(nodes: &[Node], window: &Window, node: &Node, full:
             .as_ref()
             .is_some_and(|span| span.start < window.end && span.end > window.start)
     };
-    let mut kids = span.kids.iter().filter(|id| in_window(id));
-    let (Some(first), last) = (kids.next(), kids.last()) else {
-        return (0.0, full);
+    let kids: Vec<NodeId> = span.kids.iter().copied().filter(|id| in_window(id)).collect();
+    let (Some(&first_id), Some(&last_id)) = (kids.first(), kids.last()) else {
+        return (0.0, full, 0.0);
     };
-    let first = &nodes[usize::from(*first)];
-    let last = last.map_or(first, |last| &nodes[usize::from(*last)]);
-    // the part of a kid that is a row group is cut, too
-    let part = |kid: &Node| {
-        if kid.span.as_ref().is_some_and(|span| !span.split && !span.kids.is_empty()) {
-            table_fragment(nodes, window, kid, kid.layout.size.height)
-        } else {
-            (0.0, kid.layout.size.height)
-        }
+    let (first, last) = (&nodes[usize::from(first_id)], &nodes[usize::from(last_id)]);
+    let extra: f32 = kids.iter().map(|&id| kid_part(nodes, window, id).2).sum();
+    let top = if window.open_at_start(span) {
+        first.layout.location.y + kid_part(nodes, window, first_id).0
+    } else {
+        0.0
     };
-    let top = if window.open_at_start(span) { first.layout.location.y + part(first).0 } else { 0.0 };
     let bottom = if window.open_at_end(span) {
-        last.layout.location.y + part(last).1
+        last.layout.location.y + kid_part(nodes, window, last_id).1
     } else {
         full
     };
-    (top, bottom)
+    (top, bottom, extra)
+}
+
+/// The part of a table or a row group that is in the window, as the top and the bottom of the
+/// fragment relative to the top of the box. `full` is the height of the box as a whole. The rows
+/// that are cut have the height that their part has on the page.
+pub(super) fn table_fragment(nodes: &[Node], window: &Window, node: &Node, full: f32) -> (f32, f32) {
+    let (top, bottom, extra) = fragment_parts(nodes, window, node, full);
+    (top, bottom + extra)
+}
+
+/// By how much the part of a kid of a table that is in the window is higher than the layout of it
+/// as a whole: what the boxes behind it on the page are moved down by.
+pub(super) fn part_extra(nodes: &[Node], window: &Window, id: NodeId) -> f32 {
+    kid_part(nodes, window, id).2
 }
 
 #[cfg(test)]
@@ -404,6 +477,8 @@ mod tests {
             scope: None,
             start_container: None,
             end_container: None,
+            start_offset: None,
+            end_offset: None,
         }
     }
 
