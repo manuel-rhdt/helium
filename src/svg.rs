@@ -412,6 +412,7 @@ impl SvgWriter {
         self.tilings.clear();
         self.masks.clear();
         let form = context.write_form(bbox, None, filter, |form| {
+            crate::pdf::set_device_defaults(form)?;
             self.in_stream(|this| this.draw_group(form, tree.root(), Transform::identity()))
         });
         self.tilings.clear();
@@ -560,6 +561,7 @@ impl SvgWriter {
                     Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
                     filter,
                     |form| {
+                        crate::pdf::set_device_defaults(form)?;
                         self.in_stream(|this| {
                             for child in group.children() {
                                 this.draw_node(form, child, Transform::identity())?;
@@ -621,6 +623,7 @@ impl SvgWriter {
         });
         let filter = self.filter;
         let form = c.pdf_context.write_form(bbox, Some(group), filter, |form| {
+            crate::pdf::set_device_defaults(form)?;
             self.in_stream(|this| {
                 if let Some(inner) = mask.mask() {
                     // a mask of the mask: it limits the content that makes the mask
@@ -1166,7 +1169,10 @@ impl SvgWriter {
             Pt(height),
             matrix(t),
             filter,
-            |cell| self.in_stream(|this| this.draw_group(cell, pattern.root(), Transform::identity())),
+            |cell| {
+                crate::pdf::set_device_defaults(cell)?;
+                self.in_stream(|this| this.draw_group(cell, pattern.root(), Transform::identity()))
+            },
         )?;
         self.tilings.insert(key, tiling);
         Ok(tiling)

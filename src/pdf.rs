@@ -1,7 +1,7 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::font_usage::FontUsage;
 use crate::layout::components::TextOperator;
-use crate::style::properties::computed::{PixelLength, PaintColor};
+use crate::style::properties::computed::{IccSpace, PixelLength, PaintColor};
 use crate::tagging::TagRecorder;
 use std::path::PathBuf;
 
@@ -175,33 +175,125 @@ fn wide_color_space(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>) -
     Ok(context.pdf_context.icc_color_space("rec2020-gamma24", lemon_pdf::icc::rec2020_gamma24_profile, 3, Some(StreamFilter::Deflate))?)
 }
 
-/// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is in an ICC
-/// space of sRGB, written once for the document: CSS chooses its colours deliberately, and the file
-/// says in which space they are, whatever a viewer takes the device to be. (Device colours, which images
-/// and shadings still have, are sRGB too: the page defines `DefaultRGB`.) Any other colour is in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4, written once for the
-/// document: matrix/TRC profiles are the best supported wide-gamut encoding of PDF viewers, and this one
-/// holds Display P3 and nearly all that CSS can write. (It has a pure gamma and not the curve of
-/// Rec. 2020 because an iPhone decodes every Rec. 2020 profile with a gamma of 2.4.) Only a colour that
-/// Rec. 2020 cannot hold is clipped, to it. The alpha is not set.
+/// Bradford adaptation from D65 to D50 (CSS Color 4, "Sample code for color conversions").
+#[rustfmt::skip]
+const D65_TO_D50: [[f64; 3]; 3] = [
+    [ 1.047_929_820_840_548_8,  0.022_946_793_341_019_088, -0.050_192_229_543_135_57],
+    [ 0.029_627_815_688_159_344, 0.990_434_484_573_249,    -0.017_073_825_029_385_14],
+    [-0.009_243_058_152_591_178, 0.015_055_144_896_577_895,  0.751_874_289_958_000_8],
+];
+#[rustfmt::skip]
+const SRGB_TO_XYZ: [[f64; 3]; 3] = [
+    [0.412_390_799_265_959_5, 0.357_584_339_383_878, 0.180_480_788_401_834_3],
+    [0.212_639_005_871_510_36, 0.715_168_678_767_756, 0.072_192_315_360_733_7],
+    [0.019_330_818_715_591_85, 0.119_194_779_794_626, 0.950_532_152_249_660_7],
+];
+#[rustfmt::skip]
+const A98_TO_XYZ: [[f64; 3]; 3] = [
+    [0.576_669_042_910_131_1, 0.185_558_237_906_546_4, 0.188_228_646_234_245_6],
+    [0.297_344_975_250_535_9, 0.627_363_566_255_466_3, 0.075_291_458_493_997_8],
+    [0.027_031_361_386_412_36, 0.070_688_852_535_827_6, 0.991_337_536_837_639_2],
+];
+#[rustfmt::skip]
+const REC2020_TO_XYZ: [[f64; 3]; 3] = [
+    [0.636_958_048_301_291, 0.144_616_903_586_208_4, 0.168_880_975_164_172_1],
+    [0.262_700_212_011_267_0, 0.677_998_071_518_871_0, 0.059_301_716_469_861_9],
+    [0.0,                     0.028_072_693_049_087_5, 1.060_985_057_710_791_3],
+];
+/// The colorants of ProPhoto RGB, which is relative to D50 already.
+#[rustfmt::skip]
+const PROPHOTO_TO_XYZ_D50: [[f64; 3]; 3] = [
+    [0.797_766_6, 0.135_181_3, 0.031_347_73],
+    [0.288_074_8, 0.711_835_2, 0.000_089_94],
+    [0.0,         0.0,         0.825_104_6],
+];
+
+/// The ICC space of a colour of `space`: the profile has its primaries and its curve, as CSS Color 4
+/// says them, written once for the document.
+fn icc_space(
+    context: &mut lemon_pdf::content::PageContext<'_, '_, '_>,
+    space: IccSpace,
+) -> Result<lemon_pdf::color_space::IccBasedColorSpace, Error> {
+    use lemon_pdf::icc::{ParametricCurve, rgb_matrix_profile};
+    const LINEAR: ParametricCurve = ParametricCurve { g: 1.0, a: 1.0, b: 0.0, c: 0.0, d: 0.0 };
+    let colorants = |to_xyz: &[[f64; 3]; 3], adapt: bool| -> [(f64, f64, f64); 3] {
+        [0, 1, 2].map(|column| {
+            let xyz = [to_xyz[0][column], to_xyz[1][column], to_xyz[2][column]];
+            let [x, y, z] = if adapt { multiply(&D65_TO_D50, xyz) } else { xyz };
+            (x, y, z)
+        })
+    };
+    let (key, name, to_xyz, adapt, curve) = match space {
+        IccSpace::SrgbLinear => ("srgb-linear", "sRGB linear", SRGB_TO_XYZ, true, LINEAR),
+        IccSpace::DisplayP3 => ("display-p3", "Display P3", P3_TO_XYZ, true, ParametricCurve::SRGB),
+        IccSpace::DisplayP3Linear => ("display-p3-linear", "Display P3 linear", P3_TO_XYZ, true, LINEAR),
+        IccSpace::A98Rgb => ("a98-rgb", "Adobe RGB (1998)", A98_TO_XYZ, true, ParametricCurve { g: 563.0 / 256.0, a: 1.0, b: 0.0, c: 0.0, d: 0.0 }),
+        IccSpace::ProphotoRgb => (
+            "prophoto-rgb",
+            "ProPhoto RGB",
+            PROPHOTO_TO_XYZ_D50,
+            false,
+            ParametricCurve { g: 1.8, a: 1.0, b: 0.0, c: 1.0 / 16.0, d: 16.0 / 512.0 },
+        ),
+        // pure gamma 2.4, as CSS Color 4 says, and the one that an iPhone decodes every Rec. 2020 profile with
+        IccSpace::Rec2020 => return wide_color_space(context),
+    };
+    let [red, green, blue] = colorants(&to_xyz, adapt);
+    Ok(context.pdf_context.icc_color_space(key, || rgb_matrix_profile(name, red, green, blue, curve), 3, Some(StreamFilter::Deflate))?)
+}
+
+/// Makes the fills (or the strokes) of the page use `color`, in the space that CSS wrote it in:
+///
+/// - sRGB (`rgb()`, `hsl()`, a hex code, a name, `color(srgb …)`) is a device colour; every page and form
+///   defines `DefaultRGB` as sRGB, so that it is sRGB in every viewer that honours it ([`set_device_defaults`]);
+/// - a colour of `color()` in a space with a profile (Display P3, Adobe RGB, ProPhoto RGB, Rec. 2020, and the
+///   linear ones) is in an ICC space of that profile, written once for the document;
+/// - every other colour (`lab()`, `lch()`, `xyz`, an `oklab()` or `oklch()` that sRGB cannot hold, a colour
+///   that is outside of the space it was written in) is CIELAB (D50) with nothing clipped: the PDF has no
+///   Oklab, so those are converted. A device may show a* and b* only within ±128 (an iPhone scales
+///   the range), so a colour beyond is written as XYZ in a `CalRGB` space of D50 instead.
+///
+/// The alpha is not set.
 fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
     let xyz = match color {
         PaintColor::Srgb(color) => {
             let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
-            let space = context.pdf_context.icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
-            let space = context.add_color_space(space);
-            let components = [channel(color.red), channel(color.green), channel(color.blue)];
-            return if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) };
+            let (r, g, b) = (channel(color.red), channel(color.green), channel(color.blue));
+            return if stroke { context.device_rgb_stroke_color(r, g, b) } else { context.device_rgb_fill_color(r, g, b) };
         }
-        PaintColor::DisplayP3(color) => {
-            let decode = |value: f64| if value <= 0.040_45 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) };
-            multiply(&P3_TO_XYZ, color.components().map(|c| decode(f64::from(c))))
+        PaintColor::Icc(color) => {
+            let space = icc_space(context, color.space)?;
+            let space = context.add_color_space(space);
+            let components = color.components().map(|value| (f64::from(value) * 100_000.0).round() / 100_000.0);
+            return if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) };
         }
         PaintColor::Xyz(color) => color.components().map(f64::from),
     };
-    let space = wide_color_space(context)?;
-    let space = context.add_color_space(space);
-    let components = rec2020_gamma24_components(xyz).map(|value| (value * 100_000.0).round() / 100_000.0);
-    if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) }
+    let [x, y, z] = multiply(&D65_TO_D50, xyz);
+    let white = lemon_pdf::color_space::D50_WHITE_POINT;
+    let f = |t: f64| if t > 216.0 / 24389.0 { t.cbrt() } else { (24389.0 / 27.0 * t + 16.0) / 116.0 };
+    let (fx, fy, fz) = (f(x / white[0]), f(y / white[1]), f(z / white[2]));
+    let (lightness, a, b) = (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz));
+    let round = |value: f64| (value * 10_000.0).round() / 10_000.0;
+    let lab = lemon_pdf::color_space::LabColorSpace::d50();
+    if a.abs() <= lab.range[1] && b.abs() <= lab.range[3] {
+        let name = context.add_lab_color_space(lab);
+        let lightness = round(lightness.clamp(0.0, 100.0));
+        return if stroke { context.lab_stroke_color(&name, lightness, round(a), round(b)) } else { context.lab_fill_color(&name, lightness, round(a), round(b)) };
+    }
+    let carrier = lemon_pdf::color_space::CalRgbColorSpace::xyz_carrier(white);
+    let name = context.add_color_space(carrier);
+    let components = [x / white[0], y / white[1], z / white[2]].map(|value| round(value.clamp(0.0, 1.0)));
+    if stroke { context.set_stroke_color_components(&name, &components) } else { context.set_fill_color_components(&name, &components) }
+}
+
+/// Defines what a device colour means in the resources of the page or form `context` (`DefaultRGB`):
+/// sRGB. A form has resources of its own, which the page's do not reach, so every form and pattern
+/// has to call this before it paints.
+pub(crate) fn set_device_defaults(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>) -> Result<(), Error> {
+    let srgb = context.pdf_context.icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
+    context.set_default_color_space(lemon_pdf::color_space::DefaultColorSpace::Rgb, srgb);
+    Ok(())
 }
 
 /// Makes the fills of the page use `color`, see [`set_color`].
@@ -300,6 +392,7 @@ fn paint_slice(
                     )),
                     filter,
                     |form| {
+                        set_device_defaults(form)?;
                         // Content of a form is not part of the structure of the page: it is
                         // not tagged.
                         paint_slice(
@@ -948,6 +1041,7 @@ pub fn write_pdf(
             None,
             page_filter,
             |form| {
+                set_device_defaults(form)?;
                 paint_items(
                     form,
                     &mut island.display_list,
@@ -1006,10 +1100,7 @@ pub fn write_pdf(
         page.add_content(&mut context, filter, |page_context| {
             // device colours (and images and shadings, which have only those) are sRGB, in every
             // viewer, instead of whatever the viewer takes the device to be
-            let srgb = page_context
-                .pdf_context
-                .icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
-            page_context.set_default_color_space(lemon_pdf::color_space::DefaultColorSpace::Rgb, srgb);
+            set_device_defaults(page_context)?;
             paint_items(
                 page_context,
                 &mut print_page.display_list,

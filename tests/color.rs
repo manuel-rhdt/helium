@@ -72,21 +72,33 @@ fn assert_color(actual: &Value, expected: [u8; 4], tolerance: i32, what: &str) {
 }
 
 #[test]
-fn modern_colour_spaces_render_as_srgb() {
-    // all of these are sRGB red
-    let spaces = [
+fn modern_colour_spaces_are_painted_in_the_space_they_were_written_in() {
+    // all of these are sRGB red; the ones that sRGB holds and that are written in it, or in Oklab, are sRGB
+    for (name, value) in [
         ("oklch", "oklch(62.8% 0.2577 29.23)"),
         ("oklab", "oklab(62.8% 0.2249 0.1258)"),
-        ("lab", "lab(54.288 80.798 69.879)"),
-        ("lch", "lch(54.288 106.824 40.855)"),
         ("color-srgb", "color(srgb 1 0 0)"),
-        ("color-xyz", "color(xyz-d65 0.4124 0.2126 0.0193)"),
-    ];
-    for (name, value) in spaces {
+    ] {
         let dump = dump(name, &format!(r#"<p style="color: {value}">x</p>"#));
         let colors = text_colors(&dump);
         assert_eq!(colors.len(), 1, "{name}: {colors:?}");
         assert_color(&colors[0], [255, 0, 0, 255], 2, name);
+    }
+    // CIELAB and XYZ are kept as XYZ (D65), and the PDF writes them as CIELAB
+    for (name, value) in [
+        ("lab", "lab(54.288 80.798 69.879)"),
+        ("lch", "lch(54.288 106.824 40.855)"),
+        ("color-xyz", "color(xyz-d65 0.4124 0.2126 0.0193)"),
+    ] {
+        let dump = dump(name, &format!(r#"<p style="color: {value}">x</p>"#));
+        let colors = text_colors(&dump);
+        assert_eq!(colors.len(), 1, "{name}: {colors:?}");
+        let color = colors[0].as_array().unwrap();
+        assert_eq!(color[0], "xyz", "{name}: {color:?}");
+        for (i, want) in [0.4124, 0.2126, 0.0193].into_iter().enumerate() {
+            let got = color[i + 1].as_f64().unwrap();
+            assert!((got - want).abs() < 0.002, "{name}: {color:?}");
+        }
     }
 }
 
