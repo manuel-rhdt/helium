@@ -226,7 +226,8 @@ impl TaffyBlockLayout {
             size: (page_width, self.page_height),
             margin: self.margin,
         };
-        let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow));
+        let group_elements = paginate::group_elements(&tree, &flow, &geometry.margins.keys);
+        let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow, &group_elements));
         let first_class = classes.of(helium_paginate::Position::Item(0)).clone();
         let first_spec = geometry.spec(&geometry.context(0, &first_class));
         let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone())
@@ -354,6 +355,11 @@ impl TaffyBlockLayout {
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
+        // the number of every page in the page groups that it is part of
+        let page_groups = paginate::group_positions(
+            &group_elements,
+            &planned.iter().map(|(start, from, to, ..)| (start.index, *from, *to)).collect::<Vec<_>>(),
+        );
         for (number, (start, from, to, fill, on_page, choices, floats)) in planned.iter().enumerate() {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
@@ -361,17 +367,11 @@ impl TaffyBlockLayout {
                 page_contexts.push(crate::layout::pages::PageContext {
                     index,
                     name: None,
-                    first_in_group: false,
                     rtl: page_margins.rtl,
+                    groups: vec![],
                 });
             }
-            let class = if start.index == 0 {
-                let mut class = classes.of(*from).clone();
-                class.1 = true;
-                class
-            } else {
-                classes.of(*from).clone()
-            };
+            let class = classes.of(*from).clone();
             let context = geometry.context(start.index, &class);
             let (edges, _) = geometry.of_page(&context);
             let spec = geometry.spec(&context);
@@ -534,7 +534,7 @@ impl TaffyBlockLayout {
                     .collect();
                 pages_report.push(page_report(start, from, to, fill, on_page, choices, &objective, &flow, std::mem::take(&mut paragraphs_log), containers, number + 1 == planned.len()));
             }
-            page_contexts.push(context);
+            page_contexts.push(crate::layout::pages::PageContext { groups: page_groups[number].clone(), ..context });
         }
         if reporting {
             let report = serde_json::json!({
@@ -1460,18 +1460,21 @@ impl<'a> Writer<'a, '_> {
                     line.entity,
                     line.height.0,
                     ifc.content_width(line.from_break, line.to_break).0,
+                    // a line with a `leader()` fills the paragraph, whatever the alignment
+                    ifc.leaders_on(line.from_break, line.to_break) > 0,
                 )
             })
             .collect();
 
         let mut line_boxes: Vec<[f32; 4]> = vec![];
-        for (index, (line_entity, height, advance)) in lines.into_iter().enumerate() {
+        for (index, (line_entity, height, advance, has_leader)) in lines.into_iter().enumerate() {
             let (x0, w0) = if index == 0 && first_line_kept {
                 (content_offset.0 + indent_offset, width - indent)
             } else {
                 (content_offset.0, width)
             };
             let (x, w) = match align {
+                _ if has_leader => (x0, w0.max(advance)),
                 TextAlign::Left | TextAlign::Start | TextAlign::End => (x0, advance),
                 TextAlign::Right => (x0 + (w0 - advance), advance),
                 TextAlign::Center => (x0 + (w0 - advance) / 2.0, advance),

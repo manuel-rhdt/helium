@@ -463,6 +463,9 @@ pub struct TextRun {
     pub manual_hyphen_points: Vec<usize>,
     /// The language of the text, for shaping, fallback fonts and hyphenation.
     pub lang: crate::style::properties::computed::Language,
+    /// If the run is the placeholder of a `leader()`: the string that fills the rest of the line
+    /// (the text of the run is a zero-width character).
+    pub leader: Option<std::sync::Arc<str>>,
 }
 
 /// The border and the padding of an inline box, as far as they are painted behind and around a

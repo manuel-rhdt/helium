@@ -10,11 +10,11 @@
 use super::FontMap;
 use super::components::{PageGeometry, Paragraph, PlacedColorGlyph, Position, TextFace, TextOperator, ZIndex};
 use super::inline::{ShapedLine, shape_line};
-use super::pages::{PageContext, PageMargins, Pages, normalize};
+use super::pages::{PageContext, PageMargins, Pages, Scope, normalize};
 use super::counters::format_counter;
 use crate::style::parse::{ContentItem, CounterName, MarginBoxKind, PageLabelSpec};
 use crate::style::properties::generated::CounterList;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use crate::style::properties::computed::{Language, PixelLength as Px, TextAlign};
 use crate::style::properties::specified::TextTransform;
@@ -92,7 +92,7 @@ impl PageCounterOps {
 /// The margin boxes of the kinds of pages that the `@page` rules tell apart.
 #[derive(Debug, Clone, Default)]
 pub struct MarginBoxes {
-    pub names: HashSet<Arc<str>>,
+    pub keys: super::pages::PageKeys,
     pub pages: HashMap<PageContext, Vec<ResolvedMarginBox>>,
     /// What the page context does to the `page` counter, by kind of page.
     pub counters: HashMap<PageContext, PageCounterOps>,
@@ -108,12 +108,12 @@ impl MarginBoxes {
 
     /// The operations on the `page` counter of a page.
     fn counter_ops(&self, page: &PageContext) -> PageCounterOps {
-        self.counters.get(&normalize(page, &self.names)).copied().unwrap_or_default()
+        self.counters.get(&normalize(page, &self.keys, Scope::Full)).copied().unwrap_or_default()
     }
 
     /// The `-helium-page-label` of a page.
     fn label_spec(&self, page: &PageContext) -> &PageLabelSpec {
-        self.labels.get(&normalize(page, &self.names)).unwrap_or(&PageLabelSpec::Auto)
+        self.labels.get(&normalize(page, &self.keys, Scope::Full)).unwrap_or(&PageLabelSpec::Auto)
     }
 
     /// The value of the `page` counter on every one of the first `num_pages` pages, which are
@@ -130,14 +130,14 @@ impl MarginBoxes {
 
     fn for_page(&self, page: &PageContext) -> &[ResolvedMarginBox] {
         self.pages
-            .get(&normalize(page, &self.names))
+            .get(&normalize(page, &self.keys, Scope::Full))
             .map_or(&[], Vec::as_slice)
     }
 }
 
 /// The page context of the page with this index.
 fn page_context(pages: &Pages, index: usize, rtl: bool) -> PageContext {
-    pages.0.get(index).cloned().unwrap_or(PageContext { index, name: None, first_in_group: false, rtl })
+    pages.0.get(index).cloned().unwrap_or(PageContext { index, name: None, rtl, groups: vec![] })
 }
 
 fn content_text(content: &[ContentItem], page: i64, pages: usize) -> String {
@@ -284,6 +284,18 @@ pub fn page_label_ranges(world: &specs::World) -> Vec<PageLabelRange> {
     ranges
 }
 
+/// The value of the `page` counter on every page of the laid out document.
+pub fn page_counter_values(world: &specs::World) -> Vec<i64> {
+    use specs::{Join, WorldExt};
+
+    let margin_boxes = world.read_resource::<MarginBoxes>();
+    let pages = world.read_resource::<Pages>();
+    let page_margins = world.read_resource::<PageMargins>();
+    let positions = world.read_storage::<Position>();
+    let num_pages = (&positions).join().map(|pos| pos.page + 1).max().unwrap_or(0);
+    margin_boxes.page_numbers(&pages, num_pages, page_margins.rtl)
+}
+
 /// Creates the paragraphs of the margin boxes of every page.
 pub struct MarginBoxPaint;
 
@@ -318,7 +330,7 @@ impl<'a> System<'a> for MarginBoxPaint {
         for page in 0..num_pages {
             let context = page_context(&pages, page, page_margins.rtl);
             // the margins of the page: the inner and outer margins of a book differ, and the
-            // first page of a document or of a page group can have other margins
+            // first page of a document can have other margins
             let edges = page_margins.edges(&context);
             let (margin_left, margin_right) = (edges.left, edges.right);
             let (page_width, page_height) =

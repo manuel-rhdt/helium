@@ -239,12 +239,38 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `<menu>` start and `<ol start>` and `<li value>` set; the number of the marker is the value of
   that counter, so `counter-increment: list-item` and the like change it. Not supported: `content`
   on elements (e.g. `content: url()` on an `<a>`), `::first-line` and `::first-letter`,
-  `target-counter()`, and `list-style-image`. Counters in `@page` margin boxes are only `page`
+  and `list-style-image`. Counters in `@page` margin boxes are only `page`
   and `pages`. A counter value stays within a 32 bit integer (an increment that would leave the
   range is not made), and a name that is repeated in one `counter-*` property counts every time.
   The behaviour is the one of the published CSS Lists 3 (a counter of the previous sibling is only
   inherited when the parent has none of that name); `counter-reset: reversed()` and `<ol
   reversed>`, which are only in the editor's draft, are not supported.
+  Cross-references (CSS GCPM 3): `target-counter(target, name, style)`, `target-counters(target,
+  name, separator, style)` and `target-text(target)` read the counter and the text content of the
+  element that a link points at, which may come after the reference (a table of contents). The
+  `target` is `attr(href)` (or another attribute, with or without the `url` type) or a `url()` or
+  string; only the fragment (`#id`) is followed. The counter `page` is the page number (the value
+  of the `page` counter on the page where the element starts, in the given style). `target-text()`
+  has no second argument but `content`; its text leaves out generated content and elements that are
+  not displayed, and white space is collapsed. A target that does not exist (or has no page)
+  gives nothing. The page of a target is known after pagination, so a document that reads any of
+  these is laid out again with what the previous layout found, until the page numbers stop
+  changing, but at most five times (the last layout is the result, with a warning, if they do
+  not settle). A document without them is laid out once. Not supported: `target-text()` with
+  `before`, `after` and `first-letter`.
+  `leader(type)` (CSS Generated Content 3, 2.5, a Working Draft that calls itself a very rough
+  draft): `dotted` (the string `.`), `solid` (`_`), `space` (a space) or a string, which is repeated
+  over what is left of the line, so that `a::after { content: leader('.') target-counter(attr(href),
+  page) }` makes the entry of a table of contents. The line that has a leader is as wide as the
+  paragraph whatever its `text-align` (a justified line gives the room to the leader, not to its
+  spaces), the text after the leader is at the end of the line, and the string is drawn at the places
+  of a grid that starts at the start of the line, so that the leaders of lines that follow each other
+  line up (with a `text-indent`, the first line has its grid moved by it). Only whole copies of the
+  string are drawn. The leader has no width when the lines are broken: it takes what is left of the
+  line that the text before and after it ends up on, and if there are several on a line, they share
+  it. It is an artifact, not text of the document, and has the font and the colour of the element
+  that it is in. Not supported: a leader in vertical text (it takes the room, but draws nothing),
+  and moving the text after a leader to the next line when no whole copy of the string fits.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
 - **Math functions** (CSS Values 4): `calc()`, `min()`, `max()`, `clamp()` (with `none`),
   `round()` (`nearest`, `up`, `down`, `to-zero`), `mod()`, `rem()`, `sin()`, `cos()`, `tan()`,
@@ -270,18 +296,35 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   and in other custom properties. Cycles make the properties invalid, and so does a `var()` with
   neither value nor fallback; the property that uses it is then `unset`. Custom properties are
   not available in `@page` rules and their margin boxes, nor in the style of inline SVG.
-- **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors, named
-  pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
+- **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors (`:first` is
+  the first page of the document, also in `name:first`, which matches it only if it is a page
+  with that name: CSS Paged Media 3, 4.2.2), `:nth(An+B)` and `:nth(An+B of name)` (CSS GCPM 3,
+  3.1 and 3.2, below), named pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
   from strings and `counter(page)` / `counter(pages)`, in the styles `decimal`,
   `decimal-leading-zero`, `lower-` and `upper-roman`, `lower-` and `upper-alpha`/`latin`,
   `arabic-indic` and `persian`. The `page` counter is a real counter (CSS Paged Media 3, § 6.1):
   `counter-reset`, `counter-increment` and `counter-set` of `page` in an `@page` rule apply to the
   pages that it selects, in the order of CSS Lists: the page counter is reset, then incremented
-  (by 1 unless `counter-increment` says otherwise), then set. So `@page chapter:first {
-  counter-reset: page 0 }` makes the first page of a chapter page 1, and `@page {
+  (by 1 unless `counter-increment` says otherwise), then set. So `@page :first {
+  counter-reset: page 0 }` makes the first page of the document page 1, `@page :nth(1 of chapter) {
+  counter-reset: page 0 }` the first page of every chapter, and `@page {
   counter-increment: page 2 }` numbers the pages 2, 4, 6. Not supported: `counter-reset` of
   `page` on an element (the specification does not say what it does), and changing `pages`
   (which, as in the specification, has no effect).
+  **Page groups and `:nth()`** (CSS GCPM 3, a Working Draft): an element with a `page` name and a
+  forced break (`break-before` or `break-after` of `page`, `left`, `right`, `recto` or `verso`) makes
+  a *page group* of the pages that it has (`div.chapter { page: chapter; break-before: page }`: every
+  chapter is a group). `:nth(An+B)` selects pages of the document by their number from 1, and
+  `:nth(An+B of name)` the pages in the groups of that name, counted in the group: `@page :nth(1 of
+  chapter)` is the first page of every chapter, `:nth(odd of chapter)` its odd pages. A page can be
+  in several groups (a chapter in a part), and is counted in the innermost one of a name. An element
+  makes a group only if it has the name itself: one that inherits it from its parent does not (so a
+  chapter inside another element of the name `chapter` is not a group of its own). `:nth()` has the
+  specificity of `:first`. It works in every `@page` rule except for `size` and `margin`: the
+  pages are chosen before the number of a page in its group is known, so these follow `:nth(1 of
+  name)` (the first page of a group, which is known) and not other `:nth()` selectors, which have
+  no effect on them (the margin boxes, the `page` counter and `-helium-page-label` of the rule
+  apply). There is no `name:first` for a group: `:first` is the first page of the document.
 - **Fragmentation:** `break-before`/`-after`/`-inside` (`auto`, `avoid`, `avoid-page`,
   `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
   `widows`, and `looseness` (not in CSS: how many lines more or fewer than the best breaking a
@@ -357,12 +400,20 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 ## PDF output
 
 PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from the HTML
-(headings, paragraphs, lists, tables, links, figures, formulas) and the PDF/UA identifier;
+(headings, paragraphs, lists, tables, links, figures, formulas, and tables of contents) and the PDF/UA identifier;
 document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels (the `-helium-page-label` of the `@page` rules, which is not in CSS: `auto` takes the style of the one `counter(page)` that the headers and footers of the page have between them, and the decimal number if there are none or several, `none` the decimal number, or `"A-" counter(page, upper-roman)` a prefix and the style of the number; the text around a counter in a header or footer is never a prefix); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
 from the elements with a `bookmark-level` (UA default: `h1` to `h6` and `role=heading` with `aria-level`; entries nest by level, elements that are not displayed are left out), with `bookmark-label` (strings, `content()`, `attr()`) and `bookmark-state`; `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
 groups for `opacity`.
+
+A table of contents is tagged as one (ISO 32000-1, 14.8.4.3) if it has the role `doc-toc` (DPUB-ARIA,
+`<nav role="doc-toc">`): it is a `TOC`, its `<li>` are `TOCI`, a list in an item is a `TOC` of its
+own after the item (its sub-entries), and a link in an item is a `Reference` that holds the `Link`.
+The number of an item is its `Lbl`. A list directly in the table is not a structure element, and
+block-level `<p>`, `<div>` and `<a>` in it are items, so a table of contents that is not a list
+works too. The `leader()` of an entry is an artifact. The page numbers (`target-counter()`) are
+text of the item.
 
 ### Conformance
 

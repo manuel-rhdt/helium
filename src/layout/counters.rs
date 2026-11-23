@@ -318,6 +318,19 @@ impl CounterState {
             .unwrap_or(0)
     }
 
+    /// The counters in scope for the element that was entered last, with their values, outermost
+    /// first (what `target-counter()` reads at the element that a link points at).
+    pub fn snapshot(&self) -> HashMap<String, Vec<i64>> {
+        let mut out: HashMap<String, Vec<i64>> = HashMap::new();
+        let Some(frame) = self.frames.last() else { return out };
+        for counter in frame.set.iter() {
+            out.entry(counter.name.clone())
+                .or_default()
+                .push(self.values.get(&counter.id).copied().unwrap_or(0));
+        }
+        out
+    }
+
     /// The values of `counters(name, ...)`: the counters of that name in scope, outermost first.
     pub fn values(&self, name: &str) -> Vec<i64> {
         let Some(frame) = self.frames.last() else { return vec![0] };

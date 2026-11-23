@@ -12,7 +12,7 @@ use crate::tree::ElementRef;
 
 use cssparser::{
     AtRuleParser, BasicParseErrorKind, CowRcStr, ParseError, Parser, ParserState,
-    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss,
+    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss, Token,
 };
 use html5ever::{LocalName, Namespace};
 use log::warn;
@@ -194,11 +194,43 @@ pub enum GeneralizedSelector {
 }
 
 /// The pseudo-class of an `@page` selector.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PagePseudo {
     First,
     Left,
     Right,
+    /// `:nth(An+B)`, `:nth(An+B of name)`: CSS GCPM 3, 3.1.
+    Nth(PageNth),
+}
+
+/// The argument of `:nth()` of an `@page` selector: the pages whose number (counted from 1) is
+/// `a * n + b` for some `n >= 0`, in the document or, with a name, in the page groups with that
+/// name (the pages that an element with that `page` and a forced break creates).
+/// https://www.w3.org/TR/css-gcpm-3/#document-page-selectors
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageNth {
+    pub a: i32,
+    pub b: i32,
+    pub of: Option<std::sync::Arc<str>>,
+}
+
+impl PageNth {
+    /// Whether the page with the number `position` (counted from 1) is one of the pages.
+    pub fn matches(&self, position: usize) -> bool {
+        let position = position as i64;
+        let (a, b) = (i64::from(self.a), i64::from(self.b));
+        if a == 0 {
+            return position == b;
+        }
+        let distance = position - b;
+        distance % a == 0 && distance / a >= 0
+    }
+
+    /// Whether it selects exactly the first page of a group: the one case that the size and
+    /// the margins of a page can follow (see `layout::pages`).
+    pub fn is_first_of_group(&self) -> bool {
+        self.of.is_some() && self.a == 0 && self.b == 1
+    }
 }
 
 /// The selector of an `@page` rule: an optional page name (see the `page` property) and an
@@ -226,7 +258,7 @@ impl PageSelector {
         let name = if self.name.is_some() { 100 } else { 0 };
         let pseudo = match self.pseudo {
             None => 0,
-            Some(PagePseudo::First) => 10,
+            Some(PagePseudo::First | PagePseudo::Nth(_)) => 10,
             Some(PagePseudo::Left | PagePseudo::Right) => 1,
         };
         name + pseudo
@@ -633,11 +665,28 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
             return Ok(AtPrelude::Page(PageSelector { name, pseudo: None }));
         }
         input.expect_colon()?;
-        let ident = input.expect_ident()?.clone();
-        let pseudo = match_ignore_ascii_case! { &ident,
-            "first" => PagePseudo::First,
-            "left" => PagePseudo::Left,
-            "right" => PagePseudo::Right,
+        let token = input.next()?.clone();
+        let pseudo = match token {
+            Token::Ident(ident) => match_ignore_ascii_case! { &ident,
+                "first" => PagePseudo::First,
+                "left" => PagePseudo::Left,
+                "right" => PagePseudo::Right,
+                _ => return Err(invalid()),
+            },
+            Token::Function(function) if function.eq_ignore_ascii_case("nth") => {
+                input.parse_nested_block(|input| {
+                    let (a, b) = cssparser::parse_nth(input)?;
+                    let of = if input.is_exhausted() {
+                        None
+                    } else {
+                        input.expect_ident_matching("of")?;
+                        let group = input.expect_ident()?.clone();
+                        input.expect_exhausted()?;
+                        Some(std::sync::Arc::<str>::from(&*group))
+                    };
+                    Ok(PagePseudo::Nth(PageNth { a, b, of }))
+                })?
+            }
             _ => return Err(invalid()),
         };
         if !input.is_exhausted() {

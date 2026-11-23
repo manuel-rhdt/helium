@@ -59,6 +59,9 @@ pub struct InlineFormattingContext {
     /// The no-break spaces where lines wrap, by advance: justification stretches and shrinks
     /// them like the spaces of the break points, but a line cannot break there.
     pub ties: Vec<Tie>,
+    /// The `leader()` placeholders of the paragraph, by advance: a line that has one is as wide
+    /// as the paragraph, and the leader takes the room that is left on it.
+    pub leaders: Vec<LeaderAt>,
     pub lines: Vec<Line>,
     /// The `inline-block` boxes in `elements` and the advance at which they start. Before the
     /// boxes are measured they have no width.
@@ -133,6 +136,7 @@ impl InlineFormattingContext {
             absolutes,
             break_points: vec![],
             ties: vec![],
+            leaders: vec![],
             lines: vec![],
             atom_offsets: vec![],
             direction: style.text.direction,
@@ -152,7 +156,8 @@ impl InlineFormattingContext {
     pub fn word_spacing(&self, line_num: usize, line_width: Px) -> Px {
         let line = &self.lines[line_num];
         let num_spaces = self.space_count(line.from_break, line.to_break);
-        if self.text_align != TextAlign::Justify || num_spaces == 0 {
+        // (the room of a justified line that has a leader goes to the leader)
+        if self.text_align != TextAlign::Justify || num_spaces == 0 || self.leaders_on(line.from_break, line.to_break) > 0 {
             return Px(0.0);
         }
         let is_last_line =
@@ -170,7 +175,11 @@ impl InlineFormattingContext {
     /// right in a right-to-left paragraph.
     pub fn line_start_offset(&self, line_num: usize, line_width: Px, word_spacing: Px) -> Px {
         let line = &self.lines[line_num];
-        if self.base_rtl && self.text_align == TextAlign::Justify && word_spacing == Px(0.0) {
+        if self.base_rtl
+            && self.text_align == TextAlign::Justify
+            && word_spacing == Px(0.0)
+            && self.leaders_on(line.from_break, line.to_break) == 0
+        {
             (line_width - self.content_width(line.from_break, line.to_break)).max(Px(0.0))
         } else {
             Px(0.0)
@@ -561,6 +570,14 @@ impl InlineFormattingContext {
     }
 
     /// The no-break spaces whose advance is in `start..end`.
+    /// The `leader()` placeholders on the line between two break points.
+    pub fn leaders_on(&self, from_break: usize, to_break: usize) -> usize {
+        let (start, end) = (self.break_points[from_break].advance_after, self.break_points[to_break].advance_before);
+        // (a small margin: the advances are sums of floats)
+        const EPSILON: f32 = 0.01;
+        self.leaders.iter().filter(|leader| leader.advance >= start - Px(EPSILON) && leader.advance <= end + Px(EPSILON)).count()
+    }
+
     fn ties_in(&self, start: Px, end: Px) -> &[Tie] {
         let first = self.ties.partition_point(|tie| tie.advance < start);
         let last = self.ties.partition_point(|tie| tie.advance < end).max(first);
@@ -698,6 +715,13 @@ impl InlineFormattingContext {
                 .filter(|&&(atom, _)| atom < element)
                 .fold(Px(0.0), |sum, &(_, width)| sum + width);
         }
+        for leader in &mut self.leaders {
+            let element = position(leader.entity).unwrap_or(0);
+            leader.advance += atoms
+                .iter()
+                .filter(|&&(atom, _)| atom < element)
+                .fold(Px(0.0), |sum, &(_, width)| sum + width);
+        }
         // The runs are shifted by the boxes in front of them; the run of a box itself gets its
         // width.
         let width_of_atoms = |include: &dyn Fn(usize) -> bool| {
@@ -761,6 +785,13 @@ pub struct Tie {
     pub shrink: Px,
 }
 
+/// The placeholder of a `leader()`: where it is, by advance.
+#[derive(Debug, Copy, Clone)]
+pub struct LeaderAt {
+    pub entity: Entity,
+    pub advance: Px,
+}
+
 // TODO: test this
 impl<'a> System<'a> for FindPossibleLineBreaks {
     type SystemData = (
@@ -781,6 +812,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
             elements,
             break_points,
             ties,
+            leaders,
             atom_offsets,
             direction,
             plaintext,
@@ -790,6 +822,7 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
         } in (&mut inline_formatting_contexts).join()
         {
             ties.clear();
+            leaders.clear();
             // an empty block (e.g. `<div></div>`) has an inline formatting context without content
             if elements.is_empty() {
                 continue;
@@ -839,6 +872,9 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
 
             for (index, &entity) in elements.iter().enumerate() {
                 let element_start = advance;
+                if text_runs.get(entity).is_some_and(|run| run.leader.is_some()) {
+                    leaders.push(LeaderAt { entity, advance: advance.px() });
+                }
                 if let Some(text_run) = text_runs.get_mut(entity) {
                     let font = &font_map[&text_run.face.font_name];
                     let levels = runs_of(index);
@@ -2120,8 +2156,10 @@ impl<'a> System<'a> for LineBoxCreator {
                     let shifted = shift_x != Px(0.0) || shift_y != Px(0.0);
                     // the move across the line, in physical terms
                     let cross_shift = if flow.is_vertical() { physical_x } else { physical_y };
+                    // (a leader is an artifact: it is not the text of the document)
                     let tag = text_runs
                         .get(entity)
+                        .filter(|run| run.leader.is_none())
                         .and_then(|_| structure.content_tag(entity, piece.start));
                     match (open_tag, tag) {
                         (Some((open, end)), Some(tag))
@@ -2139,7 +2177,49 @@ impl<'a> System<'a> for LineBoxCreator {
                             }
                         }
                     }
-                    let piece_width = if let Some(run) = text_runs.get(entity) {
+                    let piece_width = if let Some((run, pattern)) =
+                        text_runs.get(entity).and_then(|run| run.leader.clone().map(|pattern| (run, pattern)))
+                    {
+                        // A `leader()`: the string is repeated over what is left of the line, at
+                        // the places of a grid that starts at the start of the line, so that the
+                        // leaders of lines that follow each other line up.
+                        let font = &font_map[&run.face.font_name];
+                        let room = (line_size - ifc.content_width(line.from_break, line.to_break)).max(Px(0.0));
+                        let width = room / ifc.leaders_on(line.from_break, line.to_break).max(1) as f32;
+                        if width > Px(0.0) && !flow.is_vertical() {
+                            let mut measuring = TextOps::default();
+                            let unit = shape_piece_in_flow(
+                                &pattern, font, &run.face.fallback, None, run.face.font_size, Px(0.0), &[], false, None, None, &mut measuring,
+                            );
+                            if unit > Px(0.0) {
+                                let first = ((advance.0 - 0.01) / unit.0).ceil().max(0.0);
+                                let last = ((advance.0 + width.0 + 0.01) / unit.0).floor();
+                                let count = (last - first).max(0.0) as usize;
+                                if count > 0 {
+                                    if previous_font != Some((run.face.font_name.clone(), run.face.font_size)) {
+                                        ops.push(TextOperator::SetFont(run.face.font_name.clone(), run.face.font_size));
+                                        previous_font = Some((run.face.font_name.clone(), run.face.font_size));
+                                    }
+                                    if previous_color != Some(run.face.color) {
+                                        ops.push(TextOperator::SetColor(run.face.color));
+                                        previous_color = Some(run.face.color);
+                                    }
+                                    let start = Px(first * unit.0);
+                                    ops.push(TextOperator::BeginArtifact);
+                                    ops.push(TextOperator::NewLine { x_offset: start - text_cursor, leading: Px(0.0) });
+                                    text_cursor = start;
+                                    shape_piece_in_flow(
+                                        &pattern.repeat(count), font, &run.face.fallback, None, run.face.font_size, Px(0.0), &[], false, None, None, &mut ops,
+                                    );
+                                    ops.push(TextOperator::EndMarkedContent);
+                                }
+                            }
+                        }
+                        // the text that follows starts where the leader ends
+                        ops.push(TextOperator::NewLine { x_offset: advance + width - text_cursor, leading: Px(0.0) });
+                        text_cursor = advance + width;
+                        width
+                    } else if let Some(run) = text_runs.get(entity) {
                         if previous_font != Some((run.face.font_name.clone(), run.face.font_size)) {
                             ops.push(TextOperator::SetFont(run.face.font_name.clone(), run.face.font_size));
                             previous_font = Some((run.face.font_name.clone(), run.face.font_size));

@@ -29,9 +29,10 @@
   @page :right { margin-left: 0.85in; margin-right: 0.55in; }
   @page :left { margin-left: 0.55in; margin-right: 0.85in; }
 
-  /* The page that opens a chapter has no running head */
-  @page chapter:first { @top-center { content: none; } }
-  section.chapter { page: chapter; }
+  /* The page that opens a chapter has no running head. Every chapter is a page group (an element
+     with a page name and a forced break, CSS GCPM 3), of which :nth(1 of chapter) is the first page */
+  @page :nth(1 of chapter) { @top-center { content: none; } }
+  section.chapter { page: chapter; break-before: page; }
 
   html { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, "Latin Modern Roman", serif; }
   body { font-size: 10.5pt; line-height: 14.5pt; color: #111; margin: 0; orphans: 2; widows: 2; }

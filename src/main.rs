@@ -147,17 +147,16 @@ fn main() -> Result<(), Error> {
     };
 
     let before_render_tree = Instant::now();
-    let dom = if is_xml {
-        generate_render_tree_xml(&text)
-            .and_then(|document| parser::into_html_document(&document))
-            .map_err(|message| Error::Layout(format!("{}: {}", opt.input.display(), message)))?
-    } else {
-        generate_render_tree(&text)
+    // (a document with cross-references is laid out more than once, from a new tree each time)
+    let parse = || -> Result<crate::tree::DomRef, String> {
+        if is_xml {
+            generate_render_tree_xml(&text)
+                .and_then(|document| parser::into_html_document(&document))
+                .map_err(|message| format!("{}: {}", opt.input.display(), message))
+        } else {
+            Ok(generate_render_tree(&text))
+        }
     };
-    info!(
-        "TIMED: generate_render_tree {:?}",
-        before_render_tree.elapsed()
-    );
 
     let device = if opt.crop {
         // dummy device. Final page size is determined by cropping
@@ -174,8 +173,7 @@ fn main() -> Result<(), Error> {
     };
     layout::report_pagination(opt.dump_pagination.is_some());
     let before_layout = Instant::now();
-    let mut layout_context =
-        layout::layout(dom.clone(), device, opt.crop, &input_dir)?;
+    let (dom, mut layout_context) = layout::layout_resolved(&parse, device, opt.crop, &input_dir)?;
     info!("TIMED: layout {:?}", before_layout.elapsed());
 
     if let Some(report) =
