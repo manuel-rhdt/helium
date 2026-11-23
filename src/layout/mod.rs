@@ -497,19 +497,28 @@ pub fn layout_with_references(
         ..Default::default()
     };
     if !crop {
-        page_margins.names = pages::selected_names(&flow_constructor.styles);
-        page_styles.names = page_margins.names.clone();
-        for page in pages::representative_pages(&page_margins.names, rtl) {
+        page_margins.keys = pages::selected_names(&flow_constructor.styles);
+        page_styles.keys = page_margins.keys.clone();
+        // the style of every kind of page, for what is done after the pages are chosen (the
+        // background)
+        for page in pages::representative_pages(&page_styles.keys, rtl, pages::Scope::Full) {
             let mut style_builder = StyleBuilder::new(Default::default());
             for rule in pages::matching_rules(&flow_constructor.styles, &page) {
                 for declaration in rule.properties.declarations() {
                     style_builder.add_declaration(declaration);
                 }
             }
+            page_styles.pages.insert(page, std::sync::Arc::new(style_builder.build()));
+        }
+        // the size and the margins of the kinds of pages that the kernel can tell apart
+        for page in pages::representative_pages(&page_margins.keys, rtl, pages::Scope::Geometry) {
+            let mut style_builder = StyleBuilder::new(Default::default());
+            for rule in pages::matching_rules_in(&flow_constructor.styles, &page, pages::Scope::Geometry) {
+                for declaration in rule.properties.declarations() {
+                    style_builder.add_declaration(declaration);
+                }
+            }
             let style = style_builder.build();
-            page_styles
-                .pages
-                .insert(page.clone(), std::sync::Arc::new(style.clone()));
             // the size of the page: `size` of a rule for a kind of page replaces the plain size
             let (width, height) = page_box(&style, device);
             let (plain_width, plain_height) = page_box(&page_style(&flow_constructor.styles), device);

@@ -285,18 +285,33 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   not available in `@page` rules and their margin boxes, nor in the style of inline SVG.
 - **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors (`:first` is
   the first page of the document, also in `name:first`, which matches it only if it is a page
-  with that name: CSS Paged Media 3, 4.2.2; there is no selector for the first page of a chapter),
-  named pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
+  with that name: CSS Paged Media 3, 4.2.2), `:nth(An+B)` and `:nth(An+B of name)` (CSS GCPM 3,
+  3.1 and 3.2, below), named pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
   from strings and `counter(page)` / `counter(pages)`, in the styles `decimal`,
   `decimal-leading-zero`, `lower-` and `upper-roman`, `lower-` and `upper-alpha`/`latin`,
   `arabic-indic` and `persian`. The `page` counter is a real counter (CSS Paged Media 3, § 6.1):
   `counter-reset`, `counter-increment` and `counter-set` of `page` in an `@page` rule apply to the
   pages that it selects, in the order of CSS Lists: the page counter is reset, then incremented
   (by 1 unless `counter-increment` says otherwise), then set. So `@page :first {
-  counter-reset: page 0 }` makes the first page of the document page 1, and `@page {
+  counter-reset: page 0 }` makes the first page of the document page 1, `@page :nth(1 of chapter) {
+  counter-reset: page 0 }` the first page of every chapter, and `@page {
   counter-increment: page 2 }` numbers the pages 2, 4, 6. Not supported: `counter-reset` of
   `page` on an element (the specification does not say what it does), and changing `pages`
   (which, as in the specification, has no effect).
+  **Page groups and `:nth()`** (CSS GCPM 3, a Working Draft): an element with a `page` name and a
+  forced break (`break-before` or `break-after` of `page`, `left`, `right`, `recto` or `verso`) makes
+  a *page group* of the pages that it has (`div.chapter { page: chapter; break-before: page }`: every
+  chapter is a group). `:nth(An+B)` selects pages of the document by their number from 1, and
+  `:nth(An+B of name)` the pages in the groups of that name, counted in the group: `@page :nth(1 of
+  chapter)` is the first page of every chapter, `:nth(odd of chapter)` its odd pages. A page can be
+  in several groups (a chapter in a part), and is counted in the innermost one of a name. An element
+  makes a group only if it has the name itself: one that inherits it from its parent does not (so a
+  chapter inside another element of the name `chapter` is not a group of its own). `:nth()` has the
+  specificity of `:first`. It works in every `@page` rule except for `size` and `margin`: the
+  pages are chosen before the number of a page in its group is known, so these follow `:nth(1 of
+  name)` (the first page of a group, which is known) and not other `:nth()` selectors, which have
+  no effect on them (the margin boxes, the `page` counter and `-helium-page-label` of the rule
+  apply). There is no `name:first` for a group: `:first` is the first page of the document.
 - **Fragmentation:** `break-before`/`-after`/`-inside` (`auto`, `avoid`, `avoid-page`,
   `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
   `widows`, and `looseness` (not in CSS: how many lines more or fewer than the best breaking a

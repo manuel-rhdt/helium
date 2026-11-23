@@ -190,6 +190,114 @@ fn named_first_needs_the_name_on_the_first_page() {
     assert!(has_header(&dump, 1));
 }
 
+/// Two chapters of two pages each, and the rest of the style sheet.
+fn chapters(name: &str, rules: &str) -> Value {
+    dump(
+        name,
+        &format!(
+            "<style>{PAGE} {STYLE} {rules} \
+             section {{ page: chapter; break-before: page }} p {{ break-after: page }}</style>\
+             <section><p>a</p><p>b</p></section><section><p>c</p><p>d</p></section>"
+        ),
+    )
+}
+
+#[test]
+fn nth_of_a_name_selects_pages_of_every_page_group() {
+    // CSS GCPM 3, 3.2: every chapter (an element with a `page` name and a forced break) is a
+    // page group, and `:nth(1 of chapter)` is the first page of each of them
+    let dump = chapters("nth_first", "@page :nth(1 of chapter) { @top-center { content: none } }");
+    assert_eq!(page_count(&dump), 4);
+    let headers: Vec<bool> = (0..4).map(|page| has_header(&dump, page)).collect();
+    assert_eq!(headers, [false, true, false, true]);
+    let dump = chapters("nth_second", "@page :nth(2 of chapter) { @top-center { content: none } }");
+    let headers: Vec<bool> = (0..4).map(|page| has_header(&dump, page)).collect();
+    assert_eq!(headers, [true, false, true, false]);
+}
+
+#[test]
+fn nth_of_a_name_takes_a_formula() {
+    let dump = chapters("nth_formula", "@page :nth(n+2 of chapter) { @top-center { content: none } }");
+    let headers: Vec<bool> = (0..4).map(|page| has_header(&dump, page)).collect();
+    assert_eq!(headers, [true, false, true, false]);
+}
+
+#[test]
+fn a_page_name_without_a_forced_break_makes_no_page_group() {
+    // the chapters have the same name, so there is no break between them, and no group
+    let dump = dump(
+        "no_group",
+        &format!(
+            "<style>{PAGE} {STYLE} @page :nth(1 of chapter) {{ @top-center {{ content: none }} }} \
+             section {{ page: chapter }} p {{ break-after: page }}</style>\
+             <section><p>a</p><p>b</p></section><section><p>c</p><p>d</p></section>"
+        ),
+    );
+    assert_eq!(page_count(&dump), 4);
+    assert!((0..4).all(|page| has_header(&dump, page)));
+}
+
+#[test]
+fn nth_without_a_name_counts_the_pages_of_the_document() {
+    let dump = chapters("nth_document", "@page :nth(3) { @top-center { content: none } }");
+    let headers: Vec<bool> = (0..4).map(|page| has_header(&dump, page)).collect();
+    assert_eq!(headers, [true, true, false, true]);
+    let dump = chapters("nth_even", "@page :nth(2n) { @top-center { content: none } }");
+    let headers: Vec<bool> = (0..4).map(|page| has_header(&dump, page)).collect();
+    assert_eq!(headers, [true, false, true, false]);
+}
+
+#[test]
+fn a_page_is_part_of_the_groups_around_it() {
+    // the book is a group of four pages, and each chapter in it a group of two: page 3 is the
+    // third page of the book and the first of the second chapter
+    let html = |rules: &str| {
+        format!(
+            "<style>{PAGE} {STYLE} {rules} \
+             .book {{ page: book; break-before: page }} .chapter {{ page: chapter; break-before: page }} \
+             p {{ break-after: page }}</style>\
+             <div class=book><section class=chapter><p>a</p><p>b</p></section>\
+             <section class=chapter><p>c</p><p>d</p></section></div>"
+        )
+    };
+    let dump_of = |name: &str, rules: &str| dump(name, &html(rules));
+    let dump = dump_of("book_third", "@page :nth(3 of book) { @top-center { content: none } }");
+    assert_eq!(page_count(&dump), 4);
+    assert_eq!((0..4).map(|page| has_header(&dump, page)).collect::<Vec<_>>(), [true, true, false, true]);
+    let dump = dump_of("book_first", "@page :nth(1 of chapter) { @top-center { content: none } }");
+    assert_eq!((0..4).map(|page| has_header(&dump, page)).collect::<Vec<_>>(), [false, true, false, true]);
+}
+
+#[test]
+fn a_page_counter_can_restart_in_every_page_group() {
+    // `counter-reset: page 0` on the first page of a chapter: its pages are 1 and 2 in each
+    let dump = dump(
+        "counter",
+        &format!(
+            "<style>{PAGE} {STYLE} @page :nth(1 of chapter) {{ counter-reset: page 0 }} \
+             @page {{ @top-center {{ content: none }} @bottom-center {{ content: counter(page) }} }} \
+             section {{ page: chapter; break-before: page }} p {{ break-after: page }}</style>\
+             <section><p>a</p><p>b</p></section><section><p>c</p><p>d</p></section>"
+        ),
+    );
+    // the footers: one digit each, and (with no header) the four pages have the same runs
+    assert_eq!(page_count(&dump), 4);
+    let footer = |page| {
+        let text: Vec<String> = dump["paint"]["text"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|run| run["page"] == page)
+            .flat_map(|run| run["pieces"].as_array().into_iter().flatten())
+            .filter_map(|piece| piece["text"].as_str().map(str::to_owned))
+            .collect();
+        text.join("")
+    };
+    let footers: Vec<String> = (0..4).map(footer).collect();
+    assert!(footers[0].ends_with('1') && footers[1].ends_with('2'), "{footers:?}");
+    assert!(footers[2].ends_with('1') && footers[3].ends_with('2'), "{footers:?}");
+}
+
 #[test]
 fn page_rules_are_applied_by_specificity() {
     // the more specific rule wins although it comes first

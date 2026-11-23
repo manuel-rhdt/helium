@@ -220,7 +220,8 @@ impl TaffyBlockLayout {
             size: (page_width, self.page_height),
             margin: self.margin,
         };
-        let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow));
+        let group_elements = paginate::group_elements(&tree, &flow, &geometry.margins.keys);
+        let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow, &group_elements));
         let first_class = classes.of(helium_paginate::Position::Item(0)).clone();
         let first_spec = geometry.spec(&geometry.context(0, &first_class));
         let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone())
@@ -337,6 +338,11 @@ impl TaffyBlockLayout {
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
+        // the number of every page in the page groups that it is part of
+        let page_groups = paginate::group_positions(
+            &group_elements,
+            &planned.iter().map(|(start, from, to, ..)| (start.index, *from, *to)).collect::<Vec<_>>(),
+        );
         for (number, (start, from, to, fill, on_page, choices, floats)) in planned.iter().enumerate() {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
@@ -345,6 +351,7 @@ impl TaffyBlockLayout {
                     index,
                     name: None,
                     rtl: page_margins.rtl,
+                    groups: vec![],
                 });
             }
             let class = classes.of(*from).clone();
@@ -506,7 +513,7 @@ impl TaffyBlockLayout {
                     .collect();
                 pages_report.push(page_report(start, from, to, fill, on_page, choices, &objective, &flow, std::mem::take(&mut paragraphs_log), containers, number + 1 == planned.len()));
             }
-            page_contexts.push(context);
+            page_contexts.push(crate::layout::pages::PageContext { groups: page_groups[number].clone(), ..context });
         }
         if reporting {
             let report = serde_json::json!({

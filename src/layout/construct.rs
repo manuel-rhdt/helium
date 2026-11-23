@@ -768,7 +768,7 @@ impl FlowConstructor {
 
     /// Resolves the styles and fonts of the margin boxes (headers and footers) of the document.
     pub fn resolve_margin_boxes(&mut self) -> MarginBoxes {
-        let names = pages::selected_names(&self.styles);
+        let keys = pages::selected_names(&self.styles);
         let rtl = self.is_rtl();
         let mut resolve = |page: &PageContext| {
             let mut resolved = vec![];
@@ -823,10 +823,10 @@ impl FlowConstructor {
         };
         let mut boxes = MarginBoxes {
             pages: HashMap::new(),
-            names: names.clone(),
+            keys: keys.clone(),
             ..Default::default()
         };
-        for page in pages::representative_pages(&names, rtl) {
+        for page in pages::representative_pages(&keys, rtl, pages::Scope::Full) {
             boxes.pages.insert(page.clone(), resolve(&page));
             // the `page` counter and the label of the page: the last rule that sets a property
             // (the most specific one) decides, as for any property

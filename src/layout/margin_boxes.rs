@@ -10,11 +10,11 @@
 use super::FontMap;
 use super::components::{PageGeometry, Paragraph, PlacedColorGlyph, Position, TextFace, TextOperator, ZIndex};
 use super::inline::{ShapedLine, shape_line};
-use super::pages::{PageContext, PageMargins, Pages, normalize};
+use super::pages::{PageContext, PageMargins, Pages, Scope, normalize};
 use super::counters::format_counter;
 use crate::style::parse::{ContentItem, CounterName, MarginBoxKind, PageLabelSpec};
 use crate::style::properties::generated::CounterList;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use crate::style::properties::computed::{Language, PixelLength as Px, TextAlign};
 use crate::style::properties::specified::TextTransform;
@@ -92,7 +92,7 @@ impl PageCounterOps {
 /// The margin boxes of the kinds of pages that the `@page` rules tell apart.
 #[derive(Debug, Clone, Default)]
 pub struct MarginBoxes {
-    pub names: HashSet<Arc<str>>,
+    pub keys: super::pages::PageKeys,
     pub pages: HashMap<PageContext, Vec<ResolvedMarginBox>>,
     /// What the page context does to the `page` counter, by kind of page.
     pub counters: HashMap<PageContext, PageCounterOps>,
@@ -108,12 +108,12 @@ impl MarginBoxes {
 
     /// The operations on the `page` counter of a page.
     fn counter_ops(&self, page: &PageContext) -> PageCounterOps {
-        self.counters.get(&normalize(page, &self.names)).copied().unwrap_or_default()
+        self.counters.get(&normalize(page, &self.keys, Scope::Full)).copied().unwrap_or_default()
     }
 
     /// The `-helium-page-label` of a page.
     fn label_spec(&self, page: &PageContext) -> &PageLabelSpec {
-        self.labels.get(&normalize(page, &self.names)).unwrap_or(&PageLabelSpec::Auto)
+        self.labels.get(&normalize(page, &self.keys, Scope::Full)).unwrap_or(&PageLabelSpec::Auto)
     }
 
     /// The value of the `page` counter on every one of the first `num_pages` pages, which are
@@ -130,14 +130,14 @@ impl MarginBoxes {
 
     fn for_page(&self, page: &PageContext) -> &[ResolvedMarginBox] {
         self.pages
-            .get(&normalize(page, &self.names))
+            .get(&normalize(page, &self.keys, Scope::Full))
             .map_or(&[], Vec::as_slice)
     }
 }
 
 /// The page context of the page with this index.
 fn page_context(pages: &Pages, index: usize, rtl: bool) -> PageContext {
-    pages.0.get(index).cloned().unwrap_or(PageContext { index, name: None, rtl })
+    pages.0.get(index).cloned().unwrap_or(PageContext { index, name: None, rtl, groups: vec![] })
 }
 
 fn content_text(content: &[ContentItem], page: i64, pages: usize) -> String {
