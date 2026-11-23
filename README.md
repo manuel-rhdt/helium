@@ -257,7 +257,20 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   these is laid out again with what the previous layout found, until the page numbers stop
   changing, but at most five times (the last layout is the result, with a warning, if they do
   not settle). A document without them is laid out once. Not supported: `target-text()` with
-  `before`, `after` and `first-letter`, and `leader()`.
+  `before`, `after` and `first-letter`.
+  `leader(type)` (CSS Generated Content 3, 2.5, a Working Draft that calls itself a very rough
+  draft): `dotted` (the string `.`), `solid` (`_`), `space` (a space) or a string, which is repeated
+  over what is left of the line, so that `a::after { content: leader('.') target-counter(attr(href),
+  page) }` makes the entry of a table of contents. The line that has a leader is as wide as the
+  paragraph whatever its `text-align` (a justified line gives the room to the leader, not to its
+  spaces), the text after the leader is at the end of the line, and the string is drawn at the places
+  of a grid that starts at the start of the line, so that the leaders of lines that follow each other
+  line up (with a `text-indent`, the first line has its grid moved by it). Only whole copies of the
+  string are drawn. The leader has no width when the lines are broken: it takes what is left of the
+  line that the text before and after it ends up on, and if there are several on a line, they share
+  it. It is an artifact, not text of the document, and has the font and the colour of the element
+  that it is in. Not supported: a leader in vertical text (it takes the room, but draws nothing),
+  and moving the text after a leader to the next line when no whole copy of the string fits.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
 - **Math functions** (CSS Values 4): `calc()`, `min()`, `max()`, `clamp()` (with `none`),
   `round()` (`nearest`, `up`, `down`, `to-zero`), `mod()`, `rem()`, `sin()`, `cos()`, `tan()`,

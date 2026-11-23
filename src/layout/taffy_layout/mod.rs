@@ -1264,19 +1264,22 @@ impl<'a> Writer<'a, '_> {
                     line.entity,
                     line.height.0,
                     ifc.content_width(line.from_break, line.to_break).0,
+                    // a line with a `leader()` fills the paragraph, whatever the alignment
+                    ifc.leaders_on(line.from_break, line.to_break) > 0,
                 )
             })
             .collect();
 
         let mut y = content_offset.1;
         let mut line_boxes: Vec<[f32; 4]> = vec![];
-        for (index, (line_entity, height, advance)) in lines.into_iter().enumerate() {
+        for (index, (line_entity, height, advance, has_leader)) in lines.into_iter().enumerate() {
             let (x0, w0) = if index == 0 {
                 (content_offset.0 + indent_offset, width - indent)
             } else {
                 (content_offset.0, width)
             };
             let (x, w) = match align {
+                _ if has_leader => (x0, w0.max(advance)),
                 TextAlign::Left | TextAlign::Start | TextAlign::End => (x0, advance),
                 TextAlign::Right => (x0 + (w0 - advance), advance),
                 TextAlign::Center => (x0 + (w0 - advance) / 2.0, advance),

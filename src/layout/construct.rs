@@ -38,6 +38,20 @@ pub struct IslandSpec {
 enum ContentPiece {
     Text(String),
     Image(crate::style::properties::gradient::UrlImage),
+    /// `leader()`: the string that is repeated.
+    Leader(String),
+}
+
+/// The attribute of the inline element that a `leader()` of `content` makes: its value is the
+/// string that fills the line.
+const GENERATED_LEADER: &str = "data-helium-leader";
+
+/// The string of the leader that the element makes, if it is one.
+fn leader_pattern(data: &ParsedData) -> Option<String> {
+    let ParsedData::Element(element) = data else { return None };
+    let attributes = element.attributes.borrow();
+    let key = QualName::new(None, ns!(), html5ever::LocalName::from(GENERATED_LEADER));
+    attributes.get(&key).map(|attribute| attribute.value.to_string())
 }
 
 /// The attribute that marks the `<img>` that the `content: url()` of a pseudo-element makes.
@@ -435,6 +449,12 @@ impl FlowConstructor {
                     }
                     pieces.push(ContentPiece::Image(image.clone()));
                 }
+                ContentItem::Leader(pattern) => {
+                    if !text.is_empty() {
+                        pieces.push(ContentPiece::Text(std::mem::take(&mut text)));
+                    }
+                    pieces.push(ContentPiece::Leader(pattern.clone()));
+                }
                 ContentItem::Counter(name, counter_style) => {
                     text.push_str(&super::counters::format_counter(self.counters.value(name), *counter_style))
                 }
@@ -513,7 +533,7 @@ impl FlowConstructor {
             .into_iter()
             .filter_map(|piece| match piece {
                 ContentPiece::Text(text) => Some(text),
-                ContentPiece::Image(_) => None,
+                ContentPiece::Image(_) | ContentPiece::Leader(_) => None,
             })
             .collect()
     }
@@ -526,6 +546,25 @@ impl FlowConstructor {
             match piece {
                 ContentPiece::Text(text) => {
                     node.append(DomRef::new(NodeData::from_html_data(ParsedData::Text(std::cell::RefCell::new(text)))));
+                }
+                ContentPiece::Leader(pattern) => {
+                    // an inline box with a zero-width placeholder, which the line is filled for
+                    // where the lines are made (see `LineBoxCreator`)
+                    let name = QualName::new(None, ns!(), html5ever::LocalName::from(GENERATED_LEADER));
+                    let span = DomRef::new(NodeData::from_html_data(ParsedData::Element(ElementData {
+                        name: QualName::new(None, ns!(html), local_name!("span")),
+                        attributes: std::cell::RefCell::new(
+                            [(name.clone(), Attribute { name, value: pattern.as_str().into() })].into_iter().collect(),
+                        ),
+                        template_contents: None,
+                    })));
+                    let mut span_style = StyleBuilder::new(style.clone()).build();
+                    std::sync::Arc::make_mut(&mut span_style.box_).display = Display::Inline;
+                    span.set_style(span_style);
+                    span.append(DomRef::new(NodeData::from_html_data(ParsedData::Text(std::cell::RefCell::new(
+                        "\u{2060}".to_owned(),
+                    )))));
+                    node.append(span);
                 }
                 ContentPiece::Image(url) => {
                     let Some(image) = url.load().cloned() else { continue };
@@ -1695,7 +1734,13 @@ impl EntityConstructor {
                     );
                     let background = inline_background(&node);
                     let edges = inline_box_edges(&node);
+                    let leader = node.parent_node().and_then(|parent| leader_pattern(parent.html_data()));
                     let built = self.build_text_entity(style, transformed.as_deref().unwrap_or(&*text));
+                    if let Some(pattern) = leader {
+                        if let Some(run) = self.world.write_storage::<components::TextRun>().get_mut(built.0) {
+                            run.leader = Some(pattern.into());
+                        }
+                    }
                     if background.is_some() || edges.is_some() {
                         if let Some(run) = self.world.write_storage::<components::TextRun>().get_mut(built.0) {
                             run.background = background;
@@ -1832,6 +1877,7 @@ impl EntityConstructor {
                 hyphens,
                 manual_hyphen_points,
                 lang,
+                leader: None,
             })
             .build();
         LayoutEntity(entity)

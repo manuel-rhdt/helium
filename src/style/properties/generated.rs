@@ -31,6 +31,10 @@ pub enum ContentItem {
     TargetCounters(LinkTarget, String, String, CounterStyle),
     /// `target-text(target)`: the text of the element that the link points at.
     TargetText(LinkTarget),
+    /// `leader(type)`: a string that is repeated to fill the rest of the line (CSS Generated
+    /// Content 3, 2.5). This is the string: `.` for `dotted`, `_` for `solid`, a space for
+    /// `space`.
+    Leader(String),
     OpenQuote,
     CloseQuote,
     /// Like `open-quote` and `close-quote`, but without a quotation mark.
@@ -158,6 +162,24 @@ impl<'i> PropertyValue<'i> for Content {
                         let style = counter_style(input)?;
                         input.expect_exhausted()?;
                         Ok(ContentItem::TargetCounters(target, name, separator, style))
+                    })?,
+                    "leader" => input.parse_nested_block(|input| {
+                        let pattern = match input.next()?.clone() {
+                            Token::Ident(ident) => match_ignore_ascii_case! { &ident,
+                                "dotted" => ".".to_owned(),
+                                "solid" => "_".to_owned(),
+                                "space" => " ".to_owned(),
+                                _ => return invalid(),
+                            },
+                            // (line breaks in the string are ignored)
+                            Token::QuotedString(string) => string.chars().filter(|ch| !matches!(ch, '\n' | '\r')).collect(),
+                            _ => return invalid(),
+                        };
+                        if pattern.is_empty() {
+                            return invalid();
+                        }
+                        input.expect_exhausted()?;
+                        Ok(ContentItem::Leader(pattern))
                     })?,
                     "target-text" => input.parse_nested_block(|input| {
                         let target = LinkTarget::parse(input)?;
