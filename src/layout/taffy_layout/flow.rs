@@ -580,6 +580,20 @@ impl Extractor<'_, '_, '_> {
                         from: header_end as usize,
                         to: end as usize,
                         node,
+                        footer: false,
+                    });
+                }
+            }
+            // the footer rows of a table are repeated behind the last row of the pages in front
+            // of the one that has them
+            if let Some(footer) = self.tree.repeated_footer(id) {
+                if let Some(footer_start) = self.tree.node(footer).span.as_ref().map(|span| span.start) {
+                    let node = self.extent(Anchor::Top(footer), Anchor::Bottom(footer));
+                    self.flow.repeats.push(helium_paginate::Repeat {
+                        from: start as usize,
+                        to: footer_start as usize,
+                        node,
+                        footer: true,
                     });
                 }
             }

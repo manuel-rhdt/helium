@@ -261,6 +261,17 @@ impl TaffyBlockLayout {
                 Some((table, (header, whole)))
             })
             .collect();
+        // the footer rows that the pages repeat inside of a table
+        let footers: HashMap<NodeId, (NodeId, window::Window)> = (0..tree.nodes.len())
+            .map(NodeId::from)
+            .filter(|&id| tree.node(id).content == Content::Table)
+            .filter_map(|table| {
+                let footer = tree.repeated_footer(table)?;
+                let span = tree.node(footer).span.as_ref()?;
+                let whole = window::Window::over(span.start, span.end);
+                Some((table, (footer, whole)))
+            })
+            .collect();
         // choose the pages
         let before = std::time::Instant::now();
         let mut service = service::TreeService::new(&mut tree, &flow, first_spec.block_size);
@@ -464,6 +475,8 @@ impl TaffyBlockLayout {
                 page_bottom: edges.top.0 + spec.block_size - bottom_floats,
                 fragments: &mut fragments,
                 headers: &headers,
+                footers: &footers,
+                block_size: spec.block_size,
                 repeating: false,
                 repeated: &mut repeated,
                 overlay: None,
@@ -665,6 +678,11 @@ struct Writer<'a, 'w> {
     /// The header rows that the tables repeat, by table: the row group and a window of the items
     /// that it has.
     headers: &'a HashMap<NodeId, (NodeId, window::Window)>,
+    /// The footer rows that the tables repeat, by table: the row group and a window of the items
+    /// that it has.
+    footers: &'a HashMap<NodeId, (NodeId, window::Window)>,
+    /// The height of the content area of the page, which decides whether a footer is repeated.
+    block_size: f32,
     /// Whether the header of a table is being written again, behind a page break. It is written
     /// as parts of the boxes (the box is on the page that it was first written on, too), and it
     /// is not part of the structure of the document.
@@ -845,11 +863,14 @@ impl<'a> Writer<'a, '_> {
         // A page that goes on inside of a table has the header rows of the table at its top.
         let repeat = if open_start && content == Content::Table { self.repeat_of(id) } else { None };
         let repeat_height = repeat.map_or(0.0, |(_, height)| height);
+        // A page that ends inside of a table has the footer rows of the table behind its last row.
+        let footer = if open_end && content == Content::Table { self.footer_of(id) } else { None };
+        let footer_height = footer.map_or(0.0, |(_, height)| height);
         let (cut_top, cut_height) = match table_part {
             Some(_) => {
                 let (top, bottom) =
                     window::table_fragment(self.nodes, self.window, node, layout.size.height);
-                (top, Some(bottom - top + repeat_height))
+                (top, Some(bottom - top + repeat_height + footer_height))
             }
             None => (0.0, None),
         };
@@ -1091,6 +1112,12 @@ impl<'a> Writer<'a, '_> {
                     self.window = window_before;
                     written?;
                 }
+                // (what goes on on the next page reaches down to the footer, not to the bottom of
+                // the page)
+                let bottom_before = self.page_bottom;
+                if footer.is_some() {
+                    self.page_bottom = frame.origin.y + shift + (inline_size.1 - footer_height);
+                }
                 let mut extra = 0.0;
                 for child in parts {
                     let mut child_origin = frame.child_origin(&self.layout_of(child));
@@ -1098,6 +1125,22 @@ impl<'a> Writer<'a, '_> {
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
                     extra += window::part_extra(self.nodes, self.window, child);
+                }
+                self.page_bottom = bottom_before;
+                if let Some((footer, _)) = footer {
+                    // the footer rows again, directly behind the last row of the part of the table
+                    // on this page
+                    let footer_layout = self.layout_of(footer);
+                    let mut footer_origin = frame.child_origin(&footer_layout);
+                    footer_origin.y = frame.origin.y + shift + (inline_size.1 - footer_height);
+                    let (footer_z, footer_base) = self.child_z(footer, z, z_base);
+                    let footers = self.footers;
+                    let window_before = std::mem::replace(&mut self.window, &footers[&id].1);
+                    let repeating_before = std::mem::replace(&mut self.repeating, true);
+                    let written = self.write_box(footer, footer_origin, flow, footer_z, footer_base);
+                    self.repeating = repeating_before;
+                    self.window = window_before;
+                    written?;
                 }
             }
         }
@@ -1262,6 +1305,16 @@ impl<'a> Writer<'a, '_> {
         let (header, _) = self.headers.get(&table)?;
         let span = self.node(*header).span.as_ref()?;
         (self.window.start > span.end).then(|| (*header, self.layout_of(*header).size.height))
+    }
+
+    /// The footer rows that the page repeats behind the last row of a table that it ends in, and
+    /// their height: the footer is not on the page, and it is not more than a quarter of it (CSS
+    /// Tables 3, 6.2).
+    fn footer_of(&self, table: NodeId) -> Option<(NodeId, f32)> {
+        let (footer, _) = self.footers.get(&table)?;
+        let span = self.node(*footer).span.as_ref()?;
+        let height = self.layout_of(*footer).size.height;
+        (self.window.end <= span.start && f64::from(height) * 4.0 <= f64::from(self.block_size)).then(|| (*footer, height))
     }
 
     /// How far the top of the part of a row group that is on the page is below its top.

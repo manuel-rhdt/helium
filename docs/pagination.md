@@ -91,7 +91,14 @@ Limits of this, in order of importance:
   (`Writer::repeating`), with no element of their own in the structure tree: their text belongs to the cells of the
   header (the content of a tagged element may be on several pages). The gap between the header and
   the first row (`border-spacing`) is not repeated, and a header that comes after the rows in
-  the source is laid out first but not repeated.
+  the source is laid out first but not repeated. The room of the header is kept on a page that
+  starts inside of a row that is split over pages, too. The footer rows of a table (the first
+  `tfoot`, which is laid out last) are repeated directly behind the last row of every page that
+  ends inside of the table, as CSS Tables 3 (6.2) has it, if the footer is not more than a quarter
+  of the page (`Repeat::footer`): the kernel adds the room of the footer to a page that ends in
+  front of it (`PageFill::repeated`), and the writer writes the rows again, as parts of the boxes,
+  behind the part of the table that is on the page, where what goes on on the next page ends at
+  the top of the footer. The page that has the footer has it where it is, once.
   A box with a `height` is not split either (a minimum height is dropped for a box that is
   cut).
 - **Table rows that are split.** A row that may be taller than a page is a container item
@@ -117,8 +124,8 @@ Limits of this, in order of importance:
   of the cut or than `widows` behind it are fragments with a violation, which the pages avoid like
   the ones of the paragraphs of the flow. Not done: a cell that spans rows (`rowspan`) is not
   split, nor a row behind or in front of one; a nested table or a flex or grid container in a cell
-  is one piece; the header rows are not split, and the footer rows are not repeated (the spec
-  repeats header and footer rows of up to a quarter of the page each); a table on pages of
+  is one piece; the header and footer rows are not split (and the header is repeated whatever
+  its height, where the spec repeats it up to a quarter of the page); a table on pages of
   different widths is cut by the offsets of the last width that the layout service was asked
   about.
 - **Multi-column containers.** A container with columns whose height is the one of its content

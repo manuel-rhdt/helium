@@ -216,22 +216,28 @@ pub struct Problem {
     /// ([`FLOAT_FRACTION`](Problem::FLOAT_FRACTION)). A float that does not fit under it waits
     /// for a page of floats.
     pub float_fraction: f32,
-    /// Boxes that are repeated at the top of the pages that go on in the middle of a table: the
-    /// header rows (see [`Repeat`]).
+    /// Boxes that are repeated on the pages that go on in the middle of a table: the header rows
+    /// and the footer rows (see [`Repeat`]).
     pub repeats: Vec<Repeat>,
 }
 
-/// A box that is repeated at the top of every page that starts inside of a table, after the
-/// box: the header rows of the table. The box takes room on such a page, in front of the content.
+/// A box of a table that is repeated on the pages that go on inside of it: the header rows at the
+/// top of every page that starts inside of the table, and the footer rows directly behind the last
+/// row of every page that ends inside of it. The box takes room on such a page.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Repeat {
-    /// The first item behind the header. A page that starts at an item after this one (behind the
-    /// break that follows the header) repeats it.
+    /// For a header, the first item behind it: a page that starts at an item after this one
+    /// (behind the break that follows the header) repeats it. For a footer, the first item of the
+    /// table: a page that ends behind it, so that the next one starts after this item, repeats it.
     pub from: usize,
-    /// The end of the table: a page that starts at this item or after it does not repeat it.
+    /// For a header, the end of the table: a page that starts at this item or after it does not
+    /// repeat it. For a footer, the first item of the footer: a page that ends before it repeats
+    /// it, the page that has the footer has it where it is.
     pub to: usize,
-    /// The extent of the header.
+    /// The extent of the header or the footer.
     pub node: NodeRef,
+    /// Whether it is a footer.
+    pub footer: bool,
 }
 
 /// The ways to break a paragraph that a page can choose among (see
@@ -283,7 +289,7 @@ impl Problem {
         }
     }
 
-    /// The header rows of the tables are repeated on the pages that go on inside of them.
+    /// The header and the footer rows of the tables are repeated on the pages that go on inside of them.
     pub fn with_repeats(mut self, repeats: Vec<Repeat>) -> Self {
         self.repeats = repeats;
         self
