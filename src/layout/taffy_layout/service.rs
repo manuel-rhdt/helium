@@ -498,7 +498,7 @@ impl LayoutService for TreeService<'_, '_, '_> {
         let row = self.galley(page_inline).rows.get(&id).cloned();
         if let Some(cuts) = row {
             let fragments: Rc<[Fragment]> =
-                Rc::from(super::rows::row_fragments(&cuts, from, available, self.icb_height));
+                Rc::from(super::rows::row_fragments(&cuts, from, available, (page_inline, self.icb_height)));
             self.fragments.insert(key, fragments.clone());
             return fragments;
         }

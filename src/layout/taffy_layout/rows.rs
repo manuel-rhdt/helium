@@ -37,6 +37,19 @@ pub(super) fn dequantize(offset: u32) -> f32 {
 pub(super) struct CellUnits {
     pub node: NodeId,
     pub units: Vec<(u32, u32)>,
+    /// What each piece is, in the same order.
+    pub marks: Vec<Mark>,
+}
+
+/// What a piece of a cell is: a line of a paragraph (which paragraph, the number of the line and
+/// the number of lines, and the `orphans` and `widows` of it), or another piece (`paragraph` 0).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Mark {
+    pub paragraph: u32,
+    pub index: u32,
+    pub count: u32,
+    pub orphans: u32,
+    pub widows: u32,
 }
 
 /// Where a row can be cut, for one width.
@@ -100,6 +113,28 @@ impl RowCuts {
     }
 }
 
+impl RowCuts {
+    /// Whether a fragment that ends at the cut `offset` leaves fewer lines of a paragraph of a
+    /// cell in front of the cut than its `orphans`, or behind it than its `widows`.
+    pub fn violations(&self, offset: u32) -> (bool, bool) {
+        let (mut orphans, mut widows) = (false, false);
+        for cell in &self.cells {
+            let split = cell.units.partition_point(|&(_, bottom)| bottom <= offset);
+            if split == 0 || split >= cell.units.len() {
+                continue;
+            }
+            let (before, after) = (cell.marks[split - 1], cell.marks[split]);
+            if before.paragraph == 0 || before.paragraph != after.paragraph {
+                continue;
+            }
+            let in_front = before.index + 1;
+            orphans |= in_front < before.orphans;
+            widows |= before.count.saturating_sub(in_front) < before.widows;
+        }
+        (orphans, widows)
+    }
+}
+
 impl HeliumTree<'_, '_> {
     /// Where the row can be cut, as it is laid out now.
     pub(super) fn row_cuts(&mut self, row: NodeId) -> RowCuts {
@@ -118,16 +153,17 @@ impl HeliumTree<'_, '_> {
             if hidden {
                 continue;
             }
-            let mut found: Vec<(f32, f32)> = vec![];
+            let mut found: Vec<(f32, f32, Mark)> = vec![];
             self.collect_units(cell, top, &mut found);
-            let mut units: Vec<(u32, u32)> = found
+            let mut pieces: Vec<((u32, u32), Mark)> = found
                 .into_iter()
-                .map(|(top, bottom)| (quantize(top), quantize(bottom)))
-                .filter(|&(top, bottom)| bottom > top)
+                .map(|(top, bottom, mark)| ((quantize(top), quantize(bottom)), mark))
+                .filter(|&((top, bottom), _)| bottom > top)
                 .collect();
-            units.sort_by_key(|&(top, bottom)| (bottom, top));
+            pieces.sort_by_key(|&((top, bottom), _)| (bottom, top));
+            let (units, marks): (Vec<_>, Vec<_>) = pieces.into_iter().unzip();
             candidates.extend(units.iter().map(|&(_, bottom)| bottom).filter(|&bottom| bottom > 0 && bottom < height));
-            cells.push(CellUnits { node: cell, units });
+            cells.push(CellUnits { node: cell, units, marks });
         }
         candidates.sort_unstable();
         candidates.dedup();
@@ -137,7 +173,7 @@ impl HeliumTree<'_, '_> {
     /// The pieces of the content of a box that no cut may be in, by their top and their bottom
     /// from the top of the row: the lines of the paragraphs, and the boxes that are not split.
     /// `top` is where the border box of the box is.
-    fn collect_units(&mut self, id: NodeId, top: f32, units: &mut Vec<(f32, f32)>) {
+    fn collect_units(&mut self, id: NodeId, top: f32, units: &mut Vec<(f32, f32, Mark)>) {
         let (layout, content, entity, shift, whole, hidden) = {
             let node = self.node(id);
             let whole = node.columns.is_some()
@@ -154,8 +190,8 @@ impl HeliumTree<'_, '_> {
         }
         let bottom = top + layout.size.height;
         match content {
-            Content::Replaced | Content::Table => units.push((top, bottom)),
-            _ if whole => units.push((top, bottom)),
+            Content::Replaced | Content::Table => units.push((top, bottom, Mark::default())),
+            _ if whole => units.push((top, bottom, Mark::default())),
             Content::Inline => {
                 let (line_width, indent) = super::service::paragraph_width(self, id);
                 let heights: Vec<f32> = {
@@ -178,9 +214,15 @@ impl HeliumTree<'_, '_> {
                         None => vec![],
                     }
                 };
+                let (orphans, widows) = self
+                    .computed_values
+                    .get(entity)
+                    .map_or((2, 2), |style| (style.page.orphans as u32, style.page.widows as u32));
+                let count = heights.len() as u32;
                 let mut y = top + layout.border.top + layout.padding.top + shift;
-                for height in heights {
-                    units.push((y, y + height));
+                for (index, height) in heights.into_iter().enumerate() {
+                    let mark = Mark { paragraph: entity.id() + 1, index: index as u32, count, orphans, widows };
+                    units.push((y, y + height, mark));
                     y += height;
                 }
             }
@@ -206,20 +248,26 @@ pub(super) fn row_fragments(
     cuts: &RowCuts,
     from: Option<ContainerCut>,
     available: f64,
-    page_height: f32,
+    page: (f32, f32),
 ) -> Vec<Fragment> {
     let start = from.map_or(0, |cut| cut.item);
-    let fragment = |end: Option<u32>| Fragment {
-        end: end.map(|offset| ContainerCut::at_item(offset as usize)),
-        used: f64::from(dequantize(cuts.used(start, end.unwrap_or(cuts.height)))),
-        end_kind: BreakKind::Allowed,
-        orphan_violation: false,
-        widow_violation: false,
-        avoid_violation: false,
+    let fragment = |end: Option<u32>| {
+        let (orphan_violation, widow_violation) = end.map_or((false, false), |offset| cuts.violations(offset));
+        Fragment {
+            end: end.map(|offset| ContainerCut::at_item(offset as usize)),
+            used: f64::from(dequantize(cuts.used(start, end.unwrap_or(cuts.height)))),
+            end_kind: BreakKind::Allowed,
+            orphan_violation,
+            widow_violation,
+            avoid_violation: false,
+        }
     };
     let whole = fragment(None);
-    // a row that fits on a page is not split
-    if from.is_none() && dequantize(cuts.height) <= page_height {
+    // A row that is at most half as high as the page, and as wide, is kept whole; the others can
+    // be split where the page ends (CSS Tables 3, 6.1: they are "freely fragmentable").
+    let (width, height) = page;
+    let kept_whole = dequantize(cuts.height) * 2.0 <= height.min(width);
+    if from.is_none() && kept_whole {
         return vec![whole];
     }
     let mut found: Vec<Fragment> = cuts
@@ -252,6 +300,7 @@ mod tests {
         CellUnits {
             node: NodeId::from(index),
             units: units.iter().map(|&(top, bottom)| (quantize(top), quantize(bottom))).collect(),
+            marks: vec![Mark::default(); units.len()],
         }
     }
 
@@ -271,11 +320,35 @@ mod tests {
     }
 
     #[test]
-    fn a_row_that_fits_a_page_is_one_fragment() {
-        let fragments = row_fragments(&two_cells(), None, 30.0, 400.0);
+    fn a_row_of_up_to_half_a_page_is_one_fragment() {
+        // 300 pixels on a page of 600: kept whole, even where it does not fit what is left
+        let fragments = row_fragments(&two_cells(), None, 30.0, (700.0, 600.0));
         assert_eq!(fragments.len(), 1);
         assert_eq!(fragments[0].end, None);
         assert_eq!(fragments[0].used, 300.0);
+    }
+
+    #[test]
+    fn a_row_of_more_than_half_a_page_can_be_split_where_the_page_ends() {
+        // 300 pixels on a page of 400 (which it fits): freely fragmentable (CSS Tables 3, 6.1)
+        let fragments = row_fragments(&two_cells(), None, 150.0, (700.0, 400.0));
+        assert!(fragments.len() >= 2);
+        assert!(fragments.iter().all(|fragment| fragment.used <= 150.0 && fragment.end.is_some()));
+    }
+
+    #[test]
+    fn a_cut_inside_a_paragraph_that_leaves_one_line_is_a_violation() {
+        let mark = |index| Mark { paragraph: 7, index, count: 5, orphans: 2, widows: 2 };
+        let cell = CellUnits {
+            node: NodeId::from(1usize),
+            units: (0..5).map(|line| (quantize(line as f32 * 10.0), quantize((line + 1) as f32 * 10.0))).collect(),
+            marks: (0..5).map(mark).collect(),
+        };
+        let row = RowCuts { height: quantize(50.0), cells: vec![cell], candidates: vec![] };
+        // after the first line: an orphan; after the fourth: a widow; after the second: neither
+        assert_eq!(row.violations(quantize(10.0)), (true, false));
+        assert_eq!(row.violations(quantize(20.0)), (false, false));
+        assert_eq!(row.violations(quantize(40.0)), (false, true));
     }
 
     #[test]
@@ -316,7 +389,7 @@ mod tests {
     #[test]
     fn a_tall_row_is_cut_where_it_fits() {
         let row = two_cells();
-        let fragments = row_fragments(&row, None, 120.0, 140.0);
+        let fragments = row_fragments(&row, None, 120.0, (400.0, 140.0));
         assert!(fragments.len() >= 2);
         assert!(fragments.iter().all(|fragment| fragment.used <= 120.0));
         assert!(fragments.iter().all(|fragment| fragment.end.is_some()));
@@ -325,7 +398,7 @@ mod tests {
     #[test]
     fn the_last_fragment_ends_the_row() {
         let row = two_cells();
-        let last = row_fragments(&row, Some(ContainerCut::at_item(quantize(290.0) as usize)), 140.0, 140.0);
+        let last = row_fragments(&row, Some(ContainerCut::at_item(quantize(290.0) as usize)), 140.0, (400.0, 140.0));
         assert_eq!(last.len(), 1);
         assert_eq!(last[0].end, None);
         // (the second cell has a line from 272 to 289 across the cut at 290... no: it ends at 289)
@@ -336,7 +409,7 @@ mod tests {
     fn nothing_that_fits_is_the_least_that_can_be_placed() {
         let cells = vec![cell(1, &[(0.0, 200.0)])];
         let row = RowCuts { height: quantize(300.0), cells, candidates: vec![quantize(200.0)] };
-        let fragments = row_fragments(&row, None, 100.0, 140.0);
+        let fragments = row_fragments(&row, None, 100.0, (400.0, 140.0));
         assert_eq!(fragments.len(), 1);
         assert_eq!(fragments[0].used, 200.0);
     }

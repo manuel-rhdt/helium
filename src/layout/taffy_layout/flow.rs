@@ -731,7 +731,7 @@ impl Extractor<'_, '_, '_> {
         let (width, height) = self.page_size;
         // (the cells share the width: a lower estimate of what the row needs)
         let cell_width = (width / cells).max(1.0);
-        node.children.iter().any(|&cell| self.estimated_height(cell, cell_width) >= height * 0.5)
+        node.children.iter().any(|&cell| self.estimated_height(cell, cell_width) >= height * 0.25)
     }
 
     /// An estimate of the height of the text in a box that is `width` wide.

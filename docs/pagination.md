@@ -108,13 +108,19 @@ Limits of this, in order of importance:
   state that the kernel keeps. The writer (`write_box`) writes the row whole above the page, shifted
   up by the start of the part, and clips what it writes to the part (`Writer::clip`): boxes outside
   of it are not written, the ones across it are written as parts with no padding and border at the
-  cut, and the lines of a paragraph are the ones in the part. A row that fits a page is one
-  fragment, and a row is only a container item if the text in its cells is estimated to take half a
-  page or more (`row_may_split`), so most rows are the boxes that they were. Not done: a cell that
-  spans rows (`rowspan`) is not split, nor a row behind or in front of one; a nested table or a
-  flex or grid container in a cell is one piece; the header rows are not split; a table on pages of
-  different widths is cut by the offsets of the last width that the layout service was asked about;
-  and there are no `orphans` and `widows` for the lines of the cells.
+  cut, and the lines of a paragraph are the ones in the part. A row that is at most half as high as
+  the page, and as wide, is kept whole, as CSS Tables 3 (6.1) has it; the other rows are "freely
+  fragmentable": the page takes as much of them as fits, so a long row does not leave the room
+  below the rows in front of it empty. A row is only a container item if the text in its cells is
+  estimated to take a quarter of a page or more (`row_may_split`), so most rows are the boxes that
+  they were. The cuts inside a paragraph of a cell that leave fewer lines than `orphans` in front
+  of the cut or than `widows` behind it are fragments with a violation, which the pages avoid like
+  the ones of the paragraphs of the flow. Not done: a cell that spans rows (`rowspan`) is not
+  split, nor a row behind or in front of one; a nested table or a flex or grid container in a cell
+  is one piece; the header rows are not split, and the footer rows are not repeated (the spec
+  repeats header and footer rows of up to a quarter of the page each); a table on pages of
+  different widths is cut by the offsets of the last width that the layout service was asked
+  about.
 - **Multi-column containers.** A container with columns whose height is the one of its content
   is split over pages. One that has a `height`, `max-height`, `min-height` or `aspect-ratio`, one
   inside of another container with columns, a flex or grid container or a table cell, and any in a

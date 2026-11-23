@@ -113,11 +113,30 @@ fn the_rows_around_a_split_row_are_where_they_belong() {
 }
 
 #[test]
-fn a_row_that_fits_a_page_is_not_split() {
-    // 6 boxes of 20 pixels fit on a page of 140: the row stays in one piece, on a page of its own
-    // if it does not fit where it is
+fn a_row_of_up_to_half_a_page_is_not_split() {
+    // 3 boxes of 20 pixels are less than half of the page of 140: the row is kept whole, on the
+    // next page where it does not fit what is left of the first
     let dump = dump(
-        "fits",
+        "kept_whole",
+        &format!(
+            "<table><tr><td>{}</td></tr><tr><td>{}</td></tr></table>",
+            boxes(5, 20, "#0f0"),
+            boxes(3, 20, "#00f")
+        ),
+    );
+    let blue = painted(&dump, BLUE);
+    assert_on_pages(&blue, 3);
+    let pages: std::collections::BTreeSet<u64> = blue.iter().map(|&(page, ..)| page).collect();
+    assert_eq!(pages.len(), 1, "{blue:?}");
+    assert_eq!(*pages.iter().next().unwrap(), 1, "{blue:?}");
+}
+
+#[test]
+fn a_row_of_more_than_half_a_page_fills_the_page_and_goes_on() {
+    // 6 boxes of 20 pixels are more than half of the page: where only two fit on the first page
+    // the row is split, instead of leaving the room empty
+    let dump = dump(
+        "fills",
         &format!(
             "<table><tr><td>{}</td></tr><tr><td>{}</td></tr></table>",
             boxes(5, 20, "#0f0"),
@@ -126,6 +145,7 @@ fn a_row_that_fits_a_page_is_not_split() {
     );
     let blue = painted(&dump, BLUE);
     assert_on_pages(&blue, 6);
-    let pages: std::collections::BTreeSet<u64> = blue.iter().map(|&(page, ..)| page).collect();
-    assert_eq!(pages.len(), 1, "{blue:?}");
+    let first = blue.iter().filter(|&&(page, ..)| page == 0).count();
+    let later = blue.iter().filter(|&&(page, ..)| page == 1).count();
+    assert_eq!((first, later), (2, 4), "{blue:?}");
 }
