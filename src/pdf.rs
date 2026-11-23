@@ -249,9 +249,9 @@ fn icc_space(
 /// - a colour of `color()` in a space with a profile (Display P3, Adobe RGB, ProPhoto RGB, Rec. 2020, and the
 ///   linear ones) is in an ICC space of that profile, written once for the document;
 /// - every other colour (`lab()`, `lch()`, `xyz`, an `oklab()` or `oklch()` that sRGB cannot hold, a colour
-///   that is outside of the space it was written in) is CIELAB (D50) with nothing clipped: the PDF has no
-///   Oklab, so those are converted. A device may show a* and b* only within ±128 (an iPhone scales
-///   the range), so a colour beyond is written as XYZ in a `CalRGB` space of D50 instead.
+///   that is outside of the space it was written in) is CIELAB (D50): the PDF has no Oklab, so those are
+///   converted. A device may show a* and b* only within ±128 (an iPhone scales the range), so a colour
+///   beyond is in the Rec. 2020 ICC space if that holds it, else its chroma is reduced to fit.
 ///
 /// The alpha is not set.
 fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
@@ -276,15 +276,24 @@ fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: P
     let (lightness, a, b) = (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz));
     let round = |value: f64| (value * 10_000.0).round() / 10_000.0;
     let lab = lemon_pdf::color_space::LabColorSpace::d50();
-    if a.abs() <= lab.range[1] && b.abs() <= lab.range[3] {
-        let name = context.add_lab_color_space(lab);
-        let lightness = round(lightness.clamp(0.0, 100.0));
-        return if stroke { context.lab_stroke_color(&name, lightness, round(a), round(b)) } else { context.lab_fill_color(&name, lightness, round(a), round(b)) };
+    let limit = lab.range[1];
+    let (mut a, mut b) = (a, b);
+    if a.abs() > limit || b.abs() > limit {
+        // A device may show a* and b* only within ±128 (an iPhone scales the range), so a colour beyond is in the
+        // ICC space of Rec. 2020 if that holds it, and else its chroma is reduced (the lightness and the hue stay).
+        let linear = multiply(&XYZ_TO_REC2020, xyz);
+        if linear.iter().all(|v| (-0.000_5..=1.000_5).contains(v)) {
+            let space = wide_color_space(context)?;
+            let space = context.add_color_space(space);
+            let components = rec2020_gamma24_components(xyz).map(|value| (value * 100_000.0).round() / 100_000.0);
+            return if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) };
+        }
+        let scale = limit / a.abs().max(b.abs());
+        (a, b) = (a * scale, b * scale);
     }
-    let carrier = lemon_pdf::color_space::CalRgbColorSpace::xyz_carrier(white);
-    let name = context.add_color_space(carrier);
-    let components = [x / white[0], y / white[1], z / white[2]].map(|value| round(value.clamp(0.0, 1.0)));
-    if stroke { context.set_stroke_color_components(&name, &components) } else { context.set_fill_color_components(&name, &components) }
+    let name = context.add_lab_color_space(lab);
+    let lightness = round(lightness.clamp(0.0, 100.0));
+    if stroke { context.lab_stroke_color(&name, lightness, round(a), round(b)) } else { context.lab_fill_color(&name, lightness, round(a), round(b)) }
 }
 
 /// Defines what a device colour means in the resources of the page or form `context` (`DefaultRGB`):

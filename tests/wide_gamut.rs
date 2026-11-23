@@ -3,7 +3,7 @@
 //! in every form. A colour of `color()` in a space with a profile (Display P3, Rec. 2020, ...) is in an ICC
 //! space of that profile. Everything else (`lab()`, `lch()`, `xyz`, an `oklab()` that sRGB cannot hold, a
 //! colour outside of the space it was written in) is CIELAB, and a colour with a* or b* beyond 128 (which an
-//! iPhone does not show right in Lab) is XYZ in a `CalRGB` space. Nothing is clipped.
+//! iPhone does not show right in Lab) is in the ICC space of Rec. 2020 if that holds it, else its chroma is reduced.
 
 mod common;
 
@@ -116,11 +116,17 @@ fn lch_and_an_oklch_that_srgb_cannot_hold_are_cielab() {
 }
 
 #[test]
-fn a_color_beyond_128_in_a_or_b_is_xyz_in_a_calrgb_space() {
-    let pdf = render("calrgb", "<p style=\"background: lab(60 150 40)\">x</p>");
-    assert!(pdf.contains("/CalRGB"), "{pdf}");
-    assert!(!fills_in(&pdf, "/CalRGB").is_empty());
-    assert!(fills_in(&pdf, "/CalRGB").iter().flatten().all(|v| (0.0..=1.0).contains(v)));
+fn a_color_beyond_128_in_a_or_b_is_in_the_rec2020_profile_if_it_fits() {
+    // Rec. 2020 green: a* is about -190
+    let pdf = render("beyond", "<p style=\"background: color(rec2020 0 1 0)\">x</p>");
+    assert!(fills_in(&pdf, "/Lab").is_empty(), "{pdf}");
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
+    assert!(close(&fills[0].1, [0.0, 1.0, 0.0]), "{fills:?}");
+    // a colour that Rec. 2020 does not hold either has its chroma reduced, the lightness and the hue stay
+    let pdf = render("beyond_far", "<p style=\"background: lab(60 300 100)\">x</p>");
+    let labs = fills_in(&pdf, "/Lab");
+    assert!(labs.iter().any(|c| close(c, [60.0, 128.0, 42.6667])), "{labs:?}");
+    assert!(!pdf.contains("/CalRGB"));
 }
 
 #[test]
