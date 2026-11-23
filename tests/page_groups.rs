@@ -1,5 +1,4 @@
-//! Page groups: the first page of a named group of pages and the first page of the document have
-//! their own margins.
+//! The first page of the document has its own margins.
 
 mod common;
 

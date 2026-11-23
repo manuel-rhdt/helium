@@ -155,10 +155,12 @@ fn rules_for_a_page_name_apply_to_those_pages_only() {
 }
 
 #[test]
-fn named_first_is_the_first_page_of_a_group() {
-    // two chapters of two pages each: the pages that are the first of their chapter have no header
+fn named_first_is_the_first_page_of_the_document() {
+    // CSS Paged Media 3, 4.2.2: `:first` is the first printed page of the document, and the name
+    // only adds the condition that the page has it. Two chapters of two pages each: only the first
+    // page of the first chapter has no header, not the first page of the second one.
     let dump = dump(
-        "group",
+        "first_named",
         &format!(
             "<style>{PAGE} {STYLE} @page chapter:first {{ @top-center {{ content: none }} }} \
              section {{ page: chapter; break-before: page }} p {{ break-after: page }}</style>\
@@ -168,8 +170,24 @@ fn named_first_is_the_first_page_of_a_group() {
     assert_eq!(page_count(&dump), 4);
     assert!(!has_header(&dump, 0));
     assert!(has_header(&dump, 1));
-    assert!(!has_header(&dump, 2));
+    assert!(has_header(&dump, 2));
     assert!(has_header(&dump, 3));
+}
+
+#[test]
+fn named_first_needs_the_name_on_the_first_page() {
+    // the first page of the document is not a `chapter` page, so `chapter:first` matches no page
+    let dump = dump(
+        "first_unnamed",
+        &format!(
+            "<style>{PAGE} {STYLE} @page chapter:first {{ @top-center {{ content: none }} }} \
+             section {{ page: chapter; break-before: page }}</style>\
+             <div>cover</div><section><p>a</p></section>"
+        ),
+    );
+    assert_eq!(page_count(&dump), 2);
+    assert!(has_header(&dump, 0));
+    assert!(has_header(&dump, 1));
 }
 
 #[test]

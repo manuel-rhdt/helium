@@ -283,15 +283,17 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   and in other custom properties. Cycles make the properties invalid, and so does a `var()` with
   neither value nor fallback; the property that uses it is then `unset`. Custom properties are
   not available in `@page` rules and their margin boxes, nor in the style of inline SVG.
-- **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors, named
-  pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
+- **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors (`:first` is
+  the first page of the document, also in `name:first`, which matches it only if it is a page
+  with that name: CSS Paged Media 3, 4.2.2; there is no selector for the first page of a chapter),
+  named pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
   from strings and `counter(page)` / `counter(pages)`, in the styles `decimal`,
   `decimal-leading-zero`, `lower-` and `upper-roman`, `lower-` and `upper-alpha`/`latin`,
   `arabic-indic` and `persian`. The `page` counter is a real counter (CSS Paged Media 3, § 6.1):
   `counter-reset`, `counter-increment` and `counter-set` of `page` in an `@page` rule apply to the
   pages that it selects, in the order of CSS Lists: the page counter is reset, then incremented
-  (by 1 unless `counter-increment` says otherwise), then set. So `@page chapter:first {
-  counter-reset: page 0 }` makes the first page of a chapter page 1, and `@page {
+  (by 1 unless `counter-increment` says otherwise), then set. So `@page :first {
+  counter-reset: page 0 }` makes the first page of the document page 1, and `@page {
   counter-increment: page 2 }` numbers the pages 2, 4, 6. Not supported: `counter-reset` of
   `page` on an element (the specification does not say what it does), and changing `pages`
   (which, as in the specification, has no effect).

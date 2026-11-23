@@ -3,8 +3,8 @@
 //!
 //! A page is printed on a left page if its index is odd: the first page is a right page.
 //! The name of a page is the name of the first box on it. A change of the name forces a page
-//! break. A forced break in front of a named page starts a *page group*, which `name:first`
-//! selects the first page of.
+//! break. `:first` is the first page of the document, also in `name:first` (CSS Paged Media 3,
+//! 4.2.2): there are no page groups.
 //! https://www.w3.org/TR/css-page-3/#page-selectors
 
 use super::components::EdgeValues;
@@ -19,8 +19,6 @@ pub struct PageContext {
     /// The index of the page in the document, starting at 0.
     pub index: usize,
     pub name: Option<Arc<str>>,
-    /// Whether this is the first page of its page group (it only has a group if it has a name).
-    pub first_in_group: bool,
     /// Whether the document is set from right to left. The pages of such a document are bound
     /// on the right, and the first page is a left page.
     pub rtl: bool,
@@ -45,9 +43,8 @@ pub fn selector_matches(selector: &PageSelector, page: &PageContext) -> bool {
     }
     match selector.pseudo {
         None => true,
-        // `name:first` is the first page of a group of pages with that name, `:first` the first
-        // page of the document
-        Some(PagePseudo::First) if selector.name.is_some() => page.first_in_group,
+        // CSS Paged Media 3, 4.2.2: `:first` is the first page of the document, whatever else
+        // the selector says (`chapter:first` is the first page, if it is a `chapter` page)
         Some(PagePseudo::First) => page.is_first(),
         Some(PagePseudo::Left) => page.is_left(),
         Some(PagePseudo::Right) => !page.is_left(),
@@ -83,17 +80,7 @@ pub fn representative_pages(names: &HashSet<Arc<str>>, rtl: bool) -> Vec<PageCon
     let names = std::iter::once(None).chain(names.iter().cloned().map(Some));
     for name in names {
         for index in 0..3 {
-            for first_in_group in [false, true] {
-                if name.is_none() && first_in_group {
-                    continue;
-                }
-                pages.push(PageContext {
-                    index,
-                    name: name.clone(),
-                    first_in_group,
-                    rtl,
-                });
-            }
+            pages.push(PageContext { index, name: name.clone(), rtl });
         }
     }
     pages
@@ -108,7 +95,6 @@ pub fn normalize(page: &PageContext, names: &HashSet<Arc<str>>) -> PageContext {
             index if index % 2 == 1 => 1,
             _ => 2,
         },
-        first_in_group: name.is_some() && page.first_in_group,
         name,
         rtl: page.rtl,
     }
@@ -183,8 +169,8 @@ pub struct Pages(pub Vec<PageContext>);
 mod tests {
     use super::*;
 
-    fn page(index: usize, name: Option<&str>, first_in_group: bool) -> PageContext {
-        PageContext { index, name: name.map(Arc::from), first_in_group, rtl: false }
+    fn page(index: usize, name: Option<&str>) -> PageContext {
+        PageContext { index, name: name.map(Arc::from), rtl: false }
     }
 
     fn selector(css: &str) -> PageSelector {
@@ -218,39 +204,41 @@ mod tests {
         let first = selector("@page :first");
         let left = selector("@page :left");
         let right = selector("@page :right");
-        assert!(selector_matches(&first, &page(0, None, false)));
-        assert!(!selector_matches(&first, &page(2, None, false)));
-        assert!(selector_matches(&right, &page(0, None, false)));
-        assert!(selector_matches(&left, &page(1, None, false)));
-        assert!(!selector_matches(&left, &page(2, None, false)));
-        assert!(selector_matches(&right, &page(2, None, false)));
+        assert!(selector_matches(&first, &page(0, None)));
+        assert!(!selector_matches(&first, &page(2, None)));
+        assert!(selector_matches(&right, &page(0, None)));
+        assert!(selector_matches(&left, &page(1, None)));
+        assert!(!selector_matches(&left, &page(2, None)));
+        assert!(selector_matches(&right, &page(2, None)));
     }
 
     #[test]
     fn names_match_pages_with_that_name() {
         let named = selector("@page chapter");
-        assert!(selector_matches(&named, &page(3, Some("chapter"), false)));
-        assert!(!selector_matches(&named, &page(3, Some("other"), false)));
-        assert!(!selector_matches(&named, &page(3, None, false)));
+        assert!(selector_matches(&named, &page(3, Some("chapter"))));
+        assert!(!selector_matches(&named, &page(3, Some("other"))));
+        assert!(!selector_matches(&named, &page(3, None)));
     }
 
     #[test]
-    fn named_first_is_the_first_page_of_the_group() {
+    fn named_first_is_the_first_page_of_the_document() {
+        // CSS Paged Media 3, 4.2.2: `:first` matches the first printed page of the document, and
+        // a name only adds the condition that the page has it
         let first = selector("@page chapter:first");
-        assert!(selector_matches(&first, &page(5, Some("chapter"), true)));
-        assert!(!selector_matches(&first, &page(6, Some("chapter"), false)));
-        // not the first page of the document
-        assert!(!selector_matches(&first, &page(0, None, false)));
+        assert!(selector_matches(&first, &page(0, Some("chapter"))));
+        assert!(!selector_matches(&first, &page(5, Some("chapter"))));
+        assert!(!selector_matches(&first, &page(0, Some("other"))));
+        assert!(!selector_matches(&first, &page(0, None)));
     }
 
     #[test]
     fn rules_are_ordered_by_specificity() {
         let mut styles = Styles::default();
         styles.parse_css(
-            "@page chapter:first { margin-left: 1px } @page :left { margin-left: 2px } \
+            "@page chapter:first { margin-left: 1px } @page :right { margin-left: 2px } \
              @page chapter { margin-left: 3px } @page { margin-left: 4px }",
         );
-        let order: Vec<_> = matching_rules(&styles, &page(1, Some("chapter"), true))
+        let order: Vec<_> = matching_rules(&styles, &page(0, Some("chapter")))
             .iter()
             .map(|rule| rule.page_selector().unwrap().specificity())
             .collect();
@@ -261,10 +249,10 @@ mod tests {
     #[test]
     fn pages_are_normalized() {
         let names: HashSet<Arc<str>> = [Arc::from("chapter")].into();
-        let normalized = normalize(&page(7, Some("chapter"), true), &names);
-        assert_eq!(normalized, page(1, Some("chapter"), true));
+        let normalized = normalize(&page(7, Some("chapter")), &names);
+        assert_eq!(normalized, page(1, Some("chapter")));
         // a name that no rule selects is the same as no name
-        assert_eq!(normalize(&page(4, Some("other"), true), &names), page(2, None, false));
+        assert_eq!(normalize(&page(4, Some("other")), &names), page(2, None));
         assert!(representative_pages(&names, false).contains(&normalized));
     }
 }

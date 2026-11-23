@@ -48,15 +48,13 @@ fn plain_page_numbers_need_no_labels() {
 const PAGE: &str = "@page { size: 200px 120px; margin: 20px } div { height: 60px } section { display: block }";
 
 #[test]
-fn the_page_counter_restarts_with_the_page_context() {
-    // `@page body:first { counter-reset: page 0 }`: the first page of the body is page 1
+fn the_labels_follow_the_page_context() {
+    // the labels change with the style and the prefix of the page; the counter goes on counting
     let pdf = render(
         "restart",
         &format!(
             "<style>{PAGE} @page {{ @bottom-center {{ content: counter(page) }} }}\
              @page front {{ -helium-page-label: counter(page, lower-roman) }}\
-             @page body:first {{ counter-reset: page 0 }}\
-             @page appendix:first {{ counter-reset: page 0 }}\
              @page appendix {{ -helium-page-label: \"A-\" counter(page) }}\
              .front {{ page: front }} .body {{ page: body }} .appendix {{ page: appendix }}</style>\
              <section class=front><div>1</div><div>2</div></section>\
@@ -66,7 +64,7 @@ fn the_page_counter_restarts_with_the_page_context() {
     );
     assert_eq!(
         page_labels(&pdf),
-        "/Nums [ 0 << /S /r /St 1 >> 2 << /S /D /St 1 >> 4 << /S /D /P (A-) /St 1 >> ]"
+        "/Nums [ 0 << /S /r /St 1 >> 2 << /S /D /St 3 >> 4 << /S /D /P (A-) /St 5 >> ]"
     );
 }
 

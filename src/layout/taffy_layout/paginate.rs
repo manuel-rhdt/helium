@@ -2,8 +2,8 @@
 //! the choice of the pages, and the windows that the pages are laid out from.
 //!
 //! The kernel and the solvers of `helium_paginate` do the choosing. This module tells them what
-//! a page looks like at a place (its name, whether it is the first of a page group, and its
-//! kind decide the margins and the size), and turns what they choose into a window for every
+//! a page looks like at a place (its name and its kind decide the margins and the
+//! size), and turns what they choose into a window for every
 //! page (see [`super::window`]).
 
 use super::flow::Flow;
@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// What decides the geometry of a page, other than its kind: the name of the first content on
-/// it and whether it starts a page group.
-type Class = (Option<Arc<str>>, bool);
+/// it.
+type Class = Option<Arc<str>>;
 
 /// The class of the page that starts at every place of the flow where one can start.
 pub(super) struct Classes {
@@ -52,43 +52,15 @@ impl Classes {
             }
         };
         let mut at_item = Vec::with_capacity(len + 1);
-        let mut previous_leaf: Option<usize> = None;
         for item in 0..=len {
             let leaf = next_leaf[item].and_then(|leaf| flow.leaves[leaf].map(|node| (leaf, node)));
             let name = leaf.and_then(|(_, node)| name_of(node));
-            // a page starts a page group if the box that the name comes from (the outermost box
-            // around its first box that has the name) does not contain the content in front of
-            // it
-            let first_in_group = item == 0
-                || match (&name, leaf) {
-                    (Some(name), Some((_, node))) => {
-                        let mut source = node;
-                        while let Some(parent) = flow.parents[usize::from(source)] {
-                            if name_of(parent).as_ref() == Some(name) {
-                                source = parent;
-                            } else {
-                                break;
-                            }
-                        }
-                        let contains = |item: usize| {
-                            tree.node(source)
-                                .span
-                                .as_ref()
-                                .is_some_and(|span| (span.start as usize..span.end as usize).contains(&item))
-                        };
-                        !previous_leaf.is_some_and(contains)
-                    }
-                    _ => false,
-                };
-            at_item.push(id_of((name, first_in_group)));
-            if item < len && flow.leaves[item].is_some() {
-                previous_leaf = Some(item);
-            }
+            at_item.push(id_of(name));
         }
         let mut in_paragraph = HashMap::new();
         for (item, entry) in flow.items.iter().enumerate() {
             if let (Item::Paragraph { .. } | Item::Container { .. }, Some(node)) = (entry, flow.leaves[item]) {
-                in_paragraph.insert(item, id_of((name_of(node), false)));
+                in_paragraph.insert(item, id_of(name_of(node)));
             }
         }
         Classes { classes, at_item, in_paragraph }
@@ -116,8 +88,7 @@ impl Geometry<'_> {
     pub fn context(&self, index: usize, class: &Class) -> PageContext {
         PageContext {
             index,
-            name: class.0.clone(),
-            first_in_group: class.1,
+            name: class.clone(),
             rtl: self.margins.rtl,
         }
     }

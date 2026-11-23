@@ -137,7 +137,7 @@ impl MarginBoxes {
 
 /// The page context of the page with this index.
 fn page_context(pages: &Pages, index: usize, rtl: bool) -> PageContext {
-    pages.0.get(index).cloned().unwrap_or(PageContext { index, name: None, first_in_group: false, rtl })
+    pages.0.get(index).cloned().unwrap_or(PageContext { index, name: None, rtl })
 }
 
 fn content_text(content: &[ContentItem], page: i64, pages: usize) -> String {
@@ -330,7 +330,7 @@ impl<'a> System<'a> for MarginBoxPaint {
         for page in 0..num_pages {
             let context = page_context(&pages, page, page_margins.rtl);
             // the margins of the page: the inner and outer margins of a book differ, and the
-            // first page of a document or of a page group can have other margins
+            // first page of a document can have other margins
             let edges = page_margins.edges(&context);
             let (margin_left, margin_right) = (edges.left, edges.right);
             let (page_width, page_height) =

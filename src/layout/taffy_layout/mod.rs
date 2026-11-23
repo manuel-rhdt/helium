@@ -344,17 +344,10 @@ impl TaffyBlockLayout {
                 page_contexts.push(crate::layout::pages::PageContext {
                     index,
                     name: None,
-                    first_in_group: false,
                     rtl: page_margins.rtl,
                 });
             }
-            let class = if start.index == 0 {
-                let mut class = classes.of(*from).clone();
-                class.1 = true;
-                class
-            } else {
-                classes.of(*from).clone()
-            };
+            let class = classes.of(*from).clone();
             let context = geometry.context(start.index, &class);
             let (edges, _) = geometry.of_page(&context);
             let spec = geometry.spec(&context);

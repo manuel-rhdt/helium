@@ -58,8 +58,7 @@ The pipeline in `src/layout/mod.rs` (`layout`) is:
      with columns that fits in what is left of a page (`fragment`; see "A container that is
      split over pages").
    - `paginate.rs` gives the kernel the geometry of the page that starts at every place: the
-     name of the first content on it, whether it starts a page group, and its kind decide the
-     margins and the size. The exact solver with `CssObjective` chooses the pages.
+     name of the first content on it and its kind decide the margins and the size. The exact solver with `CssObjective` chooses the pages.
    - `columns.rs` chooses and lays out the columns of a container with columns (see "Multi-column
      layout"): for a container that is not split, its balanced columns, for one that is split, the
      columns of the fragment on a page. The container is a leaf for Taffy, so a page layout asks it
@@ -179,11 +178,11 @@ pub struct PageStart {
 }
 ```
 
-The geometry of a page follows from its `PageKind`, from the page name of the
-first content on it, and from whether it starts a page group. The name and the
-group are properties of the break at which the page starts: a change of the
-name already forces a break. The only thing that depends on the path taken is
-the `PageKind`. The full state of a solver is therefore
+The geometry of a page follows from its `PageKind` and from the page name of the
+first content on it. The name is a property of the break at which the page
+starts: a change of the name already forces a break. (`name:first` is the first
+page of the document, if it has that name: CSS Paged Media 3, 4.2.2; there are no
+page groups.) The only thing that depends on the path taken is the `PageKind`. The full state of a solver is therefore
 (`BreakToken`, `PageKind`), which keeps an exact search small.
 
 The inline size of a page is known before anything is laid out for it. A
