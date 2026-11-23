@@ -95,6 +95,9 @@ pub(super) struct Node {
     /// How far the content of a table cell is moved down in the cell, for `vertical-align:
     /// middle` and `bottom` (the cell box itself fills its row).
     pub content_shift: f32,
+    /// Where a table row that is split over pages can be cut, as it is laid out for the last
+    /// width of a page that the layout service was asked about (see [`super::rows`]).
+    pub row_cuts: Option<Rc<super::rows::RowCuts>>,
     /// The borders of a cell, row, row group or table of a table with collapsing borders (see
     /// [`super::collapse`]).
     pub collapsed: Option<crate::layout::components::EdgeValues<crate::layout::components::CollapsedEdge>>,
@@ -253,6 +256,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             mirror_rtl: false,
             mirrored_oof: false,
             content_shift: 0.0,
+            row_cuts: None,
             collapsed: None,
             span: None,
             window_style: None,

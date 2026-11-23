@@ -43,8 +43,8 @@ pub struct PageFill {
     pub choices: ChoiceId,
     /// The room that the floats on the page take; `used` has it, too.
     pub floats_used: f32,
-    /// The room that the repeated header of a table takes at the top of the page; `used` has it,
-    /// too.
+    /// The room that the repeated header of a table takes at the top of the page and the repeated
+    /// footer behind its last row; `used` has it, too.
     pub repeated: f32,
     /// The floats on the page, in the order of the flow: the ones that were waiting for it first
     /// ([`Kernel::floats`]).
@@ -586,10 +586,19 @@ impl<'a> Kernel<'a> {
         // to go on, too; where nothing fits next to them, and at the end of the document, it is the
         // only one.
         let mut first_label = Label::default();
-        // the header of a table that the page goes on in is repeated at its top
-        if let Position::Item(first_item) = position {
-            for repeat in problem.repeats.iter().filter(|repeat| repeat.from < first_item && first_item < repeat.to) {
+        // the header of a table that the page goes on in is repeated at its top (also where the
+        // page starts inside of a row that is split over pages)
+        let first_item = match position {
+            Position::Item(item) | Position::InContainer { item, .. } => Some(item),
+            Position::InParagraph { .. } => None,
+        };
+        if let Some(first_item) = first_item {
+            for repeat in problem.repeats.iter().filter(|repeat| !repeat.footer && repeat.from < first_item && first_item < repeat.to) {
                 let extent = self.service.extent(repeat.node, spec.inline_size);
+                // (a header of more than a quarter of the page is not repeated, CSS Tables 3, 6.2)
+                if extent * 4.0 > f64::from(spec.block_size) {
+                    continue;
+                }
                 first_label.used += extent;
                 first_label.repeated += extent;
             }
@@ -1056,7 +1065,9 @@ impl<'a> Kernel<'a> {
         fills: &mut Fills,
     ) -> Emit {
         let Found { token: end, legal, widows, spec, kind } = *found;
-        let used = (label.used + add + label.float_space) as f32;
+        // the footer rows of a table that the page ends inside of are repeated behind its last row
+        let footer = self.footer_room(end, spec);
+        let used = (label.used + add + label.float_space + footer) as f32;
         let overflow = used > spec.block_size;
         // A page that is too full does not take the break after it, unless there is no break
         // in between: its content then gets a page of its own.
@@ -1085,7 +1096,7 @@ impl<'a> Kernel<'a> {
             line_extent: if label.lines > 0 { (label.line_extent / f64::from(label.lines)) as f32 } else { 0.0 },
             choices,
             floats_used: label.float_space as f32,
-            repeated: label.repeated as f32,
+            repeated: (label.repeated + footer) as f32,
             placed,
             carry,
         });
@@ -1098,6 +1109,24 @@ impl<'a> Kernel<'a> {
         } else {
             Emit::Go
         }
+    }
+
+    /// The room that the footer rows of the tables take on a page that ends at `end`, if the next
+    /// page goes on inside of them and the footer is not more than a quarter of the page
+    /// (CSS Tables 3, 6.2).
+    fn footer_room(&mut self, end: BreakToken, spec: PageSpec) -> f64 {
+        if self.problem.repeats.iter().all(|repeat| !repeat.footer) {
+            return 0.0;
+        }
+        let item = self.tokens.position(end).item();
+        let mut room = 0.0;
+        for repeat in self.problem.repeats.clone().iter().filter(|repeat| repeat.footer && repeat.from < item && item <= repeat.to) {
+            let extent = self.service.extent(repeat.node, spec.inline_size);
+            if extent * 4.0 <= f64::from(spec.block_size) {
+                room += extent;
+            }
+        }
+        room
     }
 
     /// The number of a list of choices.
