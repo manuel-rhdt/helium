@@ -58,7 +58,7 @@ The installed fonts are found by scanning the font directories.
 | `--no-compression` | write uncompressed content streams (for inspecting the PDF) |
 | `--crop` | one page that is as large as the content, instead of A4 pages: no page breaks (also not forced ones), page margins, `@page` rules or margin boxes. The page is as wide as the content needs (what shrink-to-fit comes to with no limit, so text is not broken into lines: give the `body` a `width` to set one) and as high as the content, up to 100 000 pixels, after which it has another page |
 | `--no-tags` | write an untagged PDF |
-| `--pdfa <level>` | write a PDF/A file: level `2a`, `2b`, `2u`, `3a`, `3b` or `3u`. Adds the identification to the XMP packet and an output intent with an sRGB profile (made in code, so there is no file and no licence to care about), which is what makes the device colours that the pages use conformant. The level `a` needs the structure tree (not with `--no-tags`). A CMYK image is an error (the colours are sRGB). Not checked: the other things that PDF/A forbids, like fonts that may not be embedded |
+| `--pdfa <level>` | write a PDF/A file: level `1b`, `2a`, `2b`, `2u`, `3a`, `3b` or `3u`. Adds the identification to the XMP packet and an output intent with an sRGB profile (made in code, so there is no file and no licence to care about), which is what makes the device colours that the pages use conformant. The level `a` needs the structure tree (not with `--no-tags`). A CMYK image is an error (the colours are sRGB). `1b` (ISO 19005-1) is written without object streams and with the `CIDSet` of the fonts, and everything that PDF/A-1 does not allow is an error that lists what was found and writes no file: transparency (colours with an alpha channel, `opacity`, gradients with transparent colours, `background-blend-mode`, images with an alpha channel, SVG with opacity, masks or blend modes), colour glyphs, and an image with an ICC profile of version 4. The ICC spaces of `color()` are CIELAB in `1b` (the profiles are version 4), and a gradient with wide colours is clipped to sRGB (with a warning). The levels `1a` and `1u` are not supported. Not checked: the other things that PDF/A forbids, like fonts that may not be embedded |
 | `--no-system-fonts` | use only the built-in fonts, so that the output does not depend on the machine |
 | `--dump-layout <file>` | write the computed layout as JSON (`-` for stdout) |
 | `--check-layout` | evaluate the `data-expected-*` attributes of the document against the layout |
@@ -368,7 +368,7 @@ groups for `opacity`.
 ### Conformance
 
 The gallery is validated with [veraPDF](https://verapdf.org) for PDF/UA-1 and for every level of
-`--pdfa` (`tests/conformance.rs`; the test is skipped unless `VERAPDF_LIB` is the directory with the
+`--pdfa` (the documents without transparency for `1b`; `tests/conformance.rs`; the test is skipped unless `VERAPDF_LIB` is the directory with the
 jars of veraPDF, which `tools/fetch_verapdf.sh DIR` downloads to `DIR/lib`). All documents conform
 but one: the sidebar of the `cv` has headings before the `h1`, which PDF/UA-1 does not allow. This
 says that veraPDF finds nothing wrong in the gallery, which is not a proof for every document: it

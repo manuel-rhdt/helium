@@ -108,6 +108,37 @@ fn the_gallery_conforms_to_pdfa() {
     }
 }
 
+/// The documents of the gallery that need nothing that PDF/A-1 does not allow (the others use
+/// transparency: the `invoice`, the `cv`, `math-notes` and `slides` have SVG or colours with opacity, and the
+/// `emoji` colour glyphs); `a_document_with_transparency_is_not_written_as_pdfa1` has the other side.
+#[test]
+fn the_gallery_documents_without_transparency_conform_to_pdfa1() {
+    let Some(lib) = verapdf_lib() else {
+        eprintln!("skipped: VERAPDF_LIB is not set (see tools/fetch_verapdf.sh)");
+        return;
+    };
+    let files = ["report", "article", "letter"].iter().map(|document| (*document, render(document, "1b", &["--pdfa", "1b"]))).collect();
+    check(&lib, "1b", files);
+}
+
+#[test]
+fn a_document_with_transparency_is_not_written_as_pdfa1() {
+    for document in ["invoice", "cv", "math-notes", "slides", "emoji"] {
+        let output = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("conformance_{document}_1b_error.pdf"));
+        let _ = std::fs::remove_file(&output);
+        let result = common::helium()
+            .unwrap()
+            .current_dir(gallery(document))
+            .args(["--no-system-fonts", "--pdfa", "1b", "index.html"])
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{document}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("PDF/A-1"), "{document}");
+        assert!(!output.exists(), "{document}: the file is kept");
+    }
+}
+
 #[test]
 fn wide_gamut_colors_conform_to_pdfa() {
     let Some(lib) = verapdf_lib() else {

@@ -251,9 +251,15 @@ pub(crate) fn embed_into_pdf(
         FontProgram::TrueType(stream) => FontProgramRef::TrueType(pdf_context.write_object(stream)?),
         FontProgram::Cff(stream) => FontProgramRef::Cff(pdf_context.write_object(stream)?),
     };
-    let fd = pdf_context.write_object(
-        pdf_font_descriptor(font, Name::from(name.clone()), font_data)?,
-    )?;
+    let mut descriptor = pdf_font_descriptor(font, Name::from(name.clone()), font_data)?;
+    if super::pdfa1_active() {
+        // ISO 19005-1, 6.3.5: the CIDs of a font subset, which are the glyphs that are drawn (and the
+        // glyph 0, `.notdef`, that every font program has)
+        let cids = std::iter::once(0).chain(usage.glyphs().map(|glyph| encoding.code(glyph)));
+        let bytes = lemon_pdf::font::descriptor::cid_set(cids);
+        descriptor.cid_set = Some(pdf_context.write_object(stream(lemon_pdf::font::descriptor::CidSetDict {}, &bytes, compress)?)?);
+    }
+    let fd = pdf_context.write_object(descriptor)?;
 
     let mut metrics_h = vec![];
     let mut unfinished_entry: Option<MetricsEntry> = None;
