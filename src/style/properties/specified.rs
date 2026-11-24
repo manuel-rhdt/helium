@@ -54,7 +54,7 @@ pub trait CssWideProperties {
 fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
-        "list-style-type", "list-style-position", "letter-spacing", "word-spacing", "white-space", "text-indent", "text-align", "hyphens", "direction",
+        "list-style-type", "list-style-position", "letter-spacing", "word-spacing", "white-space", "text-indent", "text-align", "hyphens", "hyphenate-limit-chars", "hyphenate-limit-last", "hanging-punctuation", "direction",
         "border-spacing", "border-collapse", "quotes", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
         "math-depth",
     ];
@@ -801,6 +801,15 @@ pub enum Text {
     TextAlign(TextAlign),
     #[property]
     Hyphens(Hyphens),
+    /// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
+    #[property]
+    HyphenateLimitChars(HyphenateLimitChars),
+    /// https://www.w3.org/TR/css-text-4/#hyphenate-line-limits
+    #[property]
+    HyphenateLimitLast(HyphenateLimitLast),
+    /// https://www.w3.org/TR/css-text-3/#hanging-punctuation-property
+    #[property]
+    HangingPunctuation(HangingPunctuation),
     /// https://www.w3.org/TR/css-text-3/#letter-spacing-property
     #[property]
     LetterSpacing(NormalOrQuantity),
@@ -2522,6 +2531,199 @@ pub enum Hyphens {
 impl Default for Hyphens {
     fn default() -> Self {
         Self::Manual
+    }
+}
+
+/// `hyphenate-limit-chars`: the fewest characters of a word that is hyphenated, and the fewest
+/// before and after the hyphen. A number is `None` for `auto`.
+/// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct HyphenateLimitChars {
+    pub word: Option<u32>,
+    pub before: Option<u32>,
+    pub after: Option<u32>,
+}
+
+impl HyphenateLimitChars {
+    /// What `auto` is: 5 characters in a word and 2 before and after the hyphen, which is what
+    /// the specification suggests. (TeX's English patterns use 2 and 3.)
+    pub const AUTO: (usize, usize, usize) = (5, 2, 2);
+
+    /// The limits as numbers: the word, before and after.
+    pub fn resolved(self) -> (usize, usize, usize) {
+        let number = |value: Option<u32>, auto: usize| value.map_or(auto, |value| value as usize);
+        (
+            number(self.word, Self::AUTO.0),
+            number(self.before, Self::AUTO.1),
+            number(self.after, Self::AUTO.2),
+        )
+    }
+}
+
+impl<'i> PropertyValue<'i> for HyphenateLimitChars {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        // [ auto | <integer [0,∞]> ]{1,3}
+        let mut values: Vec<Option<u32>> = vec![];
+        while values.len() < 3 && !input.is_exhausted() {
+            let value = if input.try_parse(|input| input.expect_ident_matching("auto")).is_ok() {
+                None
+            } else {
+                let number = input.expect_integer()?;
+                match u32::try_from(number) {
+                    Ok(number) => Some(number),
+                    Err(_) => return Err(ParseError::custom(StyleParseError::InvalidValue)),
+                }
+            };
+            values.push(value);
+        }
+        input.expect_exhausted()?;
+        if values.is_empty() {
+            return Err(ParseError::custom(StyleParseError::InvalidValue));
+        }
+        // a missing second value is `auto`, and a missing third one is the second
+        let word = values[0];
+        let before = values.get(1).copied().flatten();
+        let after = values.get(2).copied().unwrap_or(before);
+        Ok(HyphenateLimitChars { word, before, after })
+    }
+}
+
+/// `hyphenate-limit-last`: where the last line before a break should not be hyphenated.
+/// https://www.w3.org/TR/css-text-4/#hyphenate-line-limits
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum HyphenateLimitLast {
+    /// No restrictions (a hyphen on the line before the last of a paragraph still has the demerits
+    /// that it has in TeX).
+    #[default]
+    None,
+    /// The last full line of the element, and the last line before any column, page or spread
+    /// break in it.
+    Always,
+    /// The last line before any column, page or spread break.
+    Column,
+    /// The last line before a page or spread break.
+    Page,
+    /// The last line before a spread break.
+    Spread,
+}
+
+impl HyphenateLimitLast {
+    /// What the last line of a paragraph has for following a line that ends in a hyphen, for the
+    /// values that ask the last full line of an element not to be hyphenated: so many demerits
+    /// that it only happens if the other breaks are much worse (the specification says that it
+    /// "should not" be). `None` is TeX's `\finalhyphendemerits`.
+    pub fn final_hyphen_demerits(self) -> Option<f64> {
+        matches!(self, HyphenateLimitLast::Always).then_some(100_000.0)
+    }
+
+    /// Where a line that ends in a hyphen should not be the last one, for the pages and the
+    /// columns: `always` is about every kind of break, `column` as well, `page` is about pages
+    /// and spreads and `spread` about spreads.
+    pub fn page_end_limit(self) -> helium_paginate::HyphenLimit {
+        match self {
+            HyphenateLimitLast::None => helium_paginate::HyphenLimit::None,
+            HyphenateLimitLast::Always | HyphenateLimitLast::Column => helium_paginate::HyphenLimit::Column,
+            HyphenateLimitLast::Page => helium_paginate::HyphenLimit::Page,
+            HyphenateLimitLast::Spread => helium_paginate::HyphenLimit::Spread,
+        }
+    }
+}
+
+/// Which stops and commas at the end of a line hang (`hanging-punctuation`).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum HangingEnd {
+    #[default]
+    None,
+    /// `force-end`: always.
+    Force,
+    /// `allow-end`: only if the line does not fit otherwise.
+    Allow,
+}
+
+/// `hanging-punctuation`: what may hang outside of the line at its start and end, so that the
+/// text is aligned by the letters and not by the punctuation.
+/// https://www.w3.org/TR/css-text-3/#hanging-punctuation-property
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct HangingPunctuation {
+    /// An opening bracket or quote at the start of the first line.
+    pub first: bool,
+    /// A closing bracket or quote at the end of the last line.
+    pub last: bool,
+    /// A stop or comma at the end of a line (and, as the specification lets a user agent add
+    /// characters, the hyphen of a hyphenated word and a hyphen at the end of a line).
+    pub end: HangingEnd,
+}
+
+impl HangingPunctuation {
+    pub fn is_none(self) -> bool {
+        self == HangingPunctuation::default()
+    }
+
+    /// The characters of `first`: opening brackets and quotes (the categories Ps, Pf and Pi, the
+    /// apostrophe and the quotation mark) and the ideographic space.
+    pub fn is_opening(ch: char) -> bool {
+        use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+        matches!(
+            ch.general_category(),
+            GeneralCategory::OpenPunctuation | GeneralCategory::InitialPunctuation | GeneralCategory::FinalPunctuation
+        ) || matches!(ch, '\'' | '"' | '\u{3000}')
+    }
+
+    /// The characters of `last`: closing brackets and quotes (the categories Pe, Pf and Pi, the
+    /// apostrophe and the quotation mark).
+    pub fn is_closing(ch: char) -> bool {
+        use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+        matches!(
+            ch.general_category(),
+            GeneralCategory::ClosePunctuation | GeneralCategory::InitialPunctuation | GeneralCategory::FinalPunctuation
+        ) || matches!(ch, '\'' | '"')
+    }
+
+    /// The stops and commas of `force-end` and `allow-end`, and the hyphens that this adds to
+    /// them (the specification lets a user agent include others "as appropriate": TeX lets the
+    /// hyphen at the end of a line hang too).
+    pub fn is_stop_or_comma(ch: char) -> bool {
+        matches!(
+            ch,
+            ',' | '.' | '\u{60c}' | '\u{6d4}' | '\u{3001}' | '\u{3002}' | '\u{ff0c}' | '\u{ff0e}' | '\u{fe50}'
+                | '\u{fe51}' | '\u{fe52}' | '\u{ff61}' | '\u{ff64}'
+        ) || Self::is_hyphen(ch)
+    }
+
+    /// The hyphens that may hang at the end of a line (U+002D and U+2010).
+    pub fn is_hyphen(ch: char) -> bool {
+        matches!(ch, '-' | '\u{2010}')
+    }
+}
+
+impl<'i> PropertyValue<'i> for HangingPunctuation {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        // none | [ first || [ force-end | allow-end ] || last ]
+        let mut value = HangingPunctuation::default();
+        let invalid = || ParseError::custom(StyleParseError::InvalidValue);
+        if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() {
+            input.expect_exhausted()?;
+            return Ok(value);
+        }
+        let (mut seen_first, mut seen_last, mut seen_end) = (false, false, false);
+        while !input.is_exhausted() {
+            let ident = input.expect_ident()?.clone();
+            match_ignore_ascii_case! { &ident,
+                "first" if !seen_first => { seen_first = true; value.first = true; },
+                "last" if !seen_last => { seen_last = true; value.last = true; },
+                "force-end" if !seen_end => { seen_end = true; value.end = HangingEnd::Force; },
+                "allow-end" if !seen_end => { seen_end = true; value.end = HangingEnd::Allow; },
+                _ => return Err(invalid()),
+            }
+        }
+        if value.is_none() {
+            return Err(invalid());
+        }
+        Ok(value)
     }
 }
 

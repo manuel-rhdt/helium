@@ -466,6 +466,9 @@ pub struct TextRun {
     /// If the run is the placeholder of a `leader()`: the string that fills the rest of the line
     /// (the text of the run is a zero-width character).
     pub leader: Option<std::sync::Arc<str>>,
+    /// `hyphenate-limit-chars`: the fewest characters of a word that is hyphenated, and the
+    /// fewest before and after the hyphen.
+    pub hyphenate_limits: (usize, usize, usize),
 }
 
 /// The border and the padding of an inline box, as far as they are painted behind and around a

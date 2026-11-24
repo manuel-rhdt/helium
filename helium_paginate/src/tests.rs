@@ -202,6 +202,8 @@ fn the_cost_of_a_page_follows_the_css_objective() {
         orphan_violation: false,
         widow_violation: false,
         overflow: false,
+        hyphen_end: crate::HyphenLimit::None,
+        hyphen_extent: 0.0,
         line_demerits: 0.0,
         line_extent: 0.0,
         choices: ChoiceId::NONE,
@@ -741,6 +743,7 @@ impl LayoutService for Characters {
         while at < 80 {
             at = (at + per_line).min(80);
             lines.push(ParLine {
+                hyphen_limit: crate::HyphenLimit::None,
                 demerits: 0.0,
                 badness: 0.0,
                 extent: 10.0,
@@ -1322,6 +1325,7 @@ impl Units {
         while at < to {
             let end = (at + 3).min(to);
             lines.push(ParLine {
+                hyphen_limit: crate::HyphenLimit::None,
                 demerits: 0.0,
                 badness: 0.0,
                 extent: 10.0 * f64::from(end - at),
@@ -1482,6 +1486,7 @@ impl Ways {
         while at < to {
             let end = (at + per_line).min(to);
             lines.push(ParLine {
+                hyphen_limit: crate::HyphenLimit::None,
                 extent: 20.0,
                 end: Cut(end),
                 demerits,
@@ -1783,4 +1788,57 @@ fn a_float_is_placed_on_the_page_where_the_solver_ends_the_page_before_it() {
     flow.content(80.0).break_(ALLOWED).float(30.0, FloatSide::Top).content(60.0);
     let pages = solve_floats(flow, 100.0);
     assert_eq!(pages, [(vec![], 0.0, 2), (vec![2], 30.0, 4)]);
+}
+
+#[test]
+fn a_page_that_ends_in_a_hyphen_costs_room_where_its_limit_is_about_it() {
+    use crate::HyphenLimit;
+    let fill = PageFill {
+        end: BreakToken(1),
+        spec: PageSpec { inline_size: 0.0, block_size: 100.0 },
+        kind: PageKind::Left,
+        used: 100.0,
+        end_kind: ALLOWED,
+        orphan_violation: false,
+        widow_violation: false,
+        overflow: false,
+        hyphen_end: HyphenLimit::None,
+        hyphen_extent: 20.0,
+        line_demerits: 0.0,
+        line_extent: 0.0,
+        choices: ChoiceId::NONE,
+        floats_used: 0.0,
+        repeated: 0.0,
+        placed: FloatList::NONE,
+        carry: FloatList::NONE,
+    };
+    let ltr = CssObjective::default();
+    let rtl = CssObjective { rtl: true, ..CssObjective::default() };
+    let free = ltr.page_cost(&fill, false).unwrap();
+    assert_eq!(free.slack, 0);
+    // `HYPHEN_END_LINES` lines of 20 px
+    let costly = CssCost { slack: CssCost::slack_of(CssObjective::HYPHEN_END_LINES * 20.0), ..free };
+    let ending = |limit, kind| PageFill { hyphen_end: limit, kind, ..fill };
+    // no limit, no cost
+    assert_eq!(ltr.page_cost(&ending(HyphenLimit::None, PageKind::Left), false), Some(free));
+    // the page and column limits are about every page
+    for kind in [PageKind::First, PageKind::Left, PageKind::Right] {
+        assert_eq!(ltr.page_cost(&ending(HyphenLimit::Page, kind), false), Some(costly), "{kind:?}");
+        assert_eq!(ltr.page_cost(&ending(HyphenLimit::Column, kind), false), Some(costly), "{kind:?}");
+    }
+    // the spread limit is about the pages at the end of a spread: the right pages and the first
+    // page, which is alone, and in a document from right to left the left pages
+    assert_eq!(ltr.page_cost(&ending(HyphenLimit::Spread, PageKind::Left), false), Some(free));
+    assert_eq!(ltr.page_cost(&ending(HyphenLimit::Spread, PageKind::Right), false), Some(costly));
+    assert_eq!(ltr.page_cost(&ending(HyphenLimit::Spread, PageKind::First), false), Some(costly));
+    assert_eq!(rtl.page_cost(&ending(HyphenLimit::Spread, PageKind::Left), false), Some(costly));
+    assert_eq!(rtl.page_cost(&ending(HyphenLimit::Spread, PageKind::Right), false), Some(free));
+    // ending a line early (20 px of room) is cheaper than the hyphen
+    assert!(CssCost::slack_of(20.0) < costly.slack);
+    // a column is taller by the room, but only if the limit is about columns
+    let column = |limit| ColumnCost::of(&PageFill { used: 50.0, ..ending(limit, PageKind::Left) }, CssObjective::LINE_TOLERANCE).height;
+    assert_eq!(column(HyphenLimit::None), 50.0);
+    assert_eq!(column(HyphenLimit::Page), 50.0);
+    assert_eq!(column(HyphenLimit::Spread), 50.0);
+    assert_eq!(column(HyphenLimit::Column), 50.0 + CssObjective::HYPHEN_END_LINES * 20.0);
 }

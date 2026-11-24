@@ -7,11 +7,14 @@ struct Node {
     previous: Option<usize>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct BreakOpportunity {
     pub forced: bool,
     pub hyphen: bool,
     pub penalty: i32,
+    /// For the last opportunity of a paragraph: the demerits of its last line for following a line
+    /// that ends in a hyphen (TeX's `\finalhyphendemerits`; [`FINAL_HYPHEN_DEMERITS`] if `None`).
+    pub final_hyphen_demerits: Option<f64>,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -34,7 +37,8 @@ const STATE_COUNT: usize = FITNESS_CLASSES * HYPHEN_STATES;
 const LINE_PENALTY: f64 = 10.0;
 const ADJACENT_FITNESS_DEMERITS: f64 = 3_000.0;
 const DOUBLE_HYPHEN_DEMERITS: f64 = 10_000.0;
-const FINAL_HYPHEN_DEMERITS: f64 = 5_000.0;
+/// What the line before the last line of a paragraph has for ending in a hyphen, as in TeX.
+pub const FINAL_HYPHEN_DEMERITS: f64 = 5_000.0;
 
 /// Choose paragraph breaks using adjustment-ratio badness and TeX-style demerits.
 ///
@@ -194,7 +198,7 @@ pub fn compute_paragraph_lines(
                     demerits += DOUBLE_HYPHEN_DEMERITS;
                 }
                 if ends_paragraph && to + 1 == opportunities.len() && previous_hyphen {
-                    demerits += FINAL_HYPHEN_DEMERITS;
+                    demerits += opportunity.final_hyphen_demerits.unwrap_or(FINAL_HYPHEN_DEMERITS);
                 }
 
                 let next_state = state_index(fitness, opportunity.hyphen);
@@ -352,7 +356,7 @@ pub fn compute_paragraph_variants(
                         demerits += DOUBLE_HYPHEN_DEMERITS;
                     }
                     if ends_paragraph && to + 1 == count && previous_hyphen {
-                        demerits += FINAL_HYPHEN_DEMERITS;
+                        demerits += opportunity.final_hyphen_demerits.unwrap_or(FINAL_HYPHEN_DEMERITS);
                     }
 
                     let next = slot(state_index(fitness, opportunity.hyphen), lines_before + 1);
@@ -649,7 +653,7 @@ mod test {
                     total += DOUBLE_HYPHEN_DEMERITS;
                 }
                 if ends_paragraph && to == last && hyphen {
-                    total += FINAL_HYPHEN_DEMERITS;
+                    total += opportunity.final_hyphen_demerits.unwrap_or(FINAL_HYPHEN_DEMERITS);
                 }
                 fitness = class;
                 hyphen = opportunity.hyphen;
@@ -714,7 +718,7 @@ mod test {
         let opportunities = (0..=words)
             .map(|index| {
                 let hyphen = index != 0 && index != words && random.below(4) == 0;
-                BreakOpportunity { forced: false, hyphen, penalty: if hyphen { 50 } else { 0 } }
+                BreakOpportunity { forced: false, hyphen, penalty: if hyphen { 50 } else { 0 }, ..Default::default() }
             })
             .collect();
         Paragraph { opportunities, advance, width: 14.0 + random.below(14) as f64 }
@@ -938,7 +942,7 @@ mod test {
             advance.push(advance.last().unwrap() + w);
         }
         let opportunities = (0..=widths.len())
-            .map(|i| BreakOpportunity { forced: forced.contains(&i), hyphen: false, penalty: 0 })
+            .map(|i| BreakOpportunity { forced: forced.contains(&i), hyphen: false, penalty: 0, ..Default::default() })
             .collect();
         (opportunities, advance)
     }
@@ -996,23 +1000,19 @@ mod test {
             BreakOpportunity {
                 forced: false,
                 hyphen: false,
-                penalty: 0,
-            },
+                penalty: 0, ..Default::default() },
             BreakOpportunity {
                 forced: false,
                 hyphen: true,
-                penalty: 50,
-            },
+                penalty: 50, ..Default::default() },
             BreakOpportunity {
                 forced: false,
                 hyphen: false,
-                penalty: 0,
-            },
+                penalty: 0, ..Default::default() },
             BreakOpportunity {
                 forced: false,
                 hyphen: false,
-                penalty: 0,
-            },
+                penalty: 0, ..Default::default() },
         ];
         let sequence = compute_paragraph_breakpoints(
             &opportunities,
@@ -1033,10 +1033,10 @@ mod test {
         // squared, which makes the loose line the cheaper one. Added after squaring it would
         // be cheaper to hyphenate.
         let opportunities = [
-            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
-            BreakOpportunity { forced: false, hyphen: true, penalty: 50 },
-            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
-            BreakOpportunity { forced: false, hyphen: false, penalty: 0 },
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0, ..Default::default() },
+            BreakOpportunity { forced: false, hyphen: true, penalty: 50, ..Default::default() },
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0, ..Default::default() },
+            BreakOpportunity { forced: false, hyphen: false, penalty: 0, ..Default::default() },
         ];
         let sequence = compute_paragraph_breakpoints(
             &opportunities,

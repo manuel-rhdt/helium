@@ -377,7 +377,49 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 - **Shaping and scripts:** HarfBuzz shaping, the Unicode bidirectional algorithm (right-to-left
   scripts), script itemization, kerning and ligatures, per-character font fallback.
 - **Line breaking:** Unicode line breaking, hyphenation with built-in dictionaries (`hyphens:
-  auto` and soft hyphens), CJK line breaking, justification.
+  auto` and soft hyphens), CJK line breaking, justification. Paragraphs are broken as a whole, as
+  TeX does (Knuth and Plass): the badness of a line is 100 times the cube of how far its spaces
+  stretch or shrink, a line has a penalty, a line that is much looser or tighter than the one before
+  it has demerits, so does a hyphen after a hyphen and a hyphen at the end of the line before the
+  last of a paragraph, and a hyphen has its own penalty.
+  `hyphenate-limit-chars` (CSS Text 4: `[ auto | <integer> ]{1,3}`, the fewest characters of a word
+  that is hyphenated, before the hyphen and after it; a missing second number is `auto`, a missing
+  third the second; `auto` is 5, 2 and 2, which the specification suggests; TeX's English patterns
+  use 2 and 3) and `hyphenate-limit-last` (`none`, `always`, `column`, `page`, `spread`; inherited)
+  set the limits. The last line before a break should not end in a hyphen, says the specification,
+  which asks for it: `always` is about the last full line of the paragraph (the line before the last,
+  for which TeX has 5000 demerits, which `none` keeps, and `always` raises to 100 000, so that it is
+  avoided unless every other breaking is much worse) and about the last line of every page and
+  column; `column` about every page and column; `page` about every page (the last line of a column
+  is not); `spread` about the pages at the end of a spread (the right pages, and the first page; in a
+  document from right to left, the left pages). A page that ends in a hyphen where it should not costs
+  as much as 2.5 lines of room, so it ends a line early if there is no other way; the pages choose
+  among the ways to break a paragraph if it has a `looseness`, and then a way that does not end in a
+  hyphen costs less than a short page. This is TeX's `\brokenpenalty`, with a size that was chosen
+  on a novel: it avoids most of the hyphens at the end of a page for pages that end a line early
+  (see `CssObjective::HYPHEN_END_LINES`). Not supported: `hyphenate-limit-lines` (a limit on the
+  number of hyphens in a row, which TeX only counts demerits for, as here), `hyphenate-limit-zone`
+  and `hyphenate-character`.
+  `hanging-punctuation` (CSS Text 3, which marks it at risk; inherited): `first` lets an opening
+  bracket or quote (the categories Ps, Pf and Pi, the apostrophe, the quotation mark and the
+  ideographic space) at the start of the first line of a paragraph hang outside of the line,
+  `last` a closing bracket or quote (Pe, Pf and Pi, the apostrophe and the quotation mark) at the
+  end of the last line, `force-end` a stop or comma (the 13 of the specification) at the end of a
+  line, and `allow-end` such a stop or comma only on a line that does not fit without it. As the
+  specification lets a user agent include other characters, the hyphen of a hyphenated word and
+  U+002D and U+2010 at the end of a line hang with the end values too, as the hyphens of a
+  book do in TeX with microtype. What hangs is not part of the line for fit, alignment and
+  justification: the breaker (which is the same for all of them) measures the lines without it,
+  and the justified lines are stretched to the width of the line without it, so that the edge
+  of the text is straight and the punctuation stands in the margin. One character hangs at each
+  edge. It is the same measure as the breaker uses, so a line that has more room because of what
+  hangs can take another word. Not supported: hanging in right-to-left text and in vertical text
+  (it is ignored there), a margin that is not wide enough (what hangs overflows the box, as the
+  specification says), the intrinsic sizes (the width of a paragraph in shrink-to-fit still
+  counts what hangs), an opening quote at the start of a line that is not the first of its
+  paragraph (the specification's `first` is about the first line only), and the characters that
+  TeX's microtype lets protrude by part of their width (letters like T and V, and the quotes and
+  the hyphen by less than their width).
 - **`@font-face`:** the descriptors `font-family`, `src`, `font-weight` (also a range) and
   `font-style`. A source is `url()` of a file inside of the directory of the document (relative
   to its style sheet; or `--resource-root`) or of a `data:` URI, or `local()` (an installed font

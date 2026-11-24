@@ -1861,6 +1861,7 @@ impl EntityConstructor {
 
         let decoration = style.font.text_decoration;
         let hyphens = style.text.hyphens;
+        let hyphenate_limits = style.text.hyphenate_limit_chars.resolved();
         let lang = style.font.lang.clone();
         let entity = self
             .world
@@ -1878,6 +1879,7 @@ impl EntityConstructor {
                 manual_hyphen_points,
                 lang,
                 leader: None,
+                hyphenate_limits: hyphenate_limits,
             })
             .build();
         LayoutEntity(entity)

@@ -3,10 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <title>A whole novel, set as a book</title>
-<meta name="description" content="All 61 chapters of Pride and Prejudice (more than 300 pages) set like a trade paperback: justified, hyphenated text, running heads on facing pages, chapter openings in small capitals, a linked table of contents and old-style folios.">
-<meta name="gallery-thumbnail" content="3">
-<meta name="keywords" content="long document, named pages, :left / :right, hyphenation, widows and orphans, small caps, links">
-<!-- The full text of "Pride and Prejudice" (chapters I to LXI) by Jane Austen (Project Gutenberg eBook #1342, public domain). -->
+<meta name="description" content="All 61 chapters of Pride and Prejudice (more than 300 pages) set like a trade paperback in three volumes: a contents page with dot leaders and page numbers that Helium looks up after it has laid the book out, page groups for the volumes and chapters, roman numerals for the front matter and a new count for the body, running heads on facing pages, chapter openings in small capitals and a tagged table of contents.">
+<meta name="gallery-thumbnail" content="2">
+<meta name="keywords" content="long document, table of contents, leader(), target-counter(), page groups, :nth(), named pages, page counter, tagged PDF, hyphenation, widows and orphans, small caps">
+<!-- The full text of "Pride and Prejudice" (chapters I to LXI) by Jane Austen (Project Gutenberg eBook #1342, public domain).
+     The text is the one of the plain text of the illustrated edition of 1894 without what was added to it: the notices of
+     that edition that stood where its plates were, which cut seven paragraphs, and the volume breaks, which are the ones of
+     the first edition of 1813 (chapters I to XXIII, XXIV to XLII and XLIII to LXI). -->
 <style>
   /* A trade-paperback page, 5.5 x 8.5 inch: about 62 characters to the line at 10.5pt, which is
      the comfortable range for continuous reading. The type is Palatino if the machine has it; the
@@ -29,20 +32,56 @@
   @page :right { margin-left: 0.85in; margin-right: 0.55in; }
   @page :left { margin-left: 0.55in; margin-right: 0.85in; }
 
-  /* The page that opens a chapter has no running head. Every chapter is a page group (an element
-     with a page name and a forced break, CSS GCPM 3), of which :nth(1 of chapter) is the first page */
-  @page :nth(1 of chapter) { @top-center { content: none; } }
+  /* Page groups (CSS GCPM 3): an element with a page name and a forced break is a group of the
+     pages that it has. The front matter, the body, every volume and every chapter are groups, and
+     `:nth(1 of name)` is the first page of each of them (and `:nth(2 of chapter)` the second, and so
+     on). The groups are inside each other: the first page of a volume is also the first of the body.
+
+     The front matter is numbered in roman numerals from i, and the body starts at 1 with the title
+     page of the first volume. The count of the title page of the book is not shown. */
+  .front { page: front; break-before: page; }
+  .body { page: body; break-before: page; }
+  section.volume { page: volume; break-before: page; }
   section.chapter { page: chapter; break-before: page; }
+
+  @page front { @top-center { content: "Contents"; } @bottom-center { content: counter(page, lower-roman); } }
+  @page :nth(1 of front) { counter-reset: page 0; }
+  @page front:nth(1 of front) { @top-center { content: none; } }
+  @page :nth(1 of body) { counter-reset: page 0; }
+
+  /* A volume opens with a title page: no running head and no number, and the text sunk low. The
+     size and the margins of a page can follow `:nth(1 of name)`, because Helium knows which pages
+     start a group when it chooses the pages. The same goes for a chapter, whose opening is sunk a
+     third of the way down the page and has no running head. */
+  @page :nth(1 of volume) { margin-top: 2.6in; @top-center { content: none; } @bottom-center { content: none; } }
+  @page :nth(1 of chapter) { margin-top: 2.3in; @top-center { content: none; } }
 
   html { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, "Latin Modern Roman", serif; }
   body { font-size: 10.5pt; line-height: 14.5pt; color: #111; margin: 0; orphans: 2; widows: 2; }
 
-  /* Body text: justified with hyphenation, indented paragraphs without space between them */
+  /* Body text: justified with hyphenation, indented paragraphs without space between them.
+     Words are broken with at least 2 letters before the hyphen and 3 after it, as TeX does for
+     English (`hyphenate-limit-chars`, the first number being the shortest word, which stays
+     the default), and the last line of the page on the right of a spread does not end in a hyphen
+     (`hyphenate-limit-last: spread`), so that the reader does not have to turn the page in the
+     middle of a word. A page that would end in one ends a line early instead, if there is no
+     other way. (The line before the last of a paragraph is not hyphenated if it can be avoided
+     in any case: TeX's final hyphen demerits.)
+
+     Punctuation hangs in the margin (`hanging-punctuation`), as the margins of a book set with
+     TeX's microtype do: the opening quote of a line of dialogue at the start of a paragraph, the
+     closing quote at its end, and the full stops, commas and hyphens at the ends of the lines. The
+     lines are measured and the justified lines stretched without them, so the right margin is
+     straight and the punctuation stands outside of it. */
+  html { hyphenate-limit-chars: auto 2 3; hyphenate-limit-last: spread; hanging-punctuation: first force-end last; }
   p { margin: 0; text-align: justify; text-indent: 1.3em; hyphens: auto; }
   h2 + p { text-indent: 0; }
 
-  /* Chapter openings start a recto-style page, sunk a third of the way down the page */
-  h2 { break-before: page; break-after: avoid; margin: 0 0 2.4em; padding-top: 1.5in;
+  /* Chapter openings: the page of a chapter has a taller margin on top (see above), and its
+     number counts in the `chapter` counter, which the contents and the list of scenes look up */
+  body { counter-reset: chapter; }
+  section.chapter { counter-increment: chapter; }
+  h2 { break-after: avoid; margin: 0 0 2.4em;
     font-size: 13pt; line-height: 16pt; font-weight: normal; text-align: center;
     font-variant-caps: all-small-caps; letter-spacing: 0.2em; }
 
@@ -53,12 +92,35 @@
   .title-page .author { font-size: 13pt; letter-spacing: 0.26em; font-variant-caps: all-small-caps; margin-top: 2.2em; }
   .title-page h1 + .author { margin-top: 0; }
 
-  /* Contents */
-  .toc { break-after: page; }
-  .toc h1 { text-align: center; font-size: 12pt; font-weight: normal; font-variant-caps: all-small-caps;
-    letter-spacing: 0.2em; margin: 0 0 2em; padding-top: 0.6in; }
-  .toc p.entry { display: inline-block; width: 32%; text-indent: 0; text-align: center; margin: 0; line-height: 17pt; font-size: 10pt; }
-  .toc a { color: inherit; text-decoration: none; }
+  /* Contents: a table of contents (`role="doc-toc"`, so it is tagged as `TOC` with an item `TOCI`
+     for every entry), with the volumes and the chapters in them. Every entry is a link, and `leader()`
+     draws the dots up to its page number, which `target-counter()` looks up: the page of the chapter
+     is known only after the book is laid out, so Helium lays it out again with the numbers it found
+     (and the numbers that are in the roman numerals of the front matter or counted again from the
+     start of the body are the ones that the footers show). The dots are on one grid, so they line up. */
+  .toc h1, .scenes h1 { text-align: center; font-size: 12pt; font-weight: normal; font-variant-caps: all-small-caps;
+    letter-spacing: 0.2em; margin: 0 0 1.6em; }
+  .toc ol { list-style: none; margin: 0; padding: 0; }
+  .toc li { text-indent: 0; font-size: 9.5pt; line-height: 14pt; }
+  .toc li.volume { margin: 0 0 1.5em; break-inside: avoid; }
+  .toc li.volume > a { font-size: 10.5pt; font-variant-caps: all-small-caps; letter-spacing: 0.14em; margin-bottom: 0.4em; }
+  .toc ol ol { column-count: 2; column-gap: 0.32in; }
+  .toc a, .scenes a { display: block; color: inherit; text-decoration: none; }
+  .toc a::after { content: leader('. ') target-counter(attr(href), page); font-variant-numeric: oldstyle-nums; }
+
+  /* Some scenes: a short list that uses the same two functions. The chapter is the value of the
+     `chapter` counter of the heading that is linked, written in roman numerals. */
+  .scenes { margin-top: 2.2em; break-inside: avoid; }
+  .scenes ul { list-style: none; margin: 0; padding: 0; }
+  .scenes li { font-size: 9.5pt; line-height: 15pt; }
+  .scenes a::after { content: leader('. ') "ch. " target-counter(attr(href), chapter, upper-roman) ", p. " target-counter(attr(href), page);
+    font-variant-numeric: oldstyle-nums; }
+
+  /* The title page of a volume */
+  section.volume > h1 { text-align: center; font-weight: normal; font-size: 24pt; line-height: 30pt;
+    font-variant-caps: small-caps; letter-spacing: 0.08em; margin: 0 0 0.5em; }
+  section.volume > .range { text-align: center; text-indent: 0; font-size: 11pt; letter-spacing: 0.18em;
+    font-variant-caps: all-small-caps; color: #444; }
 
   /* A chapter opens with its first words in small capitals */
   .open { font-variant-caps: small-caps; letter-spacing: 0.05em; }
@@ -69,70 +131,99 @@
   <h1>Pride and Prejudice</h1>
   <div class="author">Jane Austen</div>
 </div>
-<div class="toc">
+<div class="front">
+<nav class="toc" role="doc-toc">
   <h1>Contents</h1>
-  <p class="entry"><a href="#ch1">Chapter I</a></p>
-  <p class="entry"><a href="#ch2">Chapter II</a></p>
-  <p class="entry"><a href="#ch3">Chapter III</a></p>
-  <p class="entry"><a href="#ch4">Chapter IV</a></p>
-  <p class="entry"><a href="#ch5">Chapter V</a></p>
-  <p class="entry"><a href="#ch6">Chapter VI</a></p>
-  <p class="entry"><a href="#ch7">Chapter VII</a></p>
-  <p class="entry"><a href="#ch8">Chapter VIII</a></p>
-  <p class="entry"><a href="#ch9">Chapter IX</a></p>
-  <p class="entry"><a href="#ch10">Chapter X</a></p>
-  <p class="entry"><a href="#ch11">Chapter XI</a></p>
-  <p class="entry"><a href="#ch12">Chapter XII</a></p>
-  <p class="entry"><a href="#ch13">Chapter XIII</a></p>
-  <p class="entry"><a href="#ch14">Chapter XIV</a></p>
-  <p class="entry"><a href="#ch15">Chapter XV</a></p>
-  <p class="entry"><a href="#ch16">Chapter XVI</a></p>
-  <p class="entry"><a href="#ch17">Chapter XVII</a></p>
-  <p class="entry"><a href="#ch18">Chapter XVIII</a></p>
-  <p class="entry"><a href="#ch19">Chapter XIX</a></p>
-  <p class="entry"><a href="#ch20">Chapter XX</a></p>
-  <p class="entry"><a href="#ch21">Chapter XXI</a></p>
-  <p class="entry"><a href="#ch22">Chapter XXII</a></p>
-  <p class="entry"><a href="#ch23">Chapter XXIII</a></p>
-  <p class="entry"><a href="#ch24">Chapter XXIV</a></p>
-  <p class="entry"><a href="#ch25">Chapter XXV</a></p>
-  <p class="entry"><a href="#ch26">Chapter XXVI</a></p>
-  <p class="entry"><a href="#ch27">Chapter XXVII</a></p>
-  <p class="entry"><a href="#ch28">Chapter XXVIII</a></p>
-  <p class="entry"><a href="#ch29">Chapter XXIX</a></p>
-  <p class="entry"><a href="#ch30">Chapter XXX</a></p>
-  <p class="entry"><a href="#ch31">Chapter XXXI</a></p>
-  <p class="entry"><a href="#ch32">Chapter XXXII</a></p>
-  <p class="entry"><a href="#ch33">Chapter XXXIII</a></p>
-  <p class="entry"><a href="#ch34">Chapter XXXIV</a></p>
-  <p class="entry"><a href="#ch35">Chapter XXXV</a></p>
-  <p class="entry"><a href="#ch36">Chapter XXXVI</a></p>
-  <p class="entry"><a href="#ch37">Chapter XXXVII</a></p>
-  <p class="entry"><a href="#ch38">Chapter XXXVIII</a></p>
-  <p class="entry"><a href="#ch39">Chapter XXXIX</a></p>
-  <p class="entry"><a href="#ch40">Chapter XL</a></p>
-  <p class="entry"><a href="#ch41">Chapter XLI</a></p>
-  <p class="entry"><a href="#ch42">Chapter XLII</a></p>
-  <p class="entry"><a href="#ch43">Chapter XLIII</a></p>
-  <p class="entry"><a href="#ch44">Chapter XLIV</a></p>
-  <p class="entry"><a href="#ch45">Chapter XLV</a></p>
-  <p class="entry"><a href="#ch46">Chapter XLVI</a></p>
-  <p class="entry"><a href="#ch47">Chapter XLVII</a></p>
-  <p class="entry"><a href="#ch48">Chapter XLVIII</a></p>
-  <p class="entry"><a href="#ch49">Chapter XLIX</a></p>
-  <p class="entry"><a href="#ch50">Chapter L</a></p>
-  <p class="entry"><a href="#ch51">Chapter LI</a></p>
-  <p class="entry"><a href="#ch52">Chapter LII</a></p>
-  <p class="entry"><a href="#ch53">Chapter LIII</a></p>
-  <p class="entry"><a href="#ch54">Chapter LIV</a></p>
-  <p class="entry"><a href="#ch55">Chapter LV</a></p>
-  <p class="entry"><a href="#ch56">Chapter LVI</a></p>
-  <p class="entry"><a href="#ch57">Chapter LVII</a></p>
-  <p class="entry"><a href="#ch58">Chapter LVIII</a></p>
-  <p class="entry"><a href="#ch59">Chapter LIX</a></p>
-  <p class="entry"><a href="#ch60">Chapter LX</a></p>
-  <p class="entry"><a href="#ch61">Chapter LXI</a></p>
+  <ol>
+    <li class="volume"><a href="#vol1">Volume I</a>
+      <ol>
+        <li><a href="#ch1">Chapter I</a></li>
+        <li><a href="#ch2">Chapter II</a></li>
+        <li><a href="#ch3">Chapter III</a></li>
+        <li><a href="#ch4">Chapter IV</a></li>
+        <li><a href="#ch5">Chapter V</a></li>
+        <li><a href="#ch6">Chapter VI</a></li>
+        <li><a href="#ch7">Chapter VII</a></li>
+        <li><a href="#ch8">Chapter VIII</a></li>
+        <li><a href="#ch9">Chapter IX</a></li>
+        <li><a href="#ch10">Chapter X</a></li>
+        <li><a href="#ch11">Chapter XI</a></li>
+        <li><a href="#ch12">Chapter XII</a></li>
+        <li><a href="#ch13">Chapter XIII</a></li>
+        <li><a href="#ch14">Chapter XIV</a></li>
+        <li><a href="#ch15">Chapter XV</a></li>
+        <li><a href="#ch16">Chapter XVI</a></li>
+        <li><a href="#ch17">Chapter XVII</a></li>
+        <li><a href="#ch18">Chapter XVIII</a></li>
+        <li><a href="#ch19">Chapter XIX</a></li>
+        <li><a href="#ch20">Chapter XX</a></li>
+        <li><a href="#ch21">Chapter XXI</a></li>
+        <li><a href="#ch22">Chapter XXII</a></li>
+        <li><a href="#ch23">Chapter XXIII</a></li>
+      </ol></li>
+    <li class="volume"><a href="#vol2">Volume II</a>
+      <ol>
+        <li><a href="#ch24">Chapter XXIV</a></li>
+        <li><a href="#ch25">Chapter XXV</a></li>
+        <li><a href="#ch26">Chapter XXVI</a></li>
+        <li><a href="#ch27">Chapter XXVII</a></li>
+        <li><a href="#ch28">Chapter XXVIII</a></li>
+        <li><a href="#ch29">Chapter XXIX</a></li>
+        <li><a href="#ch30">Chapter XXX</a></li>
+        <li><a href="#ch31">Chapter XXXI</a></li>
+        <li><a href="#ch32">Chapter XXXII</a></li>
+        <li><a href="#ch33">Chapter XXXIII</a></li>
+        <li><a href="#ch34">Chapter XXXIV</a></li>
+        <li><a href="#ch35">Chapter XXXV</a></li>
+        <li><a href="#ch36">Chapter XXXVI</a></li>
+        <li><a href="#ch37">Chapter XXXVII</a></li>
+        <li><a href="#ch38">Chapter XXXVIII</a></li>
+        <li><a href="#ch39">Chapter XXXIX</a></li>
+        <li><a href="#ch40">Chapter XL</a></li>
+        <li><a href="#ch41">Chapter XLI</a></li>
+        <li><a href="#ch42">Chapter XLII</a></li>
+      </ol></li>
+    <li class="volume"><a href="#vol3">Volume III</a>
+      <ol>
+        <li><a href="#ch43">Chapter XLIII</a></li>
+        <li><a href="#ch44">Chapter XLIV</a></li>
+        <li><a href="#ch45">Chapter XLV</a></li>
+        <li><a href="#ch46">Chapter XLVI</a></li>
+        <li><a href="#ch47">Chapter XLVII</a></li>
+        <li><a href="#ch48">Chapter XLVIII</a></li>
+        <li><a href="#ch49">Chapter XLIX</a></li>
+        <li><a href="#ch50">Chapter L</a></li>
+        <li><a href="#ch51">Chapter LI</a></li>
+        <li><a href="#ch52">Chapter LII</a></li>
+        <li><a href="#ch53">Chapter LIII</a></li>
+        <li><a href="#ch54">Chapter LIV</a></li>
+        <li><a href="#ch55">Chapter LV</a></li>
+        <li><a href="#ch56">Chapter LVI</a></li>
+        <li><a href="#ch57">Chapter LVII</a></li>
+        <li><a href="#ch58">Chapter LVIII</a></li>
+        <li><a href="#ch59">Chapter LIX</a></li>
+        <li><a href="#ch60">Chapter LX</a></li>
+        <li><a href="#ch61">Chapter LXI</a></li>
+      </ol></li>
+  </ol>
+</nav>
+<section class="scenes">
+  <h1>Some Scenes</h1>
+  <ul>
+    <li><a href="#ch18">The ball at Netherfield</a></li>
+    <li><a href="#ch19">Mr. Collins makes an offer</a></li>
+    <li><a href="#ch34">Mr. Darcy’s first proposal</a></li>
+    <li><a href="#ch35">Mr. Darcy’s letter</a></li>
+    <li><a href="#ch43">Pemberley</a></li>
+    <li><a href="#ch58">The second proposal</a></li>
+  </ul>
+</section>
 </div>
+
+<main class="body">
+<section class="volume">
+<h1 id="vol1">Volume I</h1>
+<p class="range">Chapters I – XXIII</p>
 <section class="chapter">
 <h2 id="ch1">Chapter I.</h2>
 
@@ -392,12 +483,8 @@ disconcerted. She could not imagine what business he could have in town
 so soon after his arrival in Hertfordshire; and she began to fear that
 he might always be flying about from one place to another, and never
 settled at Netherfield as he ought to be. Lady Lucas quieted her fears a
-little by starting the idea of his</p>
-
-<p>[<i>Copyright 1894 by George Allen.</i>]</p>
-
-
-<p>being gone to London only to get a large party for the ball; and a
+little by starting the idea of his
+being gone to London only to get a large party for the ball; and a
 report soon followed that Mr. Bingley was to bring twelve ladies and
 seven gentlemen with him to the assembly. The girls grieved over such a
 number of ladies; but were comforted the day before the ball by hearing
@@ -1917,9 +2004,6 @@ the officers. And, if I may mention so delicate a subject, endeavour to
 check that little something, bordering on conceit and impertinence,
 which your lady possesses.”</p>
 
-<p>[<i>Copyright 1894 by George Allen.</i>]</p>
-
-
 <p>“Have you anything else to propose for my domestic felicity?”</p>
 
 <p>“Oh yes. Do let the portraits of your uncle and aunt Philips be placed
@@ -2439,11 +2523,8 @@ in his pleasure.</p>
 
 <p>By tea-time, however, the dose had been enough, and Mr. Bennet was glad
 to take his guest into the drawing-room again, and when tea was over,
-glad to invite him</p>
-
-
-
-<p>to read aloud to the ladies. Mr. Collins readily assented, and a book
+glad to invite him
+to read aloud to the ladies. Mr. Collins readily assented, and a book
 was produced; but on beholding it (for everything announced it to be
 from a circulating library) he started back, and, begging pardon,
 protested that he never read novels. Kitty stared at him, and Lydia
@@ -4291,12 +4372,8 @@ and it was bestowed with a most joyful alacrity. Mr. Collins’s present
 circumstances made it a most eligible match for their daughter, to whom
 they could give little fortune; and his prospects of future wealth were
 exceedingly fair. Lady Lucas began directly to calculate, with more
-interest than the matter had ever</p>
-
-<p>[<i>Copyright 1894 by George Allen.</i>]</p>
-
-
-<p>excited before, how many years longer Mr. Bennet was likely to live; and
+interest than the matter had ever
+excited before, how many years longer Mr. Bennet was likely to live; and
 Sir William gave it as his decided opinion, that whenever Mr. Collins
 should be in possession of the Longbourn estate, it would be highly
 expedient that both he and his wife should make their appearance at St.
@@ -4596,6 +4673,10 @@ Why should <i>he</i> have it more than anybody else?”</p>
 
 <p>“I leave it to yourself to determine,” said Mr. Bennet.</p>
 </section>
+</section>
+<section class="volume">
+<h1 id="vol2">Volume II</h1>
+<p class="range">Chapters XXIV – XLII</p>
 <section class="chapter">
 <h2 id="ch24">Chapter XXIV.</h2>
 
@@ -4856,9 +4937,6 @@ am sorry it went off. But these things happen so often! A young man,
 such as you describe Mr. Bingley, so easily falls in love with a pretty
 girl for a few weeks, and, when accident separates them, so easily
 forgets her, that these sort of inconstancies are very frequent.”</p>
-
-<p>[<i>Copyright 1894 by George Allen.</i>]</p>
-
 
 <p>“An excellent consolation in its way,” said Elizabeth; “but it will not
 do for <i>us</i>. We do not suffer by accident. It does not often happen
@@ -5396,9 +5474,6 @@ upstairs in a violent hurry, and calling loudly after her. She opened
 the door, and met Maria in the landing-place, who, breathless with
 agitation, cried out,—</p>
 
-<p>[Copyright 1894 by George Allen.]</p>
-
-
 <p>“Oh, my dear Eliza! pray make haste and come into the dining-room, for
 there is such a sight to be seen! I will not tell you what it is. Make
 haste, and come down this moment.”</p>
@@ -5783,11 +5858,8 @@ Miss Lucas and herself.</p>
 
 <p>His arrival was soon known at the Parsonage; for Mr. Collins was walking
 the whole morning within view of the lodges opening into Hunsford Lane,
-in order to have</p>
-
-
-
-<p>the earliest assurance of it; and, after making his bow as the carriage
+in order to have
+the earliest assurance of it; and, after making his bow as the carriage
 turned into the park, hurried home with the great intelligence. On the
 following morning he hastened to Rosings to pay his respects. There were
 two nephews of Lady Catherine to require them, for Mr. Darcy had brought
@@ -6920,12 +6992,8 @@ bring no proof of its injustice. She had never heard of him before his
 entrance into the ——shire militia, in which he had engaged at the
 persuasion of the young man, who, on meeting him accidentally in town,
 had there renewed a slight acquaintance. Of his former way of life,
-nothing had been known in Hertfordshire but what he told</p>
-
-<p>[<i>Copyright 1894 by George Allen.</i>]</p>
-
-
-<p>himself. As to his real character, had information been in her power,
+nothing had been known in Hertfordshire but what he told
+himself. As to his real character, had information been in her power,
 she had never felt a wish of inquiring. His countenance, voice, and
 manner, had established him at once in the possession of every virtue.
 She tried to recollect some instance of goodness, some distinguished
@@ -8090,6 +8158,10 @@ to the scheme.</p>
 
 <p>To Pemberley, therefore, they were to go.</p>
 </section>
+</section>
+<section class="volume">
+<h1 id="vol3">Volume III</h1>
+<p class="range">Chapters XLIII – LXI</p>
 <section class="chapter">
 <h2 id="ch43">Chapter XLIII.</h2>
 
@@ -8673,9 +8745,6 @@ she endeavoured to give pleasure were pre-possessed in her favour.
 Bingley was ready, Georgiana was eager, and Darcy determined, to be
 pleased.</p>
 
-<p>[<i>Copyright 1894 by George Allen.</i>]</p>
-
-
 <p>In seeing Bingley, her thoughts naturally flew to her sister; and oh!
 how ardently did she long to know whether any of his were directed in a
 like manner. Sometimes she could fancy that he talked less than on
@@ -9127,11 +9196,8 @@ some dreadful news which I have just received from Longbourn.”</p>
 
 <p>She burst into tears as she alluded to it, and for a few minutes could
 not speak another word. Darcy, in wretched suspense, could only say
-something indistinctly of his</p>
-
-
-
-<p>concern, and observe her in compassionate silence. At length she spoke
+something indistinctly of his
+concern, and observe her in compassionate silence. At length she spoke
 again. “I have just had a letter from Jane, with such dreadful news. It
 cannot be concealed from anyone. My youngest sister has left all her
 friends—has eloped; has thrown herself into the power of—of Mr.
@@ -12835,5 +12901,7 @@ her into Derbyshire, had been the means of uniting them.</p>
 
 
 </section>
+</section>
+</main>
 </body>
 </html>
