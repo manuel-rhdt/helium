@@ -343,7 +343,6 @@ css/css-color/currentcolor-004.html
 css/css-color/currentcolor-visited-fallback.html
 css/css-color/hsl-009.html
 css/css-color/hsl-010.html
-css/css-color/hsl-011.html
 css/css-color/lch-009.html
 css/css-color/lch-010.html
 css/css-color/oklch-009.html

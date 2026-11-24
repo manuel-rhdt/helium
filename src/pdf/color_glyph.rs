@@ -137,7 +137,10 @@ fn write_glyph(
         bbox,
         Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
         filter,
-        |form| emit_all(form, &root, &reach),
+        |form| {
+            super::set_device_defaults(form)?;
+            emit_all(form, &root, &reach)
+        },
     )?;
     Ok(Some(form))
 }
@@ -440,7 +443,10 @@ fn composite(ctx: &mut PageContext<'_, '_, '_>, children: &[Node], reach: &Reach
             reach.bbox(),
             Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
             reach.filter,
-            |form| emit_all(form, nodes, reach),
+            |form| {
+                super::set_device_defaults(form)?;
+                emit_all(form, nodes, reach)
+            },
         )
     };
     let draw = |ctx: &mut PageContext<'_, '_, '_>, form, state: Option<ExtGState>| -> Result<(), Error> {

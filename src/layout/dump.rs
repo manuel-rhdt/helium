@@ -20,7 +20,7 @@ use crate::layout::components::{
 };
 use crate::layout::construct::AssignLayoutEntity;
 use crate::parser::ParsedData;
-use crate::style::properties::computed::{PixelLength, PaintColor};
+use crate::style::properties::computed::{IccSpace, PixelLength, PaintColor};
 use crate::tree::{DomRef, TreeLinked};
 
 pub fn dump_layout(dom: &DomRef, world: &World) -> String {
@@ -136,10 +136,18 @@ fn write_boxes(out: &mut String, pos: Position, deco: Decoration) {
 fn color(c: PaintColor) -> String {
     match c {
         PaintColor::Srgb(c) => format!("[{}, {}, {}, {}]", c.red, c.green, c.blue, c.alpha),
-        // the colours that sRGB cannot hold: Display P3 (encoded) or CIE XYZ (D65), and alpha
-        PaintColor::DisplayP3(c) => {
+        // the colours of another space: the encoded components of an ICC space or CIE XYZ (D65), and alpha
+        PaintColor::Icc(c) => {
             let [r, g, b] = c.components();
-            format!("[\"display-p3\", {}, {}, {}, {}]", number(r), number(g), number(b), c.alpha)
+            let name = match c.space {
+                IccSpace::SrgbLinear => "srgb-linear",
+                IccSpace::DisplayP3 => "display-p3",
+                IccSpace::DisplayP3Linear => "display-p3-linear",
+                IccSpace::A98Rgb => "a98-rgb",
+                IccSpace::ProphotoRgb => "prophoto-rgb",
+                IccSpace::Rec2020 => "rec2020",
+            };
+            format!("[\"{name}\", {}, {}, {}, {}]", number(r), number(g), number(b), c.alpha)
         }
         PaintColor::Xyz(c) => {
             let [x, y, z] = c.components();

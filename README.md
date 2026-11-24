@@ -191,12 +191,13 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   for boxes that are not split over pages (a fragment of a split box has none). `inset` shadows
   are not drawn, and `text-shadow` is not supported.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
-  `color()` (a colour that sRGB cannot hold, like `color(display-p3 1 0 0)`, is not clipped, in fills,
-  strokes, text, backgrounds and borders: it is written in one ICC space with the primaries of Rec. 2020 and a gamma of 2.4 (written once;
-  it holds Display P3 and nearly all that CSS can write, and an iPhone shows it as it says), and only a colour that
-  Rec. 2020 cannot hold is clipped, to it. The other colours are in an ICC space of sRGB (written once), and device RGB, which images and
-  shadings still use, is defined as sRGB for every page (`DefaultRGB`). Gradients (axial and radial; a conic one is a mesh in sRGB) and `color-mix()` keep a wide colour too: a gradient with
-  one is a shading in the same ICC space and is cut into steps, interpolated in the space of the gradient. SVG images and the layers of
+  `color()`. A colour is written in the space that CSS wrote it in: `rgb()`, `hsl()`, `hwb()`, hex codes,
+  names, `color(srgb …)` and an `oklab()` or `oklch()` that sRGB holds are device RGB, which every page and form defines as sRGB
+  (`DefaultRGB`); a `color()` in Display P3, Adobe RGB (`a98-rgb`), ProPhoto RGB, Rec. 2020 (gamma 2.4, as CSS says) or a
+  linear space is in an ICC space of that profile (written once); `lab()`, `lch()`, `color(xyz …)`, an `oklab()` or `oklch()` that sRGB cannot
+  hold, and a colour outside of the space it was written in are CIELAB (D50; the PDF has no Oklab, so those are converted), or, with a\* or b\*
+  beyond ±128 (an iPhone does not show Lab right there), in the ICC space of Rec. 2020 if that holds the colour, else with its chroma reduced. Gradients (axial and radial; a conic one is a mesh in sRGB) and `color-mix()` keep a wide colour too: a gradient with
+  one is a shading in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4 and is cut into steps, interpolated in the space of the gradient. SVG images and the layers of
   colour glyphs are still sRGB, and a wide colour is clipped there), with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
   painted for backgrounds, borders, text, text decorations and gradients. `color-mix()` mixes
   two colours (also nested, and with `var()`) in `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`,

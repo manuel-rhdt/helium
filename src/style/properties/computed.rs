@@ -24,20 +24,32 @@ pub struct SrgbColor {
     pub alpha: u8,
 }
 
-/// A colour in Display P3 (the primaries of DCI-P3, the white of D65 and the curve of sRGB), with
-/// the encoded components from 0 to 1 and an alpha channel. The components are kept as their bits,
-/// so that colours can be compared and hashed.
+/// An RGB space with an ICC profile of its own, written to the PDF when a colour is authored in it
+/// (`color(display-p3 …)` and the like) and fits inside of it.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct DisplayP3Color {
+pub enum IccSpace {
+    SrgbLinear,
+    DisplayP3,
+    DisplayP3Linear,
+    A98Rgb,
+    ProphotoRgb,
+    Rec2020,
+}
+
+/// A colour in one of the [`IccSpace`]s, with the encoded components from 0 to 1 and an alpha
+/// channel. The components are kept as their bits, so that colours can be compared and hashed.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct IccColor {
+    pub space: IccSpace,
     red: u32,
     green: u32,
     blue: u32,
     pub alpha: u8,
 }
 
-impl DisplayP3Color {
-    pub fn new(red: f32, green: f32, blue: f32, alpha: u8) -> Self {
-        DisplayP3Color { red: red.to_bits(), green: green.to_bits(), blue: blue.to_bits(), alpha }
+impl IccColor {
+    pub fn new(space: IccSpace, red: f32, green: f32, blue: f32, alpha: u8) -> Self {
+        IccColor { space, red: red.to_bits(), green: green.to_bits(), blue: blue.to_bits(), alpha }
     }
 
     /// The encoded red, green and blue.
@@ -47,7 +59,7 @@ impl DisplayP3Color {
 }
 
 /// A colour as CIE XYZ (D65, Y of 1 for the white), which holds every colour there is, with an
-/// alpha channel. The components are kept as their bits, like those of [`DisplayP3Color`].
+/// alpha channel. The components are kept as their bits, like those of [`IccColor`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct XyzColor {
     x: u32,
@@ -67,17 +79,19 @@ impl XyzColor {
     }
 }
 
-/// A colour that is painted.
+/// A colour that is painted, in the space that it was written in (so that the PDF can say it).
 ///
-/// It is sRGB if sRGB can hold it; else Display P3 if that can (a colour of a wide gamut, like
-/// `color(display-p3 1 0 0)`); else CIE XYZ, which holds every colour. The colour has no channels
-/// to read: a consumer that can paint every case matches on them, and one that only has sRGB has
-/// to call [`PaintColor::clip_to_srgb`], which says what it does to the colours that sRGB cannot
-/// hold.
+/// A colour of `rgb()`, `hsl()`, `hwb()`, a hex code or a name is sRGB (a device colour in the PDF,
+/// which is sRGB for the page). One of `color()` in a space with a profile of its own is in that space
+/// if it fits in it. One of `lab()`, `lch()`, `xyz` and the one of `oklab()` or `oklch()` that sRGB
+/// cannot hold, and every colour that is out of the space it was written in, is CIE XYZ, which holds
+/// every colour (the PDF writes it as CIELAB). The colour has no channels to read: a consumer that can
+/// paint every case matches on them, and one that only has sRGB has to call
+/// [`PaintColor::clip_to_srgb`], which says what it does to the colours that sRGB cannot hold.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum PaintColor {
     Srgb(SrgbColor),
-    DisplayP3(DisplayP3Color),
+    Icc(IccColor),
     Xyz(XyzColor),
 }
 
@@ -100,7 +114,7 @@ impl PaintColor {
     pub const fn alpha(self) -> u8 {
         match self {
             PaintColor::Srgb(color) => color.alpha,
-            PaintColor::DisplayP3(color) => color.alpha,
+            PaintColor::Icc(color) => color.alpha,
             PaintColor::Xyz(color) => color.alpha,
         }
     }
@@ -109,7 +123,7 @@ impl PaintColor {
     pub fn with_alpha(self, alpha: u8) -> Self {
         match self {
             PaintColor::Srgb(color) => PaintColor::Srgb(SrgbColor { alpha, ..color }),
-            PaintColor::DisplayP3(color) => PaintColor::DisplayP3(DisplayP3Color { alpha, ..color }),
+            PaintColor::Icc(color) => PaintColor::Icc(IccColor { alpha, ..color }),
             PaintColor::Xyz(color) => PaintColor::Xyz(XyzColor { alpha, ..color }),
         }
     }
@@ -138,7 +152,7 @@ impl PaintColor {
     pub fn clip_to_srgb(self) -> SrgbColor {
         match self {
             PaintColor::Srgb(color) => color,
-            PaintColor::DisplayP3(color) => super::color::p3_to_srgb_clipped(color),
+            PaintColor::Icc(color) => super::color::icc_to_srgb_clipped(color),
             PaintColor::Xyz(color) => super::color::xyz_to_srgb_clipped(color),
         }
     }
