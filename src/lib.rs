@@ -23,6 +23,7 @@ pub mod engine;
 pub mod font_usage;
 pub mod image;
 pub mod layout;
+pub mod measure;
 pub mod metadata;
 pub mod node_data_ref;
 mod parser;

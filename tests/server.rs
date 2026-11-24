@@ -96,7 +96,10 @@ fn document(name: &str) -> (String, Value) {
 }
 
 fn cli(input: &str, args: &[&str]) -> Vec<u8> {
-    let output = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("server-cli-{}.pdf", std::process::id()));
+    // (the tests run in parallel threads of one process)
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let output = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("server-cli-{}-{n}.pdf", std::process::id()));
     let mut cmd = common::helium().unwrap();
     cmd.args(args).arg(input).arg(&output);
     cmd.assert().success();
@@ -328,4 +331,162 @@ fn the_engine_renders_the_same_bytes_as_the_cli() {
     assert!(Engine::new(config).is_ok());
     let other = EngineConfig { system_fonts: true, ..Default::default() };
     assert!(Engine::new(other).is_err());
+}
+
+fn measure(server: &mut Server, id: i64, probes: Value) -> Vec<Value> {
+    let response = server.call(id, "measure", json!({"probes": probes}));
+    assert_eq!(response.json["ok"], json!(true), "{}", response.json);
+    response.json["result"]["metrics"].as_array().unwrap().clone()
+}
+
+fn f(value: &Value) -> f64 {
+    value.as_f64().unwrap_or_else(|| panic!("not a number: {value}"))
+}
+
+const DEJAVU_10: &str = "font-family: DejaVu Sans; font-size: 10px";
+
+#[test]
+fn measure_gives_the_line_box_the_advance_and_the_ink() {
+    let mut server = Server::start();
+    let metrics = measure(
+        &mut server,
+        1,
+        json!([{"text": "0.5", "css": DEJAVU_10}, {"text": "plain label", "css": DEJAVU_10}, {"text": "", "css": DEJAVU_10}]),
+    );
+    for m in &metrics[..2] {
+        // DejaVu Sans: ascender 0.928 em, descender 0.236 em
+        assert!((f(&m["ascent"]) - 10.45).abs() < 0.05, "{m}");
+        assert!((f(&m["descent"]) - 3.52).abs() < 0.05, "{m}");
+        assert!((f(&m["height"]) - (f(&m["ascent"]) + f(&m["descent"]))).abs() < 1e-4);
+    }
+    // the ink is inside of the advance and below the baseline only for the descender
+    let label = &metrics[1];
+    assert!((f(&label["ink"]["bottom"]) - 2.08).abs() < 0.05, "{label}");
+    assert!((f(&label["ink"]["top"]) + 7.6).abs() < 0.1, "{label}");
+    assert!(f(&label["ink"]["right"]) <= f(&label["width"]));
+    assert!((f(&label["width"]) - 51.73).abs() < 0.05, "{label}");
+    // "0.5": no descender, only the overshoot of the round digits
+    let digits = &metrics[0];
+    assert!(f(&digits["ink"]["bottom"]) > 0.0 && f(&digits["ink"]["bottom"]) < 0.2, "{digits}");
+    // nothing is painted for nothing
+    assert_eq!(metrics[2]["ink"], Value::Null);
+    assert_eq!(metrics[2]["width"].as_f64(), Some(0.0));
+    server.finish();
+}
+
+#[test]
+fn measure_scales_with_the_font_size_and_the_weight() {
+    let mut server = Server::start();
+    let m = measure(
+        &mut server,
+        1,
+        json!([
+            {"text": "Ag", "css": "font-family: DejaVu Sans; font-size: 10px"},
+            {"text": "Ag", "css": "font-family: DejaVu Sans; font-size: 20px"},
+            {"text": "Ag", "css": "font-family: DejaVu Sans; font-size: 10px; font-weight: bold"},
+        ]),
+    );
+    assert!((f(&m[1]["width"]) - 2.0 * f(&m[0]["width"])).abs() < 0.05);
+    assert!((f(&m[1]["ink"]["top"]) - 2.0 * f(&m[0]["ink"]["top"])).abs() < 0.05);
+    assert!(f(&m[2]["width"]) > f(&m[0]["width"]), "bold is wider");
+    server.finish();
+}
+
+#[test]
+fn measure_does_not_mix_up_probes_in_a_batch() {
+    let mut server = Server::start();
+    let probes: Vec<Value> = (0..30)
+        .map(|i| json!({"text": if i % 2 == 0 { "x" } else { "Ågj" }, "css": format!("font-family: DejaVu Sans; font-size: {}px", 8 + i)}))
+        .collect();
+    let batch = measure(&mut server, 1, json!(probes));
+    // each one alone gives the same numbers as in the batch
+    for (i, probe) in probes.iter().enumerate() {
+        let alone = measure(&mut Server::start(), 2, json!([probe]));
+        for key in ["width", "ascent", "descent"] {
+            assert!((f(&batch[i][key]) - f(&alone[0][key])).abs() < 0.01, "probe {i} {key}");
+        }
+        for key in ["left", "top", "right", "bottom"] {
+            assert!((f(&batch[i]["ink"][key]) - f(&alone[0]["ink"][key])).abs() < 0.01, "probe {i} ink {key}");
+        }
+    }
+    server.finish();
+}
+
+#[test]
+fn measure_failures_are_per_entry() {
+    let mut server = Server::start();
+    let m = measure(
+        &mut server,
+        1,
+        json!([
+            {"text": "ok", "css": DEJAVU_10},
+            {"text": "two\nlines", "css": DEJAVU_10},
+            {"markup": "<b>", "css": DEJAVU_10},
+            {"text": "both", "markup": "<b>x</b>", "css": DEJAVU_10},
+            {"css": DEJAVU_10},
+            {"markup": "<b>bold</b> and <i>italic</i>", "css": DEJAVU_10},
+        ]),
+    );
+    assert!(m[0]["width"].is_number());
+    assert_eq!(m[1]["error"]["code"], json!("bad_request"));
+    assert_eq!(m[2]["error"]["code"], json!("parse_error"));
+    assert_eq!(m[3]["error"]["code"], json!("bad_request"));
+    assert_eq!(m[4]["error"]["code"], json!("bad_request"));
+    assert!(m[5]["width"].is_number(), "{}", m[5]);
+    server.finish();
+}
+
+#[test]
+fn measure_includes_the_rules_and_radicals_of_mathml_in_the_ink() {
+    let mut server = Server::start();
+    let math = |inner: &str| format!("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">{inner}</math>");
+    let m = measure(
+        &mut server,
+        1,
+        json!([
+            {"markup": math("<mi>x</mi>"), "css": DEJAVU_10},
+            {"markup": math("<mfrac><mi>a</mi><mi>b</mi></mfrac>"), "css": DEJAVU_10},
+            {"markup": math("<msqrt><mi>x</mi></msqrt>"), "css": DEJAVU_10},
+        ]),
+    );
+    // the fraction is taller than the letter on both sides of the baseline
+    assert!(f(&m[1]["ink"]["top"]) < f(&m[0]["ink"]["top"]) - 1.0, "{m:?}");
+    assert!(f(&m[1]["ink"]["bottom"]) > f(&m[0]["ink"]["bottom"]) + 1.0, "{m:?}");
+    // the radical sign is to the left of the letter and its bar above it
+    assert!(f(&m[2]["ink"]["right"]) - f(&m[2]["ink"]["left"]) > f(&m[0]["ink"]["right"]) - f(&m[0]["ink"]["left"]) + 3.0, "{m:?}");
+    assert!(f(&m[2]["ink"]["top"]) < f(&m[0]["ink"]["top"]), "{m:?}");
+    server.finish();
+}
+
+#[test]
+fn measure_reports_the_characters_that_no_font_has() {
+    let mut server = Server::start();
+    let m = measure(&mut server, 1, json!([{"text": "a\u{10FFFD}b", "css": DEJAVU_10}, {"text": "ab", "css": DEJAVU_10}]));
+    assert_eq!(m[0]["missing_glyphs"], json!(["U+10FFFD"]));
+    assert_eq!(m[1]["missing_glyphs"], json!([]));
+    server.finish();
+}
+
+#[test]
+fn measure_gives_the_same_answer_cached_and_after_other_requests() {
+    let mut server = Server::start();
+    let probe = json!([{"text": "stable", "css": DEJAVU_10}]);
+    let first = measure(&mut server, 1, probe.clone());
+    // other work in between
+    let (_, doc) = document("loremipsum.html");
+    server.call(2, "render", json!({"document": doc}));
+    measure(&mut server, 3, json!([{"text": "something else", "css": "font-size: 30px"}]));
+    assert_eq!(measure(&mut server, 4, probe), first);
+    // and a fresh process agrees
+    assert_eq!(measure(&mut Server::start(), 5, json!([{"text": "stable", "css": DEJAVU_10}])), first);
+    server.finish();
+}
+
+#[test]
+fn too_many_probes_are_too_large() {
+    let mut server = Server::start();
+    let probes: Vec<Value> = (0..10_001).map(|_| json!({"text": "x", "css": ""})).collect();
+    let response = server.call(1, "measure", json!({"probes": probes}));
+    assert_eq!(response.json["error"]["code"], json!("too_large"));
+    server.finish();
 }

@@ -10,7 +10,9 @@
 //! `{"id", "ok": true, "result"}` or `{"id", "ok": false, "error": {"code", "message"}}`. Requests
 //! are answered in order.
 //!
-//! **Ops.** `hello`, `layout`, `render`, `shutdown`. See the specification for their parameters;
+//! **Ops.** `hello`, `measure`, `layout`, `render`, `shutdown`. `measure` takes `probes`, a list of
+//! `{markup | text, css}`, and returns `metrics`: one entry per probe, either `{width, ascent, descent,
+//! height, ink, missing_glyphs}` or `{error: {code, message}}`. See the specification for their parameters;
 //! `hello` reports the `capabilities` that a client can rely on.
 //!
 //! **Exit status.** 0 for `shutdown` or EOF between frames, 65 if the stream can no longer be
@@ -25,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
+use crate::measure::Probe;
 use crate::engine::{
     Document, DocumentKind, Engine, Error, LayoutOptions, RenderOptions, capture_warnings, note_warning,
 };
@@ -317,6 +320,7 @@ fn handle(engine: &Engine, request: &Value) -> (Result<Reply, Failure>, Next) {
     }
     match op {
         "hello" => (Ok(hello(engine)), Next::Continue),
+        "measure" => (op_measure(engine, params), Next::Continue),
         "layout" => (op_layout(engine, params), Next::Continue),
         "render" => (op_render(engine, params), Next::Continue),
         "shutdown" => (Ok(Reply::plain(json!({}))), Next::Exit(0)),
@@ -329,7 +333,7 @@ fn hello(engine: &Engine) -> Reply {
     Reply::plain(json!({
         "protocol": PROTOCOL,
         "helium": env!("CARGO_PKG_VERSION"),
-        "capabilities": ["layout", "render", "warnings", "attachments"],
+        "capabilities": ["measure", "layout", "render", "warnings", "attachments"],
         "fonts": {
             "system_fonts": config.system_fonts,
             "font_dirs": config.font_dirs,
@@ -440,6 +444,44 @@ fn op_layout(engine: &Engine, params: &Value) -> Result<Reply, Failure> {
     let mut result = result?;
     result["warnings"] = json!(warnings);
     Ok(Reply::plain(result))
+}
+
+/// The most probes in one `measure`.
+const MAX_PROBES: usize = 10_000;
+
+fn op_measure(engine: &Engine, params: &Value) -> Result<Reply, Failure> {
+    let probes = params.get("probes").and_then(Value::as_array).ok_or_else(|| Failure::bad("`probes` must be an array"))?;
+    if probes.len() > MAX_PROBES {
+        return Err(Failure::new("too_large", format!("{} probes, more than the limit of {MAX_PROBES}", probes.len())));
+    }
+    // a probe that is not well-formed is an error of its entry only
+    let parsed: Vec<Result<Probe, Failure>> = probes
+        .iter()
+        .map(|probe| {
+            Ok(Probe {
+                markup: str_field(probe, "markup")?.map(str::to_owned),
+                text: str_field(probe, "text")?.map(str::to_owned),
+                css: str_field(probe, "css")?.unwrap_or_default().to_owned(),
+            })
+        })
+        .collect();
+    let valid: Vec<Probe> = parsed.iter().filter_map(|probe| probe.as_ref().ok().cloned()).collect();
+    let mut measured = engine.measure(&valid).into_iter();
+    let metrics: Vec<Value> = parsed
+        .iter()
+        .map(|probe| match probe {
+            Err(failure) => json!({"error": {"code": failure.code, "message": failure.message}}),
+            Ok(_) => match measured.next().expect("one result per probe") {
+                Ok(m) => json!({
+                    "width": m.width, "ascent": m.ascent, "descent": m.descent, "height": m.height,
+                    "ink": m.ink.map(|i| json!({"left": i.left, "top": i.top, "right": i.right, "bottom": i.bottom})),
+                    "missing_glyphs": m.missing_glyphs,
+                }),
+                Err(error) => json!({"error": {"code": error.code(), "message": error.message()}}),
+            },
+        })
+        .collect();
+    Ok(Reply::plain(json!({"metrics": metrics})))
 }
 
 fn op_render(engine: &Engine, params: &Value) -> Result<Reply, Failure> {

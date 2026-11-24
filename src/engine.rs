@@ -148,6 +148,7 @@ pub struct Rendered {
 
 pub struct Engine {
     config: EngineConfig,
+    pub(crate) measure_cache: Mutex<crate::measure::Cache>,
 }
 
 impl Engine {
@@ -172,7 +173,7 @@ impl Engine {
                 *installed = Some(config.clone());
             }
         }
-        Ok(Engine { config })
+        Ok(Engine { config, measure_cache: Mutex::default() })
     }
 
     pub fn config(&self) -> &EngineConfig {
