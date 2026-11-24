@@ -464,3 +464,57 @@ mod tests {
         assert_eq!(number(f32::NAN), "null");
     }
 }
+
+/// The boxes of the elements with these `id`s, as the members `page`, `border_box`, `content_box`,
+/// `padding`, `border` and `margin` that [`dump_layout`] writes for them. Returns the object of
+/// every id that was found (the first element with that id, in document order, that has a box)
+/// and the ids that were not.
+pub fn element_boxes(dom: &DomRef, world: &World, ids: &[String]) -> (serde_json::Map<String, serde_json::Value>, Vec<String>) {
+    fn walk(
+        node: &DomRef,
+        world: &World,
+        wanted: &std::collections::HashSet<&str>,
+        found: &mut std::collections::HashMap<String, String>,
+    ) {
+        if let ParsedData::Element(element) = &node.html_data {
+            let id = element
+                .attributes
+                .borrow()
+                .iter()
+                .find(|(qname, _)| &*qname.local == "id")
+                .map(|(_, attr)| attr.value.to_string());
+            if let (Some(id), Some(LayoutEntity(entity))) = (id, node.layout_entity()) {
+                if wanted.contains(id.as_str()) && !found.contains_key(&id) {
+                    if let Some(pos) = world.read_storage::<Position>().get(entity).copied() {
+                        let deco = world.read_storage::<Decoration>().get(entity).copied().unwrap_or_default();
+                        let mut out = String::new();
+                        write_boxes(&mut out, pos, deco);
+                        // (members, each with a leading ", ")
+                        found.insert(id, format!("{{{}}}", &out[2..]));
+                    }
+                }
+            }
+        }
+        for child in TreeLinked::children(node) {
+            walk(&child, world, wanted, found);
+        }
+    }
+    let wanted: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+    let mut found = std::collections::HashMap::new();
+    walk(dom, world, &wanted, &mut found);
+    let mut boxes = serde_json::Map::new();
+    let mut missing = Vec::new();
+    for id in ids {
+        match found.get(id).and_then(|json| serde_json::from_str(json).ok()) {
+            Some(value) => {
+                boxes.insert(id.clone(), value);
+            }
+            None => {
+                if !missing.contains(id) {
+                    missing.push(id.clone());
+                }
+            }
+        }
+    }
+    (boxes, missing)
+}

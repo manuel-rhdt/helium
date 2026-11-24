@@ -1,50 +1,13 @@
-#![allow(clippy::needless_update)]
-
-#[macro_use]
-extern crate cssparser;
-
-#[macro_use]
-extern crate html5ever;
-
-#[cfg(test)]
-extern crate quickcheck;
-#[cfg(test)]
-#[macro_use(quickcheck)]
-extern crate quickcheck_macros;
-
 use structopt::StructOpt;
 
 use derive_more::From;
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::io::{Read, Write};
+use std::path::PathBuf;
 
-pub mod default_cell_ext;
-pub mod display_list;
-pub mod dot;
-pub mod font_usage;
-pub mod image;
-mod svg;
-pub mod svg_dom;
-mod svg_input;
-mod svg_text;
-pub mod layout;
-pub mod metadata;
-pub mod node_data_ref;
-mod parser;
-mod pdf;
-pub mod simple_dom;
-pub mod style;
-pub mod tagging;
-mod traverse;
-mod tree;
-
-use crate::parser::{generate_render_tree, generate_render_tree_xml};
-use crate::style::device::Device;
-use style::properties::computed::PixelLength;
-
-use log::info;
+use helium::engine::{Document, DocumentKind, Engine, EngineConfig, LayoutOptions, RenderOptions};
+use helium::layout;
+use helium::pdf::PdfALevel;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "helium")]
@@ -63,7 +26,7 @@ struct Options {
     /// allow transparency, colour glyphs or ICC profiles of version 4: a document that needs one is an
     /// error. The other things that PDF/A forbids are not checked.
     #[structopt(long = "pdfa", value_name = "LEVEL")]
-    pdfa: Option<pdf::PdfALevel>,
+    pdfa: Option<PdfALevel>,
     /// Write the computed layout as JSON to this file (use `-` for stdout)
     #[structopt(long = "dump-layout", parse(from_os_str))]
     dump_layout: Option<PathBuf>,
@@ -95,15 +58,21 @@ struct Options {
     #[structopt(long = "xml")]
     xml_flag: bool,
     /// Read the input with the HTML parser, which repairs what is not well-formed. This is the
-    /// default for every other extension.
+    /// default for every other extension, and for the input `-` (standard input).
     #[structopt(long = "html", conflicts_with = "xml_flag")]
     html_flag: bool,
-    /// The input file to process: HTML, or SVG (which may hold HTML and MathML in `foreignObject`)
-    #[structopt(parse(from_os_str))]
-    input: PathBuf,
-    /// Path where the output PDF file will be stored
-    #[structopt(parse(from_os_str))]
-    output: PathBuf,
+    /// Serve requests on standard input and output instead of converting one file: a request and
+    /// response protocol with `Content-Length` framing (`hello`, `measure`, `layout`, `render` and
+    /// `shutdown`; see the documentation of `helium::server`). Standard error carries the log only.
+    #[structopt(long = "serve", conflicts_with_all = &["dump_layout", "dump_pagination", "check_layout"])]
+    serve: bool,
+    /// The input file to process: HTML, or SVG (which may hold HTML and MathML in `foreignObject`).
+    /// Use `-` for standard input.
+    #[structopt(parse(from_os_str), required_unless = "serve")]
+    input: Option<PathBuf>,
+    /// Path where the output PDF file will be stored. Use `-` for standard output.
+    #[structopt(parse(from_os_str), required_unless = "serve")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, From)]
@@ -113,83 +82,90 @@ pub enum Error {
 }
 
 fn main() -> Result<(), Error> {
-    env_logger::init();
-
     let opt = Options::from_args();
+    let no_system_fonts = opt.no_system_fonts
+        || std::env::var_os("HELIUM_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0");
+    let config = EngineConfig {
+        system_fonts: !no_system_fonts,
+        font_dirs: opt.font_dirs.clone(),
+        resource_root: opt.resource_root.clone(),
+    };
+
+    if opt.serve {
+        // the warnings of a request come back with its response
+        helium::server::init_logging();
+        let engine = Engine::new(config).map_err(|e| Error::Layout(e.to_string()))?;
+        let status = helium::server::serve(&engine, std::io::stdin().lock(), std::io::stdout(), helium::server::Limits::default());
+        std::process::exit(status);
+    }
+
+    env_logger::init();
     if opt.no_tags && opt.pdfa.is_some_and(|level| level.needs_tags()) {
         eprintln!("error: PDF/A level `a` needs the structure tree, so it cannot be used with --no-tags");
         std::process::exit(2);
     }
-    let no_system_fonts = opt.no_system_fonts
-        || std::env::var_os("HELIUM_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0");
-    layout::text::font::set_use_system_fonts(!no_system_fonts);
-    layout::text::font::set_font_dirs(opt.font_dirs.clone());
-    if let Some(root) = &opt.resource_root {
-        image::set_resource_root(root.clone());
+    let engine = Engine::new(config).map_err(|e| Error::Layout(e.to_string()))?;
+
+    let input = opt.input.clone().expect("required unless --serve");
+    let output = opt.output.clone().expect("required unless --serve");
+    let from_stdin = input.as_os_str() == "-";
+    let to_stdout = output.as_os_str() == "-";
+    let stdout_is_dump = [&opt.dump_layout, &opt.dump_pagination].iter().any(|p| p.as_ref().is_some_and(|p| p.as_os_str() == "-"));
+    if to_stdout && (stdout_is_dump || opt.check_layout) {
+        eprintln!("error: the PDF is written to standard output, which the other output cannot share");
+        std::process::exit(2);
     }
 
-    let input_dir = opt
-        .input
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-        .to_path_buf();
-    let file = fs::read(&opt.input)?;
-    let text = String::from_utf8_lossy(&file);
+    let (text, input_dir) = if from_stdin {
+        let mut bytes = Vec::new();
+        std::io::stdin().read_to_end(&mut bytes)?;
+        (String::from_utf8_lossy(&bytes).into_owned(), PathBuf::from("."))
+    } else {
+        let dir = input
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
+        (String::from_utf8_lossy(&std::fs::read(&input)?).into_owned(), dir)
+    };
     // the parser follows the kind of file: XML for SVG and XHTML, HTML for the rest
     let is_xml = if opt.xml_flag {
         true
-    } else if opt.html_flag {
+    } else if opt.html_flag || from_stdin {
         false
     } else {
-        opt.input.extension().is_some_and(|ext| {
+        input.extension().is_some_and(|ext| {
             ["svg", "xhtml", "xht", "xml"].iter().any(|xml| ext.eq_ignore_ascii_case(xml))
         })
     };
-
-    let before_render_tree = Instant::now();
-    // (a document with cross-references is laid out more than once, from a new tree each time)
-    let parse = || -> Result<crate::tree::DomRef, String> {
-        if is_xml {
-            generate_render_tree_xml(&text)
-                .and_then(|document| parser::into_html_document(&document))
-                .map_err(|message| format!("{}: {}", opt.input.display(), message))
-        } else {
-            Ok(generate_render_tree(&text))
-        }
+    let document = Document {
+        source: text,
+        kind: if is_xml { DocumentKind::Xml } else { DocumentKind::Html },
+        base_dir: Some(input_dir),
+        name: Some(if from_stdin { "<stdin>".to_owned() } else { input.display().to_string() }),
+    };
+    let render_options = RenderOptions {
+        layout: LayoutOptions { crop: opt.crop, page: None },
+        no_compression: opt.no_filter,
+        no_tags: opt.no_tags,
+        pdfa: opt.pdfa,
     };
 
-    let device = if opt.crop {
-        // dummy device. Final page size is determined by cropping
-        Device {
-            width: PixelLength(0.0),
-            height: PixelLength(0.0),
-        }
-    } else {
-        // a4 paper
-        Device {
-            width: PixelLength(793.7),
-            height: PixelLength(1123.0),
-        }
-    };
     layout::report_pagination(opt.dump_pagination.is_some());
-    let before_layout = Instant::now();
-    let (dom, mut layout_context) = layout::layout_resolved(&parse, device, opt.crop, &input_dir)?;
-    info!("TIMED: layout {:?}", before_layout.elapsed());
+    let mut layout = engine
+        .layout(&document, &render_options.layout)
+        .map_err(|e| Error::Layout(e.to_string()))?;
 
-    if let Some(report) =
-        specs::WorldExt::read_resource::<layout::text::fallback::MissingGlyphs>(&layout_context)
-            .report()
-    {
+    if let Some(report) = layout.missing_glyphs_report() {
         eprintln!("{}", report);
     }
 
     if let Some(path) = &opt.dump_layout {
-        let json = layout::dump::dump_layout(&dom, &layout_context);
+        let json = layout.dump_json();
         if path.as_os_str() == "-" {
             print!("{}", json);
         } else {
-            fs::write(path, json)?;
+            std::fs::write(path, json)?;
         }
     }
 
@@ -198,24 +174,20 @@ fn main() -> Result<(), Error> {
         if path.as_os_str() == "-" {
             println!("{}", json);
         } else {
-            fs::write(path, json)?;
+            std::fs::write(path, json)?;
         }
     }
 
     // the PDF is still written for failing checks so that it can be inspected
     let check_exit_code = if opt.check_layout {
-        let report = layout::check::check_layout(&dom, &layout_context);
+        let report = layout.check();
         for line in &report.unsupported {
             eprintln!("UNSUPPORTED {}", line);
         }
         for line in &report.failures {
             eprintln!("FAIL {}", line);
         }
-        println!(
-            "checked {} expectations, {} failed",
-            report.checked,
-            report.failures.len()
-        );
+        println!("checked {} expectations, {} failed", report.checked, report.failures.len());
         if !report.failures.is_empty() {
             Some(1)
         } else if report.checked == 0 {
@@ -228,18 +200,18 @@ fn main() -> Result<(), Error> {
         None
     };
 
-    let display_list = display_list::generate_display_list(&mut layout_context);
-
-    if let Err(error) = pdf::write_pdf(
-        opt.output,
-        display_list,
-        opt.no_filter,
-        opt.crop,
-        !opt.no_tags,
-        opt.pdfa,
-    ) {
+    // (the file is made only once the PDF is complete, so there is none for a document that cannot be written)
+    let mut pdf = Vec::new();
+    if let Err(error) = layout.write_pdf(&render_options, &mut pdf) {
         eprintln!("error: {error}");
         std::process::exit(1);
+    }
+    if to_stdout {
+        let mut out = std::io::stdout().lock();
+        out.write_all(&pdf)?;
+        out.flush()?;
+    } else {
+        std::fs::write(&output, &pdf)?;
     }
 
     if let Some(code) = check_exit_code {

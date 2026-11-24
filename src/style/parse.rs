@@ -59,7 +59,7 @@ impl Default for Styles {
     fn default() -> Self {
         let ua_style = include_str!("../../resources/user-agent.css");
         let mut styles = Styles::empty();
-        styles.parse_css(ua_style);
+        crate::engine::without_warnings(|| styles.parse_css(ua_style));
         styles.user_agent_rules = styles.rules.len();
         styles
     }
