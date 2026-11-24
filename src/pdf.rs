@@ -3,7 +3,6 @@ use crate::font_usage::FontUsage;
 use crate::layout::components::TextOperator;
 use crate::style::properties::computed::{IccSpace, PixelLength, PaintColor};
 use crate::tagging::TagRecorder;
-use std::path::PathBuf;
 
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::object::{ByteString, IndirectReference, Name, TextString};
@@ -18,8 +17,7 @@ mod gradient;
 pub(crate) mod text;
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufWriter, Error};
+use std::io::{BufWriter, Error, Write};
 
 impl From<PixelLength> for Pt {
     fn from(px: PixelLength) -> Pt {
@@ -962,10 +960,13 @@ fn check_pdfa_images(print_pages: &mut PrintPages) -> Result<(), Error> {
     Ok(())
 }
 
-/// Writes the pages as a PDF file. If `tagged`, it is a tagged PDF whose structure tree is the
+/// Writes the pages as a PDF to `output`. If `tagged`, it is a tagged PDF whose structure tree is the
 /// `structure` of the pages. With a `pdfa` level the file is written to conform to it.
-pub fn write_pdf(
-    output_path: PathBuf,
+///
+/// With PDF/A-1 the whole file is held back until it is known to conform, so that nothing is written
+/// for a document that does not.
+pub fn write_pdf<W: Write>(
+    mut output: W,
     print_pages: PrintPages,
     no_filter: bool,
     crop: bool,
@@ -973,25 +974,27 @@ pub fn write_pdf(
     pdfa: Option<PdfALevel>,
 ) -> Result<(), Error> {
     if !pdfa.is_some_and(|level| level.part == 1) {
-        return write_pdf_file(output_path, print_pages, no_filter, crop, tagged, pdfa);
+        return write_pdf_to(output, print_pages, no_filter, crop, tagged, pdfa);
     }
     // PDF/A-1 forbids transparency, which the writer meets at many places: every one of them notes
     // what it met, and the file is not kept if there was any
     PDFA1_VIOLATIONS.with(|violations| *violations.borrow_mut() = Some(Vec::new()));
-    let result = write_pdf_file(output_path.clone(), print_pages, no_filter, crop, tagged, pdfa);
+    let mut buffer = Vec::new();
+    let result = write_pdf_to(&mut buffer, print_pages, no_filter, crop, tagged, pdfa);
     let violations = PDFA1_VIOLATIONS.with(|violations| violations.borrow_mut().take()).unwrap_or_default();
-    if violations.is_empty() {
-        return result;
+    if !violations.is_empty() {
+        return Err(Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("the document cannot be written as PDF/A-1, which does not allow: {}", violations.join("; ")),
+        ));
     }
-    let _ = std::fs::remove_file(&output_path);
-    Err(Error::new(
-        std::io::ErrorKind::InvalidInput,
-        format!("the document cannot be written as PDF/A-1, which does not allow: {}", violations.join("; ")),
-    ))
+    result?;
+    output.write_all(&buffer)?;
+    output.flush()
 }
 
-fn write_pdf_file(
-    output_path: PathBuf,
+fn write_pdf_to<W: Write>(
+    output: W,
     mut print_pages: PrintPages,
     no_filter: bool,
     crop: bool,
@@ -1002,8 +1005,7 @@ fn write_pdf_file(
         // before the file is made, so that there is none if there is an error
         check_pdfa_images(&mut print_pages)?;
     }
-    let file = BufWriter::new(File::create(output_path)?);
-    let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
+    let mut context = DocumentContext::with_writer(BufWriter::new(output), Version::Pdf1_7)?;
     if pdfa1_active() {
         // PDF/A-1 (ISO 19005-1, 6.1.4) does not have cross-reference streams or object streams
         context.object_streams = false;
