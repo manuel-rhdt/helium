@@ -240,9 +240,14 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
                 tree.aligns,
             ),
         };
+        let limit = tree
+            .computed_values
+            .get(entity)
+            .map_or(helium_paginate::HyphenLimit::None, |style| style.text.hyphenate_limit_last.page_end_limit());
         lines
             .iter()
             .map(|line| ParLine {
+                hyphen_limit: hyphen_limit_of(ifc, line, limit),
                 extent: f64::from(line.height.0),
                 end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
                 demerits: line.demerits,
@@ -268,6 +273,10 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         let Some(ifc) = ifc else {
             return vec![Rc::from(vec![])];
         };
+        let limit = tree
+            .computed_values
+            .get(entity)
+            .map_or(helium_paginate::HyphenLimit::None, |style| style.text.hyphenate_limit_last.page_end_limit());
         let mut own_cache = HashMap::new();
         let cache = if inline_context.is_some() { &mut own_cache } else { &mut tree.lines };
         variants_from(
@@ -287,6 +296,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             lines
                 .iter()
                 .map(|line| ParLine {
+                    hyphen_limit: hyphen_limit_of(ifc, line, limit),
                     extent: f64::from(line.height.0),
                     end: LineCut { at: line.to_break, fitness: line.fitness }.cut(),
                     demerits: line.demerits,
@@ -588,5 +598,19 @@ impl LayoutService for TreeService<'_, '_, '_> {
         let lines = self.paragraph_lines(node, from, None, width, subtree.inline_contexts.get(&node));
         self.subtree_lines.insert(key, lines.clone());
         lines
+    }
+}
+
+/// Where the line should not be the last of a page or a column: `limit` (what
+/// `hyphenate-limit-last` of the paragraph says) if the line ends in a hyphen.
+fn hyphen_limit_of(
+    ifc: &InlineFormattingContext,
+    line: &crate::layout::inline::MeasuredLine,
+    limit: helium_paginate::HyphenLimit,
+) -> helium_paginate::HyphenLimit {
+    if limit != helium_paginate::HyphenLimit::None && ifc.break_points[line.to_break].hyphen {
+        limit
+    } else {
+        helium_paginate::HyphenLimit::None
     }
 }

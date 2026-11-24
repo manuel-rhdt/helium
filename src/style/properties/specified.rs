@@ -54,7 +54,7 @@ pub trait CssWideProperties {
 fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
-        "list-style-type", "list-style-position", "letter-spacing", "word-spacing", "white-space", "text-indent", "text-align", "hyphens", "direction",
+        "list-style-type", "list-style-position", "letter-spacing", "word-spacing", "white-space", "text-indent", "text-align", "hyphens", "hyphenate-limit-chars", "hyphenate-limit-last", "direction",
         "border-spacing", "border-collapse", "quotes", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
         "math-depth",
     ];
@@ -801,6 +801,12 @@ pub enum Text {
     TextAlign(TextAlign),
     #[property]
     Hyphens(Hyphens),
+    /// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
+    #[property]
+    HyphenateLimitChars(HyphenateLimitChars),
+    /// https://www.w3.org/TR/css-text-4/#hyphenate-line-limits
+    #[property]
+    HyphenateLimitLast(HyphenateLimitLast),
     /// https://www.w3.org/TR/css-text-3/#letter-spacing-property
     #[property]
     LetterSpacing(NormalOrQuantity),
@@ -2522,6 +2528,103 @@ pub enum Hyphens {
 impl Default for Hyphens {
     fn default() -> Self {
         Self::Manual
+    }
+}
+
+/// `hyphenate-limit-chars`: the fewest characters of a word that is hyphenated, and the fewest
+/// before and after the hyphen. A number is `None` for `auto`.
+/// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct HyphenateLimitChars {
+    pub word: Option<u32>,
+    pub before: Option<u32>,
+    pub after: Option<u32>,
+}
+
+impl HyphenateLimitChars {
+    /// What `auto` is: 5 characters in a word and 2 before and after the hyphen, which is what
+    /// the specification suggests. (TeX's English patterns use 2 and 3.)
+    pub const AUTO: (usize, usize, usize) = (5, 2, 2);
+
+    /// The limits as numbers: the word, before and after.
+    pub fn resolved(self) -> (usize, usize, usize) {
+        let number = |value: Option<u32>, auto: usize| value.map_or(auto, |value| value as usize);
+        (
+            number(self.word, Self::AUTO.0),
+            number(self.before, Self::AUTO.1),
+            number(self.after, Self::AUTO.2),
+        )
+    }
+}
+
+impl<'i> PropertyValue<'i> for HyphenateLimitChars {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        // [ auto | <integer [0,∞]> ]{1,3}
+        let mut values: Vec<Option<u32>> = vec![];
+        while values.len() < 3 && !input.is_exhausted() {
+            let value = if input.try_parse(|input| input.expect_ident_matching("auto")).is_ok() {
+                None
+            } else {
+                let number = input.expect_integer()?;
+                match u32::try_from(number) {
+                    Ok(number) => Some(number),
+                    Err(_) => return Err(ParseError::custom(StyleParseError::InvalidValue)),
+                }
+            };
+            values.push(value);
+        }
+        input.expect_exhausted()?;
+        if values.is_empty() {
+            return Err(ParseError::custom(StyleParseError::InvalidValue));
+        }
+        // a missing second value is `auto`, and a missing third one is the second
+        let word = values[0];
+        let before = values.get(1).copied().flatten();
+        let after = values.get(2).copied().unwrap_or(before);
+        Ok(HyphenateLimitChars { word, before, after })
+    }
+}
+
+/// `hyphenate-limit-last`: where the last line before a break should not be hyphenated.
+/// https://www.w3.org/TR/css-text-4/#hyphenate-line-limits
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum HyphenateLimitLast {
+    /// No restrictions (a hyphen on the line before the last of a paragraph still has the demerits
+    /// that it has in TeX).
+    #[default]
+    None,
+    /// The last full line of the element, and the last line before any column, page or spread
+    /// break in it.
+    Always,
+    /// The last line before any column, page or spread break.
+    Column,
+    /// The last line before a page or spread break.
+    Page,
+    /// The last line before a spread break.
+    Spread,
+}
+
+impl HyphenateLimitLast {
+    /// What the last line of a paragraph has for following a line that ends in a hyphen, for the
+    /// values that ask the last full line of an element not to be hyphenated: so many demerits
+    /// that it only happens if the other breaks are much worse (the specification says that it
+    /// "should not" be). `None` is TeX's `\finalhyphendemerits`.
+    pub fn final_hyphen_demerits(self) -> Option<f64> {
+        matches!(self, HyphenateLimitLast::Always).then_some(100_000.0)
+    }
+
+    /// Where a line that ends in a hyphen should not be the last one, for the pages and the
+    /// columns: `always` is about every kind of break, `column` as well, `page` is about pages
+    /// and spreads and `spread` about spreads.
+    pub fn page_end_limit(self) -> helium_paginate::HyphenLimit {
+        match self {
+            HyphenateLimitLast::None => helium_paginate::HyphenLimit::None,
+            HyphenateLimitLast::Always | HyphenateLimitLast::Column => helium_paginate::HyphenLimit::Column,
+            HyphenateLimitLast::Page => helium_paginate::HyphenLimit::Page,
+            HyphenateLimitLast::Spread => helium_paginate::HyphenLimit::Spread,
+        }
     }
 }
 

@@ -88,6 +88,8 @@ impl CssCost {
 /// far as possible.
 #[derive(Debug, Copy, Clone)]
 pub struct CssObjective {
+    /// Whether the document is set from right to left (which pages end a spread).
+    pub rtl: bool,
     /// The exchange rate between lines and room: the badness that is worth a whole line of room
     /// (see [`CssObjective::LINE_TOLERANCE`]). A greater value makes the lines of a page cheaper
     /// against its room, so that looser breakings are taken more readily.
@@ -97,6 +99,7 @@ pub struct CssObjective {
 impl Default for CssObjective {
     fn default() -> Self {
         CssObjective {
+            rtl: false,
             line_tolerance: Self::LINE_TOLERANCE,
         }
     }
@@ -114,6 +117,39 @@ impl CssObjective {
     /// page, where the square root of the demerits (which are squares, as the badness that
     /// they are made of is) is the badness, and a badness of the tolerance is a whole line.
     pub const LINE_TOLERANCE: f64 = 2000.0;
+
+    /// The room that a page costs for ending after a line that ends in a hyphen where it should
+    /// not (`hyphenate-limit-last`), in lines. A page can only avoid it by ending a line early (a
+    /// paragraph that is broken in other ways, `looseness`, may have a way that does not end in a
+    /// hyphen without a short page), and the room is a cube, so that this many lines is as much
+    /// as about 15 pages that end a line early. In the novel of the gallery (365 pages, 25 of
+    /// which end in a hyphen), 1.5 lines avoid 10 of the hyphens, 2.5 lines avoid 21 and 6 lines
+    /// avoid 24, at the cost of 3, 18 and 22 more pages that end a line early: the rest is
+    /// avoided at a price that grows faster than what it gains. TeX's `\brokenpenalty`, but
+    /// stronger, because a book that asks for this wants it.
+    pub const HYPHEN_END_LINES: f64 = 2.5;
+
+    /// Whether a page of this kind ends a spread: the right page, and the first page, which is
+    /// alone (in a document that is set from right to left, the left pages are the ones at the end
+    /// of a spread).
+    fn ends_spread(&self, kind: crate::PageKind) -> bool {
+        match kind {
+            crate::PageKind::First => true,
+            crate::PageKind::Right => !self.rtl,
+            crate::PageKind::Left => self.rtl,
+        }
+    }
+
+    /// The room that the page costs for ending in a hyphen: the height of that line times
+    /// [`HYPHEN_END_LINES`](Self::HYPHEN_END_LINES), if the page is one that its limit is about.
+    pub fn hyphen_room(&self, fill: &PageFill) -> f64 {
+        let applies = match fill.hyphen_end {
+            crate::HyphenLimit::None => false,
+            crate::HyphenLimit::Column | crate::HyphenLimit::Page => true,
+            crate::HyphenLimit::Spread => self.ends_spread(fill.kind),
+        };
+        if applies { Self::HYPHEN_END_LINES * f64::from(fill.hyphen_extent) } else { 0.0 }
+    }
 
     /// The room on a page that costs as much as the lines of the page that are broken in other ways
     /// than the first (see [`Variants`](crate::Variants)): zero for a page that is not.
@@ -153,7 +189,7 @@ impl Objective for CssObjective {
         } else {
             CssCost::slack_of(fill.spec.block_size as f64 - fill.used as f64)
         };
-        let slack = empty_room + CssCost::slack_of(self.line_room(fill));
+        let slack = empty_room + CssCost::slack_of(self.line_room(fill)) + CssCost::slack_of(self.hyphen_room(fill));
         Some(CssCost {
             overflows: 0,
             avoided_breaks: u32::from(fill.end_kind == crate::BreakKind::Avoid),
@@ -246,7 +282,14 @@ impl ColumnCost {
             overflow: f64::from(u8::from(fill.overflow)),
             avoided_break: f64::from(u8::from(fill.end_kind == crate::BreakKind::Avoid)),
             orphans_and_widows: f64::from(u8::from(fill.orphan_violation || fill.widow_violation)),
-            height: fill.used as f64 + CssObjective::line_room_at(fill, line_tolerance),
+            height: fill.used as f64
+                + CssObjective::line_room_at(fill, line_tolerance)
+                // (a column that ends in a hyphen that it should not: as much as a taller one)
+                + if fill.hyphen_end == crate::HyphenLimit::Column {
+                    CssObjective::HYPHEN_END_LINES * f64::from(fill.hyphen_extent)
+                } else {
+                    0.0
+                },
         }
     }
 

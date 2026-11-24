@@ -59,7 +59,15 @@
   html { font-family: "TeX Gyre Pagella", "Palatino Linotype", Palatino, "Latin Modern Roman", serif; }
   body { font-size: 10.5pt; line-height: 14.5pt; color: #111; margin: 0; orphans: 2; widows: 2; }
 
-  /* Body text: justified with hyphenation, indented paragraphs without space between them */
+  /* Body text: justified with hyphenation, indented paragraphs without space between them.
+     Words are broken with at least 2 letters before the hyphen and 3 after it, as TeX does for
+     English (`hyphenate-limit-chars`, the first number being the shortest word, which stays
+     the default), and the last line of the page on the right of a spread does not end in a hyphen
+     (`hyphenate-limit-last: spread`), so that the reader does not have to turn the page in the
+     middle of a word. A page that would end in one ends a line early instead, if there is no
+     other way. (The line before the last of a paragraph is not hyphenated if it can be avoided
+     in any case: TeX's final hyphen demerits.) */
+  html { hyphenate-limit-chars: auto 2 3; hyphenate-limit-last: spread; }
   p { margin: 0; text-align: justify; text-indent: 1.3em; hyphens: auto; }
   h2 + p { text-indent: 0; }
 

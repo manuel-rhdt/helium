@@ -887,6 +887,8 @@ impl StyleBuilder {
                 text_indent: inherited_values.text.text_indent,
                 text_align: inherited_values.text.text_align,
                 hyphens: inherited_values.text.hyphens,
+                hyphenate_limit_chars: inherited_values.text.hyphenate_limit_chars,
+                hyphenate_limit_last: inherited_values.text.hyphenate_limit_last,
                 letter_spacing: inherited_values.text.letter_spacing,
                 word_spacing: inherited_values.text.word_spacing,
                 text_transform: inherited_values.text.text_transform,
@@ -1437,6 +1439,8 @@ pub struct Text {
     pub text_indent: LengthPercentage,
     pub text_align: specified::TextAlign,
     pub hyphens: specified::Hyphens,
+    pub hyphenate_limit_chars: specified::HyphenateLimitChars,
+    pub hyphenate_limit_last: specified::HyphenateLimitLast,
     /// The extra space after every character; `normal` is 0.
     pub letter_spacing: PixelLength,
     /// The extra space at every word separator (a space, for one); `normal` is 0.

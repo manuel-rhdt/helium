@@ -16,9 +16,28 @@ pub struct ContainerFloat {
     pub anchor: u32,
 }
 
+/// Where a line that ends in a hyphen should not be the last line of a page or a column, as
+/// `hyphenate-limit-last` says of the element that the line is in. The kernel counts a page
+/// that ends after such a line (see [`PageFill::hyphen_end`](crate::PageFill::hyphen_end)).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum HyphenLimit {
+    /// No restriction.
+    #[default]
+    None,
+    /// Not before a spread break: the last line of the page on the right of a spread.
+    Spread,
+    /// Not before a page break (or a spread break).
+    Page,
+    /// Not before a column break (or a page or spread break).
+    Column,
+}
+
 /// A line of a paragraph of the flow.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ParLine {
+    /// Whether the line ends in a hyphen, and where it should not be the last line (a line that
+    /// does not end in a hyphen has [`HyphenLimit::None`]).
+    pub hyphen_limit: HyphenLimit,
     /// The height of the line.
     pub extent: f64,
     /// The cut behind the line, where a page that ends after the line is continued. Meaningless
@@ -245,6 +264,7 @@ impl LayoutService for GalleyService {
             .enumerate()
             .skip(first)
             .map(|(line, &extent)| ParLine {
+                hyphen_limit: HyphenLimit::None,
                 demerits: 0.0,
                 badness: 0.0,
                 extent,

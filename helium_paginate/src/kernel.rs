@@ -32,6 +32,11 @@ pub struct PageFill {
     pub widow_violation: bool,
     /// A single unbreakable item is taller than the page.
     pub overflow: bool,
+    /// If the page ends after a line that ends in a hyphen: where that line should not be the
+    /// last one (`hyphenate-limit-last`), and its height. The cost of the page counts it (see
+    /// [`CssObjective`](crate::CssObjective)).
+    pub hyphen_end: crate::HyphenLimit,
+    pub hyphen_extent: f32,
     /// The demerits of the lines of the paragraphs on the page, where the page chooses among ways
     /// to break them ([`Variants`](crate::Variants)), and 0 where it does not. A page that has a
     /// part of a paragraph has the demerits of those lines.
@@ -193,11 +198,19 @@ struct Legal {
     /// Whether a fragment of a container on the page broke the rules that it has inside.
     orphans: bool,
     widows: bool,
+    /// The line that the page ends with ends in a hyphen that it should not (and its height).
+    hyphen: crate::HyphenLimit,
+    hyphen_extent: f32,
 }
 
 impl Legal {
     fn new(kind: BreakKind, cut: Option<(u32, u32)>) -> Self {
-        Legal { kind, cut, orphans: false, widows: false }
+        Legal { kind, cut, orphans: false, widows: false, hyphen: crate::HyphenLimit::None, hyphen_extent: 0.0 }
+    }
+
+    /// The same, for a page that ends after `line`.
+    fn after(self, line: &crate::ParLine) -> Self {
+        Legal { hyphen: line.hyphen_limit, hyphen_extent: line.extent as f32, ..self }
     }
 }
 
@@ -753,7 +766,7 @@ impl<'a> Kernel<'a> {
                                     let legal = Legal {
                                         orphans: broken_orphans,
                                         widows: broken_widows,
-                                        ..Legal::new(end_kind, Some((lines_on_page, orphans)))
+                                        ..Legal::new(end_kind, Some((lines_on_page, orphans))).after(line)
                                     };
                                     // The lines that the next fragment of the container starts with
                                     // are the rest of the paragraph.
@@ -792,7 +805,7 @@ impl<'a> Kernel<'a> {
                                     let legal = Legal {
                                         orphans: broken_orphans,
                                         widows: broken_widows,
-                                        ..Legal::new(end_kind, Some((lines_on_page, orphans)))
+                                        ..Legal::new(end_kind, Some((lines_on_page, orphans))).after(last)
                                     };
                                     let found = Found { token, legal, widows: false, spec, kind: page_kind };
                                     let on_this_page = in_start.then_some(lines_on_page);
@@ -867,6 +880,9 @@ impl<'a> Kernel<'a> {
                             cut: None,
                             orphans: broken_orphans || fragment.orphan_violation || fragment.avoid_violation,
                             widows: broken_widows || fragment.widow_violation,
+                            // (a container that is split ends with the lines of its own flow)
+                            hyphen: crate::HyphenLimit::None,
+                            hyphen_extent: 0.0,
                         };
                         let found = Found { token, legal, widows: false, spec, kind: page_kind };
                         let mut here = on_page.clone();
@@ -1035,6 +1051,8 @@ impl<'a> Kernel<'a> {
             orphan_violation: false,
             widow_violation: false,
             overflow: used > spec.block_size,
+            hyphen_end: crate::HyphenLimit::None,
+            hyphen_extent: 0.0,
             line_demerits: 0.0,
             line_extent: 0.0,
             choices: ChoiceId::NONE,
@@ -1092,6 +1110,8 @@ impl<'a> Kernel<'a> {
             orphan_violation,
             widow_violation: widows || legal.widows,
             overflow,
+            hyphen_end: legal.hyphen,
+            hyphen_extent: legal.hyphen_extent,
             line_demerits: label.excess(),
             line_extent: if label.lines > 0 { (label.line_extent / f64::from(label.lines)) as f32 } else { 0.0 },
             choices,

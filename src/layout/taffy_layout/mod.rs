@@ -241,7 +241,7 @@ impl TaffyBlockLayout {
             .unwrap_or(0);
         let tuning = Tuning::from_environment();
         let problem = problem.with_variants(looseness, tuning.variant_tolerance);
-        let objective = helium_paginate::CssObjective { line_tolerance: tuning.line_tolerance };
+        let objective = helium_paginate::CssObjective { rtl: page_margins.rtl, line_tolerance: tuning.line_tolerance };
         tree.paragraph_variants = looseness;
         tree.earlier_fragments = tuning.earlier_fragments;
         tree.variants_config = helium_paginate::Variants {
@@ -320,6 +320,8 @@ impl TaffyBlockLayout {
                         spec: first_spec,
                         kind: helium_paginate::PageKind::First,
                         used: 0.0,
+                        hyphen_end: helium_paginate::HyphenLimit::None,
+                        hyphen_extent: 0.0,
                         end_kind: helium_paginate::BreakKind::Allowed,
                         orphan_violation: false,
                         widow_violation: false,

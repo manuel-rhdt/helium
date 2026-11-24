@@ -59,6 +59,9 @@ pub struct InlineFormattingContext {
     /// The no-break spaces where lines wrap, by advance: justification stretches and shrinks
     /// them like the spaces of the break points, but a line cannot break there.
     pub ties: Vec<Tie>,
+    /// The demerits that the last line of a paragraph has for following a line that ends in a
+    /// hyphen, if `hyphenate-limit-last` asks for more than TeX's (`None`).
+    pub final_hyphen_demerits: Option<f64>,
     /// The `leader()` placeholders of the paragraph, by advance: a line that has one is as wide
     /// as the paragraph, and the leader takes the room that is left on it.
     pub leaders: Vec<LeaderAt>,
@@ -132,6 +135,7 @@ impl InlineFormattingContext {
     ) -> Self {
         InlineFormattingContext {
             text_align: style.text.text_align,
+            final_hyphen_demerits: style.text.hyphenate_limit_last.final_hyphen_demerits(),
             elements,
             absolutes,
             break_points: vec![],
@@ -435,6 +439,7 @@ impl InlineFormattingContext {
                 forced: breakpoint.forced,
                 hyphen: breakpoint.hyphen,
                 penalty: breakpoint.penalty,
+                final_hyphen_demerits: self.final_hyphen_demerits,
             })
             .collect();
         let mut glue_prefix = Vec::with_capacity(breakpoints.len() + 1);
@@ -1100,8 +1105,8 @@ impl<'a> System<'a> for FindPossibleLineBreaks {
                                     let word = &text_run.text[word_start..word_end];
                                     points.extend(
                                         dictionaries
-                                            .points(&text_run.lang, word)
-                                            .iter()
+                                            .points(&text_run.lang, word, text_run.hyphenate_limits)
+                                            .into_iter()
                                             .map(|offset| word_start + offset),
                                     );
                                 }
@@ -1410,47 +1415,53 @@ impl HyphenationDictionaries {
     }
 
     /// The byte offsets in `word` of the hyphenation points that leave enough characters on both
-    /// sides (see `limit_hyphenation_chars`), in text in `lang`.
-    fn points(&mut self, lang: &crate::style::properties::computed::Language, word: &str) -> &[usize] {
+    /// sides (see `limit_hyphenation_chars`), in text in `lang`, with the limits of
+    /// `hyphenate-limit-chars` (the word, before and after).
+    fn points(
+        &mut self,
+        lang: &crate::style::properties::computed::Language,
+        word: &str,
+        limits: (usize, usize, usize),
+    ) -> Vec<usize> {
         // a word that is too short has no points: the dictionary does not need to be asked
-        if word.chars().count() < HYPHENATE_MIN_WORD {
-            return &[];
+        if word.chars().count() < limits.0 {
+            return Vec::new();
         }
         let Some(language) = hyphenation_language(lang) else {
-            return &[];
+            return Vec::new();
         };
         self.load(language);
+        // (the points of the dictionary are kept: the limits are not the same for all text)
         let words = self.words.entry(language).or_default();
         if !words.contains_key(word) {
             let points = match &self.dictionaries[&language] {
-                Some(dictionary) => limit_hyphenation_chars(word, dictionary.hyphenate(word).breaks),
+                Some(dictionary) => dictionary.hyphenate(word).breaks,
                 None => Vec::new(),
             };
             words.insert(word.to_owned(), points);
         }
-        &words[word]
+        limit_hyphenation_chars(word, words[word].clone(), limits)
     }
 }
 
-/// The shortest word that is hyphenated, and the fewest characters in front of and after the
-/// hyphen: the default of `hyphenate-limit-chars`, which is `auto` (5 2 2) in browsers. Words
-/// are not broken after a single letter, which looks as bad as it reads.
-/// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
-const HYPHENATE_MIN_WORD: usize = 5;
-const HYPHENATE_MIN_BEFORE: usize = 2;
-const HYPHENATE_MIN_AFTER: usize = 2;
+// The shortest word that is hyphenated, and the fewest characters in front of and after the
+// hyphen, are the ones of `hyphenate-limit-chars`, which is `auto` (5 2 2, as in browsers) by
+// default (`HyphenateLimitChars::AUTO`). Words are not broken after a single letter, which looks as
+// bad as it reads.
+// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
 
 /// The hyphenation points of `word` (byte offsets) that leave enough characters on both sides.
-fn limit_hyphenation_chars(word: &str, breaks: Vec<usize>) -> Vec<usize> {
+fn limit_hyphenation_chars(word: &str, breaks: Vec<usize>, limits: (usize, usize, usize)) -> Vec<usize> {
+    let (minimum, minimum_before, minimum_after) = limits;
     let length = word.chars().count();
-    if length < HYPHENATE_MIN_WORD {
+    if length < minimum {
         return Vec::new();
     }
     breaks
         .into_iter()
         .filter(|&offset| {
             let before = word[..offset].chars().count();
-            before >= HYPHENATE_MIN_BEFORE && length - before >= HYPHENATE_MIN_AFTER
+            before >= minimum_before && length - before >= minimum_after
         })
         .collect()
 }
@@ -3202,14 +3213,22 @@ mod tests {
         assert_eq!(glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected);
     }
 
+
+    const AUTO: (usize, usize, usize) = crate::style::properties::specified::HyphenateLimitChars::AUTO;
+
     #[test]
     fn hyphenation_leaves_two_characters_on_both_sides() {
         // a-ka-de-mi-a: no break after the first or in front of the last letter
-        assert_eq!(limit_hyphenation_chars("akademia", vec![1, 3, 5, 7]), vec![3, 5]);
+        assert_eq!(limit_hyphenation_chars("akademia", vec![1, 3, 5, 7], AUTO), vec![3, 5]);
         // short words are not hyphenated at all
-        assert_eq!(limit_hyphenation_chars("akme", vec![2]), Vec::<usize>::new());
+        assert_eq!(limit_hyphenation_chars("akme", vec![2], AUTO), Vec::<usize>::new());
         // the counts are in characters, not bytes: ά is two bytes
-        assert_eq!(limit_hyphenation_chars("άκρας", vec![2, 4]), vec![4]);
+        assert_eq!(limit_hyphenation_chars("άκρας", vec![2, 4], AUTO), vec![4]);
+        // the limits of `hyphenate-limit-chars`: the word, and the characters before and after
+        assert_eq!(limit_hyphenation_chars("akademia", vec![1, 3, 5, 7], (8, 3, 3)), vec![3, 5]);
+        assert_eq!(limit_hyphenation_chars("akademia", vec![1, 3, 5, 7], (9, 2, 2)), Vec::<usize>::new());
+        assert_eq!(limit_hyphenation_chars("akademia", vec![1, 3, 5, 7], (5, 4, 2)), vec![5]);
+        assert_eq!(limit_hyphenation_chars("akademia", vec![1, 3, 5, 7], (5, 1, 1)), vec![1, 3, 5, 7]);
     }
 
     #[test]
