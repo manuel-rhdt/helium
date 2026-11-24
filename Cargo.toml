@@ -18,8 +18,8 @@ selectors = "0.41"
 specs = { version = "0.20", features = ["shred-derive", "specs-derive"] }
 helium_derive = { path = "./helium_derive" }
 helium_paginate = { path = "./helium_paginate" }
-lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
-lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
+lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/bold-hopper-ycjkx3" }
+lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/bold-hopper-ycjkx3" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
 formel = "0.1.0"
 parking_lot = "0.11"

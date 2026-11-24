@@ -293,11 +293,11 @@ fn paint_plain(
         log::warn!("the wide-gamut colours of a gradient are clipped to sRGB: PDF/A-1 does not allow ICC profiles of version 4");
         wide = false;
     }
-    let profile = if wide { Some(super::wide_color_space(context)?) } else { None };
+    let profile = if wide { Some(context.rgb_icc_space(lemon_pdf::color::RgbSpace::Rec2020)?) } else { None };
     let mut color = build(context, space, gradient, |c| {
         if wide {
             let xyz = PaintColor::xyz_of_extended_srgb([c[0], c[1], c[2]]).map(f64::from);
-            let [r, g, b] = super::rec2020_gamma24_components(xyz);
+            let [r, g, b] = lemon_pdf::color::rec2020_gamma24_components(xyz);
             Rgb(r, g, b)
         } else {
             let channel = |value: f32| f64::from(value.clamp(0.0, 1.0));
