@@ -57,10 +57,11 @@ struct Options {
     /// for assistive technology, reflow and text extraction) that is derived from the HTML.
     #[structopt(long = "no-tags")]
     no_tags: bool,
-    /// Write a file that conforms to this level of PDF/A: 2a, 2b, 2u, 3a, 3b or 3u. The level `a`
+    /// Write a file that conforms to this level of PDF/A: 1b, 2a, 2b, 2u, 3a, 3b or 3u. The level `a`
     /// needs the structure tree, so it does not go with `--no-tags`. Colours are sRGB (the output
-    /// intent is a profile that is made in code), so a CMYK image is an error. The other things
-    /// that PDF/A forbids are not checked.
+    /// intent is a profile that is made in code), so a CMYK image is an error. PDF/A-1 (1b) does not
+    /// allow transparency, colour glyphs or ICC profiles of version 4: a document that needs one is an
+    /// error. The other things that PDF/A forbids are not checked.
     #[structopt(long = "pdfa", value_name = "LEVEL")]
     pdfa: Option<pdf::PdfALevel>,
     /// Write the computed layout as JSON to this file (use `-` for stdout)

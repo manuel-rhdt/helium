@@ -338,6 +338,9 @@ impl SvgWriter {
         if *known == Some(alpha) {
             return Ok(());
         }
+        if alpha != 1.0 {
+            crate::pdf::pdfa1_forbid("an SVG with opacity")?;
+        }
         *known = Some(alpha);
         if stroke {
             c.set_stroke_alpha(alpha)
@@ -509,6 +512,9 @@ impl SvgWriter {
             }
         };
         let effects = opacity < 1.0 || group.mask().is_some() || blend != BlendMode::Normal;
+        if effects {
+            crate::pdf::pdfa1_forbid("an SVG with opacity, a mask or a blend mode")?;
+        }
         let flat = effects && Self::is_flat(group);
 
         // a group that changes nothing in the graphics state needs no `q` and `Q`; the opacity of
