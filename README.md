@@ -399,6 +399,26 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
   (see `CssObjective::HYPHEN_END_LINES`). Not supported: `hyphenate-limit-lines` (a limit on the
   number of hyphens in a row, which TeX only counts demerits for, as here), `hyphenate-limit-zone`
   and `hyphenate-character`.
+  `hanging-punctuation` (CSS Text 3, which marks it at risk; inherited): `first` lets an opening
+  bracket or quote (the categories Ps, Pf and Pi, the apostrophe, the quotation mark and the
+  ideographic space) at the start of the first line of a paragraph hang outside of the line,
+  `last` a closing bracket or quote (Pe, Pf and Pi, the apostrophe and the quotation mark) at the
+  end of the last line, `force-end` a stop or comma (the 13 of the specification) at the end of a
+  line, and `allow-end` such a stop or comma only on a line that does not fit without it. As the
+  specification lets a user agent include other characters, the hyphen of a hyphenated word and
+  U+002D and U+2010 at the end of a line hang with the end values too, as the hyphens of a
+  book do in TeX with microtype. What hangs is not part of the line for fit, alignment and
+  justification: the breaker (which is the same for all of them) measures the lines without it,
+  and the justified lines are stretched to the width of the line without it, so that the edge
+  of the text is straight and the punctuation stands in the margin. One character hangs at each
+  edge. It is the same measure as the breaker uses, so a line that has more room because of what
+  hangs can take another word. Not supported: hanging in right-to-left text and in vertical text
+  (it is ignored there), a margin that is not wide enough (what hangs overflows the box, as the
+  specification says), the intrinsic sizes (the width of a paragraph in shrink-to-fit still
+  counts what hangs), an opening quote at the start of a line that is not the first of its
+  paragraph (the specification's `first` is about the first line only), and the characters that
+  TeX's microtype lets protrude by part of their width (letters like T and V, and the quotes and
+  the hyphen by less than their width).
 - **`@font-face`:** the descriptors `font-family`, `src`, `font-weight` (also a range) and
   `font-style`. A source is `url()` of a file inside of the directory of the document (relative
   to its style sheet; or `--resource-root`) or of a `data:` URI, or `local()` (an installed font

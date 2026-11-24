@@ -1461,7 +1461,7 @@ impl<'a> Writer<'a, '_> {
                 (
                     line.entity,
                     line.height.0,
-                    ifc.content_width(line.from_break, line.to_break).0,
+                    ifc.line_extent(line).0,
                     // a line with a `leader()` fills the paragraph, whatever the alignment
                     ifc.leaders_on(line.from_break, line.to_break) > 0,
                 )

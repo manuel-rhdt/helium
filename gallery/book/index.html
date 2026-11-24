@@ -66,8 +66,14 @@
      (`hyphenate-limit-last: spread`), so that the reader does not have to turn the page in the
      middle of a word. A page that would end in one ends a line early instead, if there is no
      other way. (The line before the last of a paragraph is not hyphenated if it can be avoided
-     in any case: TeX's final hyphen demerits.) */
-  html { hyphenate-limit-chars: auto 2 3; hyphenate-limit-last: spread; }
+     in any case: TeX's final hyphen demerits.)
+
+     Punctuation hangs in the margin (`hanging-punctuation`), as the margins of a book set with
+     TeX's microtype do: the opening quote of a line of dialogue at the start of a paragraph, the
+     closing quote at its end, and the full stops, commas and hyphens at the ends of the lines. The
+     lines are measured and the justified lines stretched without them, so the right margin is
+     straight and the punctuation stands outside of it. */
+  html { hyphenate-limit-chars: auto 2 3; hyphenate-limit-last: spread; hanging-punctuation: first force-end last; }
   p { margin: 0; text-align: justify; text-indent: 1.3em; hyphens: auto; }
   h2 + p { text-indent: 0; }
 
