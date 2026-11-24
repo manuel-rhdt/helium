@@ -228,6 +228,18 @@ pub(super) fn from_extended_srgb([r, g, b]: Rgb, alpha: f32) -> PaintColor {
     from_linear([srgb_decode(r), srgb_decode(g), srgb_decode(b)], Some(alpha.clamp(0.0, 1.0)))
 }
 
+/// CIE XYZ (D65) of a colour in any of the spaces that a colour can be in.
+pub(super) fn paint_to_xyz(color: PaintColor) -> Rgb {
+    match color {
+        PaintColor::Srgb(c) => {
+            let channel = |value: u8| srgb_decode(f32::from(value) / 255.0);
+            apply(&SRGB_TO_XYZ, [channel(c.red), channel(c.green), channel(c.blue)])
+        }
+        PaintColor::Icc(c) => icc_to_xyz(c),
+        PaintColor::Xyz(c) => c.components(),
+    }
+}
+
 /// CIE XYZ (D65) of a colour with extended sRGB channels.
 pub(super) fn extended_srgb_to_xyz([r, g, b]: Rgb) -> Rgb {
     apply(&SRGB_TO_XYZ, [srgb_decode(r), srgb_decode(g), srgb_decode(b)])

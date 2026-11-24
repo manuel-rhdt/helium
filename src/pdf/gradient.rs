@@ -287,7 +287,12 @@ fn paint_plain(
     // The colours of a gradient with one that sRGB cannot hold are in the ICC space of the wide colours
     // (the channels of the stops are the extended sRGB ones; the stops are close enough for the shading to
     // interpolate in that space). A conic gradient is a mesh with device colours: it is clipped to sRGB.
-    let wide = gradient.has_wide_colors() && !matches!(gradient.geometry, Geometry::Conic { .. });
+    let mut wide = gradient.has_wide_colors() && !matches!(gradient.geometry, Geometry::Conic { .. });
+    if wide && super::pdfa1_active() {
+        // the ICC space of the wide colours is a profile of version 4, which PDF/A-1 does not allow
+        log::warn!("the wide-gamut colours of a gradient are clipped to sRGB: PDF/A-1 does not allow ICC profiles of version 4");
+        wide = false;
+    }
     let profile = if wide { Some(super::wide_color_space(context)?) } else { None };
     let mut color = build(context, space, gradient, |c| {
         if wide {
@@ -309,11 +314,13 @@ fn paint_plain(
     if max_alpha - min_alpha < 1e-4 {
         // one opacity for the whole gradient
         if max_alpha < 1.0 {
+            super::pdfa1_forbid("a gradient with transparent colours")?;
             context.set_fill_alpha(f64::from(max_alpha))?;
         }
     } else {
         // The opacities are a second gradient, of gray levels, which is the soft mask. It
         // covers the box that the gradient is painted into.
+        super::pdfa1_forbid("a gradient with transparent colours")?;
         let paint = gradient.paint;
         let bbox = [
             Pt(space.x(paint.x)),
@@ -374,6 +381,7 @@ pub fn paint_blend_group(
         Pt(space.x(rect.x.0 + rect.width.0)),
         Pt(space.y(rect.y.0)),
     ];
+    super::pdfa1_forbid("`background-blend-mode` (a layer with a blend mode)")?;
     let form = context.pdf_context.write_form(
         bbox,
         Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),

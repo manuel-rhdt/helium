@@ -123,6 +123,9 @@ impl Alpha {
 
     fn set_fill(&mut self, context: &mut PageContext<'_, '_, '_>, alpha: u8) -> Result<(), Error> {
         if self.fill != u16::from(alpha) {
+            if alpha != u8::MAX {
+                pdfa1_forbid("a colour with an alpha channel, or `opacity`")?;
+            }
             context.set_fill_alpha(f64::from(alpha) / f64::from(u8::MAX))?;
             self.fill = u16::from(alpha);
         }
@@ -131,6 +134,9 @@ impl Alpha {
 
     fn set_stroke(&mut self, context: &mut PageContext<'_, '_, '_>, alpha: u8) -> Result<(), Error> {
         if self.stroke != u16::from(alpha) {
+            if alpha != u8::MAX {
+                pdfa1_forbid("a colour with an alpha channel, or `opacity`")?;
+            }
             context.set_stroke_alpha(f64::from(alpha) / f64::from(u8::MAX))?;
             self.stroke = u16::from(alpha);
         }
@@ -261,6 +267,8 @@ fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: P
             let (r, g, b) = (channel(color.red), channel(color.green), channel(color.blue));
             return if stroke { context.device_rgb_stroke_color(r, g, b) } else { context.device_rgb_fill_color(r, g, b) };
         }
+        // PDF/A-1 does not allow the profiles of version 4 that the ICC spaces are: the colour is CIELAB
+        PaintColor::Icc(_) if pdfa1_active() => color.to_xyz().map(f64::from),
         PaintColor::Icc(color) => {
             let space = icc_space(context, color.space)?;
             let space = context.add_color_space(space);
@@ -394,6 +402,7 @@ fn paint_slice(
                     Pt::from(bbox.x + bbox.width),
                     Pt::from(page_height - bbox.y),
                 ];
+                pdfa1_forbid("`opacity` on an element")?;
                 let form = page_context.pdf_context.write_form(
                     area,
                     Some(lemon_pdf::form::TransparencyGroup::new(
@@ -792,8 +801,8 @@ fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::Ra
         return image;
     };
     let components = image.color_space().components();
-    match lemon_pdf::icc::inspect_profile(&profile) {
-        Ok(info) if info.components == components => {}
+    let info = match lemon_pdf::icc::inspect_profile(&profile) {
+        Ok(info) if info.components == components => info,
         Ok(info) => {
             log::warn!("the ICC profile of an image has {} components and the image {}: it is ignored", info.components, components);
             return image;
@@ -802,6 +811,9 @@ fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::Ra
             log::warn!("the ICC profile of an image is ignored: {why}");
             return image;
         }
+    };
+    if info.major_version >= 3 {
+        let _ = pdfa1_forbid("an image with an ICC profile of version 4 (the profile has to be version 2)");
     }
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -835,6 +847,9 @@ fn embed_images(
             crate::image::LoadedImage::Raster(raster) => raster
                 .to_pdf_image()
                 .and_then(|pdf_image| {
+                    if pdf_image.has_alpha() {
+                        let _ = pdfa1_forbid("an image with an alpha channel (it is a soft mask)");
+                    }
                     let pdf_image = with_icc_profile(context, raster, pdf_image);
                     context.write_image(pdf_image).map_err(|error| error.to_string())
                 })
@@ -855,14 +870,16 @@ fn embed_images(
 
 /// The level of PDF/A (ISO 19005) that a file is written for, like `2b` or `3u`.
 ///
-/// Parts 2 and 3 are the ones that fit the PDF 1.7 that is written (part 1 forbids the
-/// transparency that the pages use, part 4 is for PDF 2.0). Level `b` is about the looks of the
-/// pages, `u` adds that the text can be extracted, `a` that the file is tagged. Helium always
+/// Parts 2 and 3 are the ones that fit the PDF 1.7 that is written (part 4 is for PDF 2.0). Part 1
+/// forbids transparency, object streams and version 4 of ICC profiles, so a file of level `1b` is
+/// written without the first two, and a document that needs any of the things that it forbids is an
+/// error (see [`pdfa1_forbid`]); only the level `b` of part 1 is supported. Level `b` is about the looks
+/// of the pages, `u` adds that the text can be extracted, `a` that the file is tagged. Helium always
 /// writes the maps from the glyphs to Unicode, so `u` costs nothing; `a` needs the structure tree,
 /// so it does not go with `--no-tags`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdfALevel {
-    /// 2 or 3.
+    /// 1, 2 or 3.
     pub part: u8,
     /// `A`, `B` or `U`.
     pub conformance: char,
@@ -882,12 +899,44 @@ impl std::str::FromStr for PdfALevel {
         let text = text.trim().to_ascii_uppercase();
         let mut chars = text.chars();
         match (chars.next(), chars.next(), chars.next()) {
+            (Some('1'), Some('B'), None) => Ok(PdfALevel { part: 1, conformance: 'B' }),
+            (Some('1'), Some('A' | 'U'), None) => Err(format!(
+                "`{text}` is not supported: of PDF/A-1 only the level 1b is (the level 1a needs a tagged PDF of version 1.4)"
+            )),
             (Some(part @ ('2' | '3')), Some(conformance @ ('A' | 'B' | 'U')), None) => {
                 Ok(PdfALevel { part: part as u8 - b'0', conformance })
             }
-            _ => Err(format!("`{text}` is not a level of PDF/A that is supported: 2a, 2b, 2u, 3a, 3b or 3u")),
+            _ => Err(format!("`{text}` is not a level of PDF/A that is supported: 1b, 2a, 2b, 2u, 3a, 3b or 3u")),
         }
     }
+}
+
+thread_local! {
+    /// While a file of PDF/A-1 is written: the things that the document needs and that PDF/A-1 forbids,
+    /// in the order they were found.
+    static PDFA1_VIOLATIONS: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Whether the file that is written is one of PDF/A-1.
+pub(crate) fn pdfa1_active() -> bool {
+    PDFA1_VIOLATIONS.with(|violations| violations.borrow().is_some())
+}
+
+/// Called where the writer is about to use something that PDF/A-1 forbids (transparency: `what` says which
+/// kind, for the message): in a file of PDF/A-1 it notes `what` and returns an error, so that the
+/// writer does not write it; the error is also reported when the caller makes light of it (an
+/// image that cannot be embedded is only a warning otherwise), because [`write_pdf`] fails with
+/// everything that was noted. In every other file it does nothing.
+pub(crate) fn pdfa1_forbid(what: &str) -> Result<(), Error> {
+    PDFA1_VIOLATIONS.with(|violations| match violations.borrow_mut().as_mut() {
+        Some(list) => {
+            if !list.iter().any(|known| known == what) {
+                list.push(what.to_owned());
+            }
+            Err(Error::new(std::io::ErrorKind::InvalidInput, format!("{what} is not allowed in PDF/A-1")))
+        }
+        None => Ok(()),
+    })
 }
 
 /// The output intent of a PDF/A file is RGB, and PDF/A does not allow device CMYK colours without
@@ -917,6 +966,32 @@ fn check_pdfa_images(print_pages: &mut PrintPages) -> Result<(), Error> {
 /// `structure` of the pages. With a `pdfa` level the file is written to conform to it.
 pub fn write_pdf(
     output_path: PathBuf,
+    print_pages: PrintPages,
+    no_filter: bool,
+    crop: bool,
+    tagged: bool,
+    pdfa: Option<PdfALevel>,
+) -> Result<(), Error> {
+    if !pdfa.is_some_and(|level| level.part == 1) {
+        return write_pdf_file(output_path, print_pages, no_filter, crop, tagged, pdfa);
+    }
+    // PDF/A-1 forbids transparency, which the writer meets at many places: every one of them notes
+    // what it met, and the file is not kept if there was any
+    PDFA1_VIOLATIONS.with(|violations| *violations.borrow_mut() = Some(Vec::new()));
+    let result = write_pdf_file(output_path.clone(), print_pages, no_filter, crop, tagged, pdfa);
+    let violations = PDFA1_VIOLATIONS.with(|violations| violations.borrow_mut().take()).unwrap_or_default();
+    if violations.is_empty() {
+        return result;
+    }
+    let _ = std::fs::remove_file(&output_path);
+    Err(Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!("the document cannot be written as PDF/A-1, which does not allow: {}", violations.join("; ")),
+    ))
+}
+
+fn write_pdf_file(
+    output_path: PathBuf,
     mut print_pages: PrintPages,
     no_filter: bool,
     crop: bool,
@@ -929,6 +1004,10 @@ pub fn write_pdf(
     }
     let file = BufWriter::new(File::create(output_path)?);
     let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
+    if pdfa1_active() {
+        // PDF/A-1 (ISO 19005-1, 6.1.4) does not have cross-reference streams or object streams
+        context.object_streams = false;
+    }
 
     let structure = std::mem::take(&mut print_pages.structure);
     let outline = std::mem::take(&mut print_pages.outline);

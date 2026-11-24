@@ -128,6 +128,7 @@ fn write_glyph(
         return Ok(None);
     }
     let Some(root) = collector.finish() else { return Ok(None) };
+    super::pdfa1_forbid("colour glyphs (emoji), which are transparency groups")?;
     let upem = f64::from(face.units_per_em());
     // the page of the glyphs is much smaller than this; the clip box of the glyph does the rest
     let extent = Pt(8.0 * upem);

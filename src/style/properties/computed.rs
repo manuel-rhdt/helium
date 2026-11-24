@@ -145,6 +145,11 @@ impl PaintColor {
         super::color::extended_srgb_to_xyz(rgb)
     }
 
+    /// The colour as CIE XYZ (D65, Y of 1 for the white), whatever space it is in.
+    pub fn to_xyz(self) -> [f32; 3] {
+        super::color::paint_to_xyz(self)
+    }
+
     /// The colour in sRGB, the nearest one that fits if it has none: the channels of a colour
     /// outside of the gamut are clipped to the range. This loses the colour; use it only where
     /// nothing but sRGB can be painted, and where the colour is painted by the PDF writer match
