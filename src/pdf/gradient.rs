@@ -239,6 +239,7 @@ pub fn paint(
         let (x_step, y_step) = (Pt(space.length(tiling.step.0)), Pt(space.length(tiling.step.1)));
         let cell_height = PixelLength(height);
         let pattern = context.pdf_context.write_tiling_pattern(bbox, x_step, y_step, matrix, filter, |cell| {
+            super::set_device_defaults(cell)?;
             paint_plain(cell, gradient, cell_height, false)
         })?;
         let key = context.add_tiling_pattern(pattern);
@@ -378,6 +379,7 @@ pub fn paint_blend_group(
         Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
         filter,
         |form| {
+            super::set_device_defaults(form)?;
             form.save_graphics_state()?;
             super::emit_path(form, &group.clip, page_height)?;
             form.clip(FillRule::NonZero)?;

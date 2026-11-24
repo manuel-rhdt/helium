@@ -93,8 +93,8 @@ fn the_style_sheets_of_the_page_apply_to_the_content() {
         ),
     );
     // the descendant selector reaches through the SVG elements into the HTML
-    assert_eq!(count(&r.pdf, "0.8 0 0 sc"), 1, "{}", r.pdf);
-    assert!(r.pdf.contains("0 0 0.8 sc"), "{}", r.pdf);
+    assert_eq!(count(&r.pdf, "0.8 0 0 rg"), 1, "{}", r.pdf);
+    assert!(r.pdf.contains("0 0 0.8 rg"), "{}", r.pdf);
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn the_content_inherits_from_the_page() {
         ),
     );
     // the text color is the one of the `<p>` that the `<svg>` is in
-    assert!(r.pdf.contains("0 0.8 0 sc"), "{}", r.pdf);
+    assert!(r.pdf.contains("0 0.8 0 rg"), "{}", r.pdf);
 }
 
 #[test]
