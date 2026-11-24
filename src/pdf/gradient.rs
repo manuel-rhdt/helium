@@ -8,7 +8,8 @@
 
 use std::io::{Error, ErrorKind};
 
-use lemon_pdf::content::{Matrix, PageContext};
+use lemon_pdf::content::{ColorOperand, Matrix, PageContext};
+use lemon_pdf::object::Name;
 use lemon_pdf::form::TransparencyGroup;
 use lemon_pdf::graphics_state::{ExtGState, FillRule, SoftMask};
 use lemon_pdf::stream::StreamFilter;
@@ -19,7 +20,6 @@ use lemon_pdf::shading::{
 };
 use lemon_pdf::Pt;
 
-use super::RawPdf;
 use crate::style::properties::computed::PixelLength;
 use crate::display_list::BlendGroup;
 use crate::style::properties::computed::PaintColor;
@@ -63,7 +63,7 @@ impl Space {
 
 /// The shading of `gradient` with the colours that `to_color` makes of the stops.
 fn build<C: Color>(
-    context: &mut PageContext<'_, '_, '_>,
+    context: &mut PageContext<'_, '_>,
     space: Space,
     gradient: &Resolved,
     to_color: impl Fn([f32; 4]) -> C,
@@ -136,7 +136,7 @@ fn colors_between(stops: &[ResolvedStop], a: f32, b: f32) -> ([f32; 4], [f32; 4]
 
 /// The mesh of a conic gradient.
 fn conic<C: Color>(
-    context: &mut PageContext<'_, '_, '_>,
+    context: &mut PageContext<'_, '_>,
     space: Space,
     gradient: &Resolved,
     to_color: impl Fn([f32; 4]) -> C,
@@ -197,27 +197,26 @@ fn conic<C: Color>(
 
 /// Paints a shading over the current clip. `artifact` marks it as an artifact of the page, which
 /// content in a form that is only a mask does not need.
-fn paint_built(context: &mut PageContext<'_, '_, '_>, built: Built, artifact: bool) -> Result<(), Error> {
+fn paint_built(context: &mut PageContext<'_, '_>, built: Built, artifact: bool) -> Result<(), Error> {
     if artifact {
-        context.push_operand(RawPdf("/Artifact".into()))?;
-        context.apply_operator("BMC")?;
+        context.content.begin_marked_content(&Name::from("Artifact"))?;
     }
-    context.save_graphics_state()?;
+    context.content.save_graphics_state()?;
     if let Some([a, b, c, d, e, f]) = built.matrix {
-        context.concatenate_matrix(a, b, c, d, Pt(e), Pt(f))?;
+        context.content.concatenate_matrix(lemon_pdf::Matrix::new(a, b, c, d, Pt(e).0, Pt(f).0))?;
     }
-    let key = context.add_shading(built.shading);
-    context.paint_shading(&key)?;
-    context.restore_graphics_state()?;
+    let key = context.resources.add_shading(built.shading);
+    context.content.paint_shading(&key)?;
+    context.content.restore_graphics_state()?;
     if artifact {
-        context.apply_operator("EMC")?;
+        context.content.end_marked_content()?;
     }
     Ok(())
 }
 
 /// Paints `gradient` over the current clip, as tiles if it is a tile that repeats.
 pub fn paint(
-    context: &mut PageContext<'_, '_, '_>,
+    context: &mut PageContext<'_, '_>,
     gradient: &Resolved,
     page_height: PixelLength,
     filter: Option<StreamFilter>,
@@ -242,39 +241,38 @@ pub fn paint(
             super::set_device_defaults(cell)?;
             paint_plain(cell, gradient, cell_height, false)
         })?;
-        let key = context.add_tiling_pattern(pattern);
+        let key = context.resources.add_tiling_pattern(pattern);
         let region = tiling.region;
-        context.push_operand(RawPdf("/Artifact".into()))?;
-        context.apply_operator("BMC")?;
-        context.set_fill_pattern(&key)?;
-        context.rect(
+        context.content.begin_marked_content(&Name::from("Artifact"))?;
+        context.content.set_fill_color(ColorOperand::Pattern(&key))?;
+        context.content.rect(
             Pt(space.x(region.x)),
             Pt(space.y(region.y + region.height)),
             Pt(space.length(region.width)),
             Pt(space.length(region.height)),
         )?;
-        context.fill_path()?;
-        return context.apply_operator("EMC");
+        context.content.fill_path()?;
+        return context.content.end_marked_content();
     }
     if gradient.clip {
         let paint = gradient.paint;
-        context.save_graphics_state()?;
-        context.rect(
+        context.content.save_graphics_state()?;
+        context.content.rect(
             Pt(space.x(paint.x)),
             Pt(space.y(paint.y + paint.height)),
             Pt(space.length(paint.width)),
             Pt(space.length(paint.height)),
         )?;
-        context.clip(FillRule::NonZero)?;
-        context.end_path()?;
+        context.content.clip(FillRule::NonZero)?;
+        context.content.end_path()?;
         paint_plain(context, gradient, page_height, true)?;
-        return context.restore_graphics_state();
+        return context.content.restore_graphics_state();
     }
     paint_plain(context, gradient, page_height, true)
 }
 
 fn paint_plain(
-    context: &mut PageContext<'_, '_, '_>,
+    context: &mut PageContext<'_, '_>,
     gradient: &Resolved,
     page_height: PixelLength,
     artifact: bool,
@@ -293,11 +291,11 @@ fn paint_plain(
         log::warn!("the wide-gamut colours of a gradient are clipped to sRGB: PDF/A-1 does not allow ICC profiles of version 4");
         wide = false;
     }
-    let profile = if wide { Some(context.rgb_icc_space(lemon_pdf::color::RgbSpace::Rec2020)?) } else { None };
+    let profile = if wide { Some(super::wide_color_space(context)?) } else { None };
     let mut color = build(context, space, gradient, |c| {
         if wide {
             let xyz = PaintColor::xyz_of_extended_srgb([c[0], c[1], c[2]]).map(f64::from);
-            let [r, g, b] = lemon_pdf::color::rec2020_gamma24_components(xyz);
+            let [r, g, b] = super::rec2020_gamma24_components(xyz);
             Rgb(r, g, b)
         } else {
             let channel = |value: f32| f64::from(value.clamp(0.0, 1.0));
@@ -315,7 +313,7 @@ fn paint_plain(
         // one opacity for the whole gradient
         if max_alpha < 1.0 {
             super::pdfa1_forbid("a gradient with transparent colours")?;
-            context.set_fill_alpha(f64::from(max_alpha))?;
+            context.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_fill_alpha(f64::from(max_alpha)))?;
         }
     } else {
         // The opacities are a second gradient, of gray levels, which is the soft mask. It
@@ -368,7 +366,7 @@ fn blend_mode(mode: BlendMode) -> lemon_pdf::graphics_state::BlendMode {
 /// transparency group, so that the layers blend with each other and not with the page, and
 /// draws the group.
 pub fn paint_blend_group(
-    context: &mut PageContext<'_, '_, '_>,
+    context: &mut PageContext<'_, '_>,
     group: &BlendGroup,
     page_height: PixelLength,
     filter: Option<StreamFilter>,
@@ -388,29 +386,29 @@ pub fn paint_blend_group(
         filter,
         |form| {
             super::set_device_defaults(form)?;
-            form.save_graphics_state()?;
+            form.content.save_graphics_state()?;
             super::emit_path(form, &group.clip, page_height)?;
-            form.clip(FillRule::NonZero)?;
-            form.end_path()?;
+            form.content.clip(FillRule::NonZero)?;
+            form.content.end_path()?;
             let color = group.color;
             if color.alpha() != 0 {
                 let channel = |value: u8| f64::from(value) / 255.0;
                 super::set_fill_color(form, color)?;
                 if color.alpha() != 255 {
-                    form.set_fill_alpha(channel(color.alpha()))?;
+                    form.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_fill_alpha(channel(color.alpha())))?;
                 }
                 super::emit_path(form, &group.clip, page_height)?;
-                form.fill_path()?;
+                form.content.fill_path()?;
             }
             for layer in &group.layers {
-                form.save_graphics_state()?;
-                form.set_blend_mode(blend_mode(layer.blend))?;
+                form.content.save_graphics_state()?;
+                form.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_blend_mode(blend_mode(layer.blend)))?;
                 paint(form, &layer.gradient, page_height, filter)?;
-                form.restore_graphics_state()?;
+                form.content.restore_graphics_state()?;
             }
-            form.restore_graphics_state()
+            form.content.restore_graphics_state()
         },
     )?;
-    let key = context.add_xobject(form);
-    context.draw_xobject(&key)
+    let key = context.resources.add_xobject(form);
+    context.content.paint_xobject(&key)
 }

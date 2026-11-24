@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Result;
 use std::sync::Arc;
 
+use lemon_pdf::content::ColorOperand;
 use lemon_pdf::form::{FormReference, TransparencyGroup};
 use lemon_pdf::graphics_state::{BlendMode, ExtGState, FillRule, LineCap, LineJoin, SoftMask};
 use lemon_pdf::image::{ColorSpace, ImageXObject};
@@ -45,7 +46,7 @@ const MAX_FLAT_CHILDREN: usize = 128;
 #[derive(Clone, PartialEq)]
 enum PaintKey {
     Rgb([u8; 3]),
-    Pattern(lemon_pdf::object::Name),
+    Pattern(lemon_pdf::resources::PatternKey),
 }
 
 /// What the writer knows of the graphics state of the content stream it is writing (`None` is
@@ -125,27 +126,27 @@ fn map(t: Transform, x: f32, y: f32) -> (Pt, Pt) {
     )
 }
 
-fn concat(c: &mut PageContext<'_, '_, '_>, t: Transform) -> Result<()> {
+fn concat(c: &mut PageContext<'_, '_>, t: Transform) -> Result<()> {
     if t.is_identity() {
         return Ok(());
     }
     let m = matrix(t).0;
-    c.concatenate_matrix(m[0], m[1], m[2], m[3], Pt(m[4]), Pt(m[5]))
+    c.content.concatenate_matrix(lemon_pdf::Matrix::new(m[0], m[1], m[2], m[3], Pt(m[4]).0, Pt(m[5]).0))
 }
 
 /// Adds the segments of `path` (transformed by `t`) to the current path.
-fn emit_path(c: &mut PageContext<'_, '_, '_>, path: &tiny_skia_path::Path, t: Transform) -> Result<()> {
+fn emit_path(c: &mut PageContext<'_, '_>, path: &tiny_skia_path::Path, t: Transform) -> Result<()> {
     let mut current = tiny_skia_path::Point::zero();
     for segment in path.segments() {
         match segment {
             PathSegment::MoveTo(p) => {
                 let (x, y) = map(t, p.x, p.y);
-                c.move_to(x, y)?;
+                c.content.move_to(x, y)?;
                 current = p;
             }
             PathSegment::LineTo(p) => {
                 let (x, y) = map(t, p.x, p.y);
-                c.line_to(x, y)?;
+                c.content.line_to(x, y)?;
                 current = p;
             }
             PathSegment::QuadTo(q, p) => {
@@ -155,17 +156,17 @@ fn emit_path(c: &mut PageContext<'_, '_, '_>, path: &tiny_skia_path::Path, t: Tr
                 let (x1, y1) = map(t, third(current.x, q.x), third(current.y, q.y));
                 let (x2, y2) = map(t, third(p.x, q.x), third(p.y, q.y));
                 let (x3, y3) = map(t, p.x, p.y);
-                c.curve_to(x1, y1, x2, y2, x3, y3)?;
+                c.content.curve_to(x1, y1, x2, y2, x3, y3)?;
                 current = p;
             }
             PathSegment::CubicTo(a, b, p) => {
                 let (x1, y1) = map(t, a.x, a.y);
                 let (x2, y2) = map(t, b.x, b.y);
                 let (x3, y3) = map(t, p.x, p.y);
-                c.curve_to(x1, y1, x2, y2, x3, y3)?;
+                c.content.curve_to(x1, y1, x2, y2, x3, y3)?;
                 current = p;
             }
-            PathSegment::Close => c.close_path()?,
+            PathSegment::Close => c.content.close_path()?,
         }
     }
     Ok(())
@@ -295,20 +296,20 @@ impl SvgWriter {
     }
 
     /// `q`
-    fn save(&mut self, c: &mut PageContext<'_, '_, '_>) -> Result<()> {
-        c.save_graphics_state()?;
+    fn save(&mut self, c: &mut PageContext<'_, '_>) -> Result<()> {
+        c.content.save_graphics_state()?;
         let state = self.state().clone();
         self.states.last_mut().expect("a content stream is being written").push(state);
         Ok(())
     }
 
     /// `Q`
-    fn restore(&mut self, c: &mut PageContext<'_, '_, '_>) -> Result<()> {
+    fn restore(&mut self, c: &mut PageContext<'_, '_>) -> Result<()> {
         self.states.last_mut().expect("a content stream is being written").pop();
-        c.restore_graphics_state()
+        c.content.restore_graphics_state()
     }
 
-    fn set_paint_key(&mut self, c: &mut PageContext<'_, '_, '_>, key: PaintKey, stroke: bool) -> Result<()> {
+    fn set_paint_key(&mut self, c: &mut PageContext<'_, '_>, key: PaintKey, stroke: bool) -> Result<()> {
         let state = self.state();
         let known = if stroke { &mut state.stroke } else { &mut state.fill };
         if known.as_ref() == Some(&key) {
@@ -317,22 +318,22 @@ impl SvgWriter {
         *known = Some(key.clone());
         match (key, stroke) {
             (PaintKey::Rgb([r, g, b]), false) => {
-                c.device_rgb_fill_color(channel(r), channel(g), channel(b))
+                c.content.set_fill_color(ColorOperand::Rgb(channel(r), channel(g), channel(b)))
             }
             (PaintKey::Rgb([r, g, b]), true) => {
-                c.device_rgb_stroke_color(channel(r), channel(g), channel(b))
+                c.content.set_stroke_color(ColorOperand::Rgb(channel(r), channel(g), channel(b)))
             }
-            (PaintKey::Pattern(name), false) => c.set_fill_pattern(&name),
-            (PaintKey::Pattern(name), true) => c.set_stroke_pattern(&name),
+            (PaintKey::Pattern(name), false) => c.content.set_fill_color(ColorOperand::Pattern(&name)),
+            (PaintKey::Pattern(name), true) => c.content.set_stroke_color(ColorOperand::Pattern(&name)),
         }
     }
 
-    fn set_color(&mut self, c: &mut PageContext<'_, '_, '_>, color: usvg::Color, stroke: bool) -> Result<()> {
+    fn set_color(&mut self, c: &mut PageContext<'_, '_>, color: usvg::Color, stroke: bool) -> Result<()> {
         self.set_paint_key(c, PaintKey::Rgb([color.red, color.green, color.blue]), stroke)
     }
 
     /// Sets the opacity of fills (and text, images and forms) or strokes.
-    fn set_alpha(&mut self, c: &mut PageContext<'_, '_, '_>, alpha: f64, stroke: bool) -> Result<()> {
+    fn set_alpha(&mut self, c: &mut PageContext<'_, '_>, alpha: f64, stroke: bool) -> Result<()> {
         let state = self.state();
         let known = if stroke { &mut state.stroke_alpha } else { &mut state.fill_alpha };
         if *known == Some(alpha) {
@@ -343,24 +344,24 @@ impl SvgWriter {
         }
         *known = Some(alpha);
         if stroke {
-            c.set_stroke_alpha(alpha)
+            c.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_stroke_alpha(alpha))
         } else {
-            c.set_fill_alpha(alpha)
+            c.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_fill_alpha(alpha))
         }
     }
 
     /// Sets the line width, caps, joins and dashes of a stroke.
-    fn set_stroke_style(&mut self, c: &mut PageContext<'_, '_, '_>, stroke: &usvg::Stroke) -> Result<()> {
+    fn set_stroke_style(&mut self, c: &mut PageContext<'_, '_>, stroke: &usvg::Stroke) -> Result<()> {
         let state = self.state();
         let width = stroke.width().get();
         if state.width != Some(width) {
             state.width = Some(width);
-            c.line_width(Pt(f64::from(width)))?;
+            c.content.set_line_width(Pt(f64::from(width)))?;
         }
         let state = self.state();
         if state.cap != Some(stroke.linecap()) {
             state.cap = Some(stroke.linecap());
-            c.line_cap(match stroke.linecap() {
+            c.content.set_line_cap(match stroke.linecap() {
                 usvg::LineCap::Butt => LineCap::Butt,
                 usvg::LineCap::Round => LineCap::Round,
                 usvg::LineCap::Square => LineCap::ProjectingSquare,
@@ -369,7 +370,7 @@ impl SvgWriter {
         let state = self.state();
         if state.join != Some(stroke.linejoin()) {
             state.join = Some(stroke.linejoin());
-            c.line_join(match stroke.linejoin() {
+            c.content.set_line_join(match stroke.linejoin() {
                 usvg::LineJoin::Miter | usvg::LineJoin::MiterClip => LineJoin::Miter,
                 usvg::LineJoin::Round => LineJoin::Round,
                 usvg::LineJoin::Bevel => LineJoin::Bevel,
@@ -379,13 +380,13 @@ impl SvgWriter {
         let miter = stroke.miterlimit().get();
         if state.miter != Some(miter) {
             state.miter = Some(miter);
-            c.miter_limit(f64::from(miter))?;
+            c.content.set_miter_limit(f64::from(miter))?;
         }
         let state = self.state();
         let dash = (stroke.dasharray().map(<[f32]>::to_vec).unwrap_or_default(), stroke.dashoffset());
         if state.dash.as_ref() != Some(&dash) {
             let dashes: Vec<Pt> = dash.0.iter().map(|&d| Pt(f64::from(d))).collect();
-            c.dash_pattern(&dashes, Pt(f64::from(dash.1)))?;
+            c.content.set_dash_pattern(&dashes, Pt(f64::from(dash.1)))?;
             state.dash = Some(dash);
         }
         Ok(())
@@ -495,7 +496,7 @@ impl SvgWriter {
     /// form that is being written.
     fn draw_group(
         &mut self,
-        c: &mut PageContext<'_, '_, '_>,
+        c: &mut PageContext<'_, '_>,
         group: &usvg::Group,
         ctm: Transform,
     ) -> Result<()> {
@@ -591,8 +592,8 @@ impl SvgWriter {
                     });
                 }
                 c.apply_ext_gstate(state)?;
-                let key = c.add_xobject(form);
-                c.draw_xobject(&key)?;
+                let key = c.resources.add_xobject(form);
+                c.content.paint_xobject(&key)?;
             }
         } else {
             for child in group.children() {
@@ -609,7 +610,7 @@ impl SvgWriter {
     /// current while the mask is applied. A mask that several groups use is written once.
     fn write_mask(
         &mut self,
-        c: &mut PageContext<'_, '_, '_>,
+        c: &mut PageContext<'_, '_>,
         mask: &usvg::Mask,
     ) -> Result<FormReference> {
         let address = mask as *const usvg::Mask as usize;
@@ -650,7 +651,7 @@ impl SvgWriter {
     /// first.
     fn apply_clip(
         &mut self,
-        c: &mut PageContext<'_, '_, '_>,
+        c: &mut PageContext<'_, '_>,
         clip: &usvg::ClipPath,
         t: Transform,
     ) -> Result<()> {
@@ -661,11 +662,11 @@ impl SvgWriter {
         let mut rule = None;
         if !self.collect_clip(c, clip.root(), t, &mut rule)? {
             // nothing is inside of the clip path: clip everything
-            c.rect(Pt(0.0), Pt(0.0), Pt(0.0), Pt(0.0))?;
+            c.content.rect(Pt(0.0), Pt(0.0), Pt(0.0), Pt(0.0))?;
             rule = Some(FillRule::NonZero);
         }
-        c.clip(rule.unwrap_or(FillRule::NonZero))?;
-        c.end_path()
+        c.content.clip(rule.unwrap_or(FillRule::NonZero))?;
+        c.content.end_path()
     }
 
     /// Adds the shapes of the children of a clip path to the current path (as the union of
@@ -673,7 +674,7 @@ impl SvgWriter {
     /// whether there was any.
     fn collect_clip(
         &mut self,
-        c: &mut PageContext<'_, '_, '_>,
+        c: &mut PageContext<'_, '_>,
         group: &usvg::Group,
         t: Transform,
         rule: &mut Option<FillRule>,
@@ -705,7 +706,7 @@ impl SvgWriter {
         Ok(any)
     }
 
-    fn draw_node(&mut self, c: &mut PageContext<'_, '_, '_>, node: &Node, ctm: Transform) -> Result<()> {
+    fn draw_node(&mut self, c: &mut PageContext<'_, '_>, node: &Node, ctm: Transform) -> Result<()> {
         match node {
             Node::Group(group) => self.draw_group(c, group, ctm),
             Node::Path(path) => self.draw_path(c, path, ctm),
@@ -731,7 +732,7 @@ impl SvgWriter {
 
     /// Draws text: as text with the embedded fonts if possible (so that it can be selected and
     /// searched, and the glyphs are shared with the text of the document), else as outlines.
-    fn draw_text(&mut self, c: &mut PageContext<'_, '_, '_>, text: &usvg::Text, ctm: Transform) -> Result<()> {
+    fn draw_text(&mut self, c: &mut PageContext<'_, '_>, text: &usvg::Text, ctm: Transform) -> Result<()> {
         if !self.is_plain_text(text) {
             self.draw_group(c, text.flattened(), ctm)?;
             // the outlines have nothing for the colour glyphs
@@ -764,7 +765,7 @@ impl SvgWriter {
     /// layers that use it.
     fn paint_color_glyphs(
         &mut self,
-        c: &mut PageContext<'_, '_, '_>,
+        c: &mut PageContext<'_, '_>,
         span: &usvg::layout::Span,
         color: usvg::Color,
     ) -> Result<()> {
@@ -789,7 +790,7 @@ impl SvgWriter {
 
     /// Shows the glyphs of a span. The text matrix of a glyph puts the em square of its font on
     /// the glyph, in the coordinate system of the text (with the y axis down, so it flips).
-    fn draw_span(&mut self, c: &mut PageContext<'_, '_, '_>, span: &usvg::layout::Span) -> Result<()> {
+    fn draw_span(&mut self, c: &mut PageContext<'_, '_>, span: &usvg::layout::Span) -> Result<()> {
         let (fill, stroke) = (span.fill.as_ref(), span.stroke.as_ref());
         if fill.is_none() && stroke.is_none() || span.positioned_glyphs.is_empty() {
             return Ok(());
@@ -822,27 +823,23 @@ impl SvgWriter {
                 self.set_alpha(c, self.alpha * f64::from(stroke.opacity().get()), true)?;
                 self.set_stroke_style(c, stroke)?;
             }
-            c.begin_text()?;
-            c.push_operand(mode)?;
-            c.apply_operator("Tr")?;
+            c.content.begin_text()?;
+            c.content.write_operator("Tr", &[&(mode)])?;
             let mut current: Option<&str> = None;
             for glyph in &span.positioned_glyphs {
                 let name = &self.font_names[&glyph.font];
                 let (font, upem, encoding) = self.fonts[name];
                 if current != Some(name.as_str()) {
-                    let key = c.add_font(font);
-                    c.set_font(&key, Pt(font_size))?;
+                    let key = c.resources.add_font(font);
+                    c.content.set_font(&key, Pt(font_size))?;
                     current = Some(name.as_str());
                 }
                 let scale = f64::from(upem) / font_size;
                 let t = glyph.outline_transform().pre_scale(scale as f32, scale as f32);
-                for value in [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty] {
-                    c.push_operand(f64::from(value))?;
-                }
-                c.apply_operator("Tm")?;
-                c.draw_cid_glyphs([encoding.code(crate::layout::text::font::GlyphIndex(u32::from(glyph.id.0)))])?;
+                c.content.set_text_matrix(lemon_pdf::Matrix([t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from)))?;
+                c.content.show_cid_glyphs([encoding.code(crate::layout::text::font::GlyphIndex(u32::from(glyph.id.0)))])?;
             }
-            c.end_text()?;
+            c.content.end_text()?;
             // Colour glyphs (emoji) have no outline to fill: the text above only advances over
             // them and gives their text; their layers are painted over it.
             if let (Some(fill), true) = (fill, mode != 1) {
@@ -856,7 +853,7 @@ impl SvgWriter {
     }
 
     /// Draws the content of a `foreignObject`, clipped to its rectangle.
-    fn draw_foreign(&mut self, c: &mut PageContext<'_, '_, '_>, foreign: &usvg::ForeignObject) -> Result<()> {
+    fn draw_foreign(&mut self, c: &mut PageContext<'_, '_>, foreign: &usvg::ForeignObject) -> Result<()> {
         let Some(&form) = self.islands.get(&foreign.handle()) else {
             self.warn("the content of a foreignObject could not be laid out");
             return Ok(());
@@ -867,27 +864,27 @@ impl SvgWriter {
         self.set_alpha(c, self.alpha, false)?;
         self.set_alpha(c, self.alpha, true)?;
         if self.state().dash != Some((Vec::new(), 0.0)) {
-            c.dash_pattern(&[], Pt(0.0))?;
+            c.content.set_dash_pattern(&[], Pt(0.0))?;
             self.state().dash = Some((Vec::new(), 0.0));
         }
-        c.rect(
+        c.content.rect(
             Pt(f64::from(rect.x())),
             Pt(f64::from(rect.y())),
             Pt(f64::from(rect.width())),
             Pt(f64::from(rect.height())),
         )?;
-        c.clip(FillRule::NonZero)?;
-        c.end_path()?;
+        c.content.clip(FillRule::NonZero)?;
+        c.content.end_path()?;
         // the form is in points with y up, from the bottom left corner; the SVG is in pixels
         // with y down
         let k = 1.0 / 0.75;
         concat(c, Transform::from_row(k, 0.0, 0.0, -k, rect.x(), rect.y() + rect.height()))?;
-        let key = c.add_xobject(form);
-        c.draw_xobject(&key)?;
+        let key = c.resources.add_xobject(form);
+        c.content.paint_xobject(&key)?;
         self.restore(c)
     }
 
-    fn draw_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
+    fn draw_path(&mut self, c: &mut PageContext<'_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
         if !path.is_visible() {
             return Ok(());
         }
@@ -902,7 +899,7 @@ impl SvgWriter {
         Ok(())
     }
 
-    fn fill_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
+    fn fill_path(&mut self, c: &mut PageContext<'_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
         let Some(fill) = path.fill() else {
             return Ok(());
         };
@@ -919,7 +916,7 @@ impl SvgWriter {
                 self.set_alpha(c, opacity, false)?;
                 self.set_color(c, *color, false)?;
                 emit_path(c, path.data(), Transform::identity())?;
-                c.fill_path_with_rule(fill_rule(fill.rule()))
+                c.content.fill_path_with_rule(fill_rule(fill.rule()))
             }
             usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
                 let Some((shading, transform)) = self.gradient(fill.paint(), path) else {
@@ -931,25 +928,25 @@ impl SvgWriter {
                 self.set_alpha(c, opacity, false)?;
                 self.save(c)?;
                 emit_path(c, path.data(), Transform::identity())?;
-                c.clip(fill_rule(fill.rule()))?;
-                c.end_path()?;
+                c.content.clip(fill_rule(fill.rule()))?;
+                c.content.end_path()?;
                 concat(c, transform)?;
-                let key = c.add_shading(shading);
-                c.paint_shading(&key)?;
+                let key = c.resources.add_shading(shading);
+                c.content.paint_shading(&key)?;
                 self.restore(c)
             }
             usvg::Paint::Pattern(pattern) => {
                 self.set_alpha(c, opacity, false)?;
                 let tiling = self.tiling_pattern(c, pattern, ctm)?;
-                let key = c.add_tiling_pattern(tiling);
+                let key = c.resources.add_tiling_pattern(tiling);
                 self.set_paint_key(c, PaintKey::Pattern(key), false)?;
                 emit_path(c, path.data(), Transform::identity())?;
-                c.fill_path_with_rule(fill_rule(fill.rule()))
+                c.content.fill_path_with_rule(fill_rule(fill.rule()))
             }
         }
     }
 
-    fn stroke_path(&mut self, c: &mut PageContext<'_, '_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
+    fn stroke_path(&mut self, c: &mut PageContext<'_, '_>, path: &usvg::Path, ctm: Transform) -> Result<()> {
         let Some(stroke) = path.stroke() else {
             return Ok(());
         };
@@ -965,19 +962,19 @@ impl SvgWriter {
                     return Ok(());
                 };
                 let pattern = ShadingPattern::new(shading).with_matrix(matrix(ctm.pre_concat(transform)));
-                let key = c.add_shading_pattern(pattern);
+                let key = c.resources.add_shading_pattern(pattern);
                 self.set_paint_key(c, PaintKey::Pattern(key), true)?;
             }
             usvg::Paint::Pattern(pattern) => {
                 let tiling = self.tiling_pattern(c, pattern, ctm)?;
-                let key = c.add_tiling_pattern(tiling);
+                let key = c.resources.add_tiling_pattern(tiling);
                 self.set_paint_key(c, PaintKey::Pattern(key), true)?;
             }
         }
         self.set_alpha(c, opacity, true)?;
         self.set_stroke_style(c, stroke)?;
         emit_path(c, path.data(), Transform::identity())?;
-        c.stroke_path()
+        c.content.stroke_path()
     }
 
     /// The shading of a gradient and the transformation from its coordinates to the current
@@ -1150,7 +1147,7 @@ impl SvgWriter {
 
     fn tiling_pattern(
         &mut self,
-        c: &mut PageContext<'_, '_, '_>,
+        c: &mut PageContext<'_, '_>,
         pattern: &usvg::Pattern,
         ctm: Transform,
     ) -> Result<IndirectReference<lemon_pdf::pattern::TilingPattern>> {
@@ -1184,7 +1181,7 @@ impl SvgWriter {
         Ok(tiling)
     }
 
-    fn draw_image(&mut self, c: &mut PageContext<'_, '_, '_>, image: &usvg::Image, ctm: Transform) -> Result<()> {
+    fn draw_image(&mut self, c: &mut PageContext<'_, '_>, image: &usvg::Image, ctm: Transform) -> Result<()> {
         if !image.is_visible() {
             return Ok(());
         }
@@ -1195,9 +1192,9 @@ impl SvgWriter {
             usvg::ImageKind::SVG(tree) => {
                 // a nested SVG image: its contents, clipped to its size
                 self.save(c)?;
-                c.rect(Pt(0.0), Pt(0.0), Pt(width), Pt(height))?;
-                c.clip(FillRule::NonZero)?;
-                c.end_path()?;
+                c.content.rect(Pt(0.0), Pt(0.0), Pt(width), Pt(height))?;
+                c.content.clip(FillRule::NonZero)?;
+                c.content.end_path()?;
                 self.draw_group(c, tree.root(), ctm)?;
                 return self.restore(c);
             }
@@ -1240,12 +1237,12 @@ impl SvgWriter {
         let Some(reference) = reference else {
             return Ok(());
         };
-        let name = c.add_xobject(reference);
+        let name = c.resources.add_xobject(reference);
         self.save(c)?;
         self.set_alpha(c, self.alpha, false)?;
         // the unit square of an image has its top at y = 1, SVG has the top at y = 0
         concat(c, Transform::from_row(width as f32, 0.0, 0.0, -(height as f32), 0.0, height as f32))?;
-        c.draw_xobject(&name)?;
+        c.content.paint_xobject(&name)?;
         self.restore(c)
     }
 }

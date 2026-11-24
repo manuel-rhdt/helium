@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::io::{Error, ErrorKind};
 
 use lemon_pdf::Pt;
-use lemon_pdf::content::PageContext;
+use lemon_pdf::content::{ColorOperand, PageContext};
 use lemon_pdf::form::{FormReference, TransparencyGroup};
 use lemon_pdf::graphics_state::{BlendMode, ExtGState, FillRule, SoftMask};
 use lemon_pdf::image::ColorSpace;
@@ -66,7 +66,7 @@ impl ColorGlyphs {
     /// in the units of the current user space, scaled to a font size of `size`.
     pub fn paint_at(
         &mut self,
-        context: &mut PageContext<'_, '_, '_>,
+        context: &mut PageContext<'_, '_>,
         name: &str,
         glyph: GlyphIndex,
         color: PaintColor,
@@ -84,7 +84,7 @@ impl ColorGlyphs {
     /// font units (y up) to the current user space.
     pub fn paint(
         &mut self,
-        context: &mut PageContext<'_, '_, '_>,
+        context: &mut PageContext<'_, '_>,
         name: &str,
         glyph: GlyphIndex,
         color: SrgbColor,
@@ -103,17 +103,17 @@ impl ColorGlyphs {
         };
         let Some(form) = form else { return Ok(()) };
         let [a, b, c, d, e, f] = matrix;
-        context.save_graphics_state()?;
-        context.concatenate_matrix(a, b, c, d, Pt(e), Pt(f))?;
-        let key = context.add_xobject(form);
-        context.draw_xobject(&key)?;
-        context.restore_graphics_state()
+        context.content.save_graphics_state()?;
+        context.content.concatenate_matrix(lemon_pdf::Matrix::new(a, b, c, d, Pt(e).0, Pt(f).0))?;
+        let key = context.resources.add_xobject(form);
+        context.content.paint_xobject(&key)?;
+        context.content.restore_graphics_state()
     }
 }
 
 /// Reads the glyph and writes its form.
 fn write_glyph(
-    context: &mut PageContext<'_, '_, '_>,
+    context: &mut PageContext<'_, '_>,
     font: &Font,
     glyph: GlyphIndex,
     color: SrgbColor,
@@ -355,29 +355,29 @@ fn pt(value: f32) -> Pt {
     Pt(f64::from(value))
 }
 
-fn emit_all(ctx: &mut PageContext<'_, '_, '_>, nodes: &[Node], reach: &Reach) -> Result<(), Error> {
+fn emit_all(ctx: &mut PageContext<'_, '_>, nodes: &[Node], reach: &Reach) -> Result<(), Error> {
     for node in nodes {
         emit(ctx, node, reach)?;
     }
     Ok(())
 }
 
-fn emit_path(ctx: &mut PageContext<'_, '_, '_>, path: &[Segment]) -> Result<(), Error> {
+fn emit_path(ctx: &mut PageContext<'_, '_>, path: &[Segment]) -> Result<(), Error> {
     let mut current = (0.0f32, 0.0f32);
     for &segment in path {
         match segment {
             Segment::Move(x, y) => {
-                ctx.move_to(pt(x), pt(y))?;
+                ctx.content.move_to(pt(x), pt(y))?;
                 current = (x, y);
             }
             Segment::Line(x, y) => {
-                ctx.line_to(pt(x), pt(y))?;
+                ctx.content.line_to(pt(x), pt(y))?;
                 current = (x, y);
             }
             Segment::Quad(x1, y1, x, y) => {
                 // a quadratic curve as the cubic with the same shape
                 let (x0, y0) = current;
-                ctx.curve_to(
+                ctx.content.curve_to(
                     pt(x0 + 2.0 / 3.0 * (x1 - x0)),
                     pt(y0 + 2.0 / 3.0 * (y1 - y0)),
                     pt(x + 2.0 / 3.0 * (x1 - x)),
@@ -388,46 +388,39 @@ fn emit_path(ctx: &mut PageContext<'_, '_, '_>, path: &[Segment]) -> Result<(), 
                 current = (x, y);
             }
             Segment::Curve(x1, y1, x2, y2, x, y) => {
-                ctx.curve_to(pt(x1), pt(y1), pt(x2), pt(y2), pt(x), pt(y))?;
+                ctx.content.curve_to(pt(x1), pt(y1), pt(x2), pt(y2), pt(x), pt(y))?;
                 current = (x, y);
             }
-            Segment::Close => ctx.close_path()?,
+            Segment::Close => ctx.content.close_path()?,
         }
     }
     Ok(())
 }
 
-fn emit(ctx: &mut PageContext<'_, '_, '_>, node: &Node, reach: &Reach) -> Result<(), Error> {
+fn emit(ctx: &mut PageContext<'_, '_>, node: &Node, reach: &Reach) -> Result<(), Error> {
     match node {
         Node::Fill(fill) => paint_fill(ctx, fill, reach),
         Node::Clip(path, children) => {
-            ctx.save_graphics_state()?;
+            ctx.content.save_graphics_state()?;
             emit_path(ctx, path)?;
-            ctx.clip(FillRule::NonZero)?;
-            ctx.end_path()?;
+            ctx.content.clip(FillRule::NonZero)?;
+            ctx.content.end_path()?;
             emit_all(ctx, children, reach)?;
-            ctx.restore_graphics_state()
+            ctx.content.restore_graphics_state()
         }
         Node::ClipBox([x0, y0, x1, y1], children) => {
-            ctx.save_graphics_state()?;
-            ctx.rect(pt(*x0), pt(*y0), pt(x1 - x0), pt(y1 - y0))?;
-            ctx.clip(FillRule::NonZero)?;
-            ctx.end_path()?;
+            ctx.content.save_graphics_state()?;
+            ctx.content.rect(pt(*x0), pt(*y0), pt(x1 - x0), pt(y1 - y0))?;
+            ctx.content.clip(FillRule::NonZero)?;
+            ctx.content.end_path()?;
             emit_all(ctx, children, reach)?;
-            ctx.restore_graphics_state()
+            ctx.content.restore_graphics_state()
         }
         Node::Transform([a, b, c, d, e, f], children) => {
-            ctx.save_graphics_state()?;
-            ctx.concatenate_matrix(
-                f64::from(*a),
-                f64::from(*b),
-                f64::from(*c),
-                f64::from(*d),
-                pt(*e),
-                pt(*f),
-            )?;
+            ctx.content.save_graphics_state()?;
+            ctx.content.concatenate_matrix(lemon_pdf::Matrix::new(f64::from(*a), f64::from(*b), f64::from(*c), f64::from(*d), pt(*e).0, pt(*f).0))?;
             emit_all(ctx, children, reach)?;
-            ctx.restore_graphics_state()
+            ctx.content.restore_graphics_state()
         }
         Node::Layer(_, children) => composite(ctx, children, reach),
     }
@@ -435,11 +428,11 @@ fn emit(ctx: &mut PageContext<'_, '_, '_>, node: &Node, reach: &Reach) -> Result
 
 /// Paints the contents of a `PaintComposite`: the backdrop and the layer of the source (the last
 /// child, a `Layer` with its own mode) that is composited onto it.
-fn composite(ctx: &mut PageContext<'_, '_, '_>, children: &[Node], reach: &Reach) -> Result<(), Error> {
+fn composite(ctx: &mut PageContext<'_, '_>, children: &[Node], reach: &Reach) -> Result<(), Error> {
     let Some((Node::Layer(mode, source), backdrop)) = children.split_last() else {
         return emit_all(ctx, children, reach);
     };
-    let group = |ctx: &mut PageContext<'_, '_, '_>, nodes: &[Node]| {
+    let group = |ctx: &mut PageContext<'_, '_>, nodes: &[Node]| {
         ctx.pdf_context.write_form(
             reach.bbox(),
             Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
@@ -450,14 +443,14 @@ fn composite(ctx: &mut PageContext<'_, '_, '_>, children: &[Node], reach: &Reach
             },
         )
     };
-    let draw = |ctx: &mut PageContext<'_, '_, '_>, form, state: Option<ExtGState>| -> Result<(), Error> {
-        ctx.save_graphics_state()?;
+    let draw = |ctx: &mut PageContext<'_, '_>, form, state: Option<ExtGState>| -> Result<(), Error> {
+        ctx.content.save_graphics_state()?;
         if let Some(state) = state {
             ctx.apply_ext_gstate(state)?;
         }
-        let key = ctx.add_xobject(form);
-        ctx.draw_xobject(&key)?;
-        ctx.restore_graphics_state()
+        let key = ctx.resources.add_xobject(form);
+        ctx.content.paint_xobject(&key)?;
+        ctx.content.restore_graphics_state()
     };
     match mode {
         CompositeMode::SourceOver => {
@@ -579,7 +572,7 @@ fn color_at(stops: &[(f32, Rgba)], offset: f32) -> Rgba {
 /// A sweep gradient as a mesh of sectors, each of which is linear in the angle. Angles are
 /// counter-clockwise from the x axis, in degrees, as in COLR.
 fn sweep<C: Color>(
-    ctx: &mut PageContext<'_, '_, '_>,
+    ctx: &mut PageContext<'_, '_>,
     center: (f32, f32),
     start: f32,
     end: f32,
@@ -632,29 +625,29 @@ fn sweep<C: Color>(
     Ok(Some(ctx.pdf_context.write_mesh_shading(&mesh).map_err(invalid)?))
 }
 
-fn paint_shading(ctx: &mut PageContext<'_, '_, '_>, shading: Shading) -> Result<(), Error> {
-    let key = ctx.add_shading(shading);
-    ctx.paint_shading(&key)
+fn paint_shading(ctx: &mut PageContext<'_, '_>, shading: Shading) -> Result<(), Error> {
+    let key = ctx.resources.add_shading(shading);
+    ctx.content.paint_shading(&key)
 }
 
-fn paint_fill(ctx: &mut PageContext<'_, '_, '_>, fill: &Fill, reach: &Reach) -> Result<(), Error> {
+fn paint_fill(ctx: &mut PageContext<'_, '_>, fill: &Fill, reach: &Reach) -> Result<(), Error> {
     let rgb = |c: Rgba| Rgb(f64::from(c[0]), f64::from(c[1]), f64::from(c[2]));
     let gray = |c: Rgba| Gray(f64::from(c[3]));
-    ctx.save_graphics_state()?;
+    ctx.content.save_graphics_state()?;
     let result = (|| -> Result<(), Error> {
         let stops = match fill {
             Fill::Solid([r, g, b, a]) => {
-                ctx.device_rgb_fill_color(f64::from(*r), f64::from(*g), f64::from(*b))?;
+                ctx.content.set_fill_color(ColorOperand::Rgb(f64::from(*r), f64::from(*g), f64::from(*b)))?;
                 if *a < 1.0 {
-                    ctx.set_fill_alpha(f64::from(*a))?;
+                    ctx.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_fill_alpha(f64::from(*a)))?;
                 }
                 let e = Pt(reach.extent);
-                ctx.rect(Pt(-e.0), Pt(-e.0), Pt(2.0 * e.0), Pt(2.0 * e.0))?;
-                return ctx.fill_path();
+                ctx.content.rect(Pt(-e.0), Pt(-e.0), Pt(2.0 * e.0), Pt(2.0 * e.0))?;
+                return ctx.content.fill_path();
             }
             Fill::Linear { stops, .. } | Fill::Radial { stops, .. } | Fill::Sweep { stops, .. } => stops,
         };
-        let build = |ctx: &mut PageContext<'_, '_, '_>, alpha: bool| -> Result<Option<Shading>, Error> {
+        let build = |ctx: &mut PageContext<'_, '_>, alpha: bool| -> Result<Option<Shading>, Error> {
             match (fill, alpha) {
                 (Fill::Sweep { center, start, end, stops }, false) => {
                     sweep(ctx, *center, *start, *end, stops, reach, rgb)
@@ -672,7 +665,7 @@ fn paint_fill(ctx: &mut PageContext<'_, '_, '_>, fill: &Fill, reach: &Reach) -> 
         let max = alphas.fold(f32::NEG_INFINITY, f32::max);
         if max - min < 1e-4 {
             if max < 1.0 {
-                ctx.set_fill_alpha(f64::from(max))?;
+                ctx.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_fill_alpha(f64::from(max)))?;
             }
         } else {
             // The opacities are a second shading, of gray levels: the soft mask.
@@ -689,6 +682,6 @@ fn paint_fill(ctx: &mut PageContext<'_, '_, '_>, fill: &Fill, reach: &Reach) -> 
         }
         paint_shading(ctx, color)
     })();
-    ctx.restore_graphics_state()?;
+    ctx.content.restore_graphics_state()?;
     result
 }

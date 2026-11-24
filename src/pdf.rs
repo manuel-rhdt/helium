@@ -4,7 +4,7 @@ use crate::layout::components::TextOperator;
 use crate::style::properties::computed::{IccSpace, PixelLength, PaintColor};
 use crate::tagging::TagRecorder;
 
-use lemon_pdf::color::{ColorValue, RgbSpace};
+use lemon_pdf::content::{ColorOperand, Matrix, PageContext};
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::object::{ByteString, IndirectReference, Name, TextString};
 use lemon_pdf::stream::StreamFilter;
@@ -44,8 +44,7 @@ impl MarkedContent {
     /// covers the content.
     fn before_content(&mut self, page: &mut PageContext, tagged: bool) -> Result<(), Error> {
         if tagged && self.stack.is_empty() && !self.implicit_artifact {
-            page.push_operand(RawPdf("/Artifact".into()))?;
-            page.apply_operator("BMC")?;
+            page.content.begin_marked_content(&Name::from("Artifact"))?;
             self.implicit_artifact = true;
         }
         Ok(())
@@ -54,7 +53,7 @@ impl MarkedContent {
     /// Called before an explicit marked-content sequence starts at the top level.
     fn close_implicit_artifact(&mut self, page: &mut PageContext) -> Result<(), Error> {
         if self.stack.is_empty() && self.implicit_artifact {
-            page.apply_operator("EMC")?;
+            page.content.end_marked_content()?;
             self.implicit_artifact = false;
         }
         Ok(())
@@ -62,7 +61,7 @@ impl MarkedContent {
 
     fn end(&mut self, page: &mut PageContext) -> Result<(), Error> {
         if self.stack.pop() == Some(true) {
-            page.apply_operator("EMC")?;
+            page.content.end_marked_content()?;
         }
         Ok(())
     }
@@ -76,7 +75,6 @@ impl MarkedContent {
     }
 }
 
-type PageContext<'p, 'c, 'b> = lemon_pdf::content::PageContext<'p, 'c, 'b>;
 
 /// How an image is embedded: raster images as an image XObject, SVG images as a form.
 enum Embedded {
@@ -85,65 +83,264 @@ enum Embedded {
     Svg(lemon_pdf::form::FormReference, f32, f32, bool),
 }
 
-/// The colour of the PDF that `color` is. In a file of PDF/A-1, which does not allow the ICC profiles of
-/// version 4 that the spaces of `color()` are, an ICC colour is CIE XYZ (and so CIELAB in the file).
-fn color_value(color: PaintColor) -> ColorValue {
-    let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
-    let space = |space: IccSpace| match space {
-        IccSpace::SrgbLinear => RgbSpace::SrgbLinear,
-        IccSpace::DisplayP3 => RgbSpace::DisplayP3,
-        IccSpace::DisplayP3Linear => RgbSpace::DisplayP3Linear,
-        IccSpace::A98Rgb => RgbSpace::A98Rgb,
-        IccSpace::ProphotoRgb => RgbSpace::ProphotoRgb,
-        IccSpace::Rec2020 => RgbSpace::Rec2020,
-    };
-    match color {
-        PaintColor::Srgb(color) => ColorValue::Srgb([channel(color.red), channel(color.green), channel(color.blue)]),
-        PaintColor::Icc(_) if pdfa1_active() => ColorValue::XyzD65(color.to_xyz().map(f64::from)),
-        PaintColor::Icc(color) => ColorValue::Rgb(space(color.space), color.components().map(f64::from)),
-        PaintColor::Xyz(color) => ColorValue::XyzD65(color.components().map(f64::from)),
+/// Paints an image into the rectangle with the lower left corner (`x`, `y`), which leaves the
+/// graphics state unchanged: the image is painted into the unit square.
+fn draw_image(
+    page_context: &mut PageContext<'_, '_>,
+    key: &lemon_pdf::resources::XObjectKey,
+    x: Pt,
+    y: Pt,
+    width: Pt,
+    height: Pt,
+) -> Result<(), Error> {
+    page_context.content.save_graphics_state()?;
+    page_context.content.concatenate_matrix(Matrix::new(width.0, 0.0, 0.0, height.0, x.0, y.0))?;
+    page_context.content.paint_xobject(key)?;
+    page_context.content.restore_graphics_state()
+}
+
+/// The opacity (`ca` and `CA`) that is set in the graphics state of the content stream being
+/// written, so that an `ExtGState` is only written when it changes. It follows `Push` and `Pop`
+/// (`q` and `Q`), which restore the opacity.
+#[derive(Debug)]
+struct Alpha {
+    /// `UNKNOWN` after something that changes the opacity without restoring it.
+    fill: u16,
+    stroke: u16,
+    saved: Vec<(u16, u16)>,
+}
+
+impl Alpha {
+    const UNKNOWN: u16 = u16::MAX;
+
+    fn new() -> Self {
+        Alpha { fill: u16::from(u8::MAX), stroke: u16::from(u8::MAX), saved: vec![] }
     }
+
+    /// Forgets the opacity: the next colour or `reset` writes it again.
+    fn invalidate(&mut self) {
+        self.fill = Self::UNKNOWN;
+        self.stroke = Self::UNKNOWN;
+    }
+
+    fn push(&mut self) {
+        self.saved.push((self.fill, self.stroke));
+    }
+
+    fn pop(&mut self) {
+        if let Some((fill, stroke)) = self.saved.pop() {
+            self.fill = fill;
+            self.stroke = stroke;
+        }
+    }
+
+    fn set_fill(&mut self, context: &mut PageContext<'_, '_>, alpha: u8) -> Result<(), Error> {
+        if self.fill != u16::from(alpha) {
+            if alpha != u8::MAX {
+                pdfa1_forbid("a colour with an alpha channel, or `opacity`")?;
+            }
+            context.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_fill_alpha(f64::from(alpha) / f64::from(u8::MAX)))?;
+            self.fill = u16::from(alpha);
+        }
+        Ok(())
+    }
+
+    fn set_stroke(&mut self, context: &mut PageContext<'_, '_>, alpha: u8) -> Result<(), Error> {
+        if self.stroke != u16::from(alpha) {
+            if alpha != u8::MAX {
+                pdfa1_forbid("a colour with an alpha channel, or `opacity`")?;
+            }
+            context.apply_ext_gstate(lemon_pdf::graphics_state::ExtGState::new().with_stroke_alpha(f64::from(alpha) / f64::from(u8::MAX)))?;
+            self.stroke = u16::from(alpha);
+        }
+        Ok(())
+    }
+
+    /// Makes what is painted next opaque, for the items that do not have a colour of their own
+    /// (images, colour glyphs) and must not take the transparency of the colour set before.
+    fn reset(&mut self, context: &mut PageContext<'_, '_>) -> Result<(), Error> {
+        self.set_fill(context, u8::MAX)?;
+        self.set_stroke(context, u8::MAX)
+    }
+}
+
+/// Linear-light Display P3 to CIE XYZ (D65), and CIE XYZ (D65) to linear-light Rec. 2020 (CSS Color 4).
+#[rustfmt::skip]
+const P3_TO_XYZ: [[f64; 3]; 3] = [
+    [0.486_570_948_6, 0.265_667_693_2, 0.198_217_285_2],
+    [0.228_974_564_1, 0.691_738_521_8, 0.079_286_914_1],
+    [0.0,             0.045_113_381_9, 1.043_944_368_9],
+];
+#[rustfmt::skip]
+const XYZ_TO_REC2020: [[f64; 3]; 3] = [
+    [ 1.716_651_187_97, -0.355_670_783_78, -0.253_366_281_37],
+    [-0.666_684_351_83,  1.616_481_236_63,  0.015_768_545_81],
+    [ 0.017_639_857_45, -0.042_770_613_26,  0.942_103_121_24],
+];
+
+fn multiply(matrix: &[[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
+    matrix.map(|row| row.iter().zip(vector).map(|(m, v)| m * v).sum())
+}
+
+/// The coordinates of a colour (CIE XYZ, D65) in the Rec. 2020 profile with the gamma 2.4: the linear
+/// ones to the power of 1/2.4. A colour that Rec. 2020 cannot hold is clipped, the only clipping here.
+fn rec2020_gamma24_components(xyz: [f64; 3]) -> [f64; 3] {
+    multiply(&XYZ_TO_REC2020, xyz).map(|linear| linear.clamp(0.0, 1.0).powf(1.0 / 2.4))
+}
+
+/// The ICC space of the colours that sRGB cannot hold (Rec. 2020 primaries, gamma 2.4), written once for the
+/// document.
+fn wide_color_space(context: &mut lemon_pdf::content::PageContext<'_, '_>) -> Result<lemon_pdf::color_space::IccBasedColorSpace, Error> {
+    Ok(context.pdf_context.icc_color_space("rec2020-gamma24", lemon_pdf::icc::rec2020_gamma24_profile, 3, Some(StreamFilter::Deflate))?)
+}
+
+/// Bradford adaptation from D65 to D50 (CSS Color 4, "Sample code for color conversions").
+#[rustfmt::skip]
+const D65_TO_D50: [[f64; 3]; 3] = [
+    [ 1.047_929_820_840_548_8,  0.022_946_793_341_019_088, -0.050_192_229_543_135_57],
+    [ 0.029_627_815_688_159_344, 0.990_434_484_573_249,    -0.017_073_825_029_385_14],
+    [-0.009_243_058_152_591_178, 0.015_055_144_896_577_895,  0.751_874_289_958_000_8],
+];
+#[rustfmt::skip]
+const SRGB_TO_XYZ: [[f64; 3]; 3] = [
+    [0.412_390_799_265_959_5, 0.357_584_339_383_878, 0.180_480_788_401_834_3],
+    [0.212_639_005_871_510_36, 0.715_168_678_767_756, 0.072_192_315_360_733_7],
+    [0.019_330_818_715_591_85, 0.119_194_779_794_626, 0.950_532_152_249_660_7],
+];
+#[rustfmt::skip]
+const A98_TO_XYZ: [[f64; 3]; 3] = [
+    [0.576_669_042_910_131_1, 0.185_558_237_906_546_4, 0.188_228_646_234_245_6],
+    [0.297_344_975_250_535_9, 0.627_363_566_255_466_3, 0.075_291_458_493_997_8],
+    [0.027_031_361_386_412_36, 0.070_688_852_535_827_6, 0.991_337_536_837_639_2],
+];
+#[rustfmt::skip]
+const REC2020_TO_XYZ: [[f64; 3]; 3] = [
+    [0.636_958_048_301_291, 0.144_616_903_586_208_4, 0.168_880_975_164_172_1],
+    [0.262_700_212_011_267_0, 0.677_998_071_518_871_0, 0.059_301_716_469_861_9],
+    [0.0,                     0.028_072_693_049_087_5, 1.060_985_057_710_791_3],
+];
+/// The colorants of ProPhoto RGB, which is relative to D50 already.
+#[rustfmt::skip]
+const PROPHOTO_TO_XYZ_D50: [[f64; 3]; 3] = [
+    [0.797_766_6, 0.135_181_3, 0.031_347_73],
+    [0.288_074_8, 0.711_835_2, 0.000_089_94],
+    [0.0,         0.0,         0.825_104_6],
+];
+
+/// The ICC space of a colour of `space`: the profile has its primaries and its curve, as CSS Color 4
+/// says them, written once for the document.
+fn icc_space(
+    context: &mut lemon_pdf::content::PageContext<'_, '_>,
+    space: IccSpace,
+) -> Result<lemon_pdf::color_space::IccBasedColorSpace, Error> {
+    use lemon_pdf::icc::{ParametricCurve, rgb_matrix_profile};
+    const LINEAR: ParametricCurve = ParametricCurve { g: 1.0, a: 1.0, b: 0.0, c: 0.0, d: 0.0 };
+    let colorants = |to_xyz: &[[f64; 3]; 3], adapt: bool| -> [(f64, f64, f64); 3] {
+        [0, 1, 2].map(|column| {
+            let xyz = [to_xyz[0][column], to_xyz[1][column], to_xyz[2][column]];
+            let [x, y, z] = if adapt { multiply(&D65_TO_D50, xyz) } else { xyz };
+            (x, y, z)
+        })
+    };
+    let (key, name, to_xyz, adapt, curve) = match space {
+        IccSpace::SrgbLinear => ("srgb-linear", "sRGB linear", SRGB_TO_XYZ, true, LINEAR),
+        IccSpace::DisplayP3 => ("display-p3", "Display P3", P3_TO_XYZ, true, ParametricCurve::SRGB),
+        IccSpace::DisplayP3Linear => ("display-p3-linear", "Display P3 linear", P3_TO_XYZ, true, LINEAR),
+        IccSpace::A98Rgb => ("a98-rgb", "Adobe RGB (1998)", A98_TO_XYZ, true, ParametricCurve { g: 563.0 / 256.0, a: 1.0, b: 0.0, c: 0.0, d: 0.0 }),
+        IccSpace::ProphotoRgb => (
+            "prophoto-rgb",
+            "ProPhoto RGB",
+            PROPHOTO_TO_XYZ_D50,
+            false,
+            ParametricCurve { g: 1.8, a: 1.0, b: 0.0, c: 1.0 / 16.0, d: 16.0 / 512.0 },
+        ),
+        // pure gamma 2.4, as CSS Color 4 says, and the one that an iPhone decodes every Rec. 2020 profile with
+        IccSpace::Rec2020 => return wide_color_space(context),
+    };
+    let [red, green, blue] = colorants(&to_xyz, adapt);
+    Ok(context.pdf_context.icc_color_space(key, || rgb_matrix_profile(name, red, green, blue, curve), 3, Some(StreamFilter::Deflate))?)
+}
+
+/// Makes the fills (or the strokes) of the page use `color`, in the space that CSS wrote it in:
+///
+/// - sRGB (`rgb()`, `hsl()`, a hex code, a name, `color(srgb …)`) is a device colour; every page and form
+///   defines `DefaultRGB` as sRGB, so that it is sRGB in every viewer that honours it ([`set_device_defaults`]);
+/// - a colour of `color()` in a space with a profile (Display P3, Adobe RGB, ProPhoto RGB, Rec. 2020, and the
+///   linear ones) is in an ICC space of that profile, written once for the document;
+/// - every other colour (`lab()`, `lch()`, `xyz`, an `oklab()` or `oklch()` that sRGB cannot hold, a colour
+///   that is outside of the space it was written in) is CIELAB (D50): the PDF has no Oklab, so those are
+///   converted. A device may show a* and b* only within ±128 (an iPhone scales the range), so a colour
+///   beyond is in the Rec. 2020 ICC space if that holds it, else its chroma is reduced to fit.
+///
+/// The alpha is not set.
+fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
+    let xyz = match color {
+        PaintColor::Srgb(color) => {
+            let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
+            let (r, g, b) = (channel(color.red), channel(color.green), channel(color.blue));
+            return if stroke { context.content.set_stroke_color(ColorOperand::Rgb(r, g, b)) } else { context.content.set_fill_color(ColorOperand::Rgb(r, g, b)) };
+        }
+        // PDF/A-1 does not allow the profiles of version 4 that the ICC spaces are: the colour is CIELAB
+        PaintColor::Icc(_) if pdfa1_active() => color.to_xyz().map(f64::from),
+        PaintColor::Icc(color) => {
+            let space = icc_space(context, color.space)?;
+            let space = context.resources.add_color_space(space);
+            let components = color.components().map(|value| (f64::from(value) * 100_000.0).round() / 100_000.0);
+            return if stroke { context.content.set_stroke_color(ColorOperand::Space(&space, &components)) } else { context.content.set_fill_color(ColorOperand::Space(&space, &components)) };
+        }
+        PaintColor::Xyz(color) => color.components().map(f64::from),
+    };
+    let [x, y, z] = multiply(&D65_TO_D50, xyz);
+    let white = lemon_pdf::color_space::D50_WHITE_POINT;
+    let f = |t: f64| if t > 216.0 / 24389.0 { t.cbrt() } else { (24389.0 / 27.0 * t + 16.0) / 116.0 };
+    let (fx, fy, fz) = (f(x / white[0]), f(y / white[1]), f(z / white[2]));
+    let (lightness, a, b) = (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz));
+    let round = |value: f64| (value * 10_000.0).round() / 10_000.0;
+    let lab = lemon_pdf::color_space::LabColorSpace::d50();
+    let limit = lab.0.range.expect("the range of the space is set")[1].0;
+    let (mut a, mut b) = (a, b);
+    if a.abs() > limit || b.abs() > limit {
+        // A device may show a* and b* only within ±128 (an iPhone scales the range), so a colour beyond is in the
+        // ICC space of Rec. 2020 if that holds it, and else its chroma is reduced (the lightness and the hue stay).
+        let linear = multiply(&XYZ_TO_REC2020, xyz);
+        if linear.iter().all(|v| (-0.000_5..=1.000_5).contains(v)) {
+            let space = wide_color_space(context)?;
+            let space = context.resources.add_color_space(space);
+            let components = rec2020_gamma24_components(xyz).map(|value| (value * 100_000.0).round() / 100_000.0);
+            return if stroke { context.content.set_stroke_color(ColorOperand::Space(&space, &components)) } else { context.content.set_fill_color(ColorOperand::Space(&space, &components)) };
+        }
+        let scale = limit / a.abs().max(b.abs());
+        (a, b) = (a * scale, b * scale);
+    }
+    let name = context.resources.add_color_space(lab);
+    let lightness = round(lightness.clamp(0.0, 100.0));
+    if stroke { context.content.set_stroke_color(ColorOperand::Space(&name, &[lightness, round(a), round(b)])) } else { context.content.set_fill_color(ColorOperand::Space(&name, &[lightness, round(a), round(b)])) }
 }
 
 /// Defines what a device colour means in the resources of the page or form `context` (`DefaultRGB`):
 /// sRGB. A form has resources of its own, which the page's do not reach, so every form and pattern
 /// has to call this before it paints.
-pub(crate) fn set_device_defaults(context: &mut PageContext<'_, '_, '_>) -> Result<(), Error> {
-    context.set_srgb_device_defaults()
+pub(crate) fn set_device_defaults(context: &mut lemon_pdf::content::PageContext<'_, '_>) -> Result<(), Error> {
+    let srgb = context.pdf_context.icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
+    context.resources.set_default_color_space(lemon_pdf::color_space::DefaultColorSpace::Rgb, srgb);
+    Ok(())
 }
 
-/// Makes the fills of the page use `color`, in the space that CSS wrote it in (see
-/// [`lemon_pdf::color`]). The alpha is not set.
-pub(crate) fn set_fill_color(context: &mut PageContext<'_, '_, '_>, color: PaintColor) -> Result<(), Error> {
-    context.set_fill_color(color_value(color))
+/// Makes the fills of the page use `color`, see [`set_color`].
+pub(crate) fn set_fill_color(context: &mut lemon_pdf::content::PageContext<'_, '_>, color: PaintColor) -> Result<(), Error> {
+    set_color(context, color, false)
 }
 
-/// Makes the strokes of the page use `color`, see [`set_fill_color`].
-pub(crate) fn set_stroke_color(context: &mut PageContext<'_, '_, '_>, color: PaintColor) -> Result<(), Error> {
-    context.set_stroke_color(color_value(color))
-}
-
-/// Makes the fills use the opacity `alpha` (0 to 255), which PDF/A-1 does not allow unless it is opaque.
-fn set_fill_alpha(context: &mut PageContext<'_, '_, '_>, alpha: u8) -> Result<(), Error> {
-    if alpha != u8::MAX {
-        pdfa1_forbid("a colour with an alpha channel, or `opacity`")?;
-    }
-    context.ensure_fill_alpha(f64::from(alpha) / f64::from(u8::MAX))
-}
-
-/// Makes the strokes use the opacity `alpha` (0 to 255), see [`set_fill_alpha`].
-fn set_stroke_alpha(context: &mut PageContext<'_, '_, '_>, alpha: u8) -> Result<(), Error> {
-    if alpha != u8::MAX {
-        pdfa1_forbid("a colour with an alpha channel, or `opacity`")?;
-    }
-    context.ensure_stroke_alpha(f64::from(alpha) / f64::from(u8::MAX))
+/// Makes the strokes of the page use `color`, see [`set_color`].
+pub(crate) fn set_stroke_color(context: &mut lemon_pdf::content::PageContext<'_, '_>, color: PaintColor) -> Result<(), Error> {
+    set_color(context, color, true)
 }
 
 /// Paints the items of a display list. The coordinates of the items are in pixels from the top
 /// left corner of a page that is `page_height` high.
 #[allow(clippy::too_many_arguments)]
 fn paint_items(
-    page_context: &mut PageContext<'_, '_, '_>,
+    page_context: &mut PageContext<'_, '_>,
     display_list: &mut display_list::DisplayList,
     page_height: PixelLength,
     filter: Option<StreamFilter>,
@@ -175,7 +372,7 @@ fn paint_items(
 /// is a transparency group, which is drawn with the opacity of the group.
 #[allow(clippy::too_many_arguments)]
 fn paint_slice(
-    page_context: &mut PageContext<'_, '_, '_>,
+    page_context: &mut PageContext<'_, '_>,
     items: &[&DisplayItem],
     page_height: PixelLength,
     filter: Option<StreamFilter>,
@@ -187,6 +384,7 @@ fn paint_slice(
     recorder: &mut Option<TagRecorder>,
     page_index: usize,
 ) -> Result<(), Error> {
+    let mut alpha = Alpha::new();
     let mut remaining = items.iter().copied();
     while let Some(item) = remaining.next() {
         match item {
@@ -243,10 +441,10 @@ fn paint_slice(
                         )
                     },
                 )?;
-                let key = page_context.add_xobject(form);
-                page_context.save_graphics_state()?;
-                page_context.push_operand(RawPdf("/Artifact".into()))?;
-                page_context.apply_operator("BMC")?;
+                let key = page_context.resources.add_xobject(form);
+                alpha.push();
+                page_context.content.save_graphics_state()?;
+                page_context.content.begin_marked_content(&Name::from("Artifact"))?;
                 // the opacity is of the group as a whole; the group itself starts out opaque
                 let opacity = f64::from(opacity);
                 page_context.apply_ext_gstate(
@@ -254,15 +452,17 @@ fn paint_slice(
                         .with_fill_alpha(opacity)
                         .with_stroke_alpha(opacity),
                 )?;
-                page_context.draw_xobject(&key)?;
-                page_context.apply_operator("EMC")?;
-                page_context.restore_graphics_state()?;
+                page_context.content.paint_xobject(&key)?;
+                page_context.content.end_marked_content()?;
+                page_context.content.restore_graphics_state()?;
+                alpha.pop();
             }
             // consumed by the `BeginGroup` that it belongs to
             DisplayItem::EndGroup => {}
             _ => paint_item(
                 page_context,
                 item,
+                &mut alpha,
                 page_height,
                 filter,
                 font_map,
@@ -281,8 +481,9 @@ fn paint_slice(
 /// Paints an item that is not a group.
 #[allow(clippy::too_many_arguments)]
 fn paint_item(
-    page_context: &mut PageContext<'_, '_, '_>,
+    page_context: &mut PageContext<'_, '_>,
     item: &DisplayItem,
+    alpha: &mut Alpha,
     page_height: PixelLength,
     filter: Option<StreamFilter>,
     font_map: &HashMap<String, font::EmbeddedFont>,
@@ -298,10 +499,12 @@ fn paint_item(
             // handled by `paint_slice`
             DisplayItem::BeginGroup { .. } | DisplayItem::EndGroup => {}
             DisplayItem::Push => {
-                page_context.save_graphics_state()?
+                alpha.push();
+                page_context.content.save_graphics_state()?
             }
             DisplayItem::Pop => {
-                page_context.restore_graphics_state()?
+                alpha.pop();
+                page_context.content.restore_graphics_state()?
             }
         &DisplayItem::Transform(matrix) => {
             // the matrix is in pixels with y down, from the top left corner of the page: bring
@@ -311,27 +514,20 @@ fn paint_item(
             let to_pdf = [0.75, 0.0, 0.0, -0.75, 0.0, 0.75 * h];
             let from_pdf = [1.0 / 0.75, 0.0, 0.0, -1.0 / 0.75, 0.0, h];
             let m = multiply(multiply(to_pdf, matrix), from_pdf);
-            page_context.concatenate_matrix(
-                f64::from(m[0]),
-                f64::from(m[1]),
-                f64::from(m[2]),
-                f64::from(m[3]),
-                Pt(f64::from(m[4])),
-                Pt(f64::from(m[5])),
-            )?;
+            page_context.content.concatenate_matrix(lemon_pdf::Matrix::new(f64::from(m[0]), f64::from(m[1]), f64::from(m[2]), f64::from(m[3]), Pt(f64::from(m[4])).0, Pt(f64::from(m[5])).0))?;
         }
             DisplayItem::Translate(x, y) => {
                 let x = *x;
                 let y = -*y;
-                page_context.concatenate_matrix(1.0, 0.0, 0.0, 1.0, x.into(), y.into())?;
+                page_context.content.concatenate_matrix(lemon_pdf::Matrix::new(1.0, 0.0, 0.0, 1.0, Pt::from(x).0, Pt::from(y).0))?;
             }
             &DisplayItem::Color(color) => {
                 set_fill_color(page_context, color)?;
-                set_fill_alpha(page_context, color.alpha())?;
+                alpha.set_fill(page_context, color.alpha())?;
             }
             &DisplayItem::StrokeColor(color) => {
                 set_stroke_color(page_context, color)?;
-                set_stroke_alpha(page_context, color.alpha())?;
+                alpha.set_stroke(page_context, color.alpha())?;
             }
             &DisplayItem::LineString {
                 ref points,
@@ -345,37 +541,34 @@ fn paint_item(
                     });
 
                 if let Some((x, y)) = point_iter.next() {
-                    page_context.push_operand(RawPdf("/Artifact".into()))?;
-                    page_context.apply_operator("BMC")?;
-                    page_context.move_to(x, y)?
+                    page_context.content.begin_marked_content(&Name::from("Artifact"))?;
+                    page_context.content.move_to(x, y)?
                 } else {
                     return Ok(());
                 }
 
                 for (x, y) in point_iter {
-                    page_context.line_to(x, y)?
+                    page_context.content.line_to(x, y)?
                 }
 
-                page_context.line_width(line_width.into())?;
-                page_context.stroke_path()?;
-                page_context.apply_operator("EMC")?;
+                page_context.content.set_line_width(line_width.into())?;
+                page_context.content.stroke_path()?;
+                page_context.content.end_marked_content()?;
             }
             DisplayItem::FillPath { path, even_odd } => {
-                page_context.push_operand(RawPdf("/Artifact".into()))?;
-                page_context.apply_operator("BMC")?;
+                page_context.content.begin_marked_content(&Name::from("Artifact"))?;
                 emit_path(page_context, path, page_height)?;
                 let rule = if *even_odd {
                     lemon_pdf::graphics_state::FillRule::EvenOdd
                 } else {
                     lemon_pdf::graphics_state::FillRule::NonZero
                 };
-                page_context.fill_path_with_rule(rule)?;
-                page_context.apply_operator("EMC")?;
+                page_context.content.fill_path_with_rule(rule)?;
+                page_context.content.end_marked_content()?;
             }
             DisplayItem::ColorGlyph(item) => {
-                page_context.ensure_opaque()?;
-                page_context.push_operand(RawPdf("/Artifact".into()))?;
-                page_context.apply_operator("BMC")?;
+                alpha.reset(page_context)?;
+                page_context.content.begin_marked_content(&Name::from("Artifact"))?;
                 color_glyphs.borrow_mut().paint_at(
                     page_context,
                     &item.font,
@@ -385,25 +578,25 @@ fn paint_item(
                     Pt::from(item.size),
                     filter,
                 )?;
-                page_context.apply_operator("EMC")?;
+                page_context.content.end_marked_content()?;
             }
             DisplayItem::Gradient(resolved) => {
-                page_context.ensure_opaque()?;
+                alpha.reset(page_context)?;
                 gradient::paint(page_context, resolved, page_height, filter)?;
                 // a gradient without a clip leaves its opacity set
-                page_context.forget_alpha();
+                alpha.invalidate();
             }
             DisplayItem::Image { rect, image } => {
                 let Some(embedded) = images.get(&std::sync::Arc::as_ptr(image)) else {
                     return Ok(());
                 };
-                page_context.ensure_opaque()?;
-                page_context.push_operand(RawPdf("/Artifact".into()))?;
-                page_context.apply_operator("BMC")?;
+                alpha.reset(page_context)?;
+                page_context.content.begin_marked_content(&Name::from("Artifact"))?;
                 match *embedded {
                     Embedded::Raster(reference) => {
-                        let key = page_context.add_xobject(reference);
-                        page_context.draw_image(
+                        let key = page_context.resources.add_xobject(reference);
+                        draw_image(
+                            page_context,
                             &key,
                             Pt::from(rect.x),
                             Pt::from(page_height - rect.y - rect.height),
@@ -423,33 +616,26 @@ fn paint_item(
                         let x = Pt::from(rect.x + PixelLength(free_w / 2.0));
                         let y = Pt::from(page_height - rect.y - PixelLength(free_h / 2.0));
                         let scale = f64::from(Pt::from(PixelLength(scale)).0);
-                        let key = page_context.add_xobject(form);
-                        page_context.save_graphics_state()?;
-                        page_context.rect(
+                        let key = page_context.resources.add_xobject(form);
+                        page_context.content.save_graphics_state()?;
+                        page_context.content.rect(
                             Pt::from(rect.x),
                             Pt::from(page_height - rect.y - rect.height),
                             Pt::from(rect.width),
                             Pt::from(rect.height),
                         )?;
-                        page_context.clip(lemon_pdf::graphics_state::FillRule::NonZero)?;
-                        page_context.end_path()?;
+                        page_context.content.clip(lemon_pdf::graphics_state::FillRule::NonZero)?;
+                        page_context.content.end_path()?;
                         // SVG has y pointing down
-                        page_context.concatenate_matrix(
-                            scale,
-                            0.0,
-                            0.0,
-                            -scale,
-                            x,
-                            y,
-                        )?;
-                        page_context.draw_xobject(&key)?;
-                        page_context.restore_graphics_state()?;
+                        page_context.content.concatenate_matrix(lemon_pdf::Matrix::new(scale, 0.0, 0.0, -scale, x.0, y.0))?;
+                        page_context.content.paint_xobject(&key)?;
+                        page_context.content.restore_graphics_state()?;
                     }
                 }
-                page_context.apply_operator("EMC")?;
+                page_context.content.end_marked_content()?;
             }
             DisplayItem::BlendGroup(group) => {
-                page_context.ensure_opaque()?;
+                alpha.reset(page_context)?;
                 gradient::paint_blend_group(page_context, group, page_height, filter)?
             }
             DisplayItem::ClipPath { path, even_odd } => {
@@ -459,8 +645,8 @@ fn paint_item(
                 } else {
                     lemon_pdf::graphics_state::FillRule::NonZero
                 };
-                page_context.clip(rule)?;
-                page_context.end_path()?;
+                page_context.content.clip(rule)?;
+                page_context.content.end_path()?;
             }
             &DisplayItem::FilledRect(Rect {
                 x,
@@ -473,18 +659,17 @@ fn paint_item(
                 let width = Pt::from(width);
                 let height = Pt::from(height);
 
-                page_context.push_operand(RawPdf("/Artifact".into()))?;
-                page_context.apply_operator("BMC")?;
-                page_context.rect(x, y, width, height)?;
-                page_context.fill_path()?;
-                page_context.apply_operator("EMC")?;
+                page_context.content.begin_marked_content(&Name::from("Artifact"))?;
+                page_context.content.rect(x, y, width, height)?;
+                page_context.content.fill_path()?;
+                page_context.content.end_marked_content()?;
             }
             DisplayItem::Paragraph(par) => {
                 let x = par.start_pos.0;
                 let y = page_height - par.start_pos.1;
 
-                page_context.begin_text()?;
-                page_context.set_position(x.into(), y.into())?;
+                page_context.content.begin_text()?;
+                page_context.content.move_text_position(x.into(), y.into())?;
                 let mut marked = MarkedContent::default();
 
                 // the text that the fonts cannot describe is given where it is drawn
@@ -499,59 +684,51 @@ fn paint_item(
                             // the font of text that is drawn entirely with fallback
                             // fonts). Selecting it would change nothing.
                             if let Some(font) = font_map.get(font_name) {
-                                let key = page_context.add_font(font.reference);
-                                page_context.set_font(&key, (*size).into())?;
+                                let key = page_context.resources.add_font(font.reference);
+                                page_context.content.set_font(&key, (*size).into())?;
                                 encoding = font.encoding;
                             }
                         }
                         &TextOperator::SetColor(color) => {
                             set_fill_color(page_context, color)?;
-                            set_fill_alpha(page_context, color.alpha())?;
+                            alpha.set_fill(page_context, color.alpha())?;
                         }
                         &TextOperator::KernedGlyphs(range) => {
                             marked.before_content(page_context, tagged)?;
-                            page_context.push_operand(text::KernedArray::new(range, &par.ops.glyphs, encoding))?;
-                            page_context.apply_operator("TJ")?;
+                            page_context.content.show_text_array(&text::KernedArray::new(range, &par.ops.glyphs, encoding))?;
                         }
                         &TextOperator::NewLine { x_offset, leading } => {
-                            page_context
-                                .set_position(x_offset.into(), (-leading).into())?;
+                            page_context.content.move_text_position(x_offset.into(), (-leading).into())?;
                         }
                         &TextOperator::SetWordSpacing(spacing) => {
-                            page_context.push_operand(Pt::from(spacing))?;
-                            page_context.apply_operator("Tw")?;
+                            page_context.content.set_word_spacing(Pt::from(spacing))?;
                         }
                         TextOperator::BeginActualText(text) => {
                             marked.before_content(page_context, tagged)?;
                             marked.stack.push(true);
-                            page_context.push_operand(RawPdf("/Span".into()))?;
                             let mut hex = String::from("FEFF");
                             for unit in text.encode_utf16() {
                                 hex.push_str(&format!("{unit:04X}"));
                             }
-                            page_context
-                                .push_operand(RawPdf(format!("<< /ActualText <{hex}> >>")))?;
-                            page_context.apply_operator("BDC")?;
+                            page_context.content.begin_marked_content_with_properties(
+                                &Name::from("Span"),
+                                &RawPdf(format!("<< /ActualText <{hex}> >>")),
+                            )?;
                         }
                         TextOperator::BeginArtifact => {
                             // page numbers, running headers and footers
                             marked.close_implicit_artifact(page_context)?;
                             marked.stack.push(true);
-                            page_context.push_operand(RawPdf("/Artifact".into()))?;
-                            page_context
-                                .push_operand(RawPdf("<< /Type /Pagination >>".into()))?;
-                            page_context.apply_operator("BDC")?;
+                            page_context.content.write_operator("BDC", &[&(RawPdf("/Artifact".into())), &(RawPdf("<< /Type /Pagination >>".into()))])?;
                         }
                         TextOperator::BeginTag(tag) => match recorder.as_mut() {
                             Some(recorder) => {
                                 marked.close_implicit_artifact(page_context)?;
                                 marked.stack.push(true);
                                 let (role, mcid) = recorder.mark(page_index, *tag);
-                                page_context.push_operand(RawPdf(format!("/{role}")))?;
-                                page_context.push_operand(RawPdf(format!(
+                                page_context.content.write_operator("BDC", &[&(RawPdf(format!("/{role}"))), &(RawPdf(format!(
                                     "<< /MCID {mcid} >>"
-                                )))?;
-                                page_context.apply_operator("BDC")?;
+                                )))])?;
                             }
                             None => marked.stack.push(false),
                         },
@@ -561,18 +738,11 @@ fn paint_item(
                         // painted by itself, at its position (see `DisplayItem::ColorGlyph`)
                         TextOperator::ColorGlyph { .. } => {}
                         &TextOperator::SetRise(rise) => {
-                            page_context.push_operand(Pt::from(rise))?;
-                            page_context.apply_operator("Ts")?;
+                            page_context.content.set_text_rise(Pt::from(rise))?;
                         }
                         &TextOperator::Embed { x, y, .. } => {
                             // resolved by the display list; only the position is left
-                            page_context.push_operand(1.0f32)?;
-                            page_context.push_operand(0.0f32)?;
-                            page_context.push_operand(0.0f32)?;
-                            page_context.push_operand(1.0f32)?;
-                            page_context.push_operand(Pt::from(x).0 as f32)?;
-                            page_context.push_operand(Pt::from(page_height - y).0 as f32)?;
-                            page_context.apply_operator("Tm")?;
+                            page_context.content.write_operator("Tm", &[&(1.0f32), &(0.0f32), &(0.0f32), &(1.0f32), &(Pt::from(x).0 as f32), &(Pt::from(page_height - y).0 as f32)])?;
                         }
                         &TextOperator::SetTransform(matrix) => {
                             let matrix: [f32; 6] = [
@@ -583,16 +753,13 @@ fn paint_item(
                                 Pt::from(matrix.e).0 as f32,
                                 Pt::from(page_height - matrix.f).0 as f32,
                             ];
-                            for elem in &matrix {
-                                page_context.push_operand(*elem)?;
-                            }
-                            page_context.apply_operator("Tm")?;
+                            page_context.content.set_text_matrix(Matrix(matrix.map(f64::from)))?;
                         }
                     }
                 }
 
                 marked.finish(page_context)?;
-                page_context.end_text()?;
+                page_context.content.end_text()?;
             }
         }
     }
@@ -1196,7 +1363,7 @@ impl lemon_pdf::object::PdfFormat for RawPdf {
 /// `dc:title` (7.1).
 /// Constructs the path (without painting it) on the page.
 pub(crate) fn emit_path(
-    page_context: &mut lemon_pdf::content::PageContext<'_, '_, '_>,
+    page_context: &mut lemon_pdf::content::PageContext<'_, '_>,
     path: &[display_list::PathSegment],
     page_height: PixelLength,
 ) -> Result<(), Error> {
@@ -1206,19 +1373,19 @@ pub(crate) fn emit_path(
         match *segment {
             PathSegment::MoveTo(p) => {
                 let (x, y) = pt(p);
-                page_context.move_to(x, y)?
+                page_context.content.move_to(x, y)?
             }
             PathSegment::LineTo(p) => {
                 let (x, y) = pt(p);
-                page_context.line_to(x, y)?
+                page_context.content.line_to(x, y)?
             }
             PathSegment::CurveTo(c1, c2, end) => {
                 let (x1, y1) = pt(c1);
                 let (x2, y2) = pt(c2);
                 let (x3, y3) = pt(end);
-                page_context.curve_to(x1, y1, x2, y2, x3, y3)?
+                page_context.content.curve_to(x1, y1, x2, y2, x3, y3)?
             }
-            PathSegment::Close => page_context.close_path()?,
+            PathSegment::Close => page_context.content.close_path()?,
         }
     }
     Ok(())
