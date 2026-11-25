@@ -18,7 +18,7 @@ fn render(name: &str, images: &[&str], args: &[&str]) -> (String, PathBuf) {
     let html: String = images.iter().map(|image| format!("<img src=\"{image}\" width=40 height=40>")).collect();
     std::fs::write(dir.join("index.html"), format!("<!doctype html><html lang=en><title>Profiles</title>{html}")).unwrap();
     let output = dir.join("out.pdf");
-    common::helium().unwrap().args(["--no-system-fonts", "--no-compression"]).args(args).arg(dir.join("index.html")).arg(&output).assert().success();
+    common::umbruch().unwrap().args(["--no-system-fonts", "--no-compression"]).args(args).arg(dir.join("index.html")).arg(&output).assert().success();
     (String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(&output).unwrap())).into_owned(), output)
 }
 

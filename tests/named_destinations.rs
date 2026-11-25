@@ -7,7 +7,7 @@ fn render(name: &str, html: &str, args: &[&str]) -> String {
     let input = dir.join(format!("named_{name}.html"));
     let output = dir.join(format!("named_{name}.pdf"));
     std::fs::write(&input, html).unwrap();
-    common::helium().unwrap().args(args).arg("--no-compression").arg(&input).arg(&output).assert().success();
+    common::umbruch().unwrap().args(args).arg("--no-compression").arg(&input).arg(&output).assert().success();
     String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(output).unwrap())).into_owned()
 }
 

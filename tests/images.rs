@@ -38,7 +38,7 @@ fn render(name: &str, html: &str) -> Rendered {
     let output = dir.join(format!("images__{}.pdf", name));
     let layout = dir.join(format!("images__{}.json", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-compression", "--no-system-fonts", "--dump-layout"])

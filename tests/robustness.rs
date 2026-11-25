@@ -1,4 +1,4 @@
-//! Documents that made Helium panic: they must be rendered (or at least rejected with an
+//! Documents that made Umbruch panic: they must be rendered (or at least rejected with an
 //! error), never abort.
 
 mod common;
@@ -11,7 +11,7 @@ fn render(name: &str, html: &str) -> serde_json::Value {
     let input = dir.join(format!("robustness__{}.html", name));
     let output = dir.join(format!("robustness__{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--dump-layout", "-"])
         .arg(&input)

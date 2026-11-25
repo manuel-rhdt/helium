@@ -15,10 +15,10 @@
 //! is laid out for its own width and height ([`super::window`]).
 
 use super::flow::{Anchor, Flow};
-use super::tree::{HeliumTree, LineCut, lines_from, lines_until, variants_from};
+use super::tree::{UmbruchTree, LineCut, lines_from, lines_until, variants_from};
 use crate::layout::inline::InlineFormattingContext;
 use crate::style::properties::computed::PixelLength;
-use helium_paginate::{BoxRef, ContainerCut, Cut, Fragment, Item, LayoutService, NodeRef, ParId, ParLine};
+use umbruch_paginate::{BoxRef, ContainerCut, Cut, Fragment, Item, LayoutService, NodeRef, ParId, ParLine};
 use std::collections::HashMap;
 use std::rc::Rc;
 use taffy::geometry::Size;
@@ -60,7 +60,7 @@ struct Subtree {
 }
 
 pub(super) struct TreeService<'t, 'a, 'w> {
-    pub tree: &'t mut HeliumTree<'a, 'w>,
+    pub tree: &'t mut UmbruchTree<'a, 'w>,
     pub flow: &'t Flow,
     /// The height of the initial containing block of a galley.
     pub icb_height: f32,
@@ -93,7 +93,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
             .and_then(|columns| columns.inner.as_ref())
             .and_then(|inner| {
                 inner.items.iter().find_map(|item| match item {
-                    helium_paginate::Item::Paragraph { id, .. } => Some(*id),
+                    umbruch_paginate::Item::Paragraph { id, .. } => Some(*id),
                     _ => None,
                 })
             });
@@ -105,7 +105,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         lines.first().map_or(0.0, |line| line.extent)
     }
 
-    pub fn new(tree: &'t mut HeliumTree<'a, 'w>, flow: &'t Flow, icb_height: f32) -> Self {
+    pub fn new(tree: &'t mut UmbruchTree<'a, 'w>, flow: &'t Flow, icb_height: f32) -> Self {
         TreeService {
             tree,
             flow,
@@ -243,7 +243,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         let limit = tree
             .computed_values
             .get(entity)
-            .map_or(helium_paginate::HyphenLimit::None, |style| style.text.hyphenate_limit_last.page_end_limit());
+            .map_or(umbruch_paginate::HyphenLimit::None, |style| style.text.hyphenate_limit_last.page_end_limit());
         lines
             .iter()
             .map(|line| ParLine {
@@ -276,7 +276,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         let limit = tree
             .computed_values
             .get(entity)
-            .map_or(helium_paginate::HyphenLimit::None, |style| style.text.hyphenate_limit_last.page_end_limit());
+            .map_or(umbruch_paginate::HyphenLimit::None, |style| style.text.hyphenate_limit_last.page_end_limit());
         let mut own_cache = HashMap::new();
         let cache = if inline_context.is_some() { &mut own_cache } else { &mut tree.lines };
         variants_from(
@@ -385,7 +385,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
 
 /// The width and the indent that the lines of a paragraph were broken for in the layout that the
 /// tree has: the ones that the measure function was given, or else the width of its content box.
-pub(super) fn paragraph_width(tree: &HeliumTree, node: NodeId) -> (f32, f32) {
+pub(super) fn paragraph_width(tree: &UmbruchTree, node: NodeId) -> (f32, f32) {
     tree.node(node).measured.unwrap_or_else(|| {
         let layout = &tree.node(node).layout;
         let edges = layout.border.horizontal_axis_sum() + layout.padding.horizontal_axis_sum();
@@ -394,7 +394,7 @@ pub(super) fn paragraph_width(tree: &HeliumTree, node: NodeId) -> (f32, f32) {
 }
 
 /// The top of every box of the flow in the document, as the galley is laid out.
-fn place(tree: &HeliumTree, id: NodeId, parent: f64, is_root: bool, tops: &mut Vec<f64>) {
+fn place(tree: &UmbruchTree, id: NodeId, parent: f64, is_root: bool, tops: &mut Vec<f64>) {
     let node = tree.node(id);
     // (the root is where the content area of the page starts)
     let top = if is_root { 0.0 } else { parent + f64::from(node.layout.location.y) };
@@ -408,7 +408,7 @@ fn place(tree: &HeliumTree, id: NodeId, parent: f64, is_root: bool, tops: &mut V
     }
 }
 
-fn y(tree: &HeliumTree, tops: &[f64], anchor: Anchor) -> f64 {
+fn y(tree: &UmbruchTree, tops: &[f64], anchor: Anchor) -> f64 {
     let top = |id: NodeId| tops[usize::from(id)];
     let height = |id: NodeId| f64::from(tree.node(id).layout.size.height);
     let is_table = |id: NodeId| tree.node(id).content == super::tree::Content::Table;
@@ -549,7 +549,7 @@ impl LayoutService for TreeService<'_, '_, '_> {
         fragments
     }
 
-    fn container_floats(&mut self, container: BoxRef) -> Rc<[helium_paginate::ContainerFloat]> {
+    fn container_floats(&mut self, container: BoxRef) -> Rc<[umbruch_paginate::ContainerFloat]> {
         let id = NodeId::from(container.0 as usize);
         let inner = self.tree.node(id).columns.as_ref().and_then(|columns| columns.inner.clone());
         inner
@@ -557,7 +557,7 @@ impl LayoutService for TreeService<'_, '_, '_> {
                 inner
                     .hoisted
                     .iter()
-                    .map(|&(node, side, anchor)| helium_paginate::ContainerFloat {
+                    .map(|&(node, side, anchor)| umbruch_paginate::ContainerFloat {
                         node: BoxRef(usize::from(node) as u32),
                         side,
                         anchor,
@@ -606,11 +606,11 @@ impl LayoutService for TreeService<'_, '_, '_> {
 fn hyphen_limit_of(
     ifc: &InlineFormattingContext,
     line: &crate::layout::inline::MeasuredLine,
-    limit: helium_paginate::HyphenLimit,
-) -> helium_paginate::HyphenLimit {
-    if limit != helium_paginate::HyphenLimit::None && ifc.break_points[line.to_break].hyphen {
+    limit: umbruch_paginate::HyphenLimit,
+) -> umbruch_paginate::HyphenLimit {
+    if limit != umbruch_paginate::HyphenLimit::None && ifc.break_points[line.to_break].hyphen {
         limit
     } else {
-        helium_paginate::HyphenLimit::None
+        umbruch_paginate::HyphenLimit::None
     }
 }

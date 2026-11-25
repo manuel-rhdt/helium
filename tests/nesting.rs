@@ -10,7 +10,7 @@ fn elements_nested_deeper_than_the_limit_are_flattened() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join("nesting.html");
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

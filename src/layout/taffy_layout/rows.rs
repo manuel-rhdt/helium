@@ -14,8 +14,8 @@
 //! cell ([`RowCuts::used`]). The fragments follow from the cuts alone, whatever the cuts before
 //! them were.
 
-use super::tree::{Content, HeliumTree, lines_from};
-use helium_paginate::{BreakKind, ContainerCut, Fragment};
+use super::tree::{Content, UmbruchTree, lines_from};
+use umbruch_paginate::{BreakKind, ContainerCut, Fragment};
 use taffy::tree::NodeId;
 
 /// The resolution of the cuts: an offset is a multiple of 1/64 pixel.
@@ -135,7 +135,7 @@ impl RowCuts {
     }
 }
 
-impl HeliumTree<'_, '_> {
+impl UmbruchTree<'_, '_> {
     /// Where the row can be cut, as it is laid out now.
     pub(super) fn row_cuts(&mut self, row: NodeId) -> RowCuts {
         let height = quantize(self.node(row).layout.size.height);

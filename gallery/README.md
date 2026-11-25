@@ -1,6 +1,6 @@
 # Gallery
 
-Documents written in plain HTML and CSS, rendered to PDF by Helium. The `Gallery` workflow
+Documents written in plain HTML and CSS, rendered to PDF by Umbruch. The `Gallery` workflow
 renders them on every push and, on `master`, publishes them with thumbnails to GitHub Pages.
 
 | Directory | Shows |
@@ -39,7 +39,7 @@ Create `gallery/<name>/index.html` (with its images next to it) and add the name
 - `<title>`, `<meta name="description">` and `<meta name="keywords">` (comma-separated tags);
 - `<meta name="gallery-thumbnail" content="3">` to use another page than the first;
 - `<meta name="gallery-fonts" content="system">` to render with the fonts installed on the
-  machine. By default only the fonts built into Helium are used (they include Noto fonts for
+  machine. By default only the fonts built into Umbruch are used (they include Noto fonts for
   most scripts), so the output is the same everywhere.
 
 References in the document (stylesheets, images) are resolved relative to its directory, and

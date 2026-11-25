@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>A whole novel, set as a book</title>
-<meta name="description" content="All 61 chapters of Pride and Prejudice (more than 300 pages) set like a trade paperback in three volumes: a contents page with dot leaders and page numbers that Helium looks up after it has laid the book out, page groups for the volumes and chapters, roman numerals for the front matter and a new count for the body, running heads on facing pages, chapter openings in small capitals and a tagged table of contents.">
+<meta name="description" content="All 61 chapters of Pride and Prejudice (more than 300 pages) set like a trade paperback in three volumes: a contents page with dot leaders and page numbers that Umbruch looks up after it has laid the book out, page groups for the volumes and chapters, roman numerals for the front matter and a new count for the body, running heads on facing pages, chapter openings in small capitals and a tagged table of contents.">
 <meta name="gallery-thumbnail" content="2">
 <meta name="keywords" content="long document, table of contents, leader(), target-counter(), page groups, :nth(), named pages, page counter, tagged PDF, hyphenation, widows and orphans, small caps">
 <!-- The full text of "Pride and Prejudice" (chapters I to LXI) by Jane Austen (Project Gutenberg eBook #1342, public domain).
@@ -13,7 +13,7 @@
 <style>
   /* A trade-paperback page, 5.5 x 8.5 inch: about 62 characters to the line at 10.5pt, which is
      the comfortable range for continuous reading. The type is Palatino if the machine has it; the
-     gallery uses only the fonts built into Helium and so shows TeX Gyre Termes. Capitals that
+     gallery uses only the fonts built into Umbruch and so shows TeX Gyre Termes. Capitals that
      stand for a word or a heading are the small capitals of the font (`font-variant-caps`), the
      folios are old-style figures, and the ligatures of the font are on. */
   @page {
@@ -50,7 +50,7 @@
   @page :nth(1 of body) { counter-reset: page 0; }
 
   /* A volume opens with a title page: no running head and no number, and the text sunk low. The
-     size and the margins of a page can follow `:nth(1 of name)`, because Helium knows which pages
+     size and the margins of a page can follow `:nth(1 of name)`, because Umbruch knows which pages
      start a group when it chooses the pages. The same goes for a chapter, whose opening is sunk a
      third of the way down the page and has no running head. */
   @page :nth(1 of volume) { margin-top: 2.6in; @top-center { content: none; } @bottom-center { content: none; } }
@@ -95,7 +95,7 @@
   /* Contents: a table of contents (`role="doc-toc"`, so it is tagged as `TOC` with an item `TOCI`
      for every entry), with the volumes and the chapters in them. Every entry is a link, and `leader()`
      draws the dots up to its page number, which `target-counter()` looks up: the page of the chapter
-     is known only after the book is laid out, so Helium lays it out again with the numbers it found
+     is known only after the book is laid out, so Umbruch lays it out again with the numbers it found
      (and the numbers that are in the roman numerals of the front matter or counted again from the
      start of the body are the ones that the footers show). The dots are on one grid, so they line up. */
   .toc h1, .scenes h1 { text-align: center; font-size: 12pt; font-weight: normal; font-variant-caps: all-small-caps;

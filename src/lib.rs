@@ -1,6 +1,6 @@
-//! Helium as a library: the layout engine and PDF writer behind one entry type, [`Engine`].
+//! Umbruch as a library: the layout engine and PDF writer behind one entry type, [`Engine`].
 //!
-//! The `helium` binary is a thin consumer of this crate (argument parsing and file I/O); the
+//! The `umbruch` binary is a thin consumer of this crate (argument parsing and file I/O); the
 //! `--serve` mode of the binary speaks the protocol of [`server`] over stdio.
 #![allow(clippy::needless_update)]
 

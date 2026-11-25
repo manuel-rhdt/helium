@@ -1,4 +1,4 @@
-//! Conversion of helium's computed style to Taffy's [`taffy::Style`].
+//! Conversion of umbruch's computed style to Taffy's [`taffy::Style`].
 
 use crate::style::properties::computed::{SizingKeyword, 
     BoxSizing, ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
@@ -241,7 +241,7 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
         Display::Block | Display::ListItem | Display::Inline | Display::InlineBlock => taffy::Display::Block,
         Display::Flex | Display::InlineFlex => taffy::Display::Flex,
         Display::Grid | Display::InlineGrid => taffy::Display::Grid,
-        // A table is laid out as a grid (see `tree::HeliumTree::build_table`). The internal
+        // A table is laid out as a grid (see `tree::UmbruchTree::build_table`). The internal
         // table boxes are no Taffy nodes of their own, except for cells and captions, which are
         // block containers.
         Display::Table | Display::InlineTable => taffy::Display::Grid,

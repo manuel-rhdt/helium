@@ -8,7 +8,7 @@ fn render(name: &str, html: &str) -> String {
     let input = dir.join(format!("page_backgrounds__{}.html", name));
     let output = dir.join(format!("page_backgrounds__{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-compression", "--no-system-fonts"])
         .arg(&input)

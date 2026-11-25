@@ -10,7 +10,7 @@ fn texts(name: &str, html: &str) -> Vec<String> {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("xref_{name}.html"));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")
@@ -118,7 +118,7 @@ fn a_table_of_contents_is_tagged_as_one() {
         <h1 id="a">One</h1><h2 id="b">Sub</h2>"##,
     )
     .unwrap();
-    let status = common::helium().unwrap().arg("--no-compression").arg(&input).arg(&output).status().unwrap();
+    let status = common::umbruch().unwrap().arg("--no-compression").arg(&input).arg(&output).status().unwrap();
     assert!(status.success());
     let pdf = String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(output).unwrap())).into_owned();
     // a table of contents, two nested ones (the table and the list of the sub-entries), and

@@ -20,7 +20,7 @@ fn the_margin_between_two_containers_with_columns_is_counted() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join("container_margins.html");
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts"])

@@ -21,7 +21,7 @@ fn dump(name: &str, body: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("floats__{}.html", name));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")
@@ -205,7 +205,7 @@ fn a_float_is_a_block_where_the_document_is_one_page_that_is_as_tall_as_its_cont
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join("floats__crop.html");
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--crop")
         .arg("--dump-layout")
@@ -248,7 +248,7 @@ fn columns_dump(name: &str, content: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("floats__{name}.html"));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

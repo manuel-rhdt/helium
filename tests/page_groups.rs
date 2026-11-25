@@ -16,7 +16,7 @@ fn layout(name: &str, html: &str) -> (Vec<Item>, String) {
     let output = dir.join(format!("page_groups__{}.pdf", name));
     let dump = dir.join(format!("page_groups__{}.json", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])

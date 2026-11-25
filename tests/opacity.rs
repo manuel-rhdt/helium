@@ -9,7 +9,7 @@ fn render(name: &str, html: &str) -> String {
     let input = dir.join(format!("opacity__{}.html", name));
     let output = dir.join(format!("opacity__{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-compression", "--no-system-fonts"])

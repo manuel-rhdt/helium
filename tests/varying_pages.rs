@@ -37,7 +37,7 @@ fn layout(name: &str, html: &str) -> Layout {
     let output = dir.join(format!("varying_pages__{}.pdf", name));
     let dump = dir.join(format!("varying_pages__{}.json", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])

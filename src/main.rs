@@ -5,12 +5,12 @@ use derive_more::From;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use helium::engine::{Document, DocumentKind, Engine, EngineConfig, LayoutOptions, RenderOptions};
-use helium::layout;
-use helium::pdf::PdfALevel;
+use umbruch::engine::{Document, DocumentKind, Engine, EngineConfig, LayoutOptions, RenderOptions};
+use umbruch::layout;
+use umbruch::pdf::PdfALevel;
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = "helium")]
+#[structopt(name = "umbruch")]
 struct Options {
     #[structopt(long = "no-compression")]
     no_filter: bool,
@@ -33,17 +33,17 @@ struct Options {
     /// Write the choices of the paginator as JSON to this file (use `-` for stdout): for every page
     /// what it holds, what it costs and why (room, orphans and widows, avoided breaks, the cost of
     /// the lines), the ways to break its paragraphs that were chosen, and the ones that the
-    /// paragraphs had. The values that are tried in experiments are `HELIUM_LINE_TOLERANCE` and
-    /// `HELIUM_VARIANT_TOLERANCE`.
+    /// paragraphs had. The values that are tried in experiments are `UMBRUCH_LINE_TOLERANCE` and
+    /// `UMBRUCH_VARIANT_TOLERANCE`.
     #[structopt(long = "dump-pagination", parse(from_os_str))]
     dump_pagination: Option<PathBuf>,
     /// Evaluate the `data-expected-*` attributes (web-platform-tests `checkLayout`) of the input
     /// document against the computed layout and exit with an error if any expectation fails.
     #[structopt(long = "check-layout")]
     check_layout: bool,
-    /// Use only the fonts built into Helium, not the fonts installed on the system, so that the
+    /// Use only the fonts built into Umbruch, not the fonts installed on the system, so that the
     /// output does not depend on the machine. Also enabled by setting the environment variable
-    /// `HELIUM_NO_SYSTEM_FONTS` (to anything but `0`).
+    /// `UMBRUCH_NO_SYSTEM_FONTS` (to anything but `0`).
     #[structopt(long = "no-system-fonts")]
     no_system_fonts: bool,
     /// A directory with fonts to use in addition to the others (can be given several times)
@@ -63,7 +63,7 @@ struct Options {
     html_flag: bool,
     /// Serve requests on standard input and output instead of converting one file: a request and
     /// response protocol with `Content-Length` framing (`hello`, `measure`, `layout`, `render` and
-    /// `shutdown`; see the documentation of `helium::server`). Standard error carries the log only.
+    /// `shutdown`; see the documentation of `umbruch::server`). Standard error carries the log only.
     #[structopt(long = "serve", conflicts_with_all = &["dump_layout", "dump_pagination", "check_layout"])]
     serve: bool,
     /// The input file to process: HTML, or SVG (which may hold HTML and MathML in `foreignObject`).
@@ -84,7 +84,7 @@ pub enum Error {
 fn main() -> Result<(), Error> {
     let opt = Options::from_args();
     let no_system_fonts = opt.no_system_fonts
-        || std::env::var_os("HELIUM_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0");
+        || std::env::var_os("UMBRUCH_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0");
     let config = EngineConfig {
         system_fonts: !no_system_fonts,
         font_dirs: opt.font_dirs.clone(),
@@ -93,9 +93,9 @@ fn main() -> Result<(), Error> {
 
     if opt.serve {
         // the warnings of a request come back with its response
-        helium::server::init_logging();
+        umbruch::server::init_logging();
         let engine = Engine::new(config).map_err(|e| Error::Layout(e.to_string()))?;
-        let status = helium::server::serve(&engine, std::io::stdin().lock(), std::io::stdout(), helium::server::Limits::default());
+        let status = umbruch::server::serve(&engine, std::io::stdin().lock(), std::io::stdout(), umbruch::server::Limits::default());
         std::process::exit(status);
     }
 

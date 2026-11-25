@@ -9,7 +9,7 @@ fn dump(name: &str, html: &str) -> Value {
     let input = dir.join(format!("{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

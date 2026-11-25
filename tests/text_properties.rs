@@ -6,7 +6,7 @@ fn log_of(name: &str, html: &str) -> String {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("text_properties__{}.html", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .arg("--no-system-fonts")
         .arg(&input)

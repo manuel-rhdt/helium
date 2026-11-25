@@ -1,4 +1,4 @@
-//! `helium --serve`: a request and response protocol over stdio, one client per process.
+//! `umbruch --serve`: a request and response protocol over stdio, one client per process.
 //!
 //! **Transport.** Requests arrive on stdin, responses leave on stdout, stderr carries the log only.
 //!
@@ -332,7 +332,7 @@ fn hello(engine: &Engine) -> Reply {
     let config = engine.config();
     Reply::plain(json!({
         "protocol": PROTOCOL,
-        "helium": env!("CARGO_PKG_VERSION"),
+        "umbruch": env!("CARGO_PKG_VERSION"),
         "capabilities": ["measure", "layout", "render", "warnings", "attachments"],
         "fonts": {
             "system_fonts": config.system_fonts,

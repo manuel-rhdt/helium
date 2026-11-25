@@ -15,7 +15,7 @@ fn crop(name: &str, extension: &str, text: &str) -> Rendered {
     let input = dir.join(format!("crop__{}.{}", name, extension));
     let output = dir.join(format!("crop__{}.pdf", name));
     std::fs::write(&input, text).unwrap();
-    let result = common::helium()
+    let result = common::umbruch()
         .unwrap()
         .args(["--no-compression", "--no-system-fonts", "--crop"])
         .arg(&input)

@@ -15,7 +15,7 @@ fn run(name: &str, html: &str) -> (Value, String) {
 }
 
 fn run_file(input: &std::path::Path, output: &std::path::Path, dump: &std::path::Path) -> (Value, String) {
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])

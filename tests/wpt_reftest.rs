@@ -1,8 +1,8 @@
 //! Runs vendored web-platform-tests reftests: a test and its `<link rel="match">` reference must
 //! produce the same painted output.
 //!
-//! Helium has no rasterizer, so instead of comparing pixels we compare the `paint` section of
-//! `helium --dump-layout`: the solid rectangles (backgrounds and borders) and the glyph runs with
+//! Umbruch has no rasterizer, so instead of comparing pixels we compare the `paint` section of
+//! `umbruch --dump-layout`: the solid rectangles (backgrounds and borders) and the glyph runs with
 //! their positions. This is independent of how the two documents are structured, which is what
 //! reftests rely on. Following the WPT convention that "red means failure", a test must also not
 //! paint anything pure red that its reference does not paint.
@@ -70,17 +70,17 @@ fn render(input: &Path) -> Result<Vec<Page>, String> {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("wpt-raster");
     std::fs::create_dir_all(&dir).unwrap();
     let pdf = dir.join(format!("{}.pdf", COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-    let mut command = common::helium().unwrap();
+    let mut command = common::umbruch().unwrap();
     // (`--font-dir=` because the option takes several values, which would be the files)
     command
         .arg(format!("--font-dir={}", common::wpt_fonts().display()))
         .arg(format!("--resource-root={}", wpt_root().display()))
         .arg(input)
         .arg(&pdf);
-    let output = output_within(command, 30).ok_or("helium took too long")?;
+    let output = output_within(command, 30).ok_or("umbruch took too long")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("helium failed: {}", stderr.lines().last().unwrap_or("")));
+        return Err(format!("umbruch failed: {}", stderr.lines().last().unwrap_or("")));
     }
     let prefix = pdf.with_extension("raster");
     let mut command = std::process::Command::new("pdftoppm");
@@ -266,7 +266,7 @@ fn wpt_reftests() {
         !is_reference && find_reference(t).is_some()
     });
     tests.sort();
-    // the tests that need what helium does not implement on purpose are not run
+    // the tests that need what umbruch does not implement on purpose are not run
     let before = tests.len();
     tests.retain(|test| {
         let reference = find_reference(test).unwrap();

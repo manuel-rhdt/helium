@@ -7,7 +7,7 @@ fn render(name: &str, html: &str) -> Vec<u8> {
     let input = dir.join(format!("font_embedding_{}.html", name));
     let output = dir.join(format!("font_embedding_{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    common::helium()
+    common::umbruch()
         .unwrap()
         .arg(&input)
         .arg(&output)
@@ -59,12 +59,12 @@ fn bigger_text_gives_bigger_subset() {
 }
 
 /// Every font is embedded: when no font of `font-family` is installed, the system's sans-serif
-/// font (or the font built into Helium) is used instead of a non-embedded standard PDF font.
+/// font (or the font built into Umbruch) is used instead of a non-embedded standard PDF font.
 #[test]
 fn fonts_are_always_embedded() {
     let pdf = render(
         "always_embedded",
-        r#"<p style="font-family: 'Helium Missing Font'">Hello</p>
+        r#"<p style="font-family: 'Umbruch Missing Font'">Hello</p>
            <pre>mono</pre><p style="font-family: serif"><b>serif</b></p>"#,
     );
     let pdf = String::from_utf8_lossy(&pdf);
@@ -84,10 +84,10 @@ fn missing_glyphs_use_a_fallback_font_or_are_reported() {
     let output = dir.join("font_embedding_fallback.pdf");
     std::fs::write(
         &input,
-        r#"<p style="font-family: 'Helium Missing Font'">A &#x2192; B, &#x0378;</p>"#,
+        r#"<p style="font-family: 'Umbruch Missing Font'">A &#x2192; B, &#x0378;</p>"#,
     )
     .unwrap();
-    let result = common::helium()
+    let result = common::umbruch()
         .unwrap()
         .arg(&input)
         .arg(&output)
@@ -98,7 +98,7 @@ fn missing_glyphs_use_a_fallback_font_or_are_reported() {
 
     // U+0378 is unassigned, so no font has it.
     assert!(stderr.contains("U+0378"), "{stderr}");
-    assert!(stderr.contains("\"Helium Missing Font\""), "{stderr}");
+    assert!(stderr.contains("\"Umbruch Missing Font\""), "{stderr}");
     // The bundled font has an arrow, so it is always found.
     assert!(!stderr.contains("U+2192"), "{stderr}");
 }

@@ -12,11 +12,11 @@
 //! * captions are grid items that span all columns in rows of their own above the cells.
 //!
 //! Rows and row groups are no Taffy nodes. After the grid is laid out, they get the boxes of the
-//! tracks they span (see [`HeliumTree::place_table_parts`]), and the cells are moved to be
+//! tracks they span (see [`UmbruchTree::place_table_parts`]), and the cells are moved to be
 //! relative to the row they are in, so the rest of the layout sees an ordinary box tree.
 //!
 //! `vertical-align` in cells puts their contents at the top, in the middle or at the bottom (see
-//! [`HeliumTree::align_cell_content`]); `baseline` counts as `top`, the baselines of the cells
+//! [`UmbruchTree::align_cell_content`]); `baseline` counts as `top`, the baselines of the cells
 //! in a row are not aligned. Not supported yet: `caption-side`. Grid tracks share extra width equally
 //! instead of in proportion to their contents. `border-collapse: collapse` is resolved in
 //! [`super::collapse`].
@@ -37,7 +37,7 @@ use crate::layout::absolute::shrink_to_fit;
 use crate::style::properties::computed::{GenericSize, LengthPercentage};
 use crate::style::properties::specified::Display;
 
-use super::tree::{Content, HeliumTree};
+use super::tree::{Content, UmbruchTree};
 
 /// How the boxes of a table are arranged in its grid.
 #[derive(Debug, Default)]
@@ -143,7 +143,7 @@ impl Slots {
     }
 }
 
-impl HeliumTree<'_, '_> {
+impl UmbruchTree<'_, '_> {
     /// The row group of a table that is repeated at the top of every page that goes on inside of
     /// the table: the first `table-header-group`, if only captions are in front of it. (A header
     /// that comes behind the rows is laid out at the top of the table, but it is not repeated.)

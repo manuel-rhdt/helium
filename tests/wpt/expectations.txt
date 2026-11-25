@@ -1,5 +1,5 @@
 # Known failures of the vendored web-platform-tests, one path per line (relative to tests/wpt).
-# A test listed here must keep failing: once helium passes it, the runner asks for its removal.
+# A test listed here must keep failing: once umbruch passes it, the runner asks for its removal.
 
 # the automatic minimum size of a compressible <input> flex item should resolve the percentage of its calc() width to 0 (CSS Sizing 3, 5.2.2); Taffy does not
 css/css-flexbox/flex-item-compressible-001.html

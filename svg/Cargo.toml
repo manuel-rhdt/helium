@@ -3,11 +3,11 @@ name = "usvg"
 version = "0.50.0"
 edition = "2024"
 rust-version = "1.85.0"
-description = "A fork of usvg 0.50 (https://github.com/linebender/resvg) that reads the DOM of Helium."
+description = "A fork of usvg 0.50 (https://github.com/linebender/resvg) that reads the DOM of Umbruch."
 license = "Apache-2.0 OR MIT"
 publish = false
 
-# The library keeps its name, so that the rest of Helium does not change.
+# The library keeps its name, so that the rest of Umbruch does not change.
 [lib]
 name = "usvg"
 path = "src/lib.rs"

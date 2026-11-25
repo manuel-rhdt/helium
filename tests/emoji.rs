@@ -7,7 +7,7 @@ fn render(name: &str, html: &str) -> Vec<u8> {
     let input = dir.join(format!("emoji_{name}.html"));
     let output = dir.join(format!("emoji_{name}.pdf"));
     std::fs::write(&input, html).unwrap();
-    common::helium().unwrap().arg(&input).arg(&output).assert().success();
+    common::umbruch().unwrap().arg(&input).arg(&output).assert().success();
     common::expand_object_streams(&std::fs::read(output).unwrap())
 }
 

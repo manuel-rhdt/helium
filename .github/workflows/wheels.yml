@@ -1,6 +1,6 @@
 name: Python wheels
 
-# Wheels of the `helium` executable for PyPI (package `helium-pdf`).  Pushing a tag like `v0.4.2`
+# Wheels of the `umbruch` executable for PyPI (package `umbruch`).  Pushing a tag like `v0.4.2`
 # builds all wheels and publishes them with PyPI trusted publishing; a manual run only uploads
 # the wheels as build artifacts.
 on:
@@ -91,10 +91,10 @@ jobs:
     - run: |
         python -m venv venv
         venv/bin/pip install dist/*.whl
-        venv/bin/python -c "import helium_pdf; print(helium_pdf.find_helium())"
-        venv/bin/helium tests/documents/book.html book.pdf
+        venv/bin/python -c "import umbruch; print(umbruch.find_umbruch())"
+        venv/bin/umbruch tests/documents/book.html book.pdf
         test -s book.pdf
-        printf 'Content-Length: 33\r\n\r\n{"id":1,"op":"hello","params":{}}' | venv/bin/helium --serve | head -c 200
+        printf 'Content-Length: 33\r\n\r\n{"id":1,"op":"hello","params":{}}' | venv/bin/umbruch --serve | head -c 200
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')

@@ -66,7 +66,7 @@ body {
 }
 
 br {
-  -helium-line-break: force;
+  -umbruch-line-break: force;
 }
 
 address,
@@ -465,7 +465,7 @@ img {
 
 math {
   font-family: "STIX Two Math", "Latin Modern Math";
-  -helium-math-variant: normal;
+  -umbruch-math-variant: normal;
   math-depth: 0;
 }
 
@@ -550,55 +550,55 @@ math annotation, math annotation-xml {
   display: none;
 }
 math mi {
-  -helium-math-variant: italic;
+  -umbruch-math-variant: italic;
 }
 math [mathvariant="normal"] {
-  -helium-math-variant: normal;
+  -umbruch-math-variant: normal;
 }
 math [mathvariant="bold"] {
-  -helium-math-variant: bold;
+  -umbruch-math-variant: bold;
 }
 math [mathvariant="italic"] {
-  -helium-math-variant: italic;
+  -umbruch-math-variant: italic;
 }
 math [mathvariant="bold-italic"] {
-  -helium-math-variant: bold-italic;
+  -umbruch-math-variant: bold-italic;
 }
 math [mathvariant="double-struck"] {
-  -helium-math-variant: double-struck;
+  -umbruch-math-variant: double-struck;
 }
 math [mathvariant="bold-fraktur"] {
-  -helium-math-variant: bold-fraktur;
+  -umbruch-math-variant: bold-fraktur;
 }
 math [mathvariant="script"] {
-  -helium-math-variant: script;
+  -umbruch-math-variant: script;
 }
 math [mathvariant="bold-script"] {
-  -helium-math-variant: bold-script;
+  -umbruch-math-variant: bold-script;
 }
 math [mathvariant="fraktur"] {
-  -helium-math-variant: fraktur;
+  -umbruch-math-variant: fraktur;
 }
 math [mathvariant="sans-serif"] {
-  -helium-math-variant: sans-serif;
+  -umbruch-math-variant: sans-serif;
 }
 math [mathvariant="bold-sans-serif"] {
-  -helium-math-variant: bold-sans-serif;
+  -umbruch-math-variant: bold-sans-serif;
 }
 math [mathvariant="sans-serif-italic"] {
-  -helium-math-variant: sans-serif-italic;
+  -umbruch-math-variant: sans-serif-italic;
 }
 math [mathvariant="sans-serif-bold-italic"] {
-  -helium-math-variant: sans-serif-bold-italic;
+  -umbruch-math-variant: sans-serif-bold-italic;
 }
 math [mathvariant="monospace"] {
-  -helium-math-variant: monospace;
+  -umbruch-math-variant: monospace;
 }
 math mo[stretchy="true"], math mstyle[stretchy="true"] mo {
-  -helium-operator-is-stretchy: true;
+  -umbruch-operator-is-stretchy: true;
 }
 math mo[stretchy="false"], math mstyle[stretchy="false"] mo {
-  -helium-operator-is-stretchy: false;
+  -umbruch-operator-is-stretchy: false;
 }
 
 iframe {

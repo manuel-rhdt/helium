@@ -234,7 +234,7 @@ impl Engine {
         // (the directory need not be inside of the resource root: it is the files that are checked)
         match &document.base_dir {
             Some(dir) => Ok(dir.clone()),
-            None => Ok(Path::new("/nonexistent/helium-no-base-dir").to_path_buf()),
+            None => Ok(Path::new("/nonexistent/umbruch-no-base-dir").to_path_buf()),
         }
     }
 }

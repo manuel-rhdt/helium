@@ -1,7 +1,7 @@
-//! A port of the subset of web-platform-tests' `check-layout-th.js` that helium can evaluate.
+//! A port of the subset of web-platform-tests' `check-layout-th.js` that umbruch can evaluate.
 //!
 //! WPT layout tests annotate elements with `data-expected-*` attributes. After layout, every
-//! annotated element is compared against the box helium computed for it.
+//! annotated element is compared against the box umbruch computed for it.
 
 use specs::{World, WorldExt};
 

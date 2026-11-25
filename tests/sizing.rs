@@ -10,7 +10,7 @@ fn run(name: &str, html: &str) -> Output {
     let input = dir.join(format!("sizing__{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    common::helium()
+    common::umbruch()
         .unwrap()
         .args(["--check-layout"])
         .arg(&input)

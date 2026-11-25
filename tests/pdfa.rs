@@ -7,7 +7,7 @@ fn render(name: &str, html: &str, args: &[&str]) -> String {
     let input = dir.join(format!("pdfa_{name}.html"));
     let output = dir.join(format!("pdfa_{name}.pdf"));
     std::fs::write(&input, html).unwrap();
-    common::helium().unwrap().args(args).arg("--no-compression").arg(&input).arg(&output).assert().success();
+    common::umbruch().unwrap().args(args).arg("--no-compression").arg(&input).arg(&output).assert().success();
     String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(output).unwrap())).into_owned()
 }
 
@@ -66,10 +66,10 @@ fn bad_levels_are_refused() {
     std::fs::write(&input, DOCUMENT).unwrap();
     let output = dir.join("pdfa_refused.pdf");
     for level in ["4b", "2c", "2", "b"] {
-        common::helium().unwrap().args(["--pdfa", level]).arg(&input).arg(&output).assert().failure();
+        common::umbruch().unwrap().args(["--pdfa", level]).arg(&input).arg(&output).assert().failure();
     }
     // level `a` is about the structure tree
-    common::helium().unwrap().args(["--pdfa", "2a", "--no-tags"]).arg(&input).arg(&output).assert().failure();
+    common::umbruch().unwrap().args(["--pdfa", "2a", "--no-tags"]).arg(&input).arg(&output).assert().failure();
 }
 
 fn render_with_image(name: &str, image: &str, args: &[&str]) -> std::process::Output {
@@ -79,7 +79,7 @@ fn render_with_image(name: &str, image: &str, args: &[&str]) -> std::process::Ou
     let _ = std::fs::remove_file(&output);
     std::fs::copy(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(image), dir.join(image)).unwrap();
     std::fs::write(&input, format!("<!doctype html><html lang=en><title>T</title><img src=\"{image}\">")).unwrap();
-    common::helium().unwrap().args(args).arg(&input).arg(&output).output().unwrap()
+    common::umbruch().unwrap().args(args).arg(&input).arg(&output).output().unwrap()
 }
 
 #[test]
@@ -100,14 +100,14 @@ fn cmyk_images_are_fine_when_the_file_is_not_pdfa() {
     assert!(render_with_image("rgb", "rgb.jpg", &["--pdfa", "2b"]).status.success());
 }
 
-/// Runs Helium on `html` with `--pdfa 1b`; the output file (if there is one) and what it said on stderr.
+/// Runs Umbruch on `html` with `--pdfa 1b`; the output file (if there is one) and what it said on stderr.
 fn render_pdfa1(name: &str, html: &str) -> (Option<Vec<u8>>, bool, String) {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("pdfa1_{name}.html"));
     let output = dir.join(format!("pdfa1_{name}.pdf"));
     let _ = std::fs::remove_file(&output);
     std::fs::write(&input, html).unwrap();
-    let result = common::helium().unwrap().env("RUST_LOG", "warn").args(["--no-system-fonts", "--pdfa", "1b"]).arg(&input).arg(&output).output().unwrap();
+    let result = common::umbruch().unwrap().env("RUST_LOG", "warn").args(["--no-system-fonts", "--pdfa", "1b"]).arg(&input).arg(&output).output().unwrap();
     (std::fs::read(&output).ok(), result.status.success(), String::from_utf8_lossy(&result.stderr).into_owned())
 }
 
@@ -130,7 +130,7 @@ fn only_the_level_b_of_part_1_is_supported() {
     let input = dir.join("pdfa_part1_input.html");
     std::fs::write(&input, DOCUMENT).unwrap();
     for level in ["1a", "1u"] {
-        let output = common::helium().unwrap().args(["--pdfa", level]).arg(&input).arg(dir.join("pdfa_part1_refused.pdf")).output().unwrap();
+        let output = common::umbruch().unwrap().args(["--pdfa", level]).arg(&input).arg(dir.join("pdfa_part1_refused.pdf")).output().unwrap();
         assert!(!output.status.success(), "{level}");
         assert!(String::from_utf8_lossy(&output.stderr).contains("only the level 1b is"), "{level}");
     }

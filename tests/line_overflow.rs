@@ -8,7 +8,7 @@ fn check_layout(name: &str, html: &str) {
     let input = dir.join(format!("line_overflow__{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .args(["--check-layout"])
         .arg(&input)

@@ -358,7 +358,7 @@ pub enum ContentItem {
     Counter(CounterName, CounterStyle),
 }
 
-/// The value of `-helium-page-label`, the label of the page in the PDF (what the page box of a
+/// The value of `-umbruch-page-label`, the label of the page in the PDF (what the page box of a
 /// viewer shows). There is no CSS property for this.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PageLabelSpec {
@@ -386,7 +386,7 @@ pub struct QualifiedRule {
     selectors: GeneralizedSelector,
     pub properties: PropertyDeclarationBlock,
     pub margin_boxes: Vec<MarginBoxRule>,
-    /// `-helium-page-label` of an `@page` rule.
+    /// `-umbruch-page-label` of an `@page` rule.
     pub page_label: Option<PageLabelSpec>,
 }
 
@@ -476,7 +476,7 @@ impl QualifiedRule {
 
 /// A declaration as it is written: the name of the property and the text of its value. Every
 /// declaration is kept, also those of properties that are not known, for the CSS of the SVG
-/// elements, which Helium does not interpret itself.
+/// elements, which Umbruch does not interpret itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawDeclaration {
     pub name: String,
@@ -866,7 +866,7 @@ impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
         if name.eq_ignore_ascii_case("content") {
             return Ok(PageBodyItem::Content(parse_content(input)?));
         }
-        if name.eq_ignore_ascii_case("-helium-page-label") {
+        if name.eq_ignore_ascii_case("-umbruch-page-label") {
             return Ok(PageBodyItem::PageLabel(parse_page_label(input)?));
         }
         let declaration =
@@ -1266,7 +1266,7 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleBodyParser<'_> {
         input: &mut Parser<'i>,
         _declaration_start: &ParserState,
     ) -> Result<Self::Declaration, ParseError<Self::Error>> {
-        // keep the text of the value, whether Helium knows the property or not
+        // keep the text of the value, whether Umbruch knows the property or not
         let state = input.state();
         let start = input.position();
         let mut has_block = false;

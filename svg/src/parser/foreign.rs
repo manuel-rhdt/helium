@@ -1,4 +1,4 @@
-// This file is part of the Helium fork of usvg.
+// This file is part of the Umbruch fork of usvg.
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 //! `foreignObject`: a rectangle with content that is not SVG.

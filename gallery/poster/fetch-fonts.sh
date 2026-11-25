@@ -1,8 +1,8 @@
 #!/bin/sh
 # Downloads the fonts that the print needs and installs them for the current user.
-# Helium uses the fonts installed on the system (there is no @font-face yet).
+# Umbruch uses the fonts installed on the system (there is no @font-face yet).
 set -eu
-dest="${1:-$HOME/.fonts/helium-poster}"
+dest="${1:-$HOME/.fonts/umbruch-poster}"
 here="$(cd "$(dirname "$0")" && pwd)"
 base=https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts
 mkdir -p "$dest"

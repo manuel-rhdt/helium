@@ -71,12 +71,12 @@ fn svg_options(base_dir: &Path, fonts: &Arc<FontContext>) -> usvg::Options<'stat
     // the font of a text is the one that the document would choose for it
     let font_context = fonts.clone();
     options.font_resolver.select_font = Box::new(move |font, _| {
-        let mut families = crate::svg_text::helium_families(font);
+        let mut families = crate::svg_text::umbruch_families(font);
         families.push(crate::style::properties::computed::FontFamily::SansSerif);
         font_context.font_id(
             &families,
             &crate::style::properties::computed::FontWeight(f32::from(font.weight())),
-            &crate::svg_text::helium_style(font),
+            &crate::svg_text::umbruch_style(font),
         )
     });
     // the size of an SVG that has none, like the default object size of CSS

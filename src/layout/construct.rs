@@ -44,7 +44,7 @@ enum ContentPiece {
 
 /// The attribute of the inline element that a `leader()` of `content` makes: its value is the
 /// string that fills the line.
-const GENERATED_LEADER: &str = "data-helium-leader";
+const GENERATED_LEADER: &str = "data-umbruch-leader";
 
 /// The string of the leader that the element makes, if it is one.
 fn leader_pattern(data: &ParsedData) -> Option<String> {
@@ -55,7 +55,7 @@ fn leader_pattern(data: &ParsedData) -> Option<String> {
 }
 
 /// The attribute that marks the `<img>` that the `content: url()` of a pseudo-element makes.
-const GENERATED_IMAGE: &str = "data-helium-generated";
+const GENERATED_IMAGE: &str = "data-umbruch-generated";
 
 /// Whether the node is the image of a `content: url()`.
 fn is_generated_image(node: &DomRef) -> bool {
@@ -569,7 +569,7 @@ impl FlowConstructor {
                 ContentPiece::Image(url) => {
                     let Some(image) = url.load().cloned() else { continue };
                     // the image is handed over under a name that no `src` can have
-                    let src = format!("helium-content-image:{}", self.entity_constructor.images.len());
+                    let src = format!("umbruch-content-image:{}", self.entity_constructor.images.len());
                     self.entity_constructor.images.insert(src.clone(), Some(image));
                     let attribute = |name: &str, value: &str| {
                         let name = QualName::new(None, ns!(), html5ever::LocalName::from(name));

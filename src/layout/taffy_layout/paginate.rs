@@ -1,19 +1,19 @@
 //! The pages of the document: the geometry of the page that starts at every place of the flow,
 //! the choice of the pages, and the windows that the pages are laid out from.
 //!
-//! The kernel and the solvers of `helium_paginate` do the choosing. This module tells them what
+//! The kernel and the solvers of `umbruch_paginate` do the choosing. This module tells them what
 //! a page looks like at a place (its name and its kind decide the margins and the
 //! size), and turns what they choose into a window for every
 //! page (see [`super::window`]).
 
 use super::flow::Flow;
 use taffy::tree::NodeId;
-use super::tree::HeliumTree;
+use super::tree::UmbruchTree;
 use super::window::{Leading, Window};
 use crate::layout::components::EdgeValues;
 use crate::layout::pages::{PageContext, PageMargins};
 use crate::style::properties::computed::PixelLength;
-use helium_paginate::{BreakLevel, Item, PageKind, PageSpec, PageTable, Position};
+use umbruch_paginate::{BreakLevel, Item, PageKind, PageSpec, PageTable, Position};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -35,7 +35,7 @@ pub(super) struct GroupElement {
 /// The `page` property is applied to the element: a name that an element has because it inherits
 /// it (`auto` is the name of the parent) makes no group. (The computed value does not say it
 /// was inherited, so an element inside another one of the same name makes no group either.)
-pub(super) fn group_elements(tree: &HeliumTree, flow: &Flow, keys: &crate::layout::pages::PageKeys) -> Vec<GroupElement> {
+pub(super) fn group_elements(tree: &UmbruchTree, flow: &Flow, keys: &crate::layout::pages::PageKeys) -> Vec<GroupElement> {
     use crate::style::properties::specified::Break;
     let forced = |value: Break| matches!(value, Break::Always | Break::Page | Break::Left | Break::Right | Break::Recto | Break::Verso);
     let mut elements = vec![];
@@ -112,7 +112,7 @@ pub(super) struct Classes {
 }
 
 impl Classes {
-    pub fn new(tree: &HeliumTree, flow: &Flow, groups: &[GroupElement]) -> Self {
+    pub fn new(tree: &UmbruchTree, flow: &Flow, groups: &[GroupElement]) -> Self {
         let len = flow.items.len();
         let name_of = |node| {
             tree.computed_values

@@ -35,7 +35,7 @@
 //! the subtree is the whole of the box. Out-of-flow boxes in the subtree whose containing block
 //! is outside of it are not placed.
 
-use super::tree::{HeliumTree, calc};
+use super::tree::{UmbruchTree, calc};
 use crate::layout::inline::InlineFormattingContext;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -55,7 +55,7 @@ struct Kept {
     lines: Vec<((u32, Option<super::tree::LineCut>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>)>,
 }
 
-/// A float laid out on its own at the width of a page ([`HeliumTree::layout_float`]).
+/// A float laid out on its own at the width of a page ([`UmbruchTree::layout_float`]).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct FloatBox {
     /// The margins of the float, with the percentages resolved against the width of the page.
@@ -72,7 +72,7 @@ impl FloatBox {
     }
 }
 
-impl HeliumTree<'_, '_> {
+impl UmbruchTree<'_, '_> {
     /// Lays out a float, which is not part of the flow, as the root of a layout of its own on a
     /// page whose content area is `page_inline` wide: like a block that fills the width of the page
     /// (`width` and the margins apply as usual). The layout of the nodes of the float is the one

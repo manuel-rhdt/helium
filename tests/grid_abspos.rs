@@ -18,7 +18,7 @@ fn layout(name: &str, html: &str) -> Value {
         format!("<style>@page{{size:600px 400px;margin:50px}} body{{margin:20px;font-size:10px}}</style>{}", html),
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])

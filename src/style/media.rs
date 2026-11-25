@@ -1,7 +1,7 @@
 //! Media queries (https://www.w3.org/TR/mediaqueries-4/): `@media` rules and the `media`
 //! attribute of `<style>` and `<link>`.
 //!
-//! Helium sets documents for print, so the media type is `print` and the other types never
+//! Umbruch sets documents for print, so the media type is `print` and the other types never
 //! match. The queries are evaluated when the style sheet is read, against the size of the page.
 
 use cssparser::{Delimiter, ParseError, Parser, Token};

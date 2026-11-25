@@ -19,7 +19,7 @@
 //! 2. the fonts designed for the script (and language) in the design of the text (`Class`),
 //!    then in the other designs, and for serif text general serif families (`SERIF_FAMILIES`),
 //! 3. a fixed list of families with a broad character coverage (`FALLBACK_FAMILIES`),
-//! 4. the font built into Helium (DejaVu Sans, see `Font::bundled`); the Noto fonts embedded for
+//! 4. the font built into Umbruch (DejaVu Sans, see `Font::bundled`); the Noto fonts embedded for
 //!    other scripts (`EMBEDDED_FONTS`, subset by `build.rs`) are found by name in step 2 like
 //!    installed fonts, which take precedence over them,
 //! 5. on Linux, any installed font that covers the cluster, as found by fontconfig.
@@ -35,7 +35,7 @@
 //!
 //! Emoji (UTS #51 presentation, see `segment::is_emoji_cluster`) take a colour emoji font before
 //! all of this: an installed font with `COLR` glyphs, else Noto Color Emoji, which is built into
-//! Helium (`EMBEDDED_FONTS`). Bitmap emoji fonts are not used.
+//! Umbruch (`EMBEDDED_FONTS`). Bitmap emoji fonts are not used.
 //!
 //! Characters that no font covers are collected in the `MissingGlyphs` resource and reported
 //! to the user (see `MissingGlyphs::report`).
@@ -671,7 +671,7 @@ impl FontResolver {
         let font = self
             .emoji_font
             .get_or_insert_with(|| {
-                // an installed emoji font if there is one, else the one built into Helium
+                // an installed emoji font if there is one, else the one built into Umbruch
                 color_emoji_font().map(|font| register_font(font_map, font))
             })
             .clone()?;
@@ -1190,7 +1190,7 @@ mod tests {
         assert_eq!(classify(&load("TeX Gyre Heros")), None);
     }
 
-    /// A correction for a font that Helium ships must still be needed: if the metadata gives the
+    /// A correction for a font that Umbruch ships must still be needed: if the metadata gives the
     /// class already, the entry is stale.
     #[test]
     fn corrections_of_bundled_fonts_are_needed() {
@@ -1866,7 +1866,7 @@ mod tests {
     }
 
     /// DejaVu Sans is a family of the broad fallback list, found by name before the font that
-    /// is built into Helium (which is the same font), so that is never needed.
+    /// is built into Umbruch (which is the same font), so that is never needed.
     #[test]
     fn the_built_in_font_is_found_by_its_family_name() {
         let mut font_map = FontMap::new();

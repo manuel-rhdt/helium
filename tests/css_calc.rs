@@ -19,7 +19,7 @@ fn boxes(name: &str, html: &str) -> HashMap<String, (f64, f64, f64, f64)> {
         format!("<style>@page{{size:800px 600px;margin:0}} body{{margin:0;font:16px Ahem}}</style>{}", html),
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--font-dir"])
         .arg(common::wpt_fonts())

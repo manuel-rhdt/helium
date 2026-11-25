@@ -1,16 +1,16 @@
-"""Locates the ``helium`` executable installed with this package."""
+"""Locates the ``umbruch`` executable installed with this package."""
 import os
 import shutil
 import sysconfig
 from pathlib import Path
 
-__all__ = ["find_helium"]
+__all__ = ["find_umbruch"]
 
-_EXE = "helium.exe" if os.name == "nt" else "helium"
+_EXE = "umbruch.exe" if os.name == "nt" else "umbruch"
 
 
-def find_helium():
-    """Path of the helium executable installed with this package, or None.
+def find_umbruch():
+    """Path of the umbruch executable installed with this package, or None.
 
     Looks in the scripts directory of the running environment (also the user scheme and,
     for editable setups, ``PATH``) rather than assuming that the environment is activated.
@@ -24,4 +24,4 @@ def find_helium():
     for d in candidates:
         if d and (Path(d) / _EXE).is_file():
             return str(Path(d) / _EXE)
-    return shutil.which("helium")
+    return shutil.which("umbruch")

@@ -1,5 +1,5 @@
 //! Runs the vendored web-platform-tests layout tests (`checkLayout`) through
-//! `helium --check-layout`.
+//! `umbruch --check-layout`.
 
 mod common;
 
@@ -11,10 +11,10 @@ fn wpt_layout_checks() {
 
     let mut tests = Vec::new();
     collect_tests(&wpt_root(), &mut tests);
-    // reftests and helium's own files live next to the checkLayout tests
+    // reftests and umbruch's own files live next to the checkLayout tests
     tests.retain(|t| std::fs::read_to_string(t).map_or(false, |s| s.contains("data-expected-")));
     tests.sort();
-    // the tests that need what helium does not implement on purpose are not run
+    // the tests that need what umbruch does not implement on purpose are not run
     let before = tests.len();
     tests.retain(|test| unsupported_feature(&[test]).is_none());
     eprintln!("{} layout tests need unsupported features (tests/wpt/unsupported.txt) and are skipped", before - tests.len());
@@ -25,7 +25,7 @@ fn wpt_layout_checks() {
     );
 
     let results = par_map(&tests, |test| {
-        let mut command = common::helium().unwrap();
+        let mut command = common::umbruch().unwrap();
         command
             .arg(format!("--font-dir={}", common::wpt_fonts().display()))
             .arg(format!("--resource-root={}", wpt_root().display()))
@@ -35,7 +35,7 @@ fn wpt_layout_checks() {
         match output_within(command, 30) {
             Some(output) if output.status.success() => Ok(()),
             Some(output) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
-            None => Err("helium took too long".to_owned()),
+            None => Err("umbruch took too long".to_owned()),
         }
     });
     if update_expectations() {

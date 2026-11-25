@@ -24,7 +24,7 @@ fn render(name: &str, svg: &str) -> Rendered {
         ),
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-compression", "--no-system-fonts"])
