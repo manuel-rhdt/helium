@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "helium-pdf"
+dynamic = ["version"]
+description = "helium: an HTML/CSS/MathML/SVG to PDF renderer (the helium executable as a Python package)"
+readme = "README.md"
+requires-python = ">=3.9"
+license-files = ["resources/fonts/LICENSE-*.txt"]
+classifiers = ["Programming Language :: Rust", "Topic :: Printing"]
+
+[tool.maturin]
+# A wheel with the compiled `helium` executable, installed into the environment's scripts
+# directory.  No Python extension module: other programs talk to it over stdio (--serve).
+bindings = "bin"
+python-source = "python"
+module-name = "helium_pdf"
+# Fonts are embedded in the binary and fontconfig cannot be linked into a portable wheel.
+no-default-features = true
+strip = true
