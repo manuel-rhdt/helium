@@ -2,36 +2,50 @@ name: Python wheels
 
 # Wheels of the `umbruch` executable for PyPI (package `umbruch`).  Pushing a tag like `v0.5.1`
 # builds all wheels and publishes them with PyPI trusted publishing; a manual run only uploads
-# the wheels as build artifacts.
+# the wheels as build artifacts, unless `publish` is set.
 on:
   push:
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload the wheels to PyPI
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    # glibc wheels are built inside the manylinux image with the distribution's own C/C++
+    # toolchain (harfbuzz is compiled from source and needs a C++ runtime), so use a native
+    # runner per architecture instead of cross compiling with zig: for the glibc targets zig
+    # links `-lc++`, which the manylinux image does not have.
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
-        target: [ x86_64, aarch64 ]
+        include:
+        - runner: ubuntu-latest
+          target: x86_64
+        - runner: ubuntu-24.04-arm
+          target: aarch64
     steps:
     - uses: actions/checkout@v5
-    # zig is the C/C++ cross compiler for harfbuzz, as in release.yml; manylinux 2_17 keeps the
-    # wheels installable on old distributions.
     - uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        manylinux: 2_17
-        args: --release --locked --out dist --zig
+        manylinux: 2_28
+        args: --release --locked --out dist
     - uses: actions/upload-artifact@v4
       with:
         name: wheels-linux-${{ matrix.target }}
         path: dist
 
   musllinux:
+    # musl links libc++ statically, so zig works as the cross compiler here (as in release.yml);
+    # musllinux_1_2 keeps the wheels installable on old distributions.
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -66,6 +80,10 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    # harfbuzz-subset.cc has more sections than MSVC's default object format allows
+    env:
+      CFLAGS: /bigobj
+      CXXFLAGS: /bigobj
     steps:
     - uses: actions/checkout@v5
     - uses: PyO3/maturin-action@v1
@@ -109,7 +127,7 @@ jobs:
         printf 'Content-Length: 33\r\n\r\n{"id":1,"op":"hello","params":{}}' | venv/bin/umbruch --serve | head -c 200
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     needs: [ linux, musllinux, macos, windows, sdist, test ]
     runs-on: ubuntu-latest
     environment: pypi
