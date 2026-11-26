@@ -118,6 +118,12 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **Tables across pages:** a table is split between its rows, and the header rows (the first
   `thead`) are repeated at the top of every page that goes on inside of the table. Footers are
   not repeated.
+- **Grids across pages:** a grid container whose height is the one of its content is split
+  between its rows, where no item spans over the break; the gap between two rows is not at the top
+  of the next page. An item that is taller than half a page is cut where its own lines end, and goes
+  on at the top of the next page with the border, padding and background of each part, as a table
+  row does. A grid with a `height` or `min-height`, an `inline-grid`, a grid inside of a flex or grid
+  container, a table cell or a container with columns, and a grid that is the root element are one box.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.
 
 ## CSS

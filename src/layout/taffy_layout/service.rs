@@ -312,6 +312,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         if let Some(galley) = self.galleys.get(&key) {
             return galley.clone();
         }
+        let icb_height = self.icb_height;
         let tree = &mut *self.tree;
         tree.clear_window();
         let root = self.flow.root;
@@ -371,7 +372,7 @@ impl<'t, 'a, 'w> TreeService<'t, 'a, 'w> {
         let rows: HashMap<NodeId, Rc<super::rows::RowCuts>> = row_nodes
             .into_iter()
             .map(|id| {
-                let cuts = Rc::new(tree.row_cuts(id));
+                let cuts = Rc::new(tree.row_cuts(id, (inline, icb_height)));
                 // (the page is written with the cuts of the last width that was laid out)
                 tree.node_mut(id).row_cuts = Some(cuts.clone());
                 (id, cuts)
