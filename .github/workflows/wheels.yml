@@ -1,6 +1,6 @@
 name: Python wheels
 
-# Wheels of the `umbruch` executable for PyPI (package `umbruch`).  Pushing a tag like `v0.4.2`
+# Wheels of the `umbruch` executable for PyPI (package `umbruch`).  Pushing a tag like `v0.5.1`
 # builds all wheels and publishes them with PyPI trusted publishing; a manual run only uploads
 # the wheels as build artifacts.
 on:
@@ -27,7 +27,9 @@ jobs:
         manylinux: 2_17
         args: --release --locked --out dist --zig
     - uses: actions/upload-artifact@v4
-      with: { name: wheels-linux-${{ matrix.target }}, path: dist }
+      with:
+        name: wheels-linux-${{ matrix.target }}
+        path: dist
 
   musllinux:
     runs-on: ubuntu-latest
@@ -42,7 +44,9 @@ jobs:
         manylinux: musllinux_1_2
         args: --release --locked --out dist --zig
     - uses: actions/upload-artifact@v4
-      with: { name: wheels-musllinux-${{ matrix.target }}, path: dist }
+      with:
+        name: wheels-musllinux-${{ matrix.target }}
+        path: dist
 
   macos:
     runs-on: macos-latest
@@ -56,7 +60,9 @@ jobs:
         target: ${{ matrix.target }}
         args: --release --locked --out dist
     - uses: actions/upload-artifact@v4
-      with: { name: wheels-macos-${{ matrix.target }}, path: dist }
+      with:
+        name: wheels-macos-${{ matrix.target }}
+        path: dist
 
   windows:
     runs-on: windows-latest
@@ -67,7 +73,9 @@ jobs:
         target: x86_64
         args: --release --locked --out dist
     - uses: actions/upload-artifact@v4
-      with: { name: wheels-windows, path: dist }
+      with:
+        name: wheels-windows
+        path: dist
 
   sdist:
     runs-on: ubuntu-latest
@@ -78,7 +86,9 @@ jobs:
         command: sdist
         args: --out dist
     - uses: actions/upload-artifact@v4
-      with: { name: wheels-sdist, path: dist }
+      with:
+        name: wheels-sdist
+        path: dist
 
   # Installs the wheel built for this runner into a clean environment and renders a page.
   test:
@@ -87,7 +97,9 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - uses: actions/download-artifact@v4
-      with: { name: wheels-linux-x86_64, path: dist }
+      with:
+        name: wheels-linux-x86_64
+        path: dist
     - run: |
         python -m venv venv
         venv/bin/pip install dist/*.whl
@@ -105,5 +117,8 @@ jobs:
       id-token: write
     steps:
     - uses: actions/download-artifact@v4
-      with: { pattern: wheels-*, merge-multiple: true, path: dist }
+      with:
+        pattern: wheels-*
+        merge-multiple: true
+        path: dist
     - uses: pypa/gh-action-pypi-publish@release/v1
