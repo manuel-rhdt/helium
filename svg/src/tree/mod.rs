@@ -734,20 +734,58 @@ impl Default for Fill {
     }
 }
 
-/// A 8-bit RGB color.
+/// A 8-bit RGB color, and where there is one, the wide-gamut color that these channels are the
+/// nearest sRGB color of.
 #[derive(Clone, Copy, PartialEq, Debug)]
 #[allow(missing_docs)]
 pub struct Color {
     pub red: u8,
     pub green: u8,
     pub blue: u8,
+    /// The color as it was written, if sRGB cannot hold it (`color(display-p3 …)`, `lab()`, …).
+    /// The channels above are then clipped to sRGB; whoever can paint more reads this.
+    pub wide: Option<WideColor>,
+}
+
+/// The space of a [`WideColor`]. The fork does not know the math of the spaces: the
+/// [`ColorParser`] of the options has parsed the color, and the caller that paints it knows what
+/// the spaces mean.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(missing_docs)]
+pub enum WideSpace {
+    SrgbLinear,
+    DisplayP3,
+    DisplayP3Linear,
+    A98Rgb,
+    ProphotoRgb,
+    Rec2020,
+    /// CIE XYZ (D65, Y of 1 for the white).
+    Xyz,
+}
+
+/// A color outside of sRGB, or one that is not written in it: three components in a [`WideSpace`]
+/// (the encoded ones, from 0 to 1, for the RGB spaces).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct WideColor {
+    /// The space of the components.
+    pub space: WideSpace,
+    /// The components.
+    pub components: [f32; 3],
+}
+
+/// Reads the colors that `svgtypes` cannot: the ones of CSS Color 4 (`color()`, `lab()`, `lch()`,
+/// `oklab()`, `oklch()`, …). It is asked for every color value that `svgtypes` rejects.
+pub trait ColorParser: Send + Sync + std::fmt::Debug {
+    /// The color of a CSS `<color>` and its opacity (0 to 255), or `None` if the text is none.
+    /// `currentColor` is not passed in.
+    fn parse(&self, text: &str) -> Option<(Color, u8)>;
 }
 
 impl Color {
     /// Constructs a new `Color` from RGB values.
     #[inline]
     pub fn new_rgb(red: u8, green: u8, blue: u8) -> Color {
-        Color { red, green, blue }
+        Color { red, green, blue, wide: None }
     }
 
     /// Constructs a new `Color` set to black.

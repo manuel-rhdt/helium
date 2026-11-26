@@ -18,8 +18,9 @@ impl<'input> Document<'input> {
     pub fn parse_tree(
         xml: &crate::xml::Document<'input>,
         max_depth: u32,
+        color_parser: Option<std::sync::Arc<dyn crate::ColorParser>>,
     ) -> Result<Document<'input>, Error> {
-        parse(xml, max_depth)
+        parse(xml, max_depth, color_parser)
     }
 
     pub(crate) fn append(&mut self, parent_id: NodeId, kind: NodeKind) -> NodeId {
@@ -65,8 +66,10 @@ impl<'input> Document<'input> {
 fn parse<'input>(
     xml: &crate::xml::Document<'input>,
     max_depth: u32,
+    color_parser: Option<std::sync::Arc<dyn crate::ColorParser>>,
 ) -> Result<Document<'input>, Error> {
     let mut doc = Document {
+        color_parser,
         nodes: Vec::new(),
         attrs: Vec::new(),
         links: HashMap::new(),

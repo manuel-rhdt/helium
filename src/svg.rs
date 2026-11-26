@@ -45,6 +45,8 @@ const MAX_FLAT_CHILDREN: usize = 128;
 #[derive(Clone, PartialEq)]
 enum PaintKey {
     Rgb([u8; 3]),
+    /// A color that sRGB cannot hold (see [`crate::pdf::set_fill_color`]).
+    Wide(crate::style::properties::computed::PaintColor),
     Pattern(lemon_pdf::object::Name),
 }
 
@@ -105,6 +107,9 @@ pub struct SvgWriter {
     /// `usvg` object (and the transformation for the patterns), for the ones that are used again.
     tilings: HashMap<(usize, [u32; 6]), IndirectReference<lemon_pdf::pattern::TilingPattern>>,
     masks: HashMap<usize, FormReference>,
+    /// The ICC space of the gradient that is being built, if it has a color that sRGB cannot
+    /// hold: the colors of its stops are components of that space (see `prepare_gradient`).
+    gradient_profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
 }
 
 fn matrix(t: Transform) -> Matrix {
@@ -245,6 +250,7 @@ impl SvgWriter {
             alpha: 1.0,
             tilings: HashMap::new(),
             masks: HashMap::new(),
+            gradient_profile: None,
         }
     }
 
@@ -322,13 +328,20 @@ impl SvgWriter {
             (PaintKey::Rgb([r, g, b]), true) => {
                 c.device_rgb_stroke_color(channel(r), channel(g), channel(b))
             }
+            (PaintKey::Wide(color), false) => crate::pdf::set_fill_color(c, color).map_err(std::io::Error::other),
+            (PaintKey::Wide(color), true) => crate::pdf::set_stroke_color(c, color).map_err(std::io::Error::other),
             (PaintKey::Pattern(name), false) => c.set_fill_pattern(&name),
             (PaintKey::Pattern(name), true) => c.set_stroke_pattern(&name),
         }
     }
 
     fn set_color(&mut self, c: &mut PageContext<'_, '_, '_>, color: usvg::Color, stroke: bool) -> Result<()> {
-        self.set_paint_key(c, PaintKey::Rgb([color.red, color.green, color.blue]), stroke)
+        let key = if color.wide.is_some() {
+            PaintKey::Wide(paint_color(color))
+        } else {
+            PaintKey::Rgb([color.red, color.green, color.blue])
+        };
+        self.set_paint_key(c, key, stroke)
     }
 
     /// Sets the opacity of fills (and text, images and forms) or strokes.
@@ -922,6 +935,7 @@ impl SvgWriter {
                 c.fill_path_with_rule(fill_rule(fill.rule()))
             }
             usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
+                self.prepare_gradient(c, fill.paint())?;
                 let Some((shading, transform)) = self.gradient(fill.paint(), path) else {
                     return Ok(());
                 };
@@ -961,6 +975,7 @@ impl SvgWriter {
             usvg::Paint::Color(color) => self.set_color(c, *color, true)?,
             usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
                 // strokes cannot be clipping paths: the shading is the color of a pattern
+                self.prepare_gradient(c, stroke.paint())?;
                 let Some((shading, transform)) = self.gradient(stroke.paint(), path) else {
                     return Ok(());
                 };
@@ -978,6 +993,38 @@ impl SvgWriter {
         self.set_stroke_style(c, stroke)?;
         emit_path(c, path.data(), Transform::identity())?;
         c.stroke_path()
+    }
+
+    /// Chooses the color space of the gradient `paint` (see `gradient_profile`): the ICC space of the
+    /// wide colors of CSS (Rec. 2020 primaries, gamma 2.4) if a stop has a color that sRGB cannot
+    /// hold, else the device space.
+    fn prepare_gradient(&mut self, c: &mut PageContext<'_, '_, '_>, paint: &usvg::Paint) -> Result<()> {
+        let base: Option<&usvg::BaseGradient> = match paint {
+            usvg::Paint::LinearGradient(gradient) => Some(gradient),
+            usvg::Paint::RadialGradient(gradient) => Some(gradient),
+            _ => None,
+        };
+        self.gradient_profile = None;
+        if !base.is_some_and(|base| base.stops().iter().any(|stop| stop.color().wide.is_some())) {
+            return Ok(());
+        }
+        if crate::pdf::pdfa1_active() {
+            // the ICC space of the wide colors is a profile of version 4, which PDF/A-1 does not allow
+            self.warn("the wide-gamut colors of a gradient are clipped to sRGB: PDF/A-1 does not allow ICC profiles of version 4");
+            return Ok(());
+        }
+        self.gradient_profile = Some(crate::pdf::wide_color_space(c).map_err(std::io::Error::other)?);
+        Ok(())
+    }
+
+    /// The color of a gradient stop in the space of the gradient.
+    fn stop_color(&self, color: usvg::Color) -> Rgb {
+        if self.gradient_profile.is_none() {
+            return rgb(color);
+        }
+        let xyz = paint_color(color).to_xyz().map(f64::from);
+        let [r, g, b] = crate::pdf::rec2020_gamma24_components(xyz);
+        Rgb(r, g, b)
     }
 
     /// The shading of a gradient and the transformation from its coordinates to the current
@@ -1009,7 +1056,7 @@ impl SvgWriter {
         let stops: Vec<(f64, Rgb)> = base
             .stops()
             .iter()
-            .map(|stop| (f64::from(stop.offset().get()), rgb(stop.color())))
+            .map(|stop| (f64::from(stop.offset().get()), self.stop_color(stop.color())))
             .collect();
         let width = (to - from) as f64;
         let mut out = Vec::new();
@@ -1090,7 +1137,10 @@ impl SvgWriter {
             Point::new(x1 + to_f * dx, y1 + to_f * dy),
             &function,
         );
-        Some(shading.into())
+        Some(match self.gradient_profile {
+            Some(profile) => shading.with_icc_profile(profile).into(),
+            None => shading.into(),
+        })
     }
 
     fn radial_gradient(
@@ -1136,16 +1186,23 @@ impl SvgWriter {
             Circle { x: Pt(cx), y: Pt(cy), radius: Pt(fr + to as f64 * (r - fr)) },
             &function,
         );
-        Some(shading.into())
+        Some(match self.gradient_profile {
+            Some(profile) => shading.with_icc_profile(profile).into(),
+            None => shading.into(),
+        })
     }
 
     /// A shading that has the color of the last stop everywhere.
     fn last_stop_pattern(&mut self, base: &usvg::BaseGradient) -> Option<Shading> {
-        let color = rgb(base.stops().last()?.color());
+        let color = self.stop_color(base.stops().last()?.color());
         let function = Gradient::new(&[ColorStop::new(0.0, color), ColorStop::new(1.0, color)])
             .ok()?
             .extended();
-        Some(AxialShading::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &function).into())
+        let shading = AxialShading::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &function);
+        Some(match self.gradient_profile {
+            Some(profile) => shading.with_icc_profile(profile).into(),
+            None => shading.into(),
+        })
     }
 
     fn tiling_pattern(
@@ -1248,4 +1305,59 @@ impl SvgWriter {
         c.draw_xobject(&name)?;
         self.restore(c)
     }
+}
+
+/// Reads the colours of SVG that `svgtypes` rejects (`color()`, `lab()`, `oklch()`, `color-mix()`, …)
+/// with the colour code of the style sheets, so that the colours of an SVG are the ones that CSS means.
+#[derive(Debug)]
+pub struct SvgColorParser;
+
+impl usvg::ColorParser for SvgColorParser {
+    fn parse(&self, text: &str) -> Option<(usvg::Color, u8)> {
+        use crate::style::properties::computed::{IccSpace, PaintColor};
+        use usvg::{WideColor, WideSpace};
+        let color = crate::style::properties::specified::parse_color_text(text)?;
+        if matches!(color, cssparser_color::Color::CurrentColor) {
+            return None;
+        }
+        let paint = crate::style::properties::color::color_to_paint(color);
+        let srgb = paint.clip_to_srgb();
+        let mut out = usvg::Color::new_rgb(srgb.red, srgb.green, srgb.blue);
+        out.wide = match paint {
+            PaintColor::Srgb(_) => None,
+            PaintColor::Icc(icc) => Some(WideColor {
+                space: match icc.space {
+                    IccSpace::SrgbLinear => WideSpace::SrgbLinear,
+                    IccSpace::DisplayP3 => WideSpace::DisplayP3,
+                    IccSpace::DisplayP3Linear => WideSpace::DisplayP3Linear,
+                    IccSpace::A98Rgb => WideSpace::A98Rgb,
+                    IccSpace::ProphotoRgb => WideSpace::ProphotoRgb,
+                    IccSpace::Rec2020 => WideSpace::Rec2020,
+                },
+                components: icc.components(),
+            }),
+            PaintColor::Xyz(xyz) => Some(WideColor { space: WideSpace::Xyz, components: xyz.components() }),
+        };
+        Some((out, paint.alpha()))
+    }
+}
+
+/// The colour that the PDF paints for `color`: the wide one where there is one, else sRGB.
+fn paint_color(color: usvg::Color) -> crate::style::properties::computed::PaintColor {
+    use crate::style::properties::computed::{IccColor, IccSpace, PaintColor, XyzColor};
+    use usvg::WideSpace;
+    let Some(wide) = color.wide else {
+        return PaintColor::srgb(color.red, color.green, color.blue, 255);
+    };
+    let [a, b, c] = wide.components;
+    let space = match wide.space {
+        WideSpace::Xyz => return PaintColor::Xyz(XyzColor::new(a, b, c, 255)),
+        WideSpace::SrgbLinear => IccSpace::SrgbLinear,
+        WideSpace::DisplayP3 => IccSpace::DisplayP3,
+        WideSpace::DisplayP3Linear => IccSpace::DisplayP3Linear,
+        WideSpace::A98Rgb => IccSpace::A98Rgb,
+        WideSpace::ProphotoRgb => IccSpace::ProphotoRgb,
+        WideSpace::Rec2020 => IccSpace::Rec2020,
+    };
+    PaintColor::Icc(IccColor::new(space, a, b, c, 255))
 }

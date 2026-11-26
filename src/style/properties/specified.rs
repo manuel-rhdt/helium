@@ -3075,6 +3075,14 @@ fn parse_css_color<'i>(input: &mut Parser<'i>) -> Result<Color, ()> {
     }
 }
 
+/// A CSS `<color>` (or a `color-mix()` of colours) that is the whole of `text`.
+pub fn parse_color_text(text: &str) -> Option<Color> {
+    let mut parser = Parser::new(text);
+    let color = parse_css_color(&mut parser).ok()?;
+    parser.expect_exhausted().ok()?;
+    Some(color)
+}
+
 impl<'i> PropertyValue<'i> for Color {
     type Error = StyleParseError;
 
