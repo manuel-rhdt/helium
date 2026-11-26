@@ -1,9 +1,9 @@
 //! Box layout with [Taffy](https://github.com/DioxusLabs/taffy).
 //!
 //! Taffy computes the sizes and positions of all boxes (block, flex and grid containers and
-//! absolutely positioned boxes). Helium keeps doing what Taffy cannot do: inline content is
+//! absolutely positioned boxes). Umbruch keeps doing what Taffy cannot do: inline content is
 //! broken into lines by [`InlineFormattingContext`]. The pages are chosen by the kernel of
-//! `helium_paginate`, and every page is laid out for its own geometry (see `docs/pagination.md`).
+//! `umbruch_paginate`, and every page is laid out for its own geometry (see `docs/pagination.md`).
 //!
 //! The result is written to the same components the rest of the layout pipeline reads:
 //! [`Position`] (content box in document coordinates), [`Decoration`], the [`TextList`] of the
@@ -40,7 +40,7 @@ use crate::layout::normal_formatting::BlockFormattingContext;
 use crate::style::properties::computed::{ComputedValues, PixelLength, TextAlign};
 
 use crate::layout::writing_mode::Flow;
-use tree::{Content, HeliumTree, Node, lines_between};
+use tree::{Content, UmbruchTree, Node, lines_between};
 use window::Window;
 
 /// Distance between the z indices of boxes at different levels of nested absolutely positioned
@@ -63,7 +63,7 @@ pub(super) mod probe {
     pub type Hook = Box<dyn FnOnce(&mut TreeService<'_, '_, '_>)>;
 
     /// A solver that the tests give to the layout instead of the exact one.
-    pub type Solve = Box<dyn for<'k, 'a> FnOnce(&'k mut helium_paginate::Kernel<'a>) -> helium_paginate::Solution>;
+    pub type Solve = Box<dyn for<'k, 'a> FnOnce(&'k mut umbruch_paginate::Kernel<'a>) -> umbruch_paginate::Solution>;
 
     thread_local! {
         pub static BEFORE: RefCell<Option<Hook>> = const { RefCell::new(None) };
@@ -93,7 +93,7 @@ pub struct TaffyBlockLayout {
 #[derive(Debug, Clone, Copy)]
 struct PlacedFloat {
     id: NodeId,
-    side: helium_paginate::FloatSide,
+    side: umbruch_paginate::FloatSide,
     /// The margins of the float, and the extent of its margin box.
     margin: taffy::geometry::Rect<f32>,
     outer: f32,
@@ -153,7 +153,7 @@ impl TaffyBlockLayout {
 
         let content_width = (self.page_width - self.margin.left - self.margin.right).0;
         let page_width_unmeasured = self.page_width;
-        let mut tree = HeliumTree {
+        let mut tree = UmbruchTree {
             nodes: vec![],
             computed_values: &computed_values,
             inline_ctxs: &mut inline_ctxs,
@@ -174,7 +174,7 @@ impl TaffyBlockLayout {
             plain_root: None,
             page_fragments: HashMap::new(),
             paragraph_variants: 0,
-            variants_config: helium_paginate::Variants::default(),
+            variants_config: umbruch_paginate::Variants::default(),
             earlier_fragments: 3,
             page_variants: HashMap::new(),
         };
@@ -228,9 +228,9 @@ impl TaffyBlockLayout {
         };
         let group_elements = paginate::group_elements(&tree, &flow, &geometry.margins.keys);
         let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow, &group_elements));
-        let first_class = classes.of(helium_paginate::Position::Item(0)).clone();
+        let first_class = classes.of(umbruch_paginate::Position::Item(0)).clone();
         let first_spec = geometry.spec(&geometry.context(0, &first_class));
-        let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone())
+        let problem = umbruch_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone())
             .with_repeats(flow.repeats.clone());
         // the pages choose among the ways to break the paragraphs that ask for it (`looseness`)
         let looseness = flow
@@ -241,10 +241,10 @@ impl TaffyBlockLayout {
             .unwrap_or(0);
         let tuning = Tuning::from_environment();
         let problem = problem.with_variants(looseness, tuning.variant_tolerance);
-        let objective = helium_paginate::CssObjective { rtl: page_margins.rtl, line_tolerance: tuning.line_tolerance };
+        let objective = umbruch_paginate::CssObjective { rtl: page_margins.rtl, line_tolerance: tuning.line_tolerance };
         tree.paragraph_variants = looseness;
         tree.earlier_fragments = tuning.earlier_fragments;
-        tree.variants_config = helium_paginate::Variants {
+        tree.variants_config = umbruch_paginate::Variants {
             extra: looseness,
             tolerance: tuning.variant_tolerance,
             line_tolerance: tuning.line_tolerance,
@@ -281,27 +281,27 @@ impl TaffyBlockLayout {
         // (start of the page, its end, the page)
         // (and the fragments of the containers that are on the page)
         let mut planned: Vec<(
-            helium_paginate::PageStart,
-            helium_paginate::Position,
-            helium_paginate::Position,
-            helium_paginate::PageFill,
-            Vec<helium_paginate::PageFragment>,
+            umbruch_paginate::PageStart,
+            umbruch_paginate::Position,
+            umbruch_paginate::Position,
+            umbruch_paginate::PageFill,
+            Vec<umbruch_paginate::PageFragment>,
             // the ways to break the paragraphs of the page that are not the first
-            Vec<helium_paginate::Choice>,
+            Vec<umbruch_paginate::Choice>,
             // the floats on the page
-            Vec<(helium_paginate::BoxRef, helium_paginate::FloatSide)>,
+            Vec<(umbruch_paginate::BoxRef, umbruch_paginate::FloatSide)>,
         )> = vec![];
         {
-            use helium_paginate::Solver;
-            let mut kernel = helium_paginate::Kernel::new(&problem, &mut service);
+            use umbruch_paginate::Solver;
+            let mut kernel = umbruch_paginate::Kernel::new(&problem, &mut service);
             #[cfg(test)]
             let custom = probe::SOLVE.with(|slot| slot.borrow_mut().take()).map(|solve| solve(&mut kernel));
             #[cfg(not(test))]
-            let custom: Option<helium_paginate::Solution> = None;
+            let custom: Option<umbruch_paginate::Solution> = None;
             let solution = custom
-                .unwrap_or_else(|| helium_paginate::ExactSolver::new(objective).solve(&mut kernel));
+                .unwrap_or_else(|| umbruch_paginate::ExactSolver::new(objective).solve(&mut kernel));
             let fills = kernel.realize(&solution).map_err(|error| format!("invalid pagination: {error:?}"))?;
-            let end = helium_paginate::Position::Item(flow.items.len());
+            let end = umbruch_paginate::Position::Item(flow.items.len());
             for (page, fill) in fills.iter().enumerate() {
                 let start = solution.pages[page];
                 let finish = kernel.position(fill.end);
@@ -313,26 +313,26 @@ impl TaffyBlockLayout {
             if fills.is_empty() {
                 planned.push((
                     solution.pages[0],
-                    helium_paginate::Position::Item(0),
+                    umbruch_paginate::Position::Item(0),
                     end,
-                    helium_paginate::PageFill {
+                    umbruch_paginate::PageFill {
                         end: solution.pages[0].at,
                         spec: first_spec,
-                        kind: helium_paginate::PageKind::First,
+                        kind: umbruch_paginate::PageKind::First,
                         used: 0.0,
-                        hyphen_end: helium_paginate::HyphenLimit::None,
+                        hyphen_end: umbruch_paginate::HyphenLimit::None,
                         hyphen_extent: 0.0,
-                        end_kind: helium_paginate::BreakKind::Allowed,
+                        end_kind: umbruch_paginate::BreakKind::Allowed,
                         orphan_violation: false,
                         widow_violation: false,
                         overflow: false,
                         line_demerits: 0.0,
                         line_extent: 0.0,
-                        choices: helium_paginate::ChoiceId::NONE,
+                        choices: umbruch_paginate::ChoiceId::NONE,
                         floats_used: 0.0,
                         repeated: 0.0,
-                        placed: helium_paginate::FloatList::NONE,
-                        carry: helium_paginate::FloatList::NONE,
+                        placed: umbruch_paginate::FloatList::NONE,
+                        carry: umbruch_paginate::FloatList::NONE,
                     },
                     vec![],
                     vec![],
@@ -380,13 +380,13 @@ impl TaffyBlockLayout {
             let window = paginate::window(
                 &flow.items,
                 &flow.leaves,
-                helium_paginate::BreakLevel::Page,
+                umbruch_paginate::BreakLevel::Page,
                 None,
                 *from,
                 *to,
                 |item| match flow.items[item] {
-                    helium_paginate::Item::Gap { node } => {
-                        helium_paginate::LayoutService::extent(&mut service, node, spec.inline_size) as f32
+                    umbruch_paginate::Item::Gap { node } => {
+                        umbruch_paginate::LayoutService::extent(&mut service, node, spec.inline_size) as f32
                     }
                     _ => 0.0,
                 },
@@ -404,7 +404,7 @@ impl TaffyBlockLayout {
                 placed_floats.iter().filter(|placed| placed.side == side).map(|placed| placed.outer).sum()
             };
             let (top_floats, bottom_floats) =
-                (floats_height(helium_paginate::FloatSide::Top), floats_height(helium_paginate::FloatSide::Bottom));
+                (floats_height(umbruch_paginate::FloatSide::Top), floats_height(umbruch_paginate::FloatSide::Bottom));
             tree.page_fragments = on_page
                 .iter()
                 .map(|fragment| {
@@ -415,7 +415,7 @@ impl TaffyBlockLayout {
             tree.page_variants = choices
                 .iter()
                 .filter_map(|choice| match flow.items[choice.item] {
-                    helium_paginate::Item::Paragraph { id, .. } => Some((flow.paragraphs[id.0 as usize], choice.variant)),
+                    umbruch_paginate::Item::Paragraph { id, .. } => Some((flow.paragraphs[id.0 as usize], choice.variant)),
                     _ => None,
                 })
                 .collect();
@@ -447,7 +447,7 @@ impl TaffyBlockLayout {
                     spec.block_size
                 );
             }
-            let HeliumTree {
+            let UmbruchTree {
                 nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, page_variants, paragraph_variants, ..
             } = tree;
             let mut paragraphs_log: Vec<serde_json::Value> = vec![];
@@ -499,7 +499,7 @@ impl TaffyBlockLayout {
                 }
                 Ok(())
             };
-            write_floats(&mut writer, helium_paginate::FloatSide::Top, edges.top.0)?;
+            write_floats(&mut writer, umbruch_paginate::FloatSide::Top, edges.top.0)?;
             // The root is placed at the top left corner of the content area of the page, below
             // the floats at its top.
             writer.write_box(
@@ -514,7 +514,7 @@ impl TaffyBlockLayout {
             )?;
             write_floats(
                 &mut writer,
-                helium_paginate::FloatSide::Bottom,
+                umbruch_paginate::FloatSide::Bottom,
                 edges.top.0 + spec.block_size - bottom_floats,
             )?;
             if reporting {
@@ -1221,7 +1221,7 @@ impl<'a> Writer<'a, '_> {
                 floats.iter().filter(|placed| placed.side == side).map(|placed| placed.outer).sum()
             };
             let (top_floats, bottom_floats) =
-                (height_of(helium_paginate::FloatSide::Top), height_of(helium_paginate::FloatSide::Bottom));
+                (height_of(umbruch_paginate::FloatSide::Top), height_of(umbruch_paginate::FloatSide::Bottom));
             // the part of a box that goes on in the next column is painted down to the bottom of
             // the column's text
             let bottom_before = std::mem::replace(&mut self.page_bottom, content_y + plan.height - bottom_floats);
@@ -1233,8 +1233,8 @@ impl<'a> Writer<'a, '_> {
             };
             let mut written = Ok(());
             for (side, mut y) in [
-                (helium_paginate::FloatSide::Top, content_y),
-                (helium_paginate::FloatSide::Bottom, content_y + plan.height - bottom_floats),
+                (umbruch_paginate::FloatSide::Top, content_y),
+                (umbruch_paginate::FloatSide::Bottom, content_y + plan.height - bottom_floats),
             ] {
                 for placed in floats.iter().filter(|placed| placed.side == side) {
                     let origin = Point { x: column_x(index) + placed.margin.left, y: y + placed.margin.top };
@@ -1501,22 +1501,22 @@ impl<'a> Writer<'a, '_> {
 /// and the paragraphs that are on it.
 #[allow(clippy::too_many_arguments)]
 fn page_report(
-    start: &helium_paginate::PageStart,
-    from: &helium_paginate::Position,
-    to: &helium_paginate::Position,
-    fill: &helium_paginate::PageFill,
-    fragments: &[helium_paginate::PageFragment],
-    choices: &[helium_paginate::Choice],
-    objective: &helium_paginate::CssObjective,
+    start: &umbruch_paginate::PageStart,
+    from: &umbruch_paginate::Position,
+    to: &umbruch_paginate::Position,
+    fill: &umbruch_paginate::PageFill,
+    fragments: &[umbruch_paginate::PageFragment],
+    choices: &[umbruch_paginate::Choice],
+    objective: &umbruch_paginate::CssObjective,
     flow: &flow::Flow,
     paragraphs: Vec<serde_json::Value>,
     containers: Vec<serde_json::Value>,
     last: bool,
 ) -> serde_json::Value {
-    use helium_paginate::Objective;
+    use umbruch_paginate::Objective;
     let cost = objective.page_cost(fill, last).unwrap_or_default();
     let line_room = objective.line_room(fill);
-    let unit = helium_paginate::CssCost::SLACK_UNIT;
+    let unit = umbruch_paginate::CssCost::SLACK_UNIT;
     serde_json::json!({
         "page": start.index + 1,
         "kind": format!("{:?}", fill.kind),
@@ -1568,15 +1568,15 @@ pub fn take_pagination_report() -> Option<String> {
 
 /// The numbers that decide how much a page gives up for better lines. They are the values of an
 /// experiment, and can be changed to try others (`tools/looseness_bench.py`): the environment
-/// variables `HELIUM_LINE_TOLERANCE` (the exchange rate of lines and room,
-/// [`helium_paginate::CssObjective::line_tolerance`]) and `HELIUM_VARIANT_TOLERANCE` (the worst
-/// badness of a line of another way to break a paragraph, [`helium_paginate::Variants`]).
+/// variables `UMBRUCH_LINE_TOLERANCE` (the exchange rate of lines and room,
+/// [`umbruch_paginate::CssObjective::line_tolerance`]) and `UMBRUCH_VARIANT_TOLERANCE` (the worst
+/// badness of a line of another way to break a paragraph, [`umbruch_paginate::Variants`]).
 #[derive(Debug, Copy, Clone)]
 struct Tuning {
     line_tolerance: f64,
     variant_tolerance: f64,
     /// The fragments of a container that end earlier than the one that fills the page, which it
-    /// offers the pages besides it (`HELIUM_EARLIER_FRAGMENTS`, 3 by default; 0 gives only the one that fills it).
+    /// offers the pages besides it (`UMBRUCH_EARLIER_FRAGMENTS`, 3 by default; 0 gives only the one that fills it).
     earlier_fragments: u32,
 }
 
@@ -1596,9 +1596,9 @@ impl Tuning {
             Err(_) => default,
         };
         Tuning {
-            line_tolerance: number("HELIUM_LINE_TOLERANCE", helium_paginate::CssObjective::LINE_TOLERANCE),
-            variant_tolerance: number("HELIUM_VARIANT_TOLERANCE", helium_paginate::Variants::TOLERANCE),
-            earlier_fragments: match std::env::var("HELIUM_EARLIER_FRAGMENTS").ok().and_then(|value| value.parse().ok()) {
+            line_tolerance: number("UMBRUCH_LINE_TOLERANCE", umbruch_paginate::CssObjective::LINE_TOLERANCE),
+            variant_tolerance: number("UMBRUCH_VARIANT_TOLERANCE", umbruch_paginate::Variants::TOLERANCE),
+            earlier_fragments: match std::env::var("UMBRUCH_EARLIER_FRAGMENTS").ok().and_then(|value| value.parse().ok()) {
                 Some(count) => count,
                 None => 3,
             },

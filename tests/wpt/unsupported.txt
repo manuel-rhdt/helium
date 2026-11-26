@@ -1,4 +1,4 @@
-# CSS that helium deliberately does not implement (see "Not supported" in the README). A test
+# CSS that umbruch deliberately does not implement (see "Not supported" in the README). A test
 # whose <style> elements or style attributes (or those of its reference) contain one of these
 # is not run: it can only fail. Each line is a text that is looked for after the case and the
 # white space have been taken out; remove a line when the feature is implemented, and run

@@ -1,5 +1,5 @@
 DejaVu Sans (DejaVuSans.ttf, DejaVuSans-Bold.ttf), https://dejavu-fonts.github.io/
-These fonts are built into Helium as the fonts of last resort.
+These fonts are built into Umbruch as the fonts of last resort.
 
 Files: *
 Copyright: Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. 

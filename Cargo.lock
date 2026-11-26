@@ -550,65 +550,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "helium"
-version = "0.5.0"
-dependencies = [
- "assert_cmd",
- "cssparser",
- "cssparser-color",
- "derive_more",
- "env_logger 0.8.4",
- "flate2",
- "fontdb",
- "formel",
- "harfbuzz_rs",
- "helium_derive",
- "helium_paginate",
- "html5ever",
- "hyphenation",
- "icu_segmenter",
- "lemon_pdf",
- "lemon_pdf_derive",
- "log",
- "parking_lot 0.11.2",
- "png",
- "precomputed-hash",
- "predicates 1.0.8",
- "quickcheck",
- "quickcheck_macros",
- "selectors",
- "serde_json",
- "smallvec",
- "specs",
- "structopt",
- "taffy",
- "thiserror",
- "ttf-parser",
- "unicode-bidi",
- "unicode-properties",
- "unicode-script",
- "unicode-segmentation",
- "unicode-vo",
- "usvg",
- "xml5ever",
- "yeslogic-fontconfig-sys",
-]
-
-[[package]]
-name = "helium_derive"
-version = "0.1.0"
-dependencies = [
- "Inflector",
- "proc-macro2 1.0.107",
- "quote 1.0.47",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "helium_paginate"
-version = "0.1.0"
-
-[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1863,6 +1804,65 @@ checksum = "bd30d05e69d1478e13fe3e7a853409cfec82cebc2cf9b8d613b3c6b0081781ed"
 dependencies = [
  "nom",
 ]
+
+[[package]]
+name = "umbruch"
+version = "0.5.0"
+dependencies = [
+ "assert_cmd",
+ "cssparser",
+ "cssparser-color",
+ "derive_more",
+ "env_logger 0.8.4",
+ "flate2",
+ "fontdb",
+ "formel",
+ "harfbuzz_rs",
+ "html5ever",
+ "hyphenation",
+ "icu_segmenter",
+ "lemon_pdf",
+ "lemon_pdf_derive",
+ "log",
+ "parking_lot 0.11.2",
+ "png",
+ "precomputed-hash",
+ "predicates 1.0.8",
+ "quickcheck",
+ "quickcheck_macros",
+ "selectors",
+ "serde_json",
+ "smallvec",
+ "specs",
+ "structopt",
+ "taffy",
+ "thiserror",
+ "ttf-parser",
+ "umbruch_derive",
+ "umbruch_paginate",
+ "unicode-bidi",
+ "unicode-properties",
+ "unicode-script",
+ "unicode-segmentation",
+ "unicode-vo",
+ "usvg",
+ "xml5ever",
+ "yeslogic-fontconfig-sys",
+]
+
+[[package]]
+name = "umbruch_derive"
+version = "0.1.0"
+dependencies = [
+ "Inflector",
+ "proc-macro2 1.0.107",
+ "quote 1.0.47",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "umbruch_paginate"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-bidi"

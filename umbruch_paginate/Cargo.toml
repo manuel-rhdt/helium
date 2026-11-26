@@ -1,5 +1,5 @@
 [package]
-name = "helium_paginate"
+name = "umbruch_paginate"
 version = "0.1.0"
 authors = ["Manuel Reinhardt <manuel.rhdt@gmail.com>"]
 edition = "2024"

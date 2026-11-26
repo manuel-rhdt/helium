@@ -14,7 +14,7 @@ fn dump(name: &str, width: u32, hyphens: &str, text: &str) -> Value {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

@@ -13,7 +13,7 @@ fn runs(name: &str, html: &str) -> Vec<String> {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("generated_{name}.html"));
     std::fs::write(&input, html).unwrap();
-    let result = common::helium()
+    let result = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")
@@ -250,7 +250,7 @@ fn image_sizes(name: &str, html: &str) -> Vec<(f64, f64)> {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("generated_{name}.html"));
     std::fs::write(&input, html).unwrap();
-    let result = common::helium()
+    let result = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

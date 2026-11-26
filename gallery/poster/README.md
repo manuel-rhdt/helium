@@ -38,7 +38,7 @@ are from memory (Toto, Tangsa and Nag Mundari are guesses).
 
 ## Fonts
 
-Helium has no `@font-face` and uses the fonts installed on the system, so the document asks for
+Umbruch has no `@font-face` and uses the fonts installed on the system, so the document asks for
 them with `<meta name="gallery-fonts" content="system">`. Noto Serif for the Indic, Southeast
 Asian, Caucasian and CJK scripts (Noto Serif CJK for Han, Japanese and Hangul), Amiri for
 Arabic, Gulzar for Nastaliq, Abyssinica SIL for Ethiopic, Gentium Book Plus for Latin, Greek and
@@ -61,7 +61,7 @@ mongolfont.com (plain HTTP, so the SHA-256 is checked) and never fails: without 
 tile is set in Noto Sans Mongolian.
 
 `fetch-fonts.sh` downloads them and copies the bundled Adiabene (about 115 files, 33 MB, mostly the three CJK serifs) into
-`~/.fonts/helium-poster`. The Gallery workflow runs it, caches the result and renders the
+`~/.fonts/umbruch-poster`. The Gallery workflow runs it, caches the result and renders the
 poster like the other documents, so there is no PDF in the repository.
 
 ## Render it locally
@@ -71,5 +71,5 @@ gallery/poster/fetch-fonts.sh
 cargo run --release -- gallery/poster/index.html poster.pdf
 ```
 
-Line breaking of Thai, Khmer, Lao and Burmese needs Helium 0.2.1 or later, and the vertical text
+Line breaking of Thai, Khmer, Lao and Burmese needs Umbruch 0.2.1 or later, and the vertical text
 needs `writing-mode`.

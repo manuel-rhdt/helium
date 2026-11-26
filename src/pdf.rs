@@ -872,7 +872,7 @@ fn embed_images(
 /// forbids transparency, object streams and version 4 of ICC profiles, so a file of level `1b` is
 /// written without the first two, and a document that needs any of the things that it forbids is an
 /// error (see [`pdfa1_forbid`]); only the level `b` of part 1 is supported. Level `b` is about the looks
-/// of the pages, `u` adds that the text can be extracted, `a` that the file is tagged. Helium always
+/// of the pages, `u` adds that the text can be extracted, `a` that the file is tagged. Umbruch always
 /// writes the maps from the glyphs to Unicode, so `u` costs nothing; `a` needs the structure tree,
 /// so it does not go with `--no-tags`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1028,7 +1028,7 @@ fn write_pdf_to<W: Write>(
     // the document information dictionary and the XMP packet say the same
     let metadata = &structure.metadata;
     let date = metadata.date.or_else(crate::metadata::Timestamp::from_environment);
-    let producer = format!("Helium {}", env!("CARGO_PKG_VERSION"));
+    let producer = format!("Umbruch {}", env!("CARGO_PKG_VERSION"));
     {
         let info = &mut context.document_info;
         let mut set = |key: &str, value: String| {
@@ -1482,7 +1482,7 @@ fn xmp_metadata(
         properties += &format!("   <xmp:CreateDate>{0}</xmp:CreateDate>\n   <xmp:ModifyDate>{0}</xmp:ModifyDate>\n", date.xmp());
     }
     properties += &format!(
-        "   <pdf:Producer>Helium {}</pdf:Producer>\n",
+        "   <pdf:Producer>Umbruch {}</pdf:Producer>\n",
         env!("CARGO_PKG_VERSION")
     );
     if tagged {

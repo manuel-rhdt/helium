@@ -2,7 +2,7 @@
 //!
 //! The formula's elements are entities with a [`MathNode`] component (built in `construct.rs`).
 //! [`EcsMathTree`] exposes them, together with their computed styles, as a
-//! [`formel::host::MathTree`], so formel lays out helium's own tree with helium's CSS.
+//! [`formel::host::MathTree`], so formel lays out umbruch's own tree with umbruch's CSS.
 
 use super::{
     FontMap,
@@ -33,7 +33,7 @@ use std::rc::Rc;
 
 use PixelLength as Px;
 
-/// helium's ECS world, seen as a math tree.
+/// umbruch's ECS world, seen as a math tree.
 struct EcsMathTree<'a, 'world> {
     nodes: &'a ReadStorage<'world, MathNode>,
     styles: &'a ReadStorage<'world, ComputedValues>,
@@ -239,7 +239,7 @@ impl MathLayoutHost for EcsMathHost<'_, '_> {
     }
 }
 
-/// The style mlayout needs, from helium's computed values. Percentages of padding and margins
+/// The style mlayout needs, from umbruch's computed values. Percentages of padding and margins
 /// resolve against 0, as math elements have no definite containing block width.
 fn math_computed_style(style: &ComputedValues) -> MathComputedStyle {
     let deco = calculate_padding_and_border(Px(0.0), style);

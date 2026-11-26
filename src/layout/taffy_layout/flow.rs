@@ -21,12 +21,12 @@
 //! content of the container are in the numbers of its flow), the extents and the paragraphs have
 //! one numbering for all of them.
 
-use super::tree::{Content, HeliumTree, node_is_out_of_flow};
+use super::tree::{Content, UmbruchTree, node_is_out_of_flow};
 use super::window::Span;
 use crate::style::properties::computed::Break;
 use crate::style::properties::specified::Display;
 use crate::style::properties::computed::{Float, FloatReference};
-use helium_paginate::{BoxRef, BreakKind, BreakLevel, FloatSide, Item, NodeRef, ParId};
+use umbruch_paginate::{BoxRef, BreakKind, BreakLevel, FloatSide, Item, NodeRef, ParId};
 use std::rc::Rc;
 use taffy::tree::NodeId;
 
@@ -77,7 +77,7 @@ pub(super) struct Flow {
     /// of the multi-column containers come behind them.
     pub page_extents: usize,
     /// The header rows of the tables, which the pages that go on inside of a table repeat.
-    pub repeats: Vec<helium_paginate::Repeat>,
+    pub repeats: Vec<umbruch_paginate::Repeat>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,8 +155,8 @@ impl Breaks {
 /// The boxes that are positioned in the initial containing block by their `top` or `bottom`
 /// are on the first page: they become children of the root, in front of its other children.
 /// (A box with a static position is on the page of the content in front of it.)
-fn pin_to_first_page(tree: &mut HeliumTree, root: NodeId) {
-    fn collect(tree: &HeliumTree, id: NodeId, positioned: bool, found: &mut Vec<(NodeId, NodeId)>) {
+fn pin_to_first_page(tree: &mut UmbruchTree, root: NodeId) {
+    fn collect(tree: &UmbruchTree, id: NodeId, positioned: bool, found: &mut Vec<(NodeId, NodeId)>) {
         for &child in &tree.node(id).children {
             let style = &tree.node(child).style;
             let is_positioned = style.position != taffy::Position::Static;
@@ -184,7 +184,7 @@ fn pin_to_first_page(tree: &mut HeliumTree, root: NodeId) {
 /// `single_page`: the document is one page whatever it says (a document that is cropped), so
 /// there are no forced page breaks.
 pub(super) fn extract(
-    tree: &mut HeliumTree,
+    tree: &mut UmbruchTree,
     root: NodeId,
     rtl: bool,
     paged: bool,
@@ -238,7 +238,7 @@ pub(super) fn extract(
 }
 
 struct Extractor<'t, 'a, 'w> {
-    tree: &'t mut HeliumTree<'a, 'w>,
+    tree: &'t mut UmbruchTree<'a, 'w>,
     flow: Flow,
     /// What the pages are that the flow is made for: the pages of the document, or the columns
     /// of a multi-column container.
@@ -576,7 +576,7 @@ impl Extractor<'_, '_, '_> {
             if let Some(header) = self.tree.repeated_header(id) {
                 if let Some(header_end) = self.tree.node(header).span.as_ref().map(|span| span.end) {
                     let node = self.extent(Anchor::Top(header), Anchor::Bottom(header));
-                    self.flow.repeats.push(helium_paginate::Repeat {
+                    self.flow.repeats.push(umbruch_paginate::Repeat {
                         from: header_end as usize,
                         to: end as usize,
                         node,
@@ -589,7 +589,7 @@ impl Extractor<'_, '_, '_> {
             if let Some(footer) = self.tree.repeated_footer(id) {
                 if let Some(footer_start) = self.tree.node(footer).span.as_ref().map(|span| span.start) {
                     let node = self.extent(Anchor::Top(footer), Anchor::Bottom(footer));
-                    self.flow.repeats.push(helium_paginate::Repeat {
+                    self.flow.repeats.push(umbruch_paginate::Repeat {
                         from: start as usize,
                         to: footer_start as usize,
                         node,

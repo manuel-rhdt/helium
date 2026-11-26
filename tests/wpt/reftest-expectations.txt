@@ -1,5 +1,5 @@
 # Known failures of the vendored web-platform-tests reftests, one path per line (relative to
-# tests/wpt). A test listed here must keep failing: once helium passes it, the runner asks for its
+# tests/wpt). A test listed here must keep failing: once umbruch passes it, the runner asks for its
 # removal. Run `cargo test --test wpt_reftest` to see why a test fails.
 
 # Fails on purpose: it expects a counter that a previous sibling made to stay in scope for the next
@@ -89,13 +89,13 @@ css/css-values/vh-calc-support-pct.html
 # fails like vh-support.html: the box is sized by the page area, the root background covers the page margins too
 css/css-values/vh-calc-support.html
 
-# @media screen does not match: helium is print media
+# @media screen does not match: umbruch is print media
 css/mediaqueries/mq-calc-008.html
 
 # needs <resolution> (dppx) in math functions
 css/mediaqueries/mq-calc-resolution.html
 
-# @media screen does not match: helium is print media
+# @media screen does not match: umbruch is print media
 css/mediaqueries/mq-calc-sign-function-003.html
 
 # needs <resolution> (dppx) in math functions

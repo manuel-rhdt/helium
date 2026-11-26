@@ -10,7 +10,7 @@ pub use super::font_features::{
 };
 use cssparser::{CowRcStr, ParseError, Parser, Token, match_ignore_ascii_case};
 use cssparser_color::Color;
-use helium_derive::{ParseDeclaration, PropertyValue};
+use umbruch_derive::{ParseDeclaration, PropertyValue};
 
 use formel::unicode_math::Family as MathFamily2;
 
@@ -311,7 +311,7 @@ where
     }
 }
 
-/// Holds any property declaration that is supported by helium, grouped
+/// Holds any property declaration that is supported by umbruch, grouped
 /// by style structs.
 #[derive(Debug, Clone, ParseDeclaration)]
 pub enum PropertyDeclaration<'a> {
@@ -2621,12 +2621,12 @@ impl HyphenateLimitLast {
     /// Where a line that ends in a hyphen should not be the last one, for the pages and the
     /// columns: `always` is about every kind of break, `column` as well, `page` is about pages
     /// and spreads and `spread` about spreads.
-    pub fn page_end_limit(self) -> helium_paginate::HyphenLimit {
+    pub fn page_end_limit(self) -> umbruch_paginate::HyphenLimit {
         match self {
-            HyphenateLimitLast::None => helium_paginate::HyphenLimit::None,
-            HyphenateLimitLast::Always | HyphenateLimitLast::Column => helium_paginate::HyphenLimit::Column,
-            HyphenateLimitLast::Page => helium_paginate::HyphenLimit::Page,
-            HyphenateLimitLast::Spread => helium_paginate::HyphenLimit::Spread,
+            HyphenateLimitLast::None => umbruch_paginate::HyphenLimit::None,
+            HyphenateLimitLast::Always | HyphenateLimitLast::Column => umbruch_paginate::HyphenLimit::Column,
+            HyphenateLimitLast::Page => umbruch_paginate::HyphenLimit::Page,
+            HyphenateLimitLast::Spread => umbruch_paginate::HyphenLimit::Spread,
         }
     }
 }
@@ -4155,7 +4155,7 @@ impl Default for MathShift {
 }
 
 /// The `math-style` property: `normal | compact`. `normal` is display style, `compact` inline
-/// style. Unlike the standard initial value (`normal`), helium starts out compact.
+/// style. Unlike the standard initial value (`normal`), umbruch starts out compact.
 /// https://w3c.github.io/mathml-core/#the-math-style
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum MathStyle {

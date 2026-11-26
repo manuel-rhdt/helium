@@ -14,7 +14,7 @@ fn boxes_and_log(name: &str, html: &str) -> (Vec<(f64, f64)>, String) {
     let output = dir.join(format!("css_variables__{}.pdf", name));
     let layout = dir.join(format!("css_variables__{}.json", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])

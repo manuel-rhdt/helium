@@ -7,7 +7,7 @@ fn base_fonts(name: &str, html: &str) -> Vec<String> {
     let input = dir.join(format!("font_weight__{}.html", name));
     let output = dir.join(format!("font_weight__{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-compression", "--no-system-fonts"])
         .arg(&input)

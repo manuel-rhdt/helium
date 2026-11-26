@@ -9,7 +9,7 @@ fn row_heights(html: &str) -> Vec<f64> {
     let output = dir.join("table_row_height.pdf");
     let layout = dir.join("table_row_height.json");
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--dump-layout"])
         .arg(&layout)

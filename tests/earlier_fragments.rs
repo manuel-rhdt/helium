@@ -1,5 +1,5 @@
 //! A container with columns that goes over pages offers the pages fragments that end earlier than
-//! the one that fills the page (`HELIUM_EARLIER_FRAGMENTS`), and the pages take them where that
+//! the one that fills the page (`UMBRUCH_EARLIER_FRAGMENTS`), and the pages take them where that
 //! leaves less room unused. The document is a generated one (`tools/looseness_bench.py`, the kind
 //! `headings`): columns with headings that must not end a column, over pages.
 
@@ -12,14 +12,14 @@ use serde_json::Value;
 fn room(earlier: Option<u32>) -> (usize, f64) {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let report = dir.join(format!("earlier_fragments_{}.json", earlier.map_or("default".into(), |n| n.to_string())));
-    let mut command = common::helium().unwrap();
+    let mut command = common::umbruch().unwrap();
     command
         .args(["--no-system-fonts", "--dump-pagination"])
         .arg(&report)
         .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/earlier_fragments.html"))
         .arg(dir.join("earlier_fragments.pdf"));
     if let Some(earlier) = earlier {
-        command.env("HELIUM_EARLIER_FRAGMENTS", earlier.to_string());
+        command.env("UMBRUCH_EARLIER_FRAGMENTS", earlier.to_string());
     }
     let output = command.output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));

@@ -20,7 +20,7 @@ use specs::storage::GenericReadStorage;
 use specs::{Component, DenseVecStorage, Entity};
 use specs::{Entities, Join, Read, ReadStorage, System, Write, WriteStorage};
 
-use helium_paginate::paragraph::LineStart;
+use umbruch_paginate::paragraph::LineStart;
 use std::collections::{BTreeMap, HashMap};
 
 /// What may hang at a break point (`hanging-punctuation`), as the width of the glyph.
@@ -57,7 +57,7 @@ pub struct MeasuredLine {
     pub baseline: Px,
     pub from_break: usize,
     pub to_break: usize,
-    /// How the line fits (`helium_paginate::paragraph::LineStart::fitness`): the breaking of the
+    /// How the line fits (`umbruch_paginate::paragraph::LineStart::fitness`): the breaking of the
     /// rest of the paragraph after it counts lines that are far apart in it.
     pub fitness: u8,
     /// The demerits of the line as the breaker counts them (`ParagraphLines::demerits`).
@@ -459,7 +459,7 @@ impl InlineFormattingContext {
     /// The ways to break the part of the paragraph that [`compute_lines_from`] breaks: the optimum
     /// first, and then, if `extra` is not 0, the breakings with the least demerits for the
     /// numbers of lines that are up to `extra` fewer and more than the optimum has (see
-    /// `helium_paginate::paragraph::compute_paragraph_variants`).
+    /// `umbruch_paginate::paragraph::compute_paragraph_variants`).
     ///
     /// [`compute_lines_from`]: Self::compute_lines_from
     #[allow(clippy::too_many_arguments)]
@@ -493,7 +493,7 @@ impl InlineFormattingContext {
 
         let opportunities: Vec<_> = breakpoints
             .iter()
-            .map(|breakpoint| helium_paginate::paragraph::BreakOpportunity {
+            .map(|breakpoint| umbruch_paginate::paragraph::BreakOpportunity {
                 forced: breakpoint.forced,
                 hyphen: breakpoint.hyphen,
                 penalty: breakpoint.penalty,
@@ -501,10 +501,10 @@ impl InlineFormattingContext {
             })
             .collect();
         let mut glue_prefix = Vec::with_capacity(breakpoints.len() + 1);
-        glue_prefix.push(helium_paginate::paragraph::GlueTotals::default());
+        glue_prefix.push(umbruch_paginate::paragraph::GlueTotals::default());
         for breakpoint in breakpoints {
             let previous = *glue_prefix.last().unwrap();
-            glue_prefix.push(helium_paginate::paragraph::GlueTotals {
+            glue_prefix.push(umbruch_paginate::paragraph::GlueTotals {
                 stretch: previous.stretch + f64::from(breakpoint.glue_stretch.0),
                 shrink: previous.shrink + f64::from(breakpoint.glue_shrink.0),
             });
@@ -525,7 +525,7 @@ impl InlineFormattingContext {
             let glue = if justified {
                 // (and the no-break spaces of the line, which are not break points)
                 let ties = self.ties_in(breakpoints[from].advance_after, breakpoints[to].advance_before);
-                helium_paginate::paragraph::GlueTotals {
+                umbruch_paginate::paragraph::GlueTotals {
                     stretch: end_glue.stretch - start_glue.stretch
                         + ties.iter().map(|tie| f64::from(tie.stretch.0)).sum::<f64>(),
                     shrink: end_glue.shrink - start_glue.shrink
@@ -535,7 +535,7 @@ impl InlineFormattingContext {
                 let font_size = text_runs
                     .get(breakpoints[to].entity)
                     .map_or(16.0, |run| run.face.font_size.0);
-                helium_paginate::paragraph::GlueTotals {
+                umbruch_paginate::paragraph::GlueTotals {
                     stretch: f64::from(2.0 * font_size),
                     shrink: 0.0,
                 }
@@ -553,7 +553,7 @@ impl InlineFormattingContext {
             LineStart { fitness, hyphen: breakpoints[from].hyphen }
         };
         let end = until.map_or(opportunities.len(), |to| to + 1);
-        let variants = helium_paginate::paragraph::compute_paragraph_variants(
+        let variants = umbruch_paginate::paragraph::compute_paragraph_variants(
             &opportunities[from..end],
             |start, end| metrics(from + start, from + end),
             width_of,
@@ -1541,7 +1541,7 @@ fn push_bidi_runs(
 }
 
 /// The hyphenation dictionaries of the languages of a document, loaded when they are first
-/// needed. Only the dictionaries that are embedded into Helium (Cargo features `embed_*` of the
+/// needed. Only the dictionaries that are embedded into Umbruch (Cargo features `embed_*` of the
 /// `hyphenation` crate, currently US English) are available. The hyphenation points of the words
 /// that were looked up are kept: words repeat, and the dictionary allocates for every lookup.
 #[derive(Default)]

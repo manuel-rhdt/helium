@@ -1,5 +1,5 @@
 [package]
-name = "helium"
+name = "umbruch"
 version = "0.5.0"
 authors = ["Manuel Reinhardt"]
 edition = "2024"
@@ -16,8 +16,8 @@ log = { version = "0.4.8", features = ["std", "max_level_trace", "release_max_le
 cssparser = "0.38"
 selectors = "0.41"
 specs = { version = "0.20", features = ["shred-derive", "specs-derive"] }
-helium_derive = { path = "./helium_derive" }
-helium_paginate = { path = "./helium_paginate" }
+umbruch_derive = { path = "./umbruch_derive" }
+umbruch_paginate = { path = "./umbruch_paginate" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }

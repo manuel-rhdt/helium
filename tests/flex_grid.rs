@@ -10,7 +10,7 @@ fn run(name: &str, html: &str, args: &[&str]) -> Output {
     let input = dir.join(format!("flex_grid__{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    common::helium()
+    common::umbruch()
         .unwrap()
         .args(args)
         .arg(&input)
@@ -303,7 +303,7 @@ fn bare_text_in_a_flex_container_is_aligned_like_an_item() {
             ),
         )
         .unwrap();
-        let output = common::helium()
+        let output = common::umbruch()
             .unwrap()
             .arg("--dump-layout")
             .arg("-")

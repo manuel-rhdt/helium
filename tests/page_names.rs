@@ -13,7 +13,7 @@ fn dump(name: &str, html: &str) -> Value {
     std::fs::create_dir_all(dir).unwrap();
     let input = dir.join(format!("page_names_{}.html", name));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

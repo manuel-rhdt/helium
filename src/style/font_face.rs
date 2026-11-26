@@ -1,4 +1,4 @@
-//! The `@font-face` rule (CSS Fonts 4, § 4): the descriptors that Helium reads.
+//! The `@font-face` rule (CSS Fonts 4, § 4): the descriptors that Umbruch reads.
 //!
 //! Supported descriptors: `font-family`, `src` (`local()` and `url()` sources, with `format()`
 //! and `tech()`), `font-weight` (also a range) and `font-style`. `font-stretch`,
@@ -175,7 +175,7 @@ fn parse_style<'i>(input: &mut Parser<'i>) -> Result<FontStyle, ParseError<Style
 }
 
 /// The comma-separated list of sources. A source that is not valid or that is of a format that
-/// Helium cannot read is left out (CSS Fonts 4 § 4.3: the others are still used).
+/// Umbruch cannot read is left out (CSS Fonts 4 § 4.3: the others are still used).
 fn parse_src(input: &mut Parser) -> Vec<FontSource> {
     let mut sources = vec![];
     loop {

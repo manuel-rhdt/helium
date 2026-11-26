@@ -16,7 +16,7 @@ fn render_with(name: &str, extension: &str, svg: &str, extra: &[&str]) -> Render
     let input = dir.join(format!("svg_input__{}.{}", name, extension));
     let output = dir.join(format!("svg_input__{}.pdf", name));
     std::fs::write(&input, svg).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-compression", "--no-system-fonts"])
@@ -85,7 +85,7 @@ fn run(name: &str, extension: &str, text: &str, extra: &[&str]) -> std::process:
     let input = dir.join(format!("svg_input__{}.{}", name, extension));
     let output = dir.join(format!("svg_input__{}.pdf", name));
     std::fs::write(&input, text).unwrap();
-    common::helium().unwrap().args(extra).arg(&input).arg(&output).output().unwrap()
+    common::umbruch().unwrap().args(extra).arg(&input).arg(&output).output().unwrap()
 }
 
 #[test]

@@ -17,7 +17,7 @@ fn dump(name: &str, style: &str, paragraphs: usize) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("looseness__{name}.html"));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--dump-layout", "-"])
         .arg(&input)
@@ -78,7 +78,7 @@ fn looseness_is_inherited() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join("looseness__inherit_body.html");
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--dump-layout", "-"])
         .arg(&input)
@@ -107,7 +107,7 @@ fn a_paragraph_that_takes_a_looser_breaking_pushes_down_what_follows_it() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join("looseness__pushes.html");
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--dump-layout", "-"])
         .arg(&input)
@@ -139,7 +139,7 @@ fn the_choices_of_the_pages_can_be_dumped() {
     let input = dir.join("looseness__dump.html");
     std::fs::write(&input, html).unwrap();
     let report = dir.join("looseness__dump.json");
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--dump-pagination"])
         .arg(&report)
@@ -189,7 +189,7 @@ fn balanced_columns_are_shorter_when_their_paragraphs_can_be_broken_in_another_w
         let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
         let input = dir.join(format!("looseness__{name}.html"));
         std::fs::write(&input, html).unwrap();
-        let output = common::helium()
+        let output = common::umbruch()
             .unwrap()
             .args(["--no-system-fonts", "--dump-layout", "-"])
             .arg(&input)

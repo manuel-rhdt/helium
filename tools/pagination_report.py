@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Prints the file that `helium --dump-pagination FILE` writes as a table.
+"""Prints the file that `umbruch --dump-pagination FILE` writes as a table.
 
-    helium --dump-pagination p.json in.html out.pdf && python3 tools/pagination_report.py p.json [--ways]
+    umbruch --dump-pagination p.json in.html out.pdf && python3 tools/pagination_report.py p.json [--ways]
 
 One line per page: the room that is left at its foot (in pixels), how it ends, what it breaks
 (orphans, widows, an avoided break, an overflow), the paragraphs that it holds with the way that

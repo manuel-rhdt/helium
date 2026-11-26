@@ -3,7 +3,7 @@
 //! The SVG parser (`svg/`, a fork of `usvg`) does not read XML text: it reads a
 //! `usvg::xml::Document`, which is built here from the DOM that the HTML parser made. So an
 //! inline `<svg>` is part of the document: the style sheets of the document apply to its
-//! elements, with the selector matching and the cascade of the rest of Helium, and the
+//! elements, with the selector matching and the cascade of the rest of Umbruch, and the
 //! elements of one `<svg>` can refer to the ones of another (`<use href="#icon">`, a gradient
 //! in a hidden `<svg>` of the page).
 

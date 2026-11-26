@@ -96,7 +96,7 @@ pub struct MarginBoxes {
     pub pages: HashMap<PageContext, Vec<ResolvedMarginBox>>,
     /// What the page context does to the `page` counter, by kind of page.
     pub counters: HashMap<PageContext, PageCounterOps>,
-    /// The `-helium-page-label` of the kinds of pages.
+    /// The `-umbruch-page-label` of the kinds of pages.
     pub labels: HashMap<PageContext, PageLabelSpec>,
 }
 
@@ -111,7 +111,7 @@ impl MarginBoxes {
         self.counters.get(&normalize(page, &self.keys, Scope::Full)).copied().unwrap_or_default()
     }
 
-    /// The `-helium-page-label` of a page.
+    /// The `-umbruch-page-label` of a page.
     fn label_spec(&self, page: &PageContext) -> &PageLabelSpec {
         self.labels.get(&normalize(page, &self.keys, Scope::Full)).unwrap_or(&PageLabelSpec::Auto)
     }
@@ -218,7 +218,7 @@ fn label_of(content: &[ContentItem]) -> Option<(LabelStyle, String)> {
     None
 }
 
-/// The style of the number of a page for `-helium-page-label: auto`: if the margin boxes of the
+/// The style of the number of a page for `-umbruch-page-label: auto`: if the margin boxes of the
 /// page (headers and footers) have exactly one `counter(page)` between them, its style. With none
 /// or with several (which could differ) there is nothing to follow. The text around the counter
 /// is not a prefix of the label: it could be anything, like the title of the book.
@@ -232,7 +232,7 @@ fn sole_counter_style(boxes: &[ResolvedMarginBox]) -> Option<LabelStyle> {
 }
 
 /// The ranges of the labels of the pages. The label of a page is decided by its
-/// `-helium-page-label` (`auto`: the style of the one `counter(page)` of its margin boxes) and
+/// `-umbruch-page-label` (`auto`: the style of the one `counter(page)` of its margin boxes) and
 /// the value of its `page` counter. A page that has no label from that has its number in decimal. Empty if all labels are the numbers of the pages in decimal, which
 /// the PDF needs no `/PageLabels` for.
 ///
@@ -528,7 +528,7 @@ mod test {
 
         let label = |css: &str| {
             let mut styles = Styles::default();
-            styles.parse_css(&format!("@page {{ -helium-page-label: {css} }}"));
+            styles.parse_css(&format!("@page {{ -umbruch-page-label: {css} }}"));
             styles.rules_iter().last().unwrap().page_label.clone()
         };
         assert_eq!(label("auto"), Some(PageLabelSpec::Auto));

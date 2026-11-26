@@ -6,7 +6,7 @@ fn check_layout(name: &str, html: &str) {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("inline_box_edges__{name}.html"));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg(format!("--font-dir={}", common::wpt_fonts().display()))
         .arg("--check-layout")

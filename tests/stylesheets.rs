@@ -8,7 +8,7 @@ fn text_colors(name: &str, html: &str) -> Vec<Value> {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("stylesheets__{}.html", name));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

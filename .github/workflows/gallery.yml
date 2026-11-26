@@ -27,8 +27,8 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
     - name: Cache cargo
       uses: Swatinem/rust-cache@v2
-    # fontconfig: Helium's default features. poppler-utils: thumbnails and page counts.
-    # Most documents use only the fonts built into Helium. The poster asks for the installed
+    # fontconfig: Umbruch's default features. poppler-utils: thumbnails and page counts.
+    # Most documents use only the fonts built into Umbruch. The poster asks for the installed
     # fonts (`gallery-fonts: system`) and needs about 115 more, which its script downloads.
     - name: Install system dependencies
       run: |
@@ -38,7 +38,7 @@ jobs:
       id: poster-fonts
       uses: actions/cache@v4
       with:
-        path: ~/.fonts/helium-poster
+        path: ~/.fonts/umbruch-poster
         key: poster-fonts-${{ hashFiles('gallery/poster/fetch-fonts.sh') }}
     - name: Download the fonts of the poster
       if: steps.poster-fonts.outputs.cache-hit != 'true'
@@ -49,23 +49,23 @@ jobs:
     - name: Download the Mongolian font of the poster
       run: sh gallery/poster/fetch-mongolian-font.sh
     - name: Index the fonts of the poster
-      run: fc-cache -f ~/.fonts/helium-poster
-    # The typography specimen is set in EB Garamond, which is not built into Helium.
+      run: fc-cache -f ~/.fonts/umbruch-poster
+    # The typography specimen is set in EB Garamond, which is not built into Umbruch.
     - name: Cache the font of the typography specimen
       id: typography-fonts
       uses: actions/cache@v4
       with:
-        path: ~/.fonts/helium-typography
+        path: ~/.fonts/umbruch-typography
         key: typography-fonts-${{ hashFiles('gallery/typography/fetch-fonts.sh') }}
     - name: Download the font of the typography specimen
       if: steps.typography-fonts.outputs.cache-hit != 'true'
       run: sh gallery/typography/fetch-fonts.sh
     - name: Index the font of the typography specimen
-      run: fc-cache -f ~/.fonts/helium-typography
+      run: fc-cache -f ~/.fonts/umbruch-typography
     - name: Build
       run: cargo build --release --locked
     - name: Render the gallery
-      run: python3 gallery/build.py --helium target/release/helium --out _site
+      run: python3 gallery/build.py --umbruch target/release/umbruch --out _site
     - uses: actions/upload-artifact@v4
       with:
         name: gallery

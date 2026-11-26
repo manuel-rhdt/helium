@@ -1,4 +1,4 @@
-//! `helium --serve` (see `helium::server`) and the library entry point.
+//! `umbruch --serve` (see `umbruch::server`) and the library entry point.
 mod common;
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -27,7 +27,7 @@ struct Response {
 
 impl Server {
     fn start() -> Server {
-        let mut command = Command::cargo_bin("helium").unwrap();
+        let mut command = Command::cargo_bin("umbruch").unwrap();
         command.args(["--serve", "--no-system-fonts"]);
         Server::spawn(command)
     }
@@ -100,7 +100,7 @@ fn cli(input: &str, args: &[&str]) -> Vec<u8> {
     static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let output = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("server-cli-{}-{n}.pdf", std::process::id()));
-    let mut cmd = common::helium().unwrap();
+    let mut cmd = common::umbruch().unwrap();
     cmd.args(args).arg(input).arg(&output);
     cmd.assert().success();
     let bytes = std::fs::read(&output).unwrap();
@@ -165,7 +165,7 @@ fn layout_dump_is_the_json_of_dump_layout() {
     let response = server.call(1, "layout", json!({"document": doc, "query": {"dump": true}}));
     let dump_file = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("server-dump-{}.json", std::process::id()));
     let pdf_file = dump_file.with_extension("pdf");
-    common::helium().unwrap().args(["--dump-layout"]).arg(&dump_file).arg(&path).arg(&pdf_file).assert().success();
+    common::umbruch().unwrap().args(["--dump-layout"]).arg(&dump_file).arg(&path).arg(&pdf_file).assert().success();
     let expected: Value = serde_json::from_slice(&std::fs::read(&dump_file).unwrap()).unwrap();
     assert_eq!(response.json["result"]["dump"], expected);
     std::fs::remove_file(dump_file).ok();
@@ -247,7 +247,7 @@ fn a_truncated_frame_exits_with_65() {
 
 #[test]
 fn a_frame_over_the_limit_is_skipped() {
-    let mut command = Command::cargo_bin("helium").unwrap();
+    let mut command = Command::cargo_bin("umbruch").unwrap();
     command.args(["--serve", "--no-system-fonts"]);
     let mut server = Server::spawn(command);
     // 70 MiB of body
@@ -307,7 +307,7 @@ fn results_do_not_depend_on_earlier_requests() {
 fn the_cli_reads_stdin_and_writes_stdout() {
     let (path, _) = document("loremipsum.html");
     let source = std::fs::read(&path).unwrap();
-    let mut cmd = common::helium().unwrap();
+    let mut cmd = common::umbruch().unwrap();
     cmd.args(["--html", "-", "-"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = cmd.spawn().unwrap();
     child.stdin.take().unwrap().write_all(&source).unwrap();
@@ -318,7 +318,7 @@ fn the_cli_reads_stdin_and_writes_stdout() {
 
 #[test]
 fn the_engine_renders_the_same_bytes_as_the_cli() {
-    use helium::{Document, DocumentKind, Engine, EngineConfig, RenderOptions};
+    use umbruch::{Document, DocumentKind, Engine, EngineConfig, RenderOptions};
     let config = EngineConfig { system_fonts: false, ..Default::default() };
     let engine = Engine::new(config.clone()).unwrap();
     let (path, _) = document("loremipsum.html");

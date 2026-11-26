@@ -16,7 +16,7 @@ fn dump(name: &str, table: &str) -> Value {
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
     let input = dir.join(format!("table_footer__{}.html", name));
     std::fs::write(&input, format!("<style>{}</style>{}", PAGE, table)).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

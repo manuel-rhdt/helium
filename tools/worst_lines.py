@@ -46,7 +46,7 @@ def main():
     # (the document may refer to files next to it)
     base = os.path.dirname(os.path.abspath(args.document))
     shutil_copy = subprocess.run(["cp", "-r", "-n", base + "/.", directory], capture_output=True)
-    env = {**os.environ, **{"HELIUM_" + k.removeprefix("HELIUM_").partition("=")[0]: k.partition("=")[2] for k in args.knob}}
+    env = {**os.environ, **{"UMBRUCH_" + k.removeprefix("UMBRUCH_").partition("=")[0]: k.partition("=")[2] for k in args.knob}}
     subprocess.run([bench.BIN, "--no-system-fonts", "--dump-pagination", os.path.join(directory, "r.json"), path,
                     os.path.join(directory, "doc.pdf")], check=True, capture_output=True, env=env)
     report = json.load(open(os.path.join(directory, "r.json")))

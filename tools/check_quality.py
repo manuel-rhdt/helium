@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks the output of helium for generated documents with and without a setting, for the
+"""Checks the output of umbruch for generated documents with and without a setting, for the
 correctness and the typographic quality of the pages (not the speed):
 
     python3 tools/check_quality.py [--seeds N] [--kinds a,b] [--knob NAME=VALUE ...] [--against NAME=VALUE ...]
@@ -23,7 +23,7 @@ import looseness_bench as bench
 def run(html, name, directory, knobs):
     path = os.path.join(directory, name + ".html")
     open(path, "w").write(html)
-    env = {**os.environ, "RUST_LOG": "warn", **{"HELIUM_" + k: v for k, v in knobs.items()}}
+    env = {**os.environ, "RUST_LOG": "warn", **{"UMBRUCH_" + k: v for k, v in knobs.items()}}
     process = subprocess.run([bench.BIN, "--no-system-fonts", "--dump-pagination", path[:-5] + ".json", path, path[:-5] + ".pdf"],
                              capture_output=True, text=True, env=env)
     if process.returncode:

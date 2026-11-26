@@ -91,7 +91,7 @@ def run(html, looseness, knobs, directory, name):
     html = html.replace("</style>", f"body {{ looseness: {looseness} }}</style>", 1)
     path = os.path.join(directory, name + ".html")
     open(path, "w").write(html)
-    env = {**os.environ, **{"HELIUM_" + k: v for k, v in knobs.items()}}
+    env = {**os.environ, **{"UMBRUCH_" + k: v for k, v in knobs.items()}}
     process = subprocess.run([bench.BIN, "--dump-pagination", path[:-5] + ".json", path, path[:-5] + ".pdf"],
                              capture_output=True, text=True, env=env)
     if process.returncode:

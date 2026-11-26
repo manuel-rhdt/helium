@@ -1,10 +1,12 @@
-# Helium
+# Umbruch
 
-Helium turns an HTML document with CSS (and MathML) into a paginated, tagged PDF. It is a print
+*Umbruch* (OOM-brookh) is the German word for page makeup, and also for upheaval.
+
+Umbruch turns an HTML document with CSS (and MathML) into a paginated, tagged PDF. It is a print
 renderer: it lays out pages, not a scrollable screen, and it runs no scripts.
 
 ```
-helium [options] input.html output.pdf
+umbruch [options] input.html output.pdf
 ```
 
 ## Install
@@ -19,20 +21,20 @@ configured. There is no macOS binary yet.
 The binary is built with the MSVC toolchain and links the C runtime statically, so it needs no
 redistributable and no other file. It is not signed, so SmartScreen asks once when it is started
 from a download: *More info* → *Run anyway*. There is no installer and no file association: unpack
-`helium-vX.Y.Z-x86_64-pc-windows-msvc.zip` where you want it and put that directory on `PATH`, in
+`umbruch-vX.Y.Z-x86_64-pc-windows-msvc.zip` where you want it and put that directory on `PATH`, in
 PowerShell:
 
 ```powershell
-$dir = "$env:LOCALAPPDATA\Programs\helium"
+$dir = "$env:LOCALAPPDATA\Programs\umbruch"
 New-Item -ItemType Directory -Force $dir | Out-Null
-Copy-Item .\helium.exe $dir
+Copy-Item .\umbruch.exe $dir
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike "*$dir*") {
   [Environment]::SetEnvironmentVariable('Path', "$userPath;$dir", 'User')
 }
 ```
 
-A new terminal then has `helium --version` and `helium document.html document.pdf`. The fonts are
+A new terminal then has `umbruch --version` and `umbruch document.html document.pdf`. The fonts are
 read from `%SYSTEMROOT%\Fonts` and the two per-user font directories (those of `%USERPROFILE%`);
 `--font-dir DIR` adds another one, and `--no-system-fonts` leaves only the built-in families
 (DejaVu, TeX Gyre, STIX Two Math, Latin Modern Math), so that the output does not depend on the
@@ -40,12 +42,12 @@ machine. Pass on `LICENSE-DejaVu.txt`, which the zip and the tarball carry, with
 
 ### Linux
 
-Unpack `helium-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz` (statically linked against musl, so it
-needs no shared library, not even fontconfig) and put `helium` on `PATH`:
+Unpack `umbruch-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz` (statically linked against musl, so it
+needs no shared library, not even fontconfig) and put `umbruch` on `PATH`:
 
 ```
-tar xzf helium-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz
-install -m 755 helium-vX.Y.Z-x86_64-unknown-linux-musl/helium ~/.local/bin/
+tar xzf umbruch-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz
+install -m 755 umbruch-vX.Y.Z-x86_64-unknown-linux-musl/umbruch ~/.local/bin/
 ```
 
 The installed fonts are found by scanning the font directories.
@@ -106,7 +108,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   read as XML (`xml5ever`): namespaces and prefixes are resolved (`<s:svg>`, `<x:div>`, `<m:math>`),
   empty elements (`<div/>`) are empty, and a file that is not well-formed is an error instead of
   being repaired. Entities of an internal DTD are not expanded. The root is an XHTML `html`
-  element, laid out as an HTML document, or an `svg` element: `helium drawing.svg out.pdf` makes one
+  element, laid out as an HTML document, or an `svg` element: `umbruch drawing.svg out.pdf` makes one
   page of the size of the drawing (`width` and `height`, else the `viewBox`, else 300 by 150
   pixels; no margin), with `<foreignObject>` content (HTML, MathML) and `<style>` elements as in
   an inline `<svg>`. Lengths mean the same in the SVG and in the HTML in it (a user unit is a CSS
@@ -324,7 +326,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   specificity of `:first`. It works in every `@page` rule except for `size` and `margin`: the
   pages are chosen before the number of a page in its group is known, so these follow `:nth(1 of
   name)` (the first page of a group, which is known) and not other `:nth()` selectors, which have
-  no effect on them (the margin boxes, the `page` counter and `-helium-page-label` of the rule
+  no effect on them (the margin boxes, the `page` counter and `-umbruch-page-label` of the rule
   apply). There is no `name:first` for a group: `:first` is the first page of the document.
 - **Fragmentation:** `break-before`/`-after`/`-inside` (`auto`, `avoid`, `avoid-page`,
   `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
@@ -444,7 +446,7 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 
 PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from the HTML
 (headings, paragraphs, lists, tables, links, figures, formulas, and tables of contents) and the PDF/UA identifier;
-document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels (the `-helium-page-label` of the `@page` rules, which is not in CSS: `auto` takes the style of the one `counter(page)` that the headers and footers of the page have between them, and the decimal number if there are none or several, `none` the decimal number, or `"A-" counter(page, upper-roman)` a prefix and the style of the number; the text around a counter in a header or footer is never a prefix); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
+document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels (the `-umbruch-page-label` of the `@page` rules, which is not in CSS: `auto` takes the style of the one `counter(page)` that the headers and footers of the page have between them, and the decimal number if there are none or several, `none` the decimal number, or `"A-" counter(page, upper-roman)` a prefix and the style of the number; the text around a counter in a header or footer is never a prefix); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
 from the elements with a `bookmark-level` (UA default: `h1` to `h6` and `role=heading` with `aria-level`; entries nest by level, elements that are not displayed are left out), with `bookmark-label` (strings, `content()`, `attr()`) and `bookmark-state`; `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency

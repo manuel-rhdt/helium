@@ -12,7 +12,7 @@
 //! without the features for them.
 
 use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
-use helium_derive::PropertyValue;
+use umbruch_derive::PropertyValue;
 
 use super::specified::PropertyValue;
 use crate::style::parse::StyleParseError;

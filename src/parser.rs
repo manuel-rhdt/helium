@@ -285,7 +285,7 @@ impl TreeSink for Sink {
         flags: ElementFlags,
     ) -> Self::Handle {
         // The prefix of an element (`<s:svg>`, from an XML parser) has no meaning once its
-        // namespace is known, and the rest of Helium compares whole names (`QualName` equality
+        // namespace is known, and the rest of Umbruch compares whole names (`QualName` equality
         // includes the prefix), so it is dropped here.
         let name = QualName::new(None, name.ns, name.local);
         // the content of a `<template>` is a tree of its own, which is not part of the document

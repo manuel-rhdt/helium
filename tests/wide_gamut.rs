@@ -14,7 +14,7 @@ fn render(name: &str, html: &str) -> String {
     let input = dir.join(format!("wide_{name}.html"));
     let output = dir.join(format!("wide_{name}.pdf"));
     std::fs::write(&input, html).unwrap();
-    common::helium().unwrap().arg("--no-compression").arg("--no-system-fonts").arg(&input).arg(&output).assert().success();
+    common::umbruch().unwrap().arg("--no-compression").arg("--no-system-fonts").arg(&input).arg(&output).assert().success();
     String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(output).unwrap())).into_owned()
 }
 
@@ -227,7 +227,7 @@ fn the_layout_dump_names_the_space_of_a_wide_color() {
          <div style=\"background: color(rec2020 0 1 0); width: 10px; height: 10px\"></div>",
     )
     .unwrap();
-    let output = common::helium().unwrap().arg("--dump-layout").arg("-").arg(&input).arg(dir.join("wide_dump.pdf")).output().unwrap();
+    let output = common::umbruch().unwrap().arg("--dump-layout").arg("-").arg(&input).arg(dir.join("wide_dump.pdf")).output().unwrap();
     let dump = String::from_utf8_lossy(&output.stdout);
     assert!(dump.contains("\"display-p3\""), "{dump}");
     assert!(dump.contains("\"rec2020\""), "{dump}");

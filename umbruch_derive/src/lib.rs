@@ -109,7 +109,7 @@ fn impl_parse_declaration_macro(ast: &syn::DeriveInput) -> proc_macro2::TokenStr
             }
 
             let property_name = if variant_attribute == Some(VariantAttribute::UAProperty) {
-                format!("-helium-{}", ident_kebab)
+                format!("-umbruch-{}", ident_kebab)
             } else {
                 ident_kebab
             };

@@ -36,7 +36,7 @@ Floats (`float: top` and `bottom`) are done in the basic form that the section "
 The pipeline in `src/layout/mod.rs` (`layout`) is:
 
 1. `FindPossibleLineBreaks` finds the break opportunities of every paragraph.
-2. `TaffyBlockLayout` (`src/layout/taffy_layout/mod.rs`) builds `HeliumTree` once and does the
+2. `TaffyBlockLayout` (`src/layout/taffy_layout/mod.rs`) builds `UmbruchTree` once and does the
    rest of the work on it:
    - `flow.rs` makes the *flow* from the tree: the items of the kernel. A block container is
      the box of its top edge, its kids with a break and a gap between each two of them, and the
@@ -154,7 +154,7 @@ Limits of this, in order of importance:
 
 Two properties of the code that the design builds on:
 
-- helium implements Taffy's tree traits itself (`HeliumTree` in `taffy_layout/tree.rs`)
+- umbruch implements Taffy's tree traits itself (`UmbruchTree` in `taffy_layout/tree.rs`)
   instead of using `TaffyTree`. It controls which children and which styles Taffy sees.
 - `paragraph::compute_paragraph_breakpoints` takes the line width as a function of the line
   number, and `InlineFormattingContext::compute_lines_from` breaks a paragraph from a break
@@ -192,7 +192,7 @@ lays out the document as a whole.
   solver and of any objective.
 
 The kernel, the paragraph breaker, the solvers and the metrics live in a crate
-of their own, `helium_paginate`, next to `helium_derive`. It has no dependency
+of their own, `umbruch_paginate`, next to `umbruch_derive`. It has no dependency
 on the ECS, on fonts or on Taffy, so it builds in seconds and can run on
 recorded problems.
 
@@ -415,7 +415,7 @@ page continues with ways of its own from the cut, so the state of a node is as i
 ways. A way whose worst line is worse than the tolerance (TeX's `\tolerance`, 200) is left out,
 and the first way is never left out. `Solution::choices` has the ways of the pages, and
 `realize` checks them; the layout breaks the paragraphs of a page as the page chose
-(`HeliumTree::page_variants`, `lines_between`).
+(`UmbruchTree::page_variants`, `lines_between`).
 
 **The exchange rate.** TeX has none: its page builder does not change how paragraphs are broken,
 and an author who wants another number of lines sets `\looseness` by hand. What TeX gives are the
@@ -470,7 +470,7 @@ The profile tables are the existing dynamic program in
 program is quadratic in the number of opportunities of a paragraph and keeps no
 list of active nodes. It needs one before it is run per width and per cut.
 
-`paragraph.rs` moves into `helium_paginate`. The live and the recorded
+`paragraph.rs` moves into `umbruch_paginate`. The live and the recorded
 implementation of `Paragraphs` then run the same code.
 
 ### Page fills
@@ -715,7 +715,7 @@ page on. For plain block flow this must never happen, and a test asserts it.
 ### How Taffy serves a part of the document
 
 Taffy has no notion of fragmentation and no way to stop early. The service
-answers through a *window* on `HeliumTree`:
+answers through a *window* on `UmbruchTree`:
 
 - `child_ids` yields only the children inside the window;
 - the style of a box that is cut has no padding and no border at the cut edge,
@@ -736,7 +736,7 @@ laid out whole.
 
 `LayoutService::content_extent(root, inline)` and its companions `extent_in` and `lines_in` answer
 for the box `root` laid out on its own. `BoxRef` names a box of the flow (in the engine, the index
-of its node in `HeliumTree`).
+of its node in `UmbruchTree`).
 
 - **What `inline` is.** The width of the *content box* of `root`. `root` is laid out as the root
   of a formatting context: its own `width`, `min-width` and `max-width` do not apply, its padding
@@ -834,7 +834,7 @@ multiplies the state of the search for little gain.
 For solver work without the engine, a problem is recorded:
 
 ```
-helium --dump-pagination problem.json input.html out.pdf
+umbruch --dump-pagination problem.json input.html out.pdf
 ```
 
 The file holds the `Problem` and what a `RecordedService` needs to answer the
@@ -847,7 +847,7 @@ dependency behind a feature.
 Recorded problems cover the flow only. Containers that are split need the real
 service.
 
-A binary in `helium_paginate` runs named solvers over a directory of problems
+A binary in `umbruch_paginate` runs named solvers over a directory of problems
 and prints the metrics and the time of each. The corpus starts with the
 gallery (`gallery/book`, `gallery/report`, ...) and the documents in
 `tests/documents`.
@@ -865,7 +865,7 @@ Tests:
   under the same objective.
 
 For a search such as OpenEvolve, the unit that is evolved is one Rust file
-with a `Solver`. The evaluator builds `helium_paginate`, runs the harness and
+with a `Solver`. The evaluator builds `umbruch_paginate`, runs the harness and
 scores the metrics. The exact solver on small problems gives the reference.
 
 ## Changes to the engine
@@ -873,7 +873,7 @@ scores the metrics. The exact solver on small problems gives the reference.
 The pipeline is now:
 
 1. Construct, find line break opportunities (unchanged).
-2. Build `HeliumTree` once. Make the flow from it.
+2. Build `UmbruchTree` once. Make the flow from it.
 3. Solve, with the layout service answering the kernel.
 4. Apply: lay out every page through its window and write the positions. The decorations of
    boxes on more than one page are made from the parts that were written for each page. There
@@ -912,7 +912,7 @@ the first page.
 
 ## Order of work
 
-1. Done. `helium_paginate` with tokens, the flat flow, the kernel and `CssObjective`;
+1. Done. `umbruch_paginate` with tokens, the flat flow, the kernel and `CssObjective`;
    `paragraph.rs` moves there. The exact solver passes the equivalence test.
 2. Done. The windowed view and the layout of a page for block flow. Pages of differing
    width work. Page groups, the shift, the guessed page class and `stop_at_forced` are removed.
@@ -1134,11 +1134,11 @@ level; the `break-inside` of the boxes around a container does not reach the col
 another fragmentation context. The breaks do not propagate out of a container: the `break-before`
 of its first child is a break between columns of it, not before the container.
 
-**A layout mode in `HeliumTree`.** Taffy has no multi-column layout. A container with columns is a
+**A layout mode in `UmbruchTree`.** Taffy has no multi-column layout. A container with columns is a
 leaf for Taffy, like a paragraph: `compute_cached_layout` calls `compute_columns_layout`, which
 asks the plan for a height and returns the size that `compute_leaf_layout` makes of it, with the
 width, padding, border, `min-` and `max-` sizes and `height` of the box as for any block. The
-columns are then laid out by helium, as a table is turned into a grid: for every column of the plan
+columns are then laid out by umbruch, as a table is turned into a grid: for every column of the plan
 the window is set to the part of the content that is in the column (the box of the container
 is a window root: `Window::scope`), the container is laid out as a block of the width of the
 column with no padding, border and margin, and the layouts of the boxes that Taffy has just laid
@@ -1267,7 +1267,7 @@ container what it asked and what it was answered. This is what a page needs to f
 the fragment again, so that the layout of the page and the choice of the pages cannot disagree
 (the numbers are the ones the kernel asked with, and the same arguments give the same answer).
 
-**The inner problem of a fragment.** `helium_paginate::plan_fragment` makes the answer; it is in
+**The inner problem of a fragment.** `umbruch_paginate::plan_fragment` makes the answer; it is in
 the crate so that the kernel tests can run it, and the engine only gives it the extents and lines
 of the content at the width of a column (`InColumns`, as for a container that is not split).
 
@@ -1307,7 +1307,7 @@ span says nothing about that, so the window knows the containers that it starts 
 (`Window::start_container` and `end_container`): the box is cut there (no padding, border or margin
 at the cut, no minimum height, and it has a fragment of its own for the decoration), as a box with
 items on both sides of the window is. In the layout of the page the container is a leaf for Taffy, as
-high as the plan found for it (`HeliumTree::page_fragments`, set from `Kernel::fragments` for the
+high as the plan found for it (`UmbruchTree::page_fragments`, set from `Kernel::fragments` for the
 page). Its columns are laid out one after the other, every one through a window of its own that
 replaces the one of the page while it is set (`save_window` and `restore_window`), and written with
 the layouts of that column. The windows are therefore nested: the one of the page, and the ones of
@@ -1524,7 +1524,7 @@ more within the tolerance of 200 are 5 of 78), so these numbers are a lower boun
 set to a longer measure.
 
 The two numbers that decide how much is taken can be changed without rebuilding
-(`HELIUM_LINE_TOLERANCE`, the exchange rate of lines and room, and `HELIUM_VARIANT_TOLERANCE`, the
+(`UMBRUCH_LINE_TOLERANCE`, the exchange rate of lines and room, and `UMBRUCH_VARIANT_TOLERANCE`, the
 worst badness of a line of another breaking; both 200 by default), and the harness takes them as
 `--knob LINE_TOLERANCE=400`. With `looseness: 2`, 20 documents of each kind:
 
@@ -1570,7 +1570,7 @@ choice cannot know: the page has to choose among fragments (see "Multi-column la
 fragment in it (the `end` of a fragment is part of what the page records, `PageFragment`), but the
 tree service gave only the fragment that fills the page. It gives now that one and up to three
 that end earlier: the columns are chosen again for the room less one, two and three lines of the
-first paragraph (`HELIUM_EARLIER_FRAGMENTS`, 3 by default, 0 for the old behaviour), and the ones
+first paragraph (`UMBRUCH_EARLIER_FRAGMENTS`, 3 by default, 0 for the old behaviour), and the ones
 that end at a place that another has are left out. The plans are kept by where the fragment starts,
 the page, the room, and where it ends. The page takes a fragment that ends earlier where that
 costs less in total, which is where the room left on the pages is spread better.
@@ -1625,7 +1625,7 @@ Two results of the first runs looked like bugs, and one was.
 
 ### Looking at the choices
 
-`helium --dump-pagination FILE` (`-` for stdout) writes what the paginator chose and why, as JSON:
+`umbruch --dump-pagination FILE` (`-` for stdout) writes what the paginator chose and why, as JSON:
 for every page its room, how it ends, orphans, widows, avoided breaks and overflow, its cost in
 the parts of the typed cost, the price of its lines in room (`line_room`), the ways chosen for its
 paragraphs, and for every paragraph on it the lines it has with their badness and the ways it
@@ -1658,7 +1658,7 @@ a mean badness that goes from 31 to 46: that is the exchange that the two knobs 
 In the columns of a container that goes over pages it does not work as well: 66.8% of the columns are full,
 and `looseness` gets that to 76.8% (78.5% with the tolerances open), and the first
 fragment of a container is always full. The fragments that start in the middle of a paragraph are the ones that are
-short (and `HELIUM_EARLIER_FRAGMENTS` takes about four points of this away, on purpose: it leaves room
+short (and `UMBRUCH_EARLIER_FRAGMENTS` takes about four points of this away, on purpose: it leaves room
 to the pages where that is cheaper, see above). In a container with one column the tolerances open give 89%, with three
 columns `looseness` changes nothing, and a way of a paragraph is hardly ever taken there. This has not
 been explained: the same machinery gives 100% for the pages of the book.
@@ -1670,7 +1670,7 @@ been explained: the same machinery gives 100% for the pages of the book.
   the known size, the available space and the size of the parent; the mode (sizing mode and
   whether the margins are collapsible) is kept once for the node. Neither the style nor the
   children are in the key. A node that is laid out in a window (other children, other style)
-  must therefore not use the cache: `HeliumTree` returns no entry and stores none for the
+  must therefore not use the cache: `UmbruchTree` returns no entry and stores none for the
   nodes that the window changes (`Node::windowed`). The nodes inside the window that are not
   changed keep sharing their entries, and since a parent that is laid out for another width
   replaces the final entry of its child, the layout of a node's descendants is always the one

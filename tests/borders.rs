@@ -22,7 +22,7 @@ fn render(name: &str, css: &str) -> Rendered {
         format!("<style>@page{{size:600px 300px;margin:10px}} div{{width:40px;height:20px;{}}}</style><div></div>", css),
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-compression", "--no-system-fonts", "--dump-layout"])

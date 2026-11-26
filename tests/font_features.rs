@@ -21,7 +21,7 @@ fn widths_and_log(name: &str, body: &str, valid: bool) -> Vec<f64> {
         format!("<style>body{{font:20px 'TeX Gyre Termes'}}span{{display:inline-block}}</style>{}", body),
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])
@@ -155,7 +155,7 @@ fn margin_text_of(name: &str, content: &str, style: &str) -> String {
         ),
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-compression", "--no-system-fonts"])
         .arg(&input)

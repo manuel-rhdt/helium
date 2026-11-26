@@ -1,7 +1,7 @@
 //! The window: the part of the document that Taffy is asked to lay out for one page.
 //!
 //! The paginator drives, and Taffy answers (see `docs/pagination.md`). Taffy knows nothing of
-//! pages, so [`HeliumTree`] shows it a *window* of the tree instead of the whole of it:
+//! pages, so [`UmbruchTree`] shows it a *window* of the tree instead of the whole of it:
 //!
 //! - the children of a box are the ones that have items of the flow in the window;
 //! - a box that is cut has no padding, no border and no margin at the cut edge, and no minimum
@@ -17,8 +17,8 @@
 //! for, and nothing in the key says which window it was computed in. These nodes bypass the
 //! cache (`Node::windowed`).
 
-use super::tree::{Content, HeliumTree, Node, node_is_out_of_flow};
-use helium_paginate::Cut;
+use super::tree::{Content, UmbruchTree, Node, node_is_out_of_flow};
+use umbruch_paginate::Cut;
 use std::collections::HashMap;
 use taffy::tree::NodeId;
 use taffy::{LengthPercentage, LengthPercentageAuto};
@@ -171,7 +171,7 @@ fn is_zero(value: LengthPercentage) -> bool {
     raw.tag() == taffy::CompactLength::LENGTH_TAG && raw.value() == 0.0
 }
 
-impl HeliumTree<'_, '_> {
+impl UmbruchTree<'_, '_> {
     /// The style that Taffy lays a box out with: the style of the box, changed for the window.
     pub(super) fn active_style(&self, id: NodeId) -> &taffy::Style {
         let node = self.node(id);

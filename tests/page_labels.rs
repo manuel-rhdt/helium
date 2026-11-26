@@ -7,7 +7,7 @@ fn render(name: &str, html: &str) -> String {
     let input = dir.join(format!("labels_{name}.html"));
     let output = dir.join(format!("labels_{name}.pdf"));
     std::fs::write(&input, html).unwrap();
-    common::helium().unwrap().arg("--no-compression").arg(&input).arg(&output).assert().success();
+    common::umbruch().unwrap().arg("--no-compression").arg(&input).arg(&output).assert().success();
     String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(output).unwrap())).into_owned()
 }
 
@@ -54,8 +54,8 @@ fn the_labels_follow_the_page_context() {
         "restart",
         &format!(
             "<style>{PAGE} @page {{ @bottom-center {{ content: counter(page) }} }}\
-             @page front {{ -helium-page-label: counter(page, lower-roman) }}\
-             @page appendix {{ -helium-page-label: \"A-\" counter(page) }}\
+             @page front {{ -umbruch-page-label: counter(page, lower-roman) }}\
+             @page appendix {{ -umbruch-page-label: \"A-\" counter(page) }}\
              .front {{ page: front }} .body {{ page: body }} .appendix {{ page: appendix }}</style>\
              <section class=front><div>1</div><div>2</div></section>\
              <section class=body><div>3</div><div>4</div></section>\
@@ -94,13 +94,13 @@ fn the_label_property_is_independent_of_the_margin_boxes() {
     // without a number in the margin box, the label is the one that the page says
     let pdf = render(
         "property",
-        &format!("<style>{PAGE} @page {{ -helium-page-label: \"p. \" counter(page, upper-alpha) }}</style><div>1</div><div>2</div>"),
+        &format!("<style>{PAGE} @page {{ -umbruch-page-label: \"p. \" counter(page, upper-alpha) }}</style><div>1</div><div>2</div>"),
     );
     assert_eq!(page_labels(&pdf), "/Nums [ 0 << /S /A /P (p. ) /St 1 >> ]");
     // `none` is the number in decimal, whatever the footer prints
     let pdf = render(
         "none_label",
-        &format!("<style>{PAGE} @page {{ -helium-page-label: none; @bottom-center {{ content: counter(page, lower-roman) }} }}</style><div>1</div><div>2</div>"),
+        &format!("<style>{PAGE} @page {{ -umbruch-page-label: none; @bottom-center {{ content: counter(page, lower-roman) }} }}</style><div>1</div><div>2</div>"),
     );
     assert_eq!(pdf.matches("/PageLabels").count(), 0);
 }

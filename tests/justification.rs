@@ -8,7 +8,7 @@ fn dump(name: &str, html: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("justification__{}.html", name));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")
@@ -166,7 +166,7 @@ fn ahem_adjustments(name: &str, text: &str) -> Vec<f64> {
         ),
     )
     .unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--font-dir")
         .arg(common::wpt_fonts())

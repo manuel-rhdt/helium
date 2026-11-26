@@ -1,6 +1,6 @@
 //! The text of SVG images is shaped by the code that shapes the text of the document, with the
 //! fonts of the document: `usvg` lays the text out (anchors, `tspan`, paths), and asks the
-//! [`HeliumShaper`] for the glyphs of every run. The fonts of the characters that the font of the
+//! [`UmbruchShaper`] for the glyphs of every run. The fonts of the characters that the font of the
 //! text has no glyphs for are chosen by the font fallback of the document
 //! (`layout::text::fallback`), like for any other text. (The SVG parser does not shape text or
 //! look for fallback fonts itself.)
@@ -27,30 +27,30 @@ struct State {
     primary: HashMap<usvg::fontdb::ID, Arc<Font>>,
 }
 
-pub struct HeliumShaper {
+pub struct UmbruchShaper {
     state: Mutex<State>,
     /// The fonts of the document that the images are in.
     fonts: std::sync::Weak<FontContext>,
 }
 
-impl HeliumShaper {
+impl UmbruchShaper {
     pub fn new(fonts: std::sync::Weak<FontContext>) -> Self {
         let mut state = State::default();
         if let Some(fonts) = fonts.upgrade() {
             state.resolver.set_fonts(fonts);
         }
-        HeliumShaper { state: Mutex::new(state), fonts }
+        UmbruchShaper { state: Mutex::new(state), fonts }
     }
 }
 
-impl std::fmt::Debug for HeliumShaper {
+impl std::fmt::Debug for UmbruchShaper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HeliumShaper").finish()
+        f.debug_struct("UmbruchShaper").finish()
     }
 }
 
 /// The font families of `font` as the families of the document.
-pub fn helium_families(font: &usvg::Font) -> Vec<FontFamily> {
+pub fn umbruch_families(font: &usvg::Font) -> Vec<FontFamily> {
     font.families()
         .iter()
         .map(|family| match family {
@@ -71,7 +71,7 @@ pub fn helium_families(font: &usvg::Font) -> Vec<FontFamily> {
         .collect()
 }
 
-pub fn helium_style(font: &usvg::Font) -> FontStyle {
+pub fn umbruch_style(font: &usvg::Font) -> FontStyle {
     match font.style() {
         usvg::FontStyle::Normal => FontStyle::Normal,
         usvg::FontStyle::Italic => FontStyle::Italic,
@@ -79,7 +79,7 @@ pub fn helium_style(font: &usvg::Font) -> FontStyle {
     }
 }
 
-impl TextShaper for HeliumShaper {
+impl TextShaper for UmbruchShaper {
     fn shape(&self, request: &ShapeRequest<'_>) -> Option<Vec<ShapedGlyph>> {
         let context = self.fonts.upgrade()?;
         let mut state = self.state.lock().ok()?;
@@ -95,14 +95,14 @@ impl TextShaper for HeliumShaper {
             }
         };
 
-        let mut families = helium_families(request.font);
+        let mut families = umbruch_families(request.font);
         // like the text of the document, which ends with the generic family of its design
         families.push(FontFamily::SansSerif);
         let key = FallbackKey::from_parts(
             Language::default(),
             families,
             FontWeight(f32::from(request.font.weight())),
-            helium_style(request.font),
+            umbruch_style(request.font),
         );
         let mut fonts = resolver.ensure_coverage_for_key(key.clone(), &font, request.text, font_map);
         let mut features = Vec::new();

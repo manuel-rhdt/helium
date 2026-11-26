@@ -1,8 +1,8 @@
 #!/bin/sh
 # Downloads EB Garamond (SIL Open Font License) and installs it for the current user.
-# Helium uses the fonts installed on the system (there is no @font-face yet).
+# Umbruch uses the fonts installed on the system (there is no @font-face yet).
 set -eu
-dest="${1:-$HOME/.fonts/helium-typography}"
+dest="${1:-$HOME/.fonts/umbruch-typography}"
 base=https://raw.githubusercontent.com/google/fonts/main/ofl/ebgaramond
 mkdir -p "$dest"
 curl -fsSL -o "$dest/EBGaramond-Regular.ttf" "$base/EBGaramond%5Bwght%5D.ttf"

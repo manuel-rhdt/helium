@@ -19,7 +19,7 @@ fn dump(name: &str, css: &str) -> Value {
         format!(r#"<style>{} body {{ margin: 0 }}</style>{}"#, css, BODY),
     )
     .unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")

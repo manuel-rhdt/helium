@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Writes a PDF that tests how a viewer and a display handle the colour spaces that Helium writes.
+"""Writes a PDF that tests how a viewer and a display handle the colour spaces that Umbruch writes.
 
-It does not use Helium or lemon_pdf: the PDF, the ICC profiles and the colour maths are written here, so a
+It does not use Umbruch or lemon_pdf: the PDF, the ICC profiles and the colour maths are written here, so a
 bug in those cannot hide in the test. Open the file on the device and look at the seams.
 
     python3 tools/wide_gamut_test_pdf.py [output.pdf]

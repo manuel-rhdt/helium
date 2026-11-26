@@ -67,7 +67,7 @@ fn subset_font_bytes(font: &Font, usage: &GlyphUsage) -> std::result::Result<Vec
     // `Identity-H` text selects glyphs by CID, and a PDF viewer finds the glyph of a CID in a
     // CID-keyed CFF font (the Noto CJK fonts) through the charset of the font. The shaper
     // returns glyph indices, which are the same as the CIDs only if the charset is the
-    // identity. A subset of the font (like the one bundled with Helium, whose glyphs are
+    // identity. A subset of the font (like the one bundled with Umbruch, whose glyphs are
     // numbered anew) keeps the CIDs of the original, so the charset is renumbered:
     // together with the retained glyph indices CID = glyph index. This has no effect on
     // other fonts.

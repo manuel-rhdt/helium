@@ -37,7 +37,7 @@ fn gallery(document: &str) -> PathBuf {
 /// does) with the arguments, and returns the file.
 fn render(document: &str, tag: &str, args: &[&str]) -> PathBuf {
     let output = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("conformance_{document}_{tag}.pdf"));
-    let mut command = common::helium().unwrap();
+    let mut command = common::umbruch().unwrap();
     command.current_dir(gallery(document)).arg("--no-system-fonts").args(args).arg("index.html").arg(&output);
     command.assert().success();
     output
@@ -126,7 +126,7 @@ fn a_document_with_transparency_is_not_written_as_pdfa1() {
     for document in ["invoice", "cv", "math-notes", "slides", "emoji"] {
         let output = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("conformance_{document}_1b_error.pdf"));
         let _ = std::fs::remove_file(&output);
-        let result = common::helium()
+        let result = common::umbruch()
             .unwrap()
             .current_dir(gallery(document))
             .args(["--no-system-fonts", "--pdfa", "1b", "index.html"])
@@ -158,7 +158,7 @@ fn wide_gamut_colors_conform_to_pdfa() {
     .unwrap();
     for level in ["2b", "3a"] {
         let output = dir.join(format!("conformance_wide_{level}.pdf"));
-        common::helium().unwrap().args(["--no-system-fonts", "--pdfa", level]).arg(&input).arg(&output).assert().success();
+        common::umbruch().unwrap().args(["--no-system-fonts", "--pdfa", level]).arg(&input).arg(&output).assert().success();
         assert!(validate(&lib, level, &[output.clone()]).is_empty(), "wide-gamut colours do not conform to {level}: {}", output.display());
     }
 }

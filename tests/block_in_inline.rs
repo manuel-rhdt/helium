@@ -6,7 +6,7 @@ fn check_layout(name: &str, html: &str) {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("block_in_inline__{name}.html"));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--check-layout")
         .arg(&input)

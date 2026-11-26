@@ -62,7 +62,7 @@ impl FallbackSet {
     }
 }
 
-/// A font file (a system font or one of the fonts built into Helium). Every font that is used
+/// A font file (a system font or one of the fonts built into Umbruch). Every font that is used
 /// is embedded into the PDF.
 #[derive(Debug)]
 pub struct Font {
@@ -100,7 +100,7 @@ impl Clone for Font {
     }
 }
 
-// `BUNDLED_FONTS`: the fonts built into Helium, deflated and described by `build.rs`: the
+// `BUNDLED_FONTS`: the fonts built into Umbruch, deflated and described by `build.rs`: the
 // TeX Gyre fonts (free, metric-compatible stand-ins for the Helvetica, Times and Courier families
 // of the PDF standard fonts, so that the generic families and the standard font names resolve
 // without any installed fonts), the OpenType math fonts (Latin Modern Math and STIX Two Math,
@@ -158,7 +158,7 @@ impl Font {
         (found != 0).then_some(position)
     }
 
-    /// The font built into Helium (DejaVu Sans) in the given weight.
+    /// The font built into Umbruch (DejaVu Sans) in the given weight.
     pub fn bundled(weight: &FontWeight) -> Self {
         // the closer of the two weights, a tie goes to the heavier one like in font matching
         let font = if weight.0 >= 550.0 { DEJAVU_BOLD } else { DEJAVU_REGULAR };
@@ -324,7 +324,7 @@ pub(crate) fn name_of(face: &HbFace, id: u32) -> Option<String> {
     String::from_utf8(buffer).ok()
 }
 
-/// Whether the fonts installed on the system are used; if not, only the fonts built into Helium
+/// Whether the fonts installed on the system are used; if not, only the fonts built into Umbruch
 /// are. Unit tests use only the built-in fonts by default, so
 /// that their results do not depend on the machine.
 static USE_SYSTEM_FONTS: AtomicBool = AtomicBool::new(!cfg!(test));
@@ -361,7 +361,7 @@ fn face_data(db: &fontdb::Database, id: fontdb::ID) -> Option<(Arc<Vec<u8>>, u32
 }
 
 /// The fonts installed on the system (unless disabled, see `use_system_fonts`) and the fonts
-/// built into Helium, scanned once.
+/// built into Umbruch, scanned once.
 fn system_fonts() -> &'static fontdb::Database {
     system_database()
 }
@@ -428,7 +428,7 @@ const EMOJI_FAMILIES: &[&str] = &[
 ];
 
 /// A colour emoji font with `COLR` glyphs: an installed one, or else Noto Color Emoji, which is
-/// built into Helium (the fonts of the system come first in the database). A system can have the
+/// built into Umbruch (the fonts of the system come first in the database). A system can have the
 /// same family as a bitmap font too (the `CBDT` build of Noto Color Emoji), which has to be
 /// skipped.
 pub(crate) fn color_emoji_font() -> Option<Font> {
@@ -459,7 +459,7 @@ struct AuthorFace {
     style: FontStyle,
 }
 
-/// The fonts that a document can use: the installed fonts and the ones built into Helium, and
+/// The fonts that a document can use: the installed fonts and the ones built into Umbruch, and
 /// the faces of its `@font-face` rules. The faces of a family that the document defines hide the
 /// installed fonts of the same name.
 ///
@@ -477,7 +477,7 @@ pub struct FontContext {
     face_ids: Mutex<BTreeMap<(String, usize), Option<fontdb::ID>>>,
     /// The shaper of the text of SVG images, shared by all of them so that it keeps the fonts it
     /// has loaded.
-    shaper: OnceLock<Arc<crate::svg_text::HeliumShaper>>,
+    shaper: OnceLock<Arc<crate::svg_text::UmbruchShaper>>,
 }
 
 impl std::fmt::Debug for FontContext {
@@ -550,7 +550,7 @@ impl FontContext {
     /// The shaper of the text of SVG images.
     pub(crate) fn shaper(self: &Arc<Self>) -> Arc<dyn usvg::TextShaper> {
         self.shaper
-            .get_or_init(|| Arc::new(crate::svg_text::HeliumShaper::new(Arc::downgrade(self))))
+            .get_or_init(|| Arc::new(crate::svg_text::UmbruchShaper::new(Arc::downgrade(self))))
             .clone()
     }
 
@@ -585,7 +585,7 @@ impl FontContext {
     }
 
     /// The font for `style`: the first available family of `font-family`, else the sans-serif
-    /// font, else the font built into Helium.
+    /// font, else the font built into Umbruch.
     pub fn match_font(&self, style: &ComputedValues) -> Font {
         let families = style
             .font
@@ -820,7 +820,7 @@ mod tests {
     fn missing_system_font_falls_back_to_an_embeddable_font() {
         let mut style = ComputedValues::default();
         std::sync::Arc::make_mut(&mut style.font).font_family =
-            vec![FontFamily::Named("Helium Missing Font".to_owned())];
+            vec![FontFamily::Named("Umbruch Missing Font".to_owned())];
 
         let font = match_font(&style);
 
