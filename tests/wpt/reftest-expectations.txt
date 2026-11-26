@@ -532,3 +532,24 @@ css/mediaqueries/negation-001.html
 css/mediaqueries/prefers-color-scheme-svg-as-image.html
 css/mediaqueries/scripting-print-noscript.html
 css/mediaqueries/scripting-print-script.html
+
+# Page fragmentation of flex and grid containers: `break-before` on the items, a flex container that
+# is cut inside of an item with `contain: size`, and the block size of the container after a cut
+css/css-break/flexbox/multi-line-row-flex-fragmentation-064-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-075-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-076-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-081a-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-081b-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-081c-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-081d-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-060-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-065-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-066-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-068a-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-068b-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-068c-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-068d-print.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-042-print.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-045-print.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-046-print.html
+css/css-break/grid/monolithic-overflow-print.html
