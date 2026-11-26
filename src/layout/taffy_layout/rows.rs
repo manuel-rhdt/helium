@@ -254,7 +254,10 @@ impl UmbruchTree<'_, '_> {
     /// `page` is the size of the page: a grid is cut inside of its items only where they are
     /// taller than half of it.
     pub(super) fn row_cuts(&mut self, row: NodeId, page: (f32, f32)) -> RowCuts {
-        let stacked = self.node(row).style.display == taffy::Display::Grid;
+        let stacked = self
+            .computed_values
+            .get(self.node(row).entity)
+            .is_some_and(|style| style.box_.display == crate::style::properties::specified::Display::Grid);
         let height = quantize(self.node(row).layout.size.height);
         let mut cells = vec![];
         let mut candidates = vec![];

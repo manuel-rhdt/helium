@@ -154,8 +154,8 @@ Limits of this, in order of importance:
     writer writes it whole above the page, shifted up by the start of the part, and clips what is
     written to the part (`Writer::clip`), as it does for a row. The absolutely positioned
     children of the grid are written with its first part.
-  - Not done: `break-inside`, `break-before` and `break-after` of the items (the grid is one item
-    of the flow, so only the ones of the grid count), and the orphans and widows of the items
+  - Not done: `break-inside`, `break-before` and `break-after` of the items and of the boxes in them
+    (the grid is one item of the flow, so only the ones of the grid count), and the orphans and widows of the items
     are only the ones of paragraphs directly in an item or in its blocks. A grid is cut by the
     offsets of the last width that the layout service was asked about, as a row is.
 - **Multi-column containers.** A container with columns whose height is the one of its content
