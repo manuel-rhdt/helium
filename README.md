@@ -203,8 +203,8 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   linear space is in an ICC space of that profile (written once); `lab()`, `lch()`, `color(xyz …)`, an `oklab()` or `oklch()` that sRGB cannot
   hold, and a colour outside of the space it was written in are CIELAB (D50; the PDF has no Oklab, so those are converted), or, with a\* or b\*
   beyond ±128 (an iPhone does not show Lab right there), in the ICC space of Rec. 2020 if that holds the colour, else with its chroma reduced. Gradients (axial and radial; a conic one is a mesh in sRGB) and `color-mix()` keep a wide colour too: a gradient with
-  one is a shading in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4 and is cut into steps, interpolated in the space of the gradient. SVG images and the layers of
-  colour glyphs are still sRGB, and a wide colour is clipped there), with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
+  one is a shading in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4 and is cut into steps, interpolated in the space of the gradient. SVG (inline, as a file or as an image) reads the same colours in `fill`, `stroke`, `stop-color`, `color` and the `style` attribute and style sheets, with the code of the style sheets, and writes them the same way (the stops of a gradient with a wide colour are in the ICC space of the wide colours, in `1b` they are clipped to sRGB with a warning); the layers of
+  colour glyphs are still sRGB, and a wide colour is clipped there; so is a wide colour in a filter of SVG, which is ignored anyway), with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
   painted for backgrounds, borders, text, text decorations and gradients. `color-mix()` mixes
   two colours (also nested, and with `var()`) in `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`,
   `lch`, `oklab`, `oklch`, `xyz`, `xyz-d50` and `xyz-d65`, with percentages, alpha premultiplied

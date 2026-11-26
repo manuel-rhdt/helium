@@ -68,6 +68,7 @@ fn svg_options(base_dir: &Path, fonts: &Arc<FontContext>) -> usvg::Options<'stat
     options.fontdb = fonts.database();
     options.font_family = "serif".to_owned();
     options.text_shaper = Some(fonts.shaper());
+    options.color_parser = Some(Arc::new(crate::svg::SvgColorParser));
     // the font of a text is the one that the document would choose for it
     let font_context = fonts.clone();
     options.font_resolver.select_font = Box::new(move |font, _| {

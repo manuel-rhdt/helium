@@ -104,6 +104,12 @@ pub struct Options<'a> {
     /// Default: `None`
     #[cfg(feature = "text")]
     pub text_shaper: Option<Arc<dyn crate::TextShaper>>,
+    /// Reads the colors that `svgtypes` rejects, like the wide-gamut colors of CSS Color 4.
+    /// Without one, such a color is an error (the fill is black, the stroke is none).
+    ///
+    /// Default: `None`
+    pub color_parser: Option<Arc<dyn crate::ColorParser>>,
+
     /// A CSS stylesheet that should be injected into the SVG. Can be used to overwrite
     /// certain attributes.
     pub style_sheet: Option<String>,
@@ -133,6 +139,7 @@ impl Default for Options<'_> {
             fontdb: Arc::new(fontdb::Database::new()),
             #[cfg(feature = "text")]
             text_shaper: None,
+            color_parser: None,
             style_sheet: None,
             max_depth: DEFAULT_MAX_DEPTH,
         }
