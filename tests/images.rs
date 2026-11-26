@@ -293,6 +293,23 @@ fn a_png_that_is_damaged_is_an_empty_box() {
 }
 
 #[test]
+fn an_image_with_too_many_pixels_is_an_empty_box_and_does_not_end_the_process() {
+    // the header of a PNG file that claims 65535 x 65535 pixels (17 GB as RGBA), and nothing more
+    let mut file = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    file.extend(65535u32.to_be_bytes());
+    file.extend(65535u32.to_be_bytes());
+    file.extend([8, 6, 0, 0, 0]);
+    let encoded = encode_base64(&file);
+    let r = render(
+        "png_too_large",
+        &format!("{PAGE}<p>a<img src=\"data:image/png;base64,{encoded}\">b</p>"),
+    );
+    assert!(r.log.contains("too large"), "{}", r.log);
+    assert_eq!(count(&r.pdf, "/Subtype /Image"), 0);
+    assert_close(r.images[0][2], 0.0);
+}
+
+#[test]
 fn an_image_that_does_not_fit_moves_to_the_next_page() {
     let r = render(
         "pages",

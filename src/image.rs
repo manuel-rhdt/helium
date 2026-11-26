@@ -162,6 +162,7 @@ impl RasterImage {
     ///
     /// The format is recognized by the signature of the file, not by its name or MIME type.
     pub fn from_bytes(data: Vec<u8>) -> Result<RasterImage, String> {
+        check_size(&data)?;
         let (image, decoded) = to_pdf_image(&data)?;
         if image.width() == 0 || image.height() == 0 {
             return Err("the image has no pixels".to_owned());
@@ -273,6 +274,49 @@ fn png_icc_profile(data: &[u8]) -> Option<Vec<u8>> {
 
 /// The number of colour components of a JPEG file, from the header of its frame.
 fn jpeg_components(data: &[u8]) -> Option<u8> {
+    jpeg_frame(data).map(|(_, _, components)| components)
+}
+
+/// The most pixels that an image may have: 100 million (10 000 x 10 000), which is more than a
+/// poster at 300 dpi needs. The size is read from the header of the file, before anything is
+/// decoded or embedded: a small file can claim any size (a few megabytes of deflate make
+/// gigabytes of pixels), a PNG with an alpha channel takes about twice its decoded size in
+/// memory, and a file that is embedded as it is would hand the same bomb on to the reader of the
+/// PDF.
+pub const MAX_PIXELS: u64 = 100_000_000;
+
+/// The size in pixels that the header of a PNG or JPEG file gives, if it can be read.
+fn header_size(data: &[u8]) -> Option<(u32, u32)> {
+    if data.starts_with(&[0x89, b'P', b'N', b'G']) {
+        // the signature, then the length and the type of the first chunk (IHDR)
+        if data.get(12..16)? != b"IHDR" {
+            return None;
+        }
+        let word = |at: usize| Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?));
+        Some((word(16)?, word(20)?))
+    } else {
+        let (height, width, _) = jpeg_frame(data)?;
+        Some((u32::from(width), u32::from(height)))
+    }
+}
+
+/// Rejects an image that has more than [`MAX_PIXELS`] pixels, going by its header.
+fn check_size(data: &[u8]) -> Result<(), String> {
+    if let Some((width, height)) = header_size(data) {
+        if u64::from(width) * u64::from(height) > MAX_PIXELS {
+            return Err(format!(
+                "the image of {} x {} pixels is too large (the limit is {} million pixels)",
+                width,
+                height,
+                MAX_PIXELS / 1_000_000
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The height, the width and the number of components that the frame header of a JPEG file has.
+fn jpeg_frame(data: &[u8]) -> Option<(u16, u16, u8)> {
     if !data.starts_with(&[0xFF, 0xD8]) {
         return None;
     }
@@ -293,7 +337,8 @@ fn jpeg_components(data: &[u8]) -> Option<u8> {
                 // the frame headers (and not the tables with the markers in between)
                 if matches!(marker, 0xC0..=0xCF) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
                     // length, precision, height, width, then the number of components
-                    return data.get(at + 9).copied();
+                    let word = |at: usize| Some(u16::from_be_bytes(data.get(at..at + 2)?.try_into().ok()?));
+                    return Some((word(at + 5)?, word(at + 7)?, *data.get(at + 9)?));
                 }
                 at += 2 + length;
             }
@@ -334,7 +379,12 @@ fn decode_png(data: &[u8]) -> Result<Image, String> {
     let size = reader
         .output_buffer_size()
         .ok_or_else(|| "the PNG image is too large".to_owned())?;
-    let mut buffer = vec![0; size];
+    // (an allocation that fails is an error, not the end of the process)
+    let mut buffer = Vec::new();
+    buffer
+        .try_reserve_exact(size)
+        .map_err(|_| "the PNG image is too large".to_owned())?;
+    buffer.resize(size, 0);
     let frame = reader.next_frame(&mut buffer).map_err(invalid)?;
     buffer.truncate(frame.buffer_size());
     if frame.bit_depth != png::BitDepth::Eight {
@@ -525,6 +575,41 @@ mod tests {
         assert_eq!(decode_base64("").unwrap(), b"");
         assert!(decode_base64("a$b").is_err());
         assert!(decode_base64("aG=V").is_err());
+    }
+
+    /// A PNG file of the given size whose pixel data is missing (only the header is right).
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut file = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        file.extend(width.to_be_bytes());
+        file.extend(height.to_be_bytes());
+        file.extend([8, 6, 0, 0, 0]);
+        file
+    }
+
+    #[test]
+    fn a_header_that_claims_too_many_pixels_is_an_error_before_anything_is_decoded() {
+        // 65535 x 65535 RGBA would need 17 GB, and a few bytes of file say so
+        let error = RasterImage::from_bytes(png_header(65535, 65535)).unwrap_err();
+        assert!(error.contains("too large"), "{error}");
+        // the limit itself is allowed (the header is then found to be damaged, which is another error)
+        assert!(check_size(&png_header(10_000, 10_000)).is_ok());
+        assert!(check_size(&png_header(10_000, 10_001)).is_err());
+        // wide and flat does not overflow the product
+        assert!(check_size(&png_header(u32::MAX, u32::MAX)).is_err());
+        // the same for a JPEG file that claims 65500 x 65500
+        let mut jpeg = fixture("gray.jpg");
+        let at = jpeg.windows(2).position(|pair| pair == [0xFF, 0xC0] || pair == [0xFF, 0xC2]).unwrap();
+        jpeg[at + 5..at + 9].copy_from_slice(&[0xFF, 0xDC, 0xFF, 0xDC]);
+        assert!(RasterImage::from_bytes(jpeg).unwrap_err().contains("too large"));
+    }
+
+    #[test]
+    fn the_sizes_of_the_fixtures_are_read_from_their_headers() {
+        assert_eq!(header_size(&fixture("alpha.png")), Some((40, 20)));
+        assert_eq!(header_size(&png_header(3, 7)), Some((3, 7)));
+        assert_eq!(header_size(&png_header(3, 7)[..18]), None);
+        assert_eq!(header_size(b"not an image"), None);
+        assert!(header_size(&fixture("gray.jpg")).is_some());
     }
 
     #[test]
