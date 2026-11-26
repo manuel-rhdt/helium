@@ -22,6 +22,7 @@
 //! are moved down with the ones that are moved to start at the cut.
 
 use super::tree::{Content, UmbruchTree, lines_from};
+use crate::style::properties::specified::{Break, Display};
 use umbruch_paginate::{BreakKind, ContainerCut, Fragment};
 use taffy::tree::NodeId;
 
@@ -74,6 +75,10 @@ pub(super) struct RowCuts {
     /// Whether the cells are the items of a grid, which are in rows of the grid below each other
     /// and not side by side in one row.
     pub stacked: bool,
+    /// The cuts that a forced break (`break-before` and `break-after` of the items and of the boxes
+    /// in them) asks for, in growing order: a grid or a flex container does not go on behind them
+    /// on the page that they end.
+    pub forced: Vec<(u32, BreakKind)>,
 }
 
 impl RowCuts {
@@ -320,7 +325,104 @@ impl UmbruchTree<'_, '_> {
         }
         candidates.sort_unstable();
         candidates.dedup();
-        RowCuts { height, cells, candidates, stacked }
+        let mut forced = vec![];
+        if stacked {
+            let content_end = cells.iter().flat_map(|cell| cell.units.iter().map(|&(_, bottom)| bottom)).max().unwrap_or(0);
+            for cell in self.node(row).children.clone() {
+                if self.is_hidden(cell) {
+                    continue;
+                }
+                let (top, height) = {
+                    let node = self.node(cell);
+                    (node.layout.location.y, node.layout.size.height)
+                };
+                if let Some(kind) = self.edge_break(cell, false) {
+                    forced.push((quantize(top), kind));
+                }
+                if let Some(kind) = self.edge_break(cell, true) {
+                    forced.push((quantize(top + height), kind));
+                }
+                self.collect_breaks(cell, top, &mut forced);
+            }
+            // (no break at the start or behind the last piece: nothing is on the page there)
+            forced.retain(|&(offset, _)| offset > 0 && offset < content_end);
+            forced.sort_by_key(|&(offset, kind)| (offset, kind == BreakKind::Forced));
+            forced.dedup_by_key(|&mut (offset, _)| offset);
+        }
+        RowCuts { height, cells, candidates, stacked, forced }
+    }
+
+    fn is_hidden(&self, id: NodeId) -> bool {
+        let node = self.node(id);
+        node.style.display == taffy::Display::None || node.style.position == taffy::Position::Absolute
+    }
+
+    /// The boxes in a box that can be split between: its children if it is a block container
+    /// (not a table, a flex or a grid container or one with columns, which are one piece).
+    fn flow_children(&self, id: NodeId) -> Vec<NodeId> {
+        let node = self.node(id);
+        let splits = node.content == Content::Blocks
+            && node.columns.is_none()
+            && !node.orthogonal
+            && !matches!(node.style.display, taffy::Display::Flex | taffy::Display::Grid)
+            && self.computed_values.get(node.entity).is_none_or(|style| {
+                !matches!(
+                    style.box_.display,
+                    Display::TableRow | Display::TableCell | Display::TableCaption | Display::TableRowGroup
+                )
+            });
+        if !splits {
+            return vec![];
+        }
+        node.children.iter().copied().filter(|&child| !self.is_hidden(child)).collect()
+    }
+
+    /// The forced break that a box has in front of it (or behind it, with `after`): the value of
+    /// the box, or else of its first (last) child, and so on down, as it is propagated.
+    /// https://www.w3.org/TR/css-break-3/#break-propagation
+    fn edge_break(&self, mut id: NodeId, after: bool) -> Option<BreakKind> {
+        let mut found: Option<BreakKind> = None;
+        loop {
+            if let Some(style) = self.computed_values.get(self.node(id).entity) {
+                let value = if after { style.page.break_after } else { style.page.break_before };
+                let kind = match value {
+                    Break::Left => Some(BreakKind::ForcedLeft),
+                    Break::Right | Break::Recto => Some(BreakKind::ForcedRight),
+                    Break::Verso => Some(BreakKind::ForcedLeft),
+                    value if value.forces_page() => Some(BreakKind::Forced),
+                    _ => None,
+                };
+                // (a value for a side wins over `page`)
+                found = match (found, kind) {
+                    (Some(BreakKind::Forced) | None, kind) => kind.or(found),
+                    (found, _) => found,
+                };
+            }
+            let kids = self.flow_children(id);
+            match if after { kids.last() } else { kids.first() } {
+                Some(&kid) => id = kid,
+                None => return found,
+            }
+        }
+    }
+
+    /// The cuts that forced breaks between the boxes in a box ask for: behind the box in front of
+    /// the break. `top` is where the border box of the box is, from the top of the container.
+    fn collect_breaks(&self, id: NodeId, top: f32, out: &mut Vec<(u32, BreakKind)>) {
+        let origin = top + self.node(id).content_shift;
+        let mut previous: Option<(NodeId, f32)> = None;
+        for child in self.flow_children(id) {
+            let child_top = origin + self.node(child).layout.location.y;
+            if let Some((before, before_top)) = previous {
+                let kinds = [self.edge_break(before, true), self.edge_break(child, false)];
+                let kind = kinds.iter().flatten().find(|&&kind| kind != BreakKind::Forced).or(kinds.iter().flatten().next());
+                if let Some(&kind) = kind {
+                    out.push((quantize(before_top + self.node(before).layout.size.height), kind));
+                }
+            }
+            self.collect_breaks(child, child_top, out);
+            previous = Some((child, child_top));
+        }
     }
 
     /// The pieces of the content of a box that no cut may be in, by their top and their bottom
@@ -404,25 +506,33 @@ pub(super) fn row_fragments(
     page: (f32, f32),
 ) -> Vec<Fragment> {
     let start = from.map_or(0, |cut| cut.item);
+    // the cut that a forced break asks for next: the fragments end there at the latest
+    let forced = cuts.forced.iter().find(|&&(offset, _)| offset > start).copied();
     let fragment = |end: Option<u32>| {
         let (orphan_violation, widow_violation) = end.map_or((false, false), |offset| cuts.violations(offset));
+        let end_kind = match (end, forced) {
+            (Some(offset), Some((at, kind))) if offset == at => kind,
+            _ => BreakKind::Allowed,
+        };
         Fragment {
             end: end.map(|offset| ContainerCut::at_item(offset as usize)),
             used: f64::from(dequantize(cuts.used(start, end.unwrap_or(cuts.height)))),
-            end_kind: BreakKind::Allowed,
-            orphan_violation,
-            widow_violation,
+            end_kind,
+            orphan_violation: orphan_violation && !end_kind.is_forced(),
+            widow_violation: widow_violation && !end_kind.is_forced(),
             avoid_violation: false,
         }
     };
     let whole = fragment(None);
+    // (the container does not go on behind a forced break)
+    let has_forced = forced.is_some();
     // A row that is at most half as high as the page, and as wide, is kept whole; the others can
     // be split where the page ends (CSS Tables 3, 6.1: they are "freely fragmentable").
     let (width, height) = page;
     // (a grid is cut between its rows whatever its height is: a grid that has no place to be cut
     // in has no candidates)
     let kept_whole = !cuts.stacked && dequantize(cuts.height) * 2.0 <= height.min(width);
-    if from.is_none() && kept_whole {
+    if from.is_none() && kept_whole && !has_forced {
         return vec![whole];
     }
     let windowed: Vec<u32>;
@@ -442,13 +552,16 @@ pub(super) fn row_fragments(
         windowed = chosen;
         candidates = &windowed;
     }
-    let mut found: Vec<Fragment> = candidates
+    let mut ends: Vec<u32> = candidates
         .iter()
         .copied()
-        .filter(|&offset| offset > start)
-        .map(|offset| fragment(Some(offset)))
+        .filter(|&offset| offset > start && forced.is_none_or(|(at, _)| offset < at))
         .collect();
-    found.push(whole);
+    ends.extend(forced.map(|(at, _)| at));
+    let mut found: Vec<Fragment> = ends.into_iter().map(|offset| fragment(Some(offset))).collect();
+    if !has_forced {
+        found.push(whole);
+    }
     // the content grows with the end of the fragment (the fragments that end where a piece does,
     // and what a cell goes on with from the cut, can be a little less than the one before)
     found.sort_by(|left, right| left.used.total_cmp(&right.used));
@@ -488,7 +601,7 @@ mod tests {
             .collect();
         candidates.sort_unstable();
         candidates.dedup();
-        RowCuts { height: quantize(300.0), cells, candidates, stacked: false }
+        RowCuts { height: quantize(300.0), cells, candidates, stacked: false, forced: vec![] }
     }
 
     #[test]
@@ -517,7 +630,7 @@ mod tests {
             marks: (0..5).map(mark).collect(),
             atomic: false,
         };
-        let row = RowCuts { height: quantize(50.0), cells: vec![cell], candidates: vec![], stacked: false };
+        let row = RowCuts { height: quantize(50.0), cells: vec![cell], candidates: vec![], stacked: false, forced: vec![] };
         // after the first line: an orphan; after the fourth: a widow; after the second: neither
         assert_eq!(row.violations(quantize(10.0)), (true, false));
         assert_eq!(row.violations(quantize(20.0)), (false, false));
@@ -581,7 +694,7 @@ mod tests {
     #[test]
     fn nothing_that_fits_is_the_least_that_can_be_placed() {
         let cells = vec![cell(1, &[(0.0, 200.0)])];
-        let row = RowCuts { height: quantize(300.0), cells, candidates: vec![quantize(200.0)], stacked: false };
+        let row = RowCuts { height: quantize(300.0), cells, candidates: vec![quantize(200.0)], stacked: false, forced: vec![] };
         let fragments = row_fragments(&row, None, 100.0, (400.0, 140.0));
         assert_eq!(fragments.len(), 1);
         assert_eq!(fragments[0].used, 200.0);

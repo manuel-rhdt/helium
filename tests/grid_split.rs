@@ -273,3 +273,69 @@ fn a_flex_container_with_a_height_is_one_box() {
     let dump = dump("flex_height", &format!("<div style='display:flex;flex-direction:column;height:60px'>{}</div>", items(1, 30, "#0f0")));
     assert_on_pages(&painted(&dump, GREEN), 1);
 }
+
+// forced breaks in the items
+
+fn pages_of(found: &[(u64, f64, f64)]) -> Vec<u64> {
+    found.iter().map(|&(page, ..)| page).collect()
+}
+
+#[test]
+fn a_break_before_an_item_of_a_grid_starts_its_row_on_the_next_page() {
+    // rows of 30 pixels: the break is in front of the second row, with plenty of room on the page
+    let dump = dump(
+        "break_before",
+        &format!(
+            "<div class=grid><div style='height:30px;background:#0f0'></div><div style='height:30px;background:#0f0'></div>\
+             <div style='height:30px;background:#00f;break-before:page'></div><div style='height:30px;background:#00f'></div></div>"
+        ),
+    );
+    let (green, blue) = (painted(&dump, GREEN), painted(&dump, BLUE));
+    assert_on_pages(&green, 2);
+    assert_on_pages(&blue, 2);
+    assert_eq!(pages_of(&green), vec![0, 0]);
+    assert_eq!(pages_of(&blue), vec![1, 1]);
+    assert!((top_of(&blue, 1) - 10.0).abs() < 0.01, "{blue:?}");
+}
+
+#[test]
+fn a_break_after_an_item_of_a_column_flex_container_ends_the_page() {
+    let dump = dump(
+        "flex_break_after",
+        "<div style='display:flex;flex-direction:column'>\
+         <div style='height:30px;background:#0f0'></div><div style='height:30px;background:#0f0;break-after:page'></div>\
+         <div style='height:30px;background:#00f'></div></div>",
+    );
+    let (green, blue) = (painted(&dump, GREEN), painted(&dump, BLUE));
+    assert_eq!(pages_of(&green), vec![0, 0]);
+    assert_eq!(pages_of(&blue), vec![1]);
+    assert!((top_of(&blue, 1) - 10.0).abs() < 0.01);
+}
+
+#[test]
+fn a_break_between_the_boxes_in_an_item_cuts_all_the_items() {
+    // the break is inside of the first item, behind its first box: the second item (no break in
+    // it) is cut at the same place when it is taller, and goes on on the next page
+    let dump = dump(
+        "break_inside_item",
+        &format!(
+            "<div class=grid><div><div style='height:30px;background:#0f0;break-after:page'></div>{}</div><div>{}</div></div>",
+            boxes(2, 30, "#00f"),
+            boxes(3, 30, "#f00")
+        ),
+    );
+    let (green, blue, red) = (painted(&dump, GREEN), painted(&dump, BLUE), painted(&dump, RED));
+    assert_eq!(pages_of(&green), vec![0]);
+    assert!(blue.iter().all(|&(page, ..)| page == 1), "{blue:?}");
+    assert_eq!(blue.len(), 2);
+    assert_eq!(red.len(), 3);
+}
+
+#[test]
+fn a_break_after_the_last_item_is_no_break() {
+    let dump = dump(
+        "break_last",
+        "<div class=grid><div style='height:30px;background:#0f0'></div><div style='height:30px;background:#0f0;break-after:page'></div></div>",
+    );
+    assert_eq!(pages(&painted(&dump, GREEN)).len(), 1);
+}

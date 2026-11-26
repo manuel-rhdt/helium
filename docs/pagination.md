@@ -155,10 +155,16 @@ Limits of this, in order of importance:
     writer writes it whole above the page, shifted up by the start of the part, and clips what is
     written to the part (`Writer::clip`), as it does for a row. The absolutely positioned
     children of the grid are written with its first part.
-  - Not done: `break-inside`, `break-before` and `break-after` of the items and of the boxes in them
-    (the grid is one item of the flow, so only the ones of the grid count), and the orphans and widows of the items
-    are only the ones of paragraphs directly in an item or in its blocks. A grid is cut by the
-    offsets of the last width that the layout service was asked about, as a row is.
+  - Forced breaks: `break-before` and `break-after` (`page`, `always`, `left`, `right`, `recto` and
+    `verso`; recto and verso as for a document that is set from left to right) of an item, of its first
+    and last box (propagated), and of the boxes in an item that are between each other, are
+    cuts of the container (`RowCuts::forced`). The fragments of the container end at the next one at
+    the latest and none goes on behind it, so a break in front of an item in a row of a wrapping flex
+    container or of a grid is a break in front of the whole row. A forced break behind the last piece
+    or in front of the first is none. Not done: `break-inside: avoid` and the `avoid` values of the
+    items and of the boxes in them (only the ones of the grid count), and `break-before: column`.
+    The orphans and widows of the items are only the ones of the paragraphs in them. A grid is cut
+    by the offsets of the last width that the layout service was asked about, as a row is.
 - **Multi-column containers.** A container with columns whose height is the one of its content
   is split over pages. One that has a `height`, `max-height`, `min-height` or `aspect-ratio`, one
   inside of another container with columns, a flex or grid container or a table cell, and any in a
