@@ -711,6 +711,8 @@ struct Writer<'a, 'w> {
 /// A table row split over pages, on one page.
 #[derive(Clone)]
 struct RowOnPage {
+    /// The box that is split over pages (a table row, or a grid).
+    container: NodeId,
     cuts: Rc<rows::RowCuts>,
     /// The cuts at the start and at the end of the part on the page.
     start: u32,
@@ -826,11 +828,23 @@ impl<'a> Writer<'a, '_> {
         .then(|| window::row_part(self.window, node, id))
         .flatten();
         let (clip_before, row_before) = (self.clip, self.row.take());
+        let mut origin = origin;
         if let (Some(part), Some(cuts)) = (part, node.row_cuts.clone()) {
             let (start, end) = self.window.row_cut_offsets(id);
+            // A grid is where its part starts on the page, and is written whole above it, like the
+            // row of a table is (the row is written from the table, which is cut).
+            if cuts.stacked {
+                origin.y -= part.top;
+            }
             let top = origin.y + part.top;
             self.clip = Some((top, top + part.height));
-            self.row = Some(RowOnPage { start: start.unwrap_or(0), end: end.unwrap_or(cuts.height), cuts, top });
+            self.row = Some(RowOnPage {
+                container: id,
+                start: start.unwrap_or(0),
+                end: end.unwrap_or(cuts.height),
+                cuts,
+                top,
+            });
         } else {
             self.row = row_before.clone();
         }
@@ -882,6 +896,10 @@ impl<'a> Writer<'a, '_> {
         let (width, mut height) = parent_flow.swap((layout.size.width, layout.size.height));
         if let Some(cut) = cut_height {
             height = cut;
+        }
+        // the layout of a grid that is split over pages is as high as its part: it is written whole
+        if let Some(row) = self.row.as_ref().filter(|row| row.container == id && row.cuts.stacked) {
+            height = rows::dequantize(row.cuts.height);
         }
         // A box that is outside of the part of a row on the page is on another page; one that is
         // across its edge goes on there.
@@ -1070,6 +1088,11 @@ impl<'a> Writer<'a, '_> {
                     }
                     let mut child_origin = frame.child_origin(&self.layout_of(child));
                     child_origin.y += shift;
+                    // (the items of a grid that start behind the cut are moved down with the ones
+                    // that are moved to start at it)
+                    if let Some(row) = self.row.as_ref().filter(|row| row.container == id) {
+                        child_origin.y += rows::dequantize(row.cuts.box_shift(child, row.start));
+                    }
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
                 }
@@ -1155,8 +1178,10 @@ impl<'a> Writer<'a, '_> {
             self.emit(BlockLevelElement::ContainerEnd(entity));
         }
 
-        // the absolutely positioned boxes this box is the containing block of
-        for &child in &node.hoisted {
+        // the absolutely positioned boxes this box is the containing block of (the ones of a grid
+        // that is split over pages are written with its first part)
+        let continued = open_start && node.row_cuts.as_ref().is_some_and(|cuts| cuts.stacked);
+        for &child in node.hoisted.iter().filter(|_| !continued) {
             self.open_group(None);
             let child_origin = frame.child_origin(&self.layout_of(child));
             let abs_base = z_base + ABS_Z_STEP;

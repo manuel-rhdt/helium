@@ -13,8 +13,16 @@
 //! page is above the cut ([`RowCuts::cell_origin`]), and the fragment is as high as its highest
 //! cell ([`RowCuts::used`]). The fragments follow from the cuts alone, whatever the cuts before
 //! them were.
+//!
+//! A grid container is cut the same way ([`RowCuts::stacked`]): its items are the cells, and they
+//! are in more rows than one. An item that is not taller than half a page is one piece (it is not
+//! cut, as a row of a table is not between its cells), a taller one is cut where its own lines
+//! end. A cut that is between the rows has no item across it, and then the gap between the rows is
+//! not at the top of the next page. Where a line is across a cut, the items that start behind it
+//! are moved down with the ones that are moved to start at the cut.
 
 use super::tree::{Content, UmbruchTree, lines_from};
+use crate::style::properties::specified::{Break, Display};
 use umbruch_paginate::{BreakKind, ContainerCut, Fragment};
 use taffy::tree::NodeId;
 
@@ -39,6 +47,9 @@ pub(super) struct CellUnits {
     pub units: Vec<(u32, u32)>,
     /// What each piece is, in the same order.
     pub marks: Vec<Mark>,
+    /// Whether the cell is one piece that no cut is in (an item of a grid that is not taller than
+    /// half a page).
+    pub atomic: bool,
 }
 
 /// What a piece of a cell is: a line of a paragraph (which paragraph, the number of the line and
@@ -61,9 +72,87 @@ pub(super) struct RowCuts {
     /// The offsets that a fragment can end at, in growing order, without the end of the row: the
     /// bottoms of the pieces of the cells.
     pub candidates: Vec<u32>,
+    /// Whether the cells are the items of a grid, which are in rows of the grid below each other
+    /// and not side by side in one row.
+    pub stacked: bool,
+    /// The cuts that a forced break (`break-before` and `break-after` of the items and of the boxes
+    /// in them) asks for, in growing order: a grid or a flex container does not go on behind them
+    /// on the page that they end.
+    pub forced: Vec<(u32, BreakKind)>,
 }
 
 impl RowCuts {
+    /// How far the pieces that are across the cut `offset` are above it, at most (0: no piece is
+    /// across it, and the cut is between the rows of a grid).
+    pub fn crossing(&self, offset: u32) -> u32 {
+        self.cells
+            .iter()
+            .filter_map(|cell| {
+                let first = cell.units.partition_point(|&(_, bottom)| bottom <= offset);
+                cell.units.get(first).and_then(|&(top, _)| offset.checked_sub(top))
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Where the part of the container that starts at the cut `offset` starts. In a grid that is
+    /// the top of the first piece behind the cut if no piece is across the cut: the gap between
+    /// two rows is not at the top of a page. In all other cases it is the cut.
+    pub fn start(&self, offset: u32) -> u32 {
+        if !self.stacked || offset == 0 || self.crossing(offset) > 0 {
+            return offset;
+        }
+        self.cells
+            .iter()
+            .filter_map(|cell| {
+                let first = cell.units.partition_point(|&(_, bottom)| bottom <= offset);
+                cell.units.get(first).map(|&(top, _)| top)
+            })
+            .min()
+            .map_or(offset, |top| top.max(offset))
+    }
+
+    /// The cells that have a piece across the cut `offset`, as where the cell ends and how far its
+    /// content is moved down.
+    fn crossing_cells(&self, offset: u32) -> Vec<(u32, u32)> {
+        self.cells
+            .iter()
+            .filter_map(|cell| {
+                let first = cell.units.partition_point(|&(_, bottom)| bottom <= offset);
+                let &(top, _) = cell.units.get(first)?;
+                let end = cell.units.last()?.1;
+                (top < offset).then(|| (end, offset - top))
+            })
+            .collect()
+    }
+
+    /// How far a cell is moved down on the fragment that starts at the cut `offset`: its content
+    /// (to start at the cut, where a piece is across it), and its box. The cells of a grid that
+    /// are below a cell that is moved down are moved down with it, by the most of what the ones
+    /// above are. `crossing` is [`RowCuts::crossing_cells`].
+    fn shifts(&self, cell: &CellUnits, offset: u32, crossing: &[(u32, u32)]) -> Option<(u32, u32)> {
+        let first = cell.units.partition_point(|&(_, bottom)| bottom <= offset);
+        let &(top, _) = cell.units.get(first)?;
+        if top < offset {
+            return Some((offset - top, 0));
+        }
+        let below = if self.stacked {
+            crossing.iter().filter(|&&(end, _)| end <= top).map(|&(_, shift)| shift).max().unwrap_or(0)
+        } else {
+            0
+        };
+        Some((0, below))
+    }
+
+    /// How far the box of a cell that has no piece across the cut `offset` is moved down in a
+    /// grid, so that it is below the cells that are moved down to start at the cut.
+    pub fn box_shift(&self, node: NodeId, offset: u32) -> u32 {
+        let Some(cell) = self.cells.iter().find(|cell| cell.node == node) else {
+            return 0;
+        };
+        self.shifts(cell, offset, &self.crossing_cells(offset)).map_or(0, |(_, below)| below)
+    }
+
     /// Where the part of a cell that starts at the cut `offset` starts: the top of its first
     /// piece that ends behind the cut. That is above the cut where a line is across it. At the
     /// start of the row it is the top of the row (the padding of the cell is part of it).
@@ -80,6 +169,9 @@ impl RowCuts {
     /// its last piece that ends before the cut. The fragment that ends the row is as high as what
     /// is left of the row, from the part of a cell that starts highest.
     pub fn used(&self, start: u32, end: u32) -> u32 {
+        if self.stacked {
+            return self.used_stacked(start, end);
+        }
         if end >= self.height {
             let highest = self.cells.iter().filter_map(|cell| self.cell_origin(cell, start)).min();
             return self.height.saturating_sub(highest.unwrap_or(start));
@@ -99,6 +191,30 @@ impl RowCuts {
         used
     }
 
+    /// [`RowCuts::used`] for a grid: the fragment starts where [`RowCuts::start`] says. A cell that
+    /// has a piece across the cut is moved down by how far that is above it, and the others by
+    /// the most of that.
+    fn used_stacked(&self, start: u32, end: u32) -> u32 {
+        let from = self.start(start);
+        let crossing = self.crossing_cells(start);
+        if end >= self.height {
+            let spill = crossing.iter().map(|&(_, shift)| shift).max().unwrap_or(0);
+            return (self.height + spill).saturating_sub(from);
+        }
+        let mut used = 0;
+        for cell in &self.cells {
+            let Some((content, below)) = self.shifts(cell, start, &crossing) else {
+                continue;
+            };
+            let last = cell.units.partition_point(|&(_, bottom)| bottom <= end);
+            let first = cell.units.partition_point(|&(_, bottom)| bottom <= start);
+            if last > first {
+                used = used.max((cell.units[last - 1].1 + content + below).saturating_sub(from));
+            }
+        }
+        used
+    }
+
     /// The part of a cell that is on the fragment from `start` to `end`, as how far the cell is
     /// moved down (to start where the fragment does) and where the part ends, from the top of the
     /// part of the row on the page (`None`: it goes to the end of the row).
@@ -108,7 +224,9 @@ impl RowCuts {
             Some(origin) => start.saturating_sub(origin),
             None => 0,
         };
-        let until = (end < self.height).then(|| end.saturating_sub(start) + shift);
+        // (the cells of a grid that are not across the cut are moved down as a box)
+        let moved = if self.stacked && shift == 0 { self.box_shift(node, start) } else { shift };
+        let until = (end < self.height).then(|| end.saturating_sub(self.start(start)) + moved);
         Some((shift, until))
     }
 }
@@ -137,7 +255,14 @@ impl RowCuts {
 
 impl UmbruchTree<'_, '_> {
     /// Where the row can be cut, as it is laid out now.
-    pub(super) fn row_cuts(&mut self, row: NodeId) -> RowCuts {
+    ///
+    /// `page` is the size of the page: a grid is cut inside of its items only where they are
+    /// taller than half of it.
+    pub(super) fn row_cuts(&mut self, row: NodeId, page: (f32, f32)) -> RowCuts {
+        let stacked = self
+            .computed_values
+            .get(self.node(row).entity)
+            .is_some_and(|style| matches!(style.box_.display, crate::style::properties::specified::Display::Grid | crate::style::properties::specified::Display::Flex));
         let height = quantize(self.node(row).layout.size.height);
         let mut cells = vec![];
         let mut candidates = vec![];
@@ -154,20 +279,150 @@ impl UmbruchTree<'_, '_> {
                 continue;
             }
             let mut found: Vec<(f32, f32, Mark)> = vec![];
-            self.collect_units(cell, top, &mut found);
+            let cell_height = self.node(cell).layout.size.height;
+            // (an item of a grid that is not taller than half of the page is not cut)
+            let atomic = stacked && cell_height * 2.0 <= page.1;
+            if atomic {
+                found.push((top, top + cell_height, Mark::default()));
+            } else {
+                self.collect_units(cell, top, &mut found);
+            }
             let mut pieces: Vec<((u32, u32), Mark)> = found
                 .into_iter()
                 .map(|(top, bottom, mark)| ((quantize(top), quantize(bottom)), mark))
                 .filter(|&((top, bottom), _)| bottom > top)
                 .collect();
             pieces.sort_by_key(|&((top, bottom), _)| (bottom, top));
+            // (a single piece is one that no cut is in)
+            let atomic = atomic || (stacked && pieces.len() <= 1);
+            if stacked && !atomic {
+                // the padding and the border of an item go with its first and its last piece (no
+                // cut leaves them on a page of their own); the space that an item that is stretched
+                // has below its content does not
+                let layout = self.node(cell).layout;
+                let (item_top, item_bottom) = (top, top + cell_height);
+                if let Some(((first, _), _)) = pieces.first_mut() {
+                    let edge = layout.padding.top + layout.border.top;
+                    *first = (*first).min(quantize((dequantize(*first) - edge).max(item_top)));
+                }
+                if let Some(((_, last), _)) = pieces.last_mut() {
+                    let edge = layout.padding.bottom + layout.border.bottom;
+                    *last = (*last).max(quantize((dequantize(*last) + edge).min(item_bottom)));
+                }
+            }
             let (units, marks): (Vec<_>, Vec<_>) = pieces.into_iter().unzip();
             candidates.extend(units.iter().map(|&(_, bottom)| bottom).filter(|&bottom| bottom > 0 && bottom < height));
-            cells.push(CellUnits { node: cell, units, marks });
+            cells.push(CellUnits { node: cell, units, marks, atomic });
+        }
+        if stacked {
+            // no cut is inside of an item that is not cut, and none leaves nothing but the
+            // padding of the grid for the next page
+            let content_end = cells.iter().flat_map(|cell| cell.units.iter().map(|&(_, bottom)| bottom)).max().unwrap_or(0);
+            let atomic: Vec<(u32, u32)> = cells.iter().filter(|cell| cell.atomic).flat_map(|cell| cell.units.iter().copied()).collect();
+            candidates.retain(|&offset| {
+                offset < content_end && !atomic.iter().any(|&(top, bottom)| top < offset && offset < bottom)
+            });
         }
         candidates.sort_unstable();
         candidates.dedup();
-        RowCuts { height, cells, candidates }
+        let mut forced = vec![];
+        if stacked {
+            let content_end = cells.iter().flat_map(|cell| cell.units.iter().map(|&(_, bottom)| bottom)).max().unwrap_or(0);
+            for cell in self.node(row).children.clone() {
+                if self.is_hidden(cell) {
+                    continue;
+                }
+                let (top, height) = {
+                    let node = self.node(cell);
+                    (node.layout.location.y, node.layout.size.height)
+                };
+                if let Some(kind) = self.edge_break(cell, false) {
+                    forced.push((quantize(top), kind));
+                }
+                if let Some(kind) = self.edge_break(cell, true) {
+                    forced.push((quantize(top + height), kind));
+                }
+                self.collect_breaks(cell, top, &mut forced);
+            }
+            // (no break at the start or behind the last piece: nothing is on the page there)
+            forced.retain(|&(offset, _)| offset > 0 && offset < content_end);
+            forced.sort_by_key(|&(offset, kind)| (offset, kind == BreakKind::Forced));
+            forced.dedup_by_key(|&mut (offset, _)| offset);
+        }
+        RowCuts { height, cells, candidates, stacked, forced }
+    }
+
+    fn is_hidden(&self, id: NodeId) -> bool {
+        let node = self.node(id);
+        node.style.display == taffy::Display::None || node.style.position == taffy::Position::Absolute
+    }
+
+    /// The boxes in a box that can be split between: its children if it is a block container
+    /// (not a table, a flex or a grid container or one with columns, which are one piece).
+    fn flow_children(&self, id: NodeId) -> Vec<NodeId> {
+        let node = self.node(id);
+        let splits = node.content == Content::Blocks
+            && node.columns.is_none()
+            && !node.orthogonal
+            && !matches!(node.style.display, taffy::Display::Flex | taffy::Display::Grid)
+            && self.computed_values.get(node.entity).is_none_or(|style| {
+                !matches!(
+                    style.box_.display,
+                    Display::TableRow | Display::TableCell | Display::TableCaption | Display::TableRowGroup
+                )
+            });
+        if !splits {
+            return vec![];
+        }
+        node.children.iter().copied().filter(|&child| !self.is_hidden(child)).collect()
+    }
+
+    /// The forced break that a box has in front of it (or behind it, with `after`): the value of
+    /// the box, or else of its first (last) child, and so on down, as it is propagated.
+    /// https://www.w3.org/TR/css-break-3/#break-propagation
+    fn edge_break(&self, mut id: NodeId, after: bool) -> Option<BreakKind> {
+        let mut found: Option<BreakKind> = None;
+        loop {
+            if let Some(style) = self.computed_values.get(self.node(id).entity) {
+                let value = if after { style.page.break_after } else { style.page.break_before };
+                let kind = match value {
+                    Break::Left => Some(BreakKind::ForcedLeft),
+                    Break::Right | Break::Recto => Some(BreakKind::ForcedRight),
+                    Break::Verso => Some(BreakKind::ForcedLeft),
+                    value if value.forces_page() => Some(BreakKind::Forced),
+                    _ => None,
+                };
+                // (a value for a side wins over `page`)
+                found = match (found, kind) {
+                    (Some(BreakKind::Forced) | None, kind) => kind.or(found),
+                    (found, _) => found,
+                };
+            }
+            let kids = self.flow_children(id);
+            match if after { kids.last() } else { kids.first() } {
+                Some(&kid) => id = kid,
+                None => return found,
+            }
+        }
+    }
+
+    /// The cuts that forced breaks between the boxes in a box ask for: behind the box in front of
+    /// the break. `top` is where the border box of the box is, from the top of the container.
+    fn collect_breaks(&self, id: NodeId, top: f32, out: &mut Vec<(u32, BreakKind)>) {
+        let origin = top + self.node(id).content_shift;
+        let mut previous: Option<(NodeId, f32)> = None;
+        for child in self.flow_children(id) {
+            let child_top = origin + self.node(child).layout.location.y;
+            if let Some((before, before_top)) = previous {
+                let kinds = [self.edge_break(before, true), self.edge_break(child, false)];
+                let kind = kinds.iter().flatten().find(|&&kind| kind != BreakKind::Forced).or(kinds.iter().flatten().next());
+                if let Some(&kind) = kind {
+                    out.push((quantize(before_top + self.node(before).layout.size.height), kind));
+                }
+            }
+            self.collect_breaks(child, child_top, out);
+            previous = Some((child, child_top));
+        }
     }
 
     /// The pieces of the content of a box that no cut may be in, by their top and their bottom
@@ -251,33 +506,62 @@ pub(super) fn row_fragments(
     page: (f32, f32),
 ) -> Vec<Fragment> {
     let start = from.map_or(0, |cut| cut.item);
+    // the cut that a forced break asks for next: the fragments end there at the latest
+    let forced = cuts.forced.iter().find(|&&(offset, _)| offset > start).copied();
     let fragment = |end: Option<u32>| {
         let (orphan_violation, widow_violation) = end.map_or((false, false), |offset| cuts.violations(offset));
+        let end_kind = match (end, forced) {
+            (Some(offset), Some((at, kind))) if offset == at => kind,
+            _ => BreakKind::Allowed,
+        };
         Fragment {
             end: end.map(|offset| ContainerCut::at_item(offset as usize)),
             used: f64::from(dequantize(cuts.used(start, end.unwrap_or(cuts.height)))),
-            end_kind: BreakKind::Allowed,
-            orphan_violation,
-            widow_violation,
+            end_kind,
+            orphan_violation: orphan_violation && !end_kind.is_forced(),
+            widow_violation: widow_violation && !end_kind.is_forced(),
             avoid_violation: false,
         }
     };
     let whole = fragment(None);
+    // (the container does not go on behind a forced break)
+    let has_forced = forced.is_some();
     // A row that is at most half as high as the page, and as wide, is kept whole; the others can
     // be split where the page ends (CSS Tables 3, 6.1: they are "freely fragmentable").
     let (width, height) = page;
-    let kept_whole = dequantize(cuts.height) * 2.0 <= height.min(width);
-    if from.is_none() && kept_whole {
+    // (a grid is cut between its rows whatever its height is: a grid that has no place to be cut
+    // in has no candidates)
+    let kept_whole = !cuts.stacked && dequantize(cuts.height) * 2.0 <= height.min(width);
+    if from.is_none() && kept_whole && !has_forced {
         return vec![whole];
     }
-    let mut found: Vec<Fragment> = cuts
-        .candidates
+    let windowed: Vec<u32>;
+    let mut candidates: &[u32] = &cuts.candidates;
+    if cuts.stacked {
+        // A fragment is at least as high as what it ends at is below where it starts, so the
+        // ends that fit are the ones up to there; of these the last are the ones that fill the
+        // page best, and the first one is the least that can be placed.
+        const WINDOW: usize = 32;
+        let from = cuts.start(start);
+        let limit = from.saturating_add((available.max(0.0) * f64::from(QUANT)).ceil() as u32).saturating_add(1);
+        let low = candidates.partition_point(|&offset| offset <= start);
+        let high = candidates.partition_point(|&offset| offset <= limit).max(low);
+        let mut chosen: Vec<u32> = candidates.get(low).copied().into_iter().collect();
+        chosen.extend_from_slice(&candidates[high.saturating_sub(WINDOW).max(low)..high]);
+        chosen.dedup();
+        windowed = chosen;
+        candidates = &windowed;
+    }
+    let mut ends: Vec<u32> = candidates
         .iter()
         .copied()
-        .filter(|&offset| offset > start)
-        .map(|offset| fragment(Some(offset)))
+        .filter(|&offset| offset > start && forced.is_none_or(|(at, _)| offset < at))
         .collect();
-    found.push(whole);
+    ends.extend(forced.map(|(at, _)| at));
+    let mut found: Vec<Fragment> = ends.into_iter().map(|offset| fragment(Some(offset))).collect();
+    if !has_forced {
+        found.push(whole);
+    }
     // the content grows with the end of the fragment (the fragments that end where a piece does,
     // and what a cell goes on with from the cut, can be a little less than the one before)
     found.sort_by(|left, right| left.used.total_cmp(&right.used));
@@ -301,6 +585,7 @@ mod tests {
             node: NodeId::from(index),
             units: units.iter().map(|&(top, bottom)| (quantize(top), quantize(bottom))).collect(),
             marks: vec![Mark::default(); units.len()],
+            atomic: false,
         }
     }
 
@@ -316,7 +601,7 @@ mod tests {
             .collect();
         candidates.sort_unstable();
         candidates.dedup();
-        RowCuts { height: quantize(300.0), cells, candidates }
+        RowCuts { height: quantize(300.0), cells, candidates, stacked: false, forced: vec![] }
     }
 
     #[test]
@@ -343,8 +628,9 @@ mod tests {
             node: NodeId::from(1usize),
             units: (0..5).map(|line| (quantize(line as f32 * 10.0), quantize((line + 1) as f32 * 10.0))).collect(),
             marks: (0..5).map(mark).collect(),
+            atomic: false,
         };
-        let row = RowCuts { height: quantize(50.0), cells: vec![cell], candidates: vec![] };
+        let row = RowCuts { height: quantize(50.0), cells: vec![cell], candidates: vec![], stacked: false, forced: vec![] };
         // after the first line: an orphan; after the fourth: a widow; after the second: neither
         assert_eq!(row.violations(quantize(10.0)), (true, false));
         assert_eq!(row.violations(quantize(20.0)), (false, false));
@@ -408,7 +694,7 @@ mod tests {
     #[test]
     fn nothing_that_fits_is_the_least_that_can_be_placed() {
         let cells = vec![cell(1, &[(0.0, 200.0)])];
-        let row = RowCuts { height: quantize(300.0), cells, candidates: vec![quantize(200.0)] };
+        let row = RowCuts { height: quantize(300.0), cells, candidates: vec![quantize(200.0)], stacked: false, forced: vec![] };
         let fragments = row_fragments(&row, None, 100.0, (400.0, 140.0));
         assert_eq!(fragments.len(), 1);
         assert_eq!(fragments[0].used, 200.0);

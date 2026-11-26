@@ -230,6 +230,13 @@ impl UmbruchTree<'_, '_> {
         }
     }
 
+    /// Whether a box is laid out whole for every page that it is on, and the part of the page is cut
+    /// from the layout: a table, and a grid that is split over pages.
+    fn keeps_layout(&self, id: NodeId) -> bool {
+        let node = self.node(id);
+        node.content == Content::Table || node.row_cuts.as_ref().is_some_and(|cuts| cuts.stacked)
+    }
+
     /// Takes the window off the tree.
     pub(super) fn clear_window(&mut self) {
         self.window = None;
@@ -261,7 +268,7 @@ impl UmbruchTree<'_, '_> {
             }
             let open = self.node(id).span.as_ref().is_some_and(|span| window.cut_at_start(id, span));
             let change = changes.entry(id).or_default();
-            let table = self.node(id).content == Content::Table;
+            let table = self.keeps_layout(id);
             if open {
                 change.top_edge = !table;
                 change.margin_top = Some(0.0);
@@ -291,7 +298,7 @@ impl UmbruchTree<'_, '_> {
             }
             let open = self.node(id).span.as_ref().is_some_and(|span| window.cut_at_end(id, span));
             let change = changes.entry(id).or_default();
-            let table = self.node(id).content == Content::Table;
+            let table = self.keeps_layout(id);
             if open {
                 change.bottom_edge = !table;
                 change.margin_bottom = Some(0.0);
@@ -393,7 +400,7 @@ pub(super) fn row_part(window: &Window, node: &Node, id: NodeId) -> Option<RowPa
     }
     let (start, end) = (start.unwrap_or(0), end.unwrap_or(cuts.height));
     Some(RowPart {
-        top: super::rows::dequantize(start),
+        top: super::rows::dequantize(cuts.start(start)),
         bottom: super::rows::dequantize(end.min(cuts.height)),
         height: super::rows::dequantize(cuts.used(start, end)),
     })

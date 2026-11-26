@@ -41,7 +41,7 @@ The pipeline in `src/layout/mod.rs` (`layout`) is:
    - `flow.rs` makes the *flow* from the tree: the items of the kernel. A block container is
      the box of its top edge, its kids with a break and a gap between each two of them, and the
      box of its bottom edge. A paragraph is its two edges and a paragraph item. Boxes that are
-     not split (replaced boxes, flex and grid containers, boxes with a `height`, orthogonal
+     not split (replaced boxes, flex containers, boxes with a `height`, orthogonal
      flows) are one box. A table is split between its rows, row groups and captions, where no
      cell spans over the break. A container with columns is one item, `Item::Container`, which
      the kernel asks the layout service for the fragments of. Every box knows its items
@@ -76,7 +76,9 @@ Limits of this, in order of importance:
 - **Paragraphs are rigid.** There are no profiles and no joint optimisation (step 5). A paragraph
   that continues on a page of another width is broken again from the cut on, without the state of
   the line breaker.
-- **Monolithic containers.** Flex and grid containers are never split. A table is split between
+- **Monolithic containers.** A flex or grid container (see "Grids that are split") that has a
+  `height` or a `min-height`, an `inline-flex` or `inline-grid`, or one that is inside of another
+  flex or grid container, a table cell or a container with columns, or is the root. A table is split between
   rows, and a table row that is taller than a page is split too (see "Table rows that are split").
   A table is laid out as a whole, again for the width of every page that it
   is on (the window shows Taffy all its cells, and the galley of each width lays out all of
@@ -128,6 +130,41 @@ Limits of this, in order of importance:
   is one piece; the header and footer rows are not split; a table on pages of
   different widths is cut by the offsets of the last width that the layout service was asked
   about.
+- **Grids that are split.** (Flex containers are the same: their items are the cells, the lines of a
+  wrapping container are the rows, and a column container is a stack of items.) A grid container whose height is the one of its content is a container
+  item (`Item::Container`) of the flow, like a table row that may be taller than a page, and its
+  fragments are found by the layout service with the same machinery (`rows.rs`: `RowCuts` with
+  `stacked` set). The grid is laid out whole, the items are the cells, and what is on a page is the
+  part of it between two cuts, in 1/64 pixel from its top. The differences to a row are the ones that
+  come from the items being in more rows than one:
+  - An item that is not taller than half a page is one piece, so no cut is in it (an item with
+    nothing in it that can be cut is one, too). A cut that is across such an item is not a
+    candidate. Of a taller item the pieces are the lines and the boxes that are not split, and the
+    padding and the border of the item are those of its first and last piece (no cut leaves them
+    on a page of their own). The space that a stretched item has below its content is not.
+  - A grid has no "kept whole if it is at most half a page" rule: it has no place to be cut in if
+    it has one row of items that are not cut. A grid of several short rows is cut between them.
+  - A fragment that starts at a cut that no piece is across starts at the top of the first piece
+    behind it, so the gap between two rows (and the space an item is aligned by) is not at the top
+    of the page. A fragment that starts where pieces are across the cut starts at the cut, as the
+    ones of a row do, and the items that are below the items that are moved down to start at the cut
+    are moved down with them (by the most of how far those are), so that nothing overlaps. Items
+    beside them are not.
+  - For the page layout the grid is as high as its part (`compute_child_layout`), laid out whole
+    with the style that the grid has (a window keeps its padding, border and minimum height); the
+    writer writes it whole above the page, shifted up by the start of the part, and clips what is
+    written to the part (`Writer::clip`), as it does for a row. The absolutely positioned
+    children of the grid are written with its first part.
+  - Forced breaks: `break-before` and `break-after` (`page`, `always`, `left`, `right`, `recto` and
+    `verso`; recto and verso as for a document that is set from left to right) of an item, of its first
+    and last box (propagated), and of the boxes in an item that are between each other, are
+    cuts of the container (`RowCuts::forced`). The fragments of the container end at the next one at
+    the latest and none goes on behind it, so a break in front of an item in a row of a wrapping flex
+    container or of a grid is a break in front of the whole row. A forced break behind the last piece
+    or in front of the first is none. Not done: `break-inside: avoid` and the `avoid` values of the
+    items and of the boxes in them (only the ones of the grid count), and `break-before: column`.
+    The orphans and widows of the items are only the ones of the paragraphs in them. A grid is cut
+    by the offsets of the last width that the layout service was asked about, as a row is.
 - **Multi-column containers.** A container with columns whose height is the one of its content
   is split over pages. One that has a `height`, `max-height`, `min-height` or `aspect-ratio`, one
   inside of another container with columns, a flex or grid container or a table cell, and any in a
@@ -925,7 +962,9 @@ the first page.
    follows its scales (done, opt-in with `looseness`); the harness that says whether it is better;
    a better rate from it; profiles after that.
 6. `fragment` for tables between rows, with pinned columns.
-7. `fragment` for grid and flex, with parallel parts.
+7. `fragment` for grid and flex, with parallel parts. Done for grids, without a token with parallel
+   parts: the grid is one container item that has a cut for all its items (see "Grids that are split").
+   Flex is done the same way.
 
 Steps 1 to 3 are the base for iterating on solvers. Steps 5 to 7 are
 independent of each other.

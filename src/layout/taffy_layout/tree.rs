@@ -1447,8 +1447,23 @@ impl LayoutPartialTree for UmbruchTree<'_, '_> {
             let mut output = match tree.node(id).content {
                 Content::Blocks => {
                     let output = match tree.node(id).style.display {
-                        taffy::Display::Flex => compute_flexbox_layout(tree, id, inputs),
-                        taffy::Display::Grid => compute_grid_layout(tree, id, inputs),
+                        taffy::Display::Flex | taffy::Display::Grid => {
+                            let mut output = if tree.node(id).style.display == taffy::Display::Flex {
+                                compute_flexbox_layout(tree, id, inputs)
+                            } else {
+                                compute_grid_layout(tree, id, inputs)
+                            };
+                            // a grid or flex container that the window cuts is as high as its part
+                            if inputs.run_mode == RunMode::PerformLayout && tree.node(id).windowed {
+                                if let Some(window) = &tree.window {
+                                    let node = tree.node(id);
+                                    if let Some(part) = super::window::row_part(window, node, id) {
+                                        output.size.height = part.height;
+                                    }
+                                }
+                            }
+                            output
+                        }
                         _ => compute_block_layout(tree, id, inputs, None),
                     };
                     if inputs.run_mode == RunMode::PerformLayout {

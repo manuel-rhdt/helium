@@ -364,6 +364,11 @@ impl Extractor<'_, '_, '_> {
             };
             return if self.paged && self.level == BreakLevel::Page && no_min_height { Kind::Container } else { Kind::Whole };
         }
+        // A grid or flex container is split over pages like a table row is: its items are cut between the
+        // rows of the grid, and inside of the ones that are taller than half a page.
+        if self.grid_may_split(id) {
+            return Kind::Container;
+        }
         match node.content {
             Content::Replaced => Kind::Whole,
             Content::Inline => {
@@ -394,6 +399,24 @@ impl Extractor<'_, '_, '_> {
                 }
             }
         }
+    }
+
+    /// Whether a grid container is split over pages: it is in the flow of a page and its height is
+    /// the one of its content.
+    fn grid_may_split(&self, id: NodeId) -> bool {
+        if !self.paged || self.level != BreakLevel::Page || self.single_page || id == self.flow.root {
+            return false;
+        }
+        let node = self.tree.node(id);
+        if node.content != Content::Blocks || !matches!(self.display(id), Some(Display::Grid | Display::Flex)) {
+            return false;
+        }
+        let min_height = node.style.min_size.height;
+        let no_min_height = min_height.is_auto() || {
+            let raw = min_height.into_raw();
+            raw.tag() == taffy::CompactLength::LENGTH_TAG && raw.value() == 0.0
+        };
+        no_min_height && !self.in_flow_children(id).is_empty()
     }
 
     /// The last (first) in-flow box in a box, which the `break-after` (`break-before`) of its

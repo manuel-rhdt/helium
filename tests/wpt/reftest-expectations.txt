@@ -532,3 +532,15 @@ css/mediaqueries/negation-001.html
 css/mediaqueries/prefers-color-scheme-svg-as-image.html
 css/mediaqueries/scripting-print-noscript.html
 css/mediaqueries/scripting-print-script.html
+
+# Page fragmentation of flex and grid containers: a table inside of an item (which is not split), and
+# margins and gaps at a cut with items that have `contain: size` (the container does not grow where
+# an item is pushed to the next page)
+css/css-break/flexbox/multi-line-row-flex-fragmentation-064-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-075-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-076-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-060-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-065-print.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-042-print.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-045-print.html
+css/css-break/grid/monolithic-overflow-print.html
