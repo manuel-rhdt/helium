@@ -257,7 +257,7 @@ impl UmbruchTree<'_, '_> {
         let stacked = self
             .computed_values
             .get(self.node(row).entity)
-            .is_some_and(|style| style.box_.display == crate::style::properties::specified::Display::Grid);
+            .is_some_and(|style| matches!(style.box_.display, crate::style::properties::specified::Display::Grid | crate::style::properties::specified::Display::Flex));
         let height = quantize(self.node(row).layout.size.height);
         let mut cells = vec![];
         let mut candidates = vec![];

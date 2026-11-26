@@ -226,3 +226,50 @@ fn a_card_that_is_taller_than_half_a_page_is_cut() {
     let blue = painted(&dump, BLUE);
     assert!(pages(&blue).len() >= 3, "the card is painted on every page that it goes on: {blue:?}");
 }
+
+// flex containers are split the same way
+
+#[test]
+fn a_column_flex_container_is_split_between_its_items() {
+    let dump = dump("flex_column", &format!("<div style='display:flex;flex-direction:column'>{}</div>", items(12, 30, "#0f0")));
+    let green = painted(&dump, GREEN);
+    assert_on_pages(&green, 12);
+    assert_eq!(pages(&green).len(), 3, "{green:?}");
+    for page in pages(&green) {
+        assert!((top_of(&green, page) - 10.0).abs() < 0.01);
+    }
+}
+
+#[test]
+fn the_lines_of_a_wrapping_flex_container_are_not_cut() {
+    let dump = dump(
+        "flex_wrap",
+        &format!("<div style='display:flex;flex-wrap:wrap'>{}</div>", "<div style='width:50%;height:30px;background:#0f0'></div>".repeat(20)),
+    );
+    let green = painted(&dump, GREEN);
+    assert_on_pages(&green, 20);
+    for &(_, y, height) in &green {
+        assert!((height - 30.0).abs() < 0.01, "{y} {height}");
+        assert!(((y - 10.0) / 30.0).fract().abs() < 0.01, "{y}");
+    }
+}
+
+#[test]
+fn the_items_of_a_flex_row_that_is_taller_than_a_page_go_on_together() {
+    let dump = dump(
+        "flex_row",
+        &format!(
+            "<div style='display:flex'><div style='flex:1'>{}</div><div style='flex:1'>{}</div></div>",
+            boxes(30, 20, "#0f0"),
+            boxes(20, 17, "#00f")
+        ),
+    );
+    assert_on_pages(&painted(&dump, GREEN), 30);
+    assert_on_pages(&painted(&dump, BLUE), 20);
+}
+
+#[test]
+fn a_flex_container_with_a_height_is_one_box() {
+    let dump = dump("flex_height", &format!("<div style='display:flex;flex-direction:column;height:60px'>{}</div>", items(1, 30, "#0f0")));
+    assert_on_pages(&painted(&dump, GREEN), 1);
+}

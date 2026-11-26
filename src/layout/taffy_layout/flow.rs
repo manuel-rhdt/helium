@@ -364,7 +364,7 @@ impl Extractor<'_, '_, '_> {
             };
             return if self.paged && self.level == BreakLevel::Page && no_min_height { Kind::Container } else { Kind::Whole };
         }
-        // A grid container is split over pages like a table row is: its items are cut between the
+        // A grid or flex container is split over pages like a table row is: its items are cut between the
         // rows of the grid, and inside of the ones that are taller than half a page.
         if self.grid_may_split(id) {
             return Kind::Container;
@@ -408,7 +408,7 @@ impl Extractor<'_, '_, '_> {
             return false;
         }
         let node = self.tree.node(id);
-        if node.content != Content::Blocks || self.display(id) != Some(Display::Grid) {
+        if node.content != Content::Blocks || !matches!(self.display(id), Some(Display::Grid | Display::Flex)) {
             return false;
         }
         let min_height = node.style.min_size.height;

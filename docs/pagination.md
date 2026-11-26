@@ -76,8 +76,8 @@ Limits of this, in order of importance:
 - **Paragraphs are rigid.** There are no profiles and no joint optimisation (step 5). A paragraph
   that continues on a page of another width is broken again from the cut on, without the state of
   the line breaker.
-- **Monolithic containers.** Flex containers are never split, and neither is a grid (see "Grids that
-  are split") that has a `height` or a `min-height`, an `inline-grid`, or one that is inside of another
+- **Monolithic containers.** A flex or grid container (see "Grids that are split") that has a
+  `height` or a `min-height`, an `inline-flex` or `inline-grid`, or one that is inside of another
   flex or grid container, a table cell or a container with columns, or is the root. A table is split between
   rows, and a table row that is taller than a page is split too (see "Table rows that are split").
   A table is laid out as a whole, again for the width of every page that it
@@ -130,7 +130,8 @@ Limits of this, in order of importance:
   is one piece; the header and footer rows are not split; a table on pages of
   different widths is cut by the offsets of the last width that the layout service was asked
   about.
-- **Grids that are split.** A grid container whose height is the one of its content is a container
+- **Grids that are split.** (Flex containers are the same: their items are the cells, the lines of a
+  wrapping container are the rows, and a column container is a stack of items.) A grid container whose height is the one of its content is a container
   item (`Item::Container`) of the flow, like a table row that may be taller than a page, and its
   fragments are found by the layout service with the same machinery (`rows.rs`: `RowCuts` with
   `stacked` set). The grid is laid out whole, the items are the cells, and what is on a page is the
@@ -957,7 +958,7 @@ the first page.
 6. `fragment` for tables between rows, with pinned columns.
 7. `fragment` for grid and flex, with parallel parts. Done for grids, without a token with parallel
    parts: the grid is one container item that has a cut for all its items (see "Grids that are split").
-   Flex is not done.
+   Flex is done the same way.
 
 Steps 1 to 3 are the base for iterating on solvers. Steps 5 to 7 are
 independent of each other.
