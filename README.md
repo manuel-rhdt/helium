@@ -118,7 +118,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **Tables across pages:** a table is split between its rows, and the header rows (the first
   `thead`) are repeated at the top of every page that goes on inside of the table. Footers are
   not repeated.
-- **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.
+- **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document. Like every file that a document refers to (images, fonts, the images of an SVG), the style sheet must be inside of the directory of the document (or of `--resource-root`), after the symbolic links and the `..` are resolved; an absolute path is no exception. A file that does not exist and one that is outside of the directory give the same error. `src/resource.rs` is the only code that reads such files.
 
 ## CSS
 

@@ -8,7 +8,7 @@
 //! that PDF cannot take as they are (with an alpha channel, or interlaced) are decoded.
 
 use crate::layout::text::font::FontContext;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use lemon_pdf::image::{Image, ImageError};
@@ -81,11 +81,12 @@ fn svg_options(base_dir: &Path, fonts: &Arc<FontContext>) -> usvg::Options<'stat
     });
     // the size of an SVG that has none, like the default object size of CSS
     options.default_size = usvg::Size::from_wh(300.0, 150.0).unwrap();
+    // the files that an SVG refers to are read like the ones of the document, by the same function
     options.image_href_resolver.resolve_string = {
-        let default = usvg::ImageHrefResolver::default_string_resolver();
         let base_dir = base_dir.to_path_buf();
-        Box::new(move |href, options| match resolve_path(href, &base_dir) {
-            Ok(path) => default(&path.to_string_lossy(), options),
+        Box::new(move |href, options| match crate::resource::read(href, &base_dir, &base_dir) {
+            // (the format is found out by looking at the contents, not at the name)
+            Ok(data) => (options.image_href_resolver.resolve_data)("text/plain", Arc::new(data), options),
             Err(error) => {
                 log::warn!("SVG: cannot load the image `{}`: {}", href, error);
                 None
@@ -419,163 +420,14 @@ pub fn load_relative(
     root: &Path,
     fonts: &Arc<FontContext>,
 ) -> Result<LoadedImage, String> {
-    LoadedImage::from_bytes(read_resource_in(src, relative_to, root)?, root, fonts)
+    LoadedImage::from_bytes(crate::resource::read(src, relative_to, root)?, root, fonts)
 }
 
-/// The bytes that `src` refers to: a `data:` URI or a file inside of `base_dir` (see `load`).
-pub(crate) fn read_resource(src: &str, base_dir: &Path) -> Result<Vec<u8>, String> {
-    read_resource_in(src, base_dir, base_dir)
-}
-
-/// [`read_resource`] for a `src` that is relative to `relative_to`, inside of `root`.
-pub(crate) fn read_resource_in(src: &str, relative_to: &Path, root: &Path) -> Result<Vec<u8>, String> {
-    let src = src.trim();
-    if src.is_empty() {
-        return Err("the `src` attribute is empty".to_owned());
-    }
-    if let Some(rest) = strip_prefix_ignore_case(src, "data:") {
-        let (header, payload) = rest
-            .split_once(',')
-            .ok_or_else(|| "a data URI needs a comma before its data".to_owned())?;
-        return if header.to_ascii_lowercase().ends_with(";base64") {
-            decode_base64(payload)
-        } else {
-            // text, mostly SVG: percent-encoded
-            percent_decode_bytes(payload)
-        };
-    }
-    let path = resolve_path_in(src, relative_to, root)?;
-    std::fs::read(&path).map_err(|error| format!("cannot read {}: {}", path.display(), error))
-}
-
-static RESOURCE_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-
-/// Sets the directory that the files of a document (images) must be inside of, if it is not
-/// the directory of the document itself: a document may refer to files next to it, such as
-/// `../support/image.png`. Must be called before the first image is loaded.
-pub fn set_resource_root(root: PathBuf) {
-    let _ = RESOURCE_ROOT.set(root);
-}
-
-/// The file that a relative URL refers to, if it is inside of `base_dir` (or of the resource
-/// root, see `set_resource_root`).
-fn resolve_path(src: &str, base_dir: &Path) -> Result<PathBuf, String> {
-    resolve_path_in(src, base_dir, base_dir)
-}
-
-/// [`resolve_path`] for a URL that is relative to `relative_to`, inside of `root`.
-fn resolve_path_in(src: &str, relative_to: &Path, root: &Path) -> Result<PathBuf, String> {
-    let src = src.trim();
-    if let Some(colon) = src.find(':') {
-        // a scheme (`https:`), not a directory with a colon in its name
-        if src[..colon]
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-        {
-            return Err(format!(
-                "`{}` is not supported: only files next to the document and data URIs are",
-                &src[..=colon]
-            ));
-        }
-    }
-
-    // a path in a URL: percent-encoded, and without the query or fragment
-    let path = src.split(['?', '#']).next().unwrap_or(src);
-    let path = percent_decode(path)?;
-    let full = relative_to.join(&path);
-    let canonical = full
-        .canonicalize()
-        .map_err(|error| format!("cannot read {}: {}", full.display(), error))?;
-    let allowed = RESOURCE_ROOT.get().map_or(root, |root| root.as_path());
-    let base = allowed
-        .canonicalize()
-        .map_err(|error| format!("cannot read {}: {}", allowed.display(), error))?;
-    if !canonical.starts_with(&base) {
-        return Err(format!(
-            "{} is outside of the directory of the document",
-            full.display()
-        ));
-    }
-    Ok(canonical)
-}
-
-fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    let head = text.get(..prefix.len())?;
-    head.eq_ignore_ascii_case(prefix).then(|| &text[prefix.len()..])
-}
-
-fn percent_decode(text: &str) -> Result<String, String> {
-    String::from_utf8(percent_decode_bytes(text)?).map_err(|_| format!("`{}` is not valid UTF-8", text))
-}
-
-fn percent_decode_bytes(text: &str) -> Result<Vec<u8>, String> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let hex = bytes
-                .get(i + 1..i + 3)
-                .and_then(|hex| std::str::from_utf8(hex).ok())
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-                .ok_or_else(|| format!("invalid percent escape in `{}`", text))?;
-            out.push(hex);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    Ok(out)
-}
-
-/// Decodes standard base64. Whitespace is ignored and the padding is optional, as in the
-/// forgiving-base64 decoding of the URL standard.
-fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
-    let mut out = Vec::with_capacity(text.len() * 3 / 4);
-    let mut buffer = 0u32;
-    let mut bits = 0;
-    let mut padding = 0;
-    for byte in text.bytes() {
-        let value = match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'+' | b'-' => 62,
-            b'/' | b'_' => 63,
-            b'=' => {
-                padding += 1;
-                continue;
-            }
-            b if b.is_ascii_whitespace() => continue,
-            _ => return Err("the data URI is not valid base64".to_owned()),
-        };
-        if padding > 0 {
-            return Err("the data URI is not valid base64".to_owned());
-        }
-        buffer = (buffer << 6) | u32::from(value);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buffer >> bits) as u8);
-            buffer &= (1 << bits) - 1;
-        }
-    }
-    Ok(out)
-}
+pub use crate::resource::set_resource_root;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn base64() {
-        assert_eq!(decode_base64("aGVsbG8=").unwrap(), b"hello");
-        assert_eq!(decode_base64("aGVs bG8").unwrap(), b"hello");
-        assert_eq!(decode_base64("").unwrap(), b"");
-        assert!(decode_base64("a$b").is_err());
-        assert!(decode_base64("aG=V").is_err());
-    }
 
     /// A PNG file of the given size whose pixel data is missing (only the header is right).
     fn png_header(width: u32, height: u32) -> Vec<u8> {
@@ -610,12 +462,6 @@ mod tests {
         assert_eq!(header_size(&png_header(3, 7)[..18]), None);
         assert_eq!(header_size(b"not an image"), None);
         assert!(header_size(&fixture("gray.jpg")).is_some());
-    }
-
-    #[test]
-    fn percent() {
-        assert_eq!(percent_decode("a%20b.jpg").unwrap(), "a b.jpg");
-        assert!(percent_decode("a%2").is_err());
     }
 
     fn fixture(name: &str) -> Vec<u8> {

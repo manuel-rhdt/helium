@@ -78,39 +78,14 @@ impl ImageHrefResolver<'_> {
 
     /// Creates a default string resolver.
     ///
-    /// The default implementation treats an input string as a file path and tries to open.
-    /// If a string is an URL or something else it would be ignored.
-    ///
-    /// Paths have to be absolute or relative to the input SVG file or relative to
-    /// [Options::resources_dir](crate::Options::resources_dir).
+    /// Umbruch change: the default resolver does not read files. The host decides which files
+    /// a document may read and how (see `umbruch::resource`), and a default that opens the
+    /// path of an `href` would be a way around that for every `Options` that is made without
+    /// setting `image_href_resolver.resolve_string`.
     pub fn default_string_resolver() -> ImageHrefStringResolverFn<'static> {
-        Box::new(move |href: &str, opts: &Options| {
-            let path = opts.get_abs_path(std::path::Path::new(href));
-
-            if path.exists() {
-                let data = match std::fs::read(&path) {
-                    Ok(data) => data,
-                    Err(_) => {
-                        log::warn!("Failed to load '{}'. Skipped.", href);
-                        return None;
-                    }
-                };
-
-                match get_image_file_format(&path, &data) {
-                    Some(ImageFormat::JPEG) => Some(ImageKind::JPEG(Arc::new(data))),
-                    Some(ImageFormat::PNG) => Some(ImageKind::PNG(Arc::new(data))),
-                    Some(ImageFormat::GIF) => Some(ImageKind::GIF(Arc::new(data))),
-                    Some(ImageFormat::WEBP) => Some(ImageKind::WEBP(Arc::new(data))),
-                    Some(ImageFormat::SVG) => load_sub_svg(&data, opts),
-                    _ => {
-                        log::warn!("'{}' is not a PNG, JPEG, GIF, WebP or SVG(Z) image.", href);
-                        None
-                    }
-                }
-            } else {
-                log::warn!("'{}' is not a path to an image.", href);
-                None
-            }
+        Box::new(move |href: &str, _opts: &Options| {
+            log::warn!("'{}' is not loaded: external image files need a string resolver.", href);
+            None
         })
     }
 }
@@ -127,7 +102,6 @@ enum ImageFormat {
     JPEG,
     GIF,
     WEBP,
-    SVG,
 }
 
 pub(crate) fn convert(
@@ -316,17 +290,6 @@ pub(crate) fn get_href_data(href: &str, state: &converter::State) -> Option<Imag
     } else {
         (state.opt.image_href_resolver.resolve_string)(href, state.opt)
     }
-}
-
-/// Checks that file has a PNG, a GIF, a JPEG or a WebP magic bytes.
-/// Or an SVG(Z) extension.
-fn get_image_file_format(path: &std::path::Path, data: &[u8]) -> Option<ImageFormat> {
-    let ext = path.extension().and_then(|e| e.to_str())?.to_lowercase();
-    if ext == "svg" || ext == "svgz" {
-        return Some(ImageFormat::SVG);
-    }
-
-    get_image_data_format(data)
 }
 
 /// Checks that file has a PNG, a GIF, a JPEG or a WebP magic bytes.

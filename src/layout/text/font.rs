@@ -758,7 +758,7 @@ fn load_face(system: &fontdb::Database, rule: &FontFaceRule) -> Option<fontdb::F
                 }
             }
             FontSource::Url(url) => {
-                let data = match crate::image::read_resource(url, &rule.base_dir) {
+                let data = match crate::resource::read(url, &rule.base_dir, &rule.base_dir) {
                     Ok(data) => data,
                     Err(error) => {
                         log::warn!("@font-face \"{}\": cannot read the font `{}`: {}", rule.family, url, error);

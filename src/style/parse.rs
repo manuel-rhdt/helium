@@ -144,24 +144,17 @@ impl Styles {
             return;
         }
 
-        let path = Path::new(href);
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            base_dir.join(path)
-        };
-
-        match std::fs::read_to_string(&path) {
-            // relative URLs in the style sheet are relative to the style sheet
-            Ok(css) => {
-                let sheet_dir = path.parent().unwrap_or(base_dir);
-                crate::style::url_context::with(sheet_dir, base_dir, || self.parse_css_in(&css, sheet_dir))
-            }
-            Err(error) => warn!(
-                "Could not read stylesheet \"{}\": {}",
-                path.display(),
-                error
-            ),
+        // (the style sheet is a file of the document like any other: see `resource`)
+        match crate::resource::read_file(href, base_dir, base_dir) {
+            Ok((bytes, path)) => match String::from_utf8(bytes) {
+                // relative URLs in the style sheet are relative to the style sheet
+                Ok(css) => {
+                    let sheet_dir = path.parent().unwrap_or(base_dir);
+                    crate::style::url_context::with(sheet_dir, base_dir, || self.parse_css_in(&css, sheet_dir))
+                }
+                Err(_) => warn!("Could not read stylesheet \"{}\": it is not UTF-8", href),
+            },
+            Err(error) => warn!("Could not read stylesheet \"{}\": {}", href, error),
         }
     }
 

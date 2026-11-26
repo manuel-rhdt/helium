@@ -168,7 +168,7 @@ impl Engine {
                 layout::text::font::set_use_system_fonts(config.system_fonts);
                 layout::text::font::set_font_dirs(config.font_dirs.clone());
                 if let Some(root) = &config.resource_root {
-                    crate::image::set_resource_root(root.clone());
+                    crate::resource::set_resource_root(root.clone());
                 }
                 *installed = Some(config.clone());
             }
