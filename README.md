@@ -1,9 +1,6 @@
 # Umbruch
 
-*Umbruch* (OOM-brookh) is the German word for page makeup, and also for upheaval.
-
-Umbruch turns an HTML document with CSS (and MathML) into a paginated, tagged PDF. It is a print
-renderer: it lays out pages, not a scrollable screen, and it runs no scripts.
+Umbruch turns an HTML document with CSS (and MathML) into a PDF. 
 
 ```
 umbruch [options] input.html output.pdf
