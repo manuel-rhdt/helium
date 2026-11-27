@@ -122,7 +122,7 @@ fn probe_element(index: usize, probe: &Probe) -> Result<String> {
     }
     // (the declarations cannot leave the attribute, and the ones that make a probe a probe come last)
     Ok(format!(
-        "<div id=\"probe{index}\" style=\"{}; display: block; float: left; clear: left; width: max-content; height: auto; \
+        "<div id=\"probe{index}\" style=\"{}; display: block; width: max-content; height: auto; \
          margin: 0 0 4px 0; padding: 0; border: 0; white-space: pre; line-height: normal\">{fragment}</div>",
         escape(&probe.css)
     ))

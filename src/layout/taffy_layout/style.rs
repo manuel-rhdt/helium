@@ -2,7 +2,7 @@
 
 use crate::style::properties::computed::{SizingKeyword, 
     BoxSizing, ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
-    GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize, TrackEntry, Breadth,
+    GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize, TrackEntry, Breadth, Float,
 };
 use crate::layout::writing_mode::Flow;
 use crate::style::properties::calc::Calc;
@@ -325,6 +325,11 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
             };
             !(length(pos.width) && length(pos.height))
         }),
+        float: match style.page.float {
+            Float::Left => taffy::Float::Left,
+            Float::Right => taffy::Float::Right,
+            _ => taffy::Float::None,
+        },
         position: match style.box_.position {
             PositionSpec::Static => Position::Static,
             PositionSpec::Relative | PositionSpec::Sticky => Position::Relative,

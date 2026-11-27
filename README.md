@@ -401,8 +401,13 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   column, as wide as the column (floats that wait go on in the next column and over the page
   break), and `float-reference: page` makes it a float of the page, as wide as the page, which is
   placed at the top or bottom of the next page and takes room from the container that continues
-  there. Not supported: floats in paragraphs, in tables and in flex and grid containers, and
-  `float: left` and `right`.
+  there. Not supported: floats in paragraphs, and in tables and in flex and grid containers.
+- **Floats beside the text (first step):** `float: left` and `right` on a block between the blocks
+  of a block container, placed by Taffy. The blocks that follow it are boxes beside it (or below
+  it if they do not fit): their text does not flow around the float, so it stays in the narrower
+  column however tall it is. Not supported yet: `clear`, text that flows under a float, and a
+  float that is taller than a page or that the paginator knows of (it is not part of the flow, so
+  a page break next to it is not aware of it).
 - **Multi-column layout:** `column-count`, `column-width`, `columns`, `column-gap` (`normal` is
   `1em`; also `gap` and `row-gap` take `normal`, which is no gap in a grid and a flex container),
   `column-rule` with `-width`, `-style` and `-color`, `column-fill` (`balance`, `balance-all` and
@@ -536,7 +541,7 @@ checks what a program can check, and not for example whether the reading order m
 ## Not supported
 
 Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`,
-`@supports`, `@import`, `overflow`, `float: left`/`right`, `position:
+`@supports`, `@import`, `overflow`, `clear`, `position:
 fixed`/`sticky`, `z-index`, `text-shadow`, inset shadows,
 `outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form

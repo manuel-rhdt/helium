@@ -181,6 +181,7 @@ impl TaffyBlockLayout {
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
         tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
+        tree.avoid_floats(root);
         tree.mark_columns(root);
         let out_of_flow: Vec<bool> = (0..tree.nodes.len())
             .map(|index| tree::node_is_out_of_flow(&tree, NodeId::from(index)))

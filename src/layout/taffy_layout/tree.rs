@@ -201,6 +201,27 @@ impl<'a, 'w> UmbruchTree<'a, 'w> {
         (self.page_variants.get(&id).copied().unwrap_or(0), self.paragraph_variants.min(looseness))
     }
 
+    /// Makes the blocks that follow a floated box avoid it. Taffy's block layout lets an in-flow
+    /// block overlap a float (its lines would be shortened, but Taffy has no lines), and moves
+    /// only a box that starts a block formatting context (`contain: layout`) beside the float, or
+    /// below it if it does not fit there. The box is then as wide as the room next to the float,
+    /// and it does not flow around the float: its text stays next to it, whatever its height.
+    pub(super) fn avoid_floats(&mut self, id: NodeId) {
+        let mut floated = false;
+        for child in self.node(id).children.clone() {
+            let style = &self.node(child).style;
+            if style.float.is_floated() {
+                floated = true;
+            } else if floated
+                && style.display == taffy::Display::Block
+                && style.position != taffy::Position::Absolute
+            {
+                self.node_mut(child).style.contain = taffy::Contain::LAYOUT;
+            }
+            self.avoid_floats(child);
+        }
+    }
+
     pub(super) fn mark_orthogonal(&mut self, id: NodeId, parent: Flow) {
         let flow = self.node(id).flow;
         if flow.is_vertical() != parent.is_vertical() {
