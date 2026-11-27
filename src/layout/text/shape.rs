@@ -890,11 +890,24 @@ mod tests {
     /// A font without U+2010 gets the hyphen-minus.
     #[test]
     fn the_hyphen_is_the_hyphen_minus_if_the_font_lacks_u2010() {
-        use harfbuzz_rs::subset::SubsetInput;
+        use read_fonts::collections::IntSet;
+        use read_fonts::types::{GlyphId, NameId, Tag};
         let s = setup("abc");
-        let mut input = SubsetInput::new().unwrap();
-        input.unicode_set_mut().insert_str("abc-");
-        let bytes = harfbuzz_rs::Face::from_bytes(&s.font.data, s.font.index).subset(&input).unwrap().face_data().as_ref().to_vec();
+        let source = read_fonts::FontRef::from_index(&s.font.data, s.font.index).unwrap();
+        let mut unicodes = IntSet::<u32>::empty();
+        unicodes.extend_unsorted("abc-".chars().map(|c| c as u32));
+        let plan = skera::Plan::new(
+            &IntSet::<GlyphId>::empty(),
+            &unicodes,
+            &source,
+            skera::SubsetFlags::SUBSET_FLAGS_NOTDEF_OUTLINE,
+            &IntSet::empty(),
+            &IntSet::all(),
+            &IntSet::<Tag>::all(),
+            &IntSet::<NameId>::all(),
+            &IntSet::all(),
+        );
+        let bytes = skera::subset_font(&source, &plan).unwrap();
         let font = Font::load(std::sync::Arc::new(bytes), 0).unwrap();
         assert!(!font.covers('\u{2010}') && font.covers('-'));
         assert_eq!(hyphen_character(&font, &TextFonts::default(), Some(2)), '-');

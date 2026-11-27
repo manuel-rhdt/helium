@@ -20,9 +20,8 @@ umbruch_derive = { path = "./umbruch_derive" }
 umbruch_paginate = { path = "./umbruch_paginate" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
-harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
 harfrust = "0.16"
-# Subsets the fonts for embedding into PDFs (the fonts bundled by `build.rs` are still subset with harfbuzz).
+# Subsets the fonts for embedding into PDFs (`build.rs` subsets the bundled fonts with skera).
 subsetter = { version = "0.2", default-features = false }
 read-fonts = "0.47"
 formel = "0.2"
@@ -56,6 +55,9 @@ default = ["fontconfig"]
 fontconfig = ["dep:yeslogic-fontconfig-sys"]
 
 [dev-dependencies]
+# The reference of the differential tests of the font stack (`layout/text/shape_diff.rs`).
+harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
+skera = "0.10"
 assert_cmd = "1"
 predicates = "1"
 quickcheck = "1"
@@ -64,9 +66,10 @@ quickcheck_macros = "1"
 [build-dependencies]
 fontdb = { version = "0.24", default-features = false, features = ["std"] }
 flate2 = "1"
-harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
+read-fonts = "0.47"
+skera = "0.10"
 
-# The build script subsets the bundled fonts; do not run harfbuzz unoptimized.
+# The build script subsets the bundled fonts; do not run the subsetter unoptimized.
 [profile.dev.build-override]
 opt-level = 3
 
