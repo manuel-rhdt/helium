@@ -30,6 +30,7 @@ use crate::layout::normal_formatting::BlockFormattingContext;
 use crate::style::properties::computed::{ComputedValues, PixelLength};
 
 use super::style::{is_out_of_flow, taffy_style_in};
+use crate::layout::inline::LineShape;
 use crate::layout::writing_mode::Flow;
 use super::replaced;
 use super::table::{GridTracks, TableStructure};
@@ -111,6 +112,14 @@ pub(super) struct Node {
     /// The width the lines of the paragraph were last broken for, and the indent of the first
     /// line, as the measure function was given them when the box was laid out for real.
     pub measured: Option<(f32, f32)>,
+    /// The floats (`float: left` and `right`) right in front of this box among its siblings,
+    /// which its first lines go around.
+    pub floats_before: Vec<NodeId>,
+    /// The width and the height of the margin box of a float, as it was last laid out.
+    pub float_outer: Option<(f32, f32)>,
+    /// The shape that the lines of the paragraph were last broken for (see
+    /// [`InlineFormattingContext::shape`]), as `measured` is the width.
+    pub shape: Vec<LineShape>,
     /// The inline context of a box with `inline-block` boxes as it was before their widths were
     /// applied, and the line width and the height that the boxes were laid out for. Together
     /// they let a layout at another width size the boxes again (see [`super::subtree`]).
@@ -201,25 +210,62 @@ impl<'a, 'w> UmbruchTree<'a, 'w> {
         (self.page_variants.get(&id).copied().unwrap_or(0), self.paragraph_variants.min(looseness))
     }
 
-    /// Makes the blocks that follow a floated box avoid it. Taffy's block layout lets an in-flow
-    /// block overlap a float (its lines would be shortened, but Taffy has no lines), and moves
-    /// only a box that starts a block formatting context (`contain: layout`) beside the float, or
-    /// below it if it does not fit there. The box is then as wide as the room next to the float,
-    /// and it does not flow around the float: its text stays next to it, whatever its height.
-    pub(super) fn avoid_floats(&mut self, id: NodeId) {
-        let mut floated = false;
+    /// Tells every box about the floats right in front of it among its siblings. The text of a
+    /// paragraph goes around them (see [`Self::float_shape`]); Taffy places the floats.
+    pub(super) fn link_floats(&mut self, id: NodeId) {
+        let mut floats: Vec<NodeId> = vec![];
         for child in self.node(id).children.clone() {
-            let style = &self.node(child).style;
-            if style.float.is_floated() {
-                floated = true;
-            } else if floated
-                && style.display == taffy::Display::Block
-                && style.position != taffy::Position::Absolute
-            {
-                self.node_mut(child).style.contain = taffy::Contain::LAYOUT;
+            if self.node(child).style.float.is_floated() {
+                floats.push(child);
+            } else if self.node(child).style.position != taffy::Position::Absolute {
+                self.node_mut(child).floats_before = std::mem::take(&mut floats);
             }
-            self.avoid_floats(child);
+            self.link_floats(child);
         }
+    }
+
+    /// What the floats in front of a paragraph take of its first lines. The lines that start above
+    /// the bottom of a float (the margin box) are narrower by its width, and start after it if
+    /// it is at the left. The float is taken to start where the paragraph does, and a line is as
+    /// high as the strut of the paragraph, whatever is in it.
+    fn float_shape(&self, id: NodeId, parent_width: Option<f32>) -> (Vec<LineShape>, f32) {
+        let node = self.node(id);
+        let floats: Vec<(bool, f32, f32)> = node
+            .floats_before
+            .iter()
+            .filter_map(|&float| {
+                let float = self.node(float);
+                let (width, height) = float.float_outer?;
+                Some((float.style.float == taffy::Float::Left, width, height))
+            })
+            .collect();
+        let Some(ifc) = self.inline_ctxs.get(node.entity) else {
+            return (vec![], 0.0);
+        };
+        let line_height = (ifc.strut.0 + ifc.strut.1).0;
+        if floats.is_empty() || line_height <= 0.0 {
+            return (vec![], 0.0);
+        }
+        // the float starts at the top margin of the paragraph, and the lines at its border
+        let top = node.style.margin.top.resolve_or_zero(parent_width, calc);
+        let below = |height: f32| (height - top).max(0.0);
+        let contain = floats.iter().map(|&(_, _, height)| below(height)).fold(0.0, f32::max);
+        let rows = (contain / line_height - 0.001).ceil().max(0.0) as usize;
+        let shape = (0..rows)
+            .map(|line| {
+                let y = line as f32 * line_height;
+                let width = |left: bool| -> f32 {
+                    floats
+                        .iter()
+                        .filter(|&&(is_left, _, height)| is_left == left && below(height) > y + 0.001)
+                        .map(|&(_, width, _)| width)
+                        .sum()
+                };
+                let (left, right) = (width(true), width(false));
+                LineShape { offset: left, reduction: left + right }
+            })
+            .collect();
+        (shape, contain)
     }
 
     pub(super) fn mark_orthogonal(&mut self, id: NodeId, parent: Flow) {
@@ -286,6 +332,9 @@ impl<'a, 'w> UmbruchTree<'a, 'w> {
             window_style: None,
             windowed: false,
             measured: None,
+            floats_before: vec![],
+            float_outer: None,
+            shape: vec![],
             atoms_before: None,
             columns: None,
             cache: Cache::new(),
@@ -900,6 +949,15 @@ impl UmbruchTree<'_, '_> {
     pub(super) fn compute_inline_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
         self.ensure_atoms(id, &inputs);
         let variant = self.variant_of(id);
+        // the first lines go around the floats in front of the paragraph; `contain` is how far
+        // the floats reach below its top, which it is as high as (the next block is below them)
+        let (shape, contain) = self.float_shape(id, inputs.parent_size.width);
+        let entity = self.node(id).entity;
+        if let Some(ifc) = self.inline_ctxs.get_mut(entity) {
+            if ifc.shape != shape {
+                ifc.shape = shape.clone();
+            }
+        }
 
         let node = &self.nodes[usize::from(id)];
         let entity = node.entity;
@@ -980,7 +1038,7 @@ impl UmbruchTree<'_, '_> {
             }
             Size {
                 width,
-                height: known.height.unwrap_or(height),
+                height: known.height.unwrap_or(height.max(contain)),
             }
         });
 
@@ -1026,6 +1084,7 @@ impl UmbruchTree<'_, '_> {
         }
         if measured.is_some() {
             self.node_mut(id).measured = measured;
+            self.node_mut(id).shape = shape;
         }
         output
     }
@@ -1203,7 +1262,7 @@ impl LineCut {
 }
 
 /// The lines of paragraphs, by the paragraph, the place where they start, and the width.
-pub(super) type LineCache = HashMap<(u32, Option<LineCut>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>>;
+pub(super) type LineCache = HashMap<(u32, Option<LineCut>, u64), Rc<Vec<crate::layout::inline::MeasuredLine>>>;
 
 /// The ways to break a paragraph from the break `from` (the start of the paragraph if there is none)
 /// to its end, for a line width: the lines of [`lines_from`], and, if `extra` is not 0, the
@@ -1338,7 +1397,17 @@ pub(super) fn lines_from(
     intrinsic_sizes: &WriteStorage<IntrinsicSize>,
     aligns: &ReadStorage<crate::layout::components::VerticalAlignment>,
 ) -> Rc<Vec<crate::layout::inline::MeasuredLine>> {
-    let key = (node, from, line_width.0.to_bits());
+    // (the lines of a paragraph that goes around floats are not those of one that does not)
+    let shape_key = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        for shape in &ifc.shape {
+            shape.offset.to_bits().hash(&mut hasher);
+            shape.reduction.to_bits().hash(&mut hasher);
+        }
+        hasher.finish() as u32
+    };
+    let key = (node, from, u64::from(line_width.0.to_bits()) | (u64::from(shape_key) << 32));
     if let Some(lines) = cache.get(&key) {
         return lines.clone();
     }
@@ -1536,6 +1605,14 @@ impl LayoutPartialTree for UmbruchTree<'_, '_> {
             }
             if orthogonal {
                 transpose_output(&mut output);
+            }
+            // the room that a float takes, which the paragraphs after it go around
+            if tree.node(id).style.float.is_floated() && inputs.run_mode == RunMode::PerformLayout {
+                let margin = tree.node(id).style.margin.resolve_or_zero(inputs.parent_size.width, calc);
+                tree.node_mut(id).float_outer = Some((
+                    output.size.width + margin.left + margin.right,
+                    output.size.height + margin.top + margin.bottom,
+                ));
             }
             output
         })

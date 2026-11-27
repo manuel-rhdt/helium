@@ -52,7 +52,7 @@ struct Kept {
     ifc: InlineFormattingContext,
     before: Option<Box<(InlineFormattingContext, f32, Option<f32>)>>,
     /// The lines that were cached for the paragraph, by the entity.
-    lines: Vec<((u32, Option<super::tree::LineCut>, u32), Rc<Vec<crate::layout::inline::MeasuredLine>>)>,
+    lines: Vec<((u32, Option<super::tree::LineCut>, u64), Rc<Vec<crate::layout::inline::MeasuredLine>>)>,
 }
 
 /// A float laid out on its own at the width of a page ([`UmbruchTree::layout_float`]).

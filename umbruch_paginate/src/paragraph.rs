@@ -115,8 +115,27 @@ impl ParagraphLines {
 /// following a hyphen as the last line of a paragraph has), and it ends at the last opportunity.
 pub fn compute_paragraph_lines(
     opportunities: &[BreakOpportunity],
-    mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
+    line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
     mut line_width: impl FnMut(usize) -> f64,
+    start: LineStart,
+    ends_paragraph: bool,
+) -> ParagraphLines {
+    compute_paragraph_lines_shaped(opportunities, line_metrics, |_, from| line_width(from), 0, start, ends_paragraph)
+}
+
+/// Like [`compute_paragraph_lines`], for a paragraph whose first `shaped` lines have widths of
+/// their own, like the lines of TeX's `\parshape` (a paragraph that wraps around a float).
+/// `line_width(line, from)` is the width of the line that is the number `line` (counted from the
+/// start of the breaking) and starts at the break `from`; it is asked for the numbers up to
+/// `shaped` only, and the width of `shaped` is the one of all the lines after the shaped ones.
+///
+/// The search keeps the number of the line, up to `shaped`, as a part of its state, so it takes
+/// `shaped + 1` times as long (and as long as before where there is no shape).
+pub fn compute_paragraph_lines_shaped(
+    opportunities: &[BreakOpportunity],
+    mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
+    mut line_width: impl FnMut(usize, usize) -> f64,
+    shaped: usize,
     start: LineStart,
     ends_paragraph: bool,
 ) -> ParagraphLines {
@@ -129,12 +148,16 @@ pub fn compute_paragraph_lines(
         };
     }
 
-    let mut paths = vec![[None; STATE_COUNT]; opportunities.len()];
+    // (a state is the number of the line, up to `shaped`, and then the fitness class and the hyphen)
+    let slots = STATE_COUNT * (shaped + 1);
+    let mut paths = vec![vec![None; slots]; opportunities.len()];
     let mut forced_prefix = vec![0usize; opportunities.len() + 1];
     for (index, opportunity) in opportunities.iter().enumerate() {
         forced_prefix[index + 1] = forced_prefix[index] + usize::from(opportunity.forced);
     }
-    let line_widths: Vec<_> = (0..opportunities.len() - 1).map(&mut line_width).collect();
+    let line_widths: Vec<Vec<f64>> = (0..=shaped)
+        .map(|line| (0..opportunities.len() - 1).map(|from| line_width(line, from)).collect())
+        .collect();
     let initial_state = state_index(usize::from(start.fitness).min(FITNESS_CLASSES - 1), start.hyphen);
     paths[0][initial_state] = Some(ParagraphNode {
         demerits: 0.0,
@@ -150,7 +173,8 @@ pub fn compute_paragraph_lines(
             let Some((natural_width, glue)) = line_metrics(from, to) else {
                 continue;
             };
-            let delta = line_widths[from] - natural_width;
+            for line in 0..=shaped {
+            let delta = line_widths[line][from] - natural_width;
             // A line that cannot be shortened enough is overfull. Like TeX does in its last
             // resort, accept it only for the smallest piece that can end a line, so that a word
             // wider than the line gets a line of its own with the worst possible badness.
@@ -171,9 +195,11 @@ pub fn compute_paragraph_lines(
             };
             let fitness = fitness_class(ratio);
             let opportunity = opportunities[to];
+            let next_line = (line + 1).min(shaped);
 
             for previous_state in 0..STATE_COUNT {
-                let Some(previous) = paths[from][previous_state] else {
+                let previous_slot = line * STATE_COUNT + previous_state;
+                let Some(previous) = paths[from][previous_slot] else {
                     continue;
                 };
                 let (previous_fitness, previous_hyphen) = decode_state(previous_state);
@@ -201,16 +227,17 @@ pub fn compute_paragraph_lines(
                     demerits += opportunity.final_hyphen_demerits.unwrap_or(FINAL_HYPHEN_DEMERITS);
                 }
 
-                let next_state = state_index(fitness, opportunity.hyphen);
+                let next_slot = next_line * STATE_COUNT + state_index(fitness, opportunity.hyphen);
                 let replace =
-                    paths[to][next_state].map_or(true, |current| demerits < current.demerits);
+                    paths[to][next_slot].map_or(true, |current| demerits < current.demerits);
                 if replace {
-                    paths[to][next_state] = Some(ParagraphNode {
+                    paths[to][next_slot] = Some(ParagraphNode {
                         demerits,
                         badness,
-                        previous: Some((from, previous_state)),
+                        previous: Some((from, previous_slot)),
                     });
                 }
+            }
             }
         }
     }
@@ -232,7 +259,7 @@ pub fn compute_paragraph_lines(
 
     let mut index = last;
     let mut sequence = vec![last];
-    let mut fitness = vec![decode_state(state).0 as u8];
+    let mut fitness = vec![decode_state(state % STATE_COUNT).0 as u8];
     let mut cumulative = vec![paths[last][state].map_or(0.0, |node| node.demerits)];
     let mut badness = vec![paths[last][state].map_or(0.0, |node| node.badness)];
     while let Some((previous_index, previous_state)) =
@@ -241,7 +268,7 @@ pub fn compute_paragraph_lines(
         index = previous_index;
         state = previous_state;
         sequence.push(index);
-        fitness.push(decode_state(state).0 as u8);
+        fitness.push(decode_state(state % STATE_COUNT).0 as u8);
         cumulative.push(paths[index][state].map_or(0.0, |node| node.demerits));
         badness.push(paths[index][state].map_or(0.0, |node| node.badness));
     }
@@ -282,13 +309,28 @@ struct CountedNode {
 /// state. It takes `extra` + the number of lines of the optimum times as long.
 pub fn compute_paragraph_variants(
     opportunities: &[BreakOpportunity],
-    mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
+    line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
     mut line_width: impl FnMut(usize) -> f64,
     start: LineStart,
     ends_paragraph: bool,
     extra: u32,
 ) -> Vec<ParagraphLines> {
-    let optimum = compute_paragraph_lines(opportunities, &mut line_metrics, &mut line_width, start, ends_paragraph);
+    compute_paragraph_variants_shaped(opportunities, line_metrics, |_, from| line_width(from), 0, start, ends_paragraph, extra)
+}
+
+/// Like [`compute_paragraph_variants`], for a paragraph whose first `shaped` lines have widths of
+/// their own (see [`compute_paragraph_lines_shaped`]).
+pub fn compute_paragraph_variants_shaped(
+    opportunities: &[BreakOpportunity],
+    mut line_metrics: impl FnMut(usize, usize) -> Option<(f64, GlueTotals)>,
+    mut line_width: impl FnMut(usize, usize) -> f64,
+    shaped: usize,
+    start: LineStart,
+    ends_paragraph: bool,
+    extra: u32,
+) -> Vec<ParagraphLines> {
+    let optimum =
+        compute_paragraph_lines_shaped(opportunities, &mut line_metrics, &mut line_width, shaped, start, ends_paragraph);
     let optimum_lines = optimum.lines();
     if extra == 0 || opportunities.len() < 2 || optimum_lines == 0 || optimum.demerits.iter().any(|d| d.is_infinite()) {
         return vec![optimum];
@@ -304,7 +346,8 @@ pub fn compute_paragraph_variants(
     for (index, opportunity) in opportunities.iter().enumerate() {
         forced_prefix[index + 1] = forced_prefix[index] + usize::from(opportunity.forced);
     }
-    let line_widths: Vec<_> = (0..count - 1).map(&mut line_width).collect();
+    let line_widths: Vec<Vec<f64>> =
+        (0..=shaped).map(|line| (0..count - 1).map(|from| line_width(line, from)).collect()).collect();
     let initial_state = state_index(usize::from(start.fitness).min(FITNESS_CLASSES - 1), start.hyphen);
     paths[0][slot(initial_state, 0)] = Some(CountedNode {
         demerits: 0.0,
@@ -320,15 +363,6 @@ pub fn compute_paragraph_variants(
             let Some((natural_width, glue)) = line_metrics(from, to) else {
                 continue;
             };
-            let delta = line_widths[from] - natural_width;
-            let overfull = delta < 0.0 && (glue.shrink <= 0.0 || -delta > glue.shrink);
-            if overfull && to != from + 1 {
-                continue;
-            }
-            let ragged_final_line = ends_paragraph && to + 1 == count && delta >= 0.0;
-            let ratio = if ragged_final_line { 0.0 } else { adjustment_ratio(delta, glue) };
-            let badness = if ragged_final_line { 0.0 } else { line_badness(ratio) };
-            let fitness = fitness_class(ratio);
             let opportunity = opportunities[to];
 
             for previous_state in 0..STATE_COUNT {
@@ -337,6 +371,15 @@ pub fn compute_paragraph_variants(
                     let Some(previous) = paths[from][slot(previous_state, lines_before)] else {
                         continue;
                     };
+                    let delta = line_widths[lines_before.min(shaped)][from] - natural_width;
+                    let overfull = delta < 0.0 && (glue.shrink <= 0.0 || -delta > glue.shrink);
+                    if overfull && to != from + 1 {
+                        continue;
+                    }
+                    let ragged_final_line = ends_paragraph && to + 1 == count && delta >= 0.0;
+                    let ratio = if ragged_final_line { 0.0 } else { adjustment_ratio(delta, glue) };
+                    let badness = if ragged_final_line { 0.0 } else { line_badness(ratio) };
+                    let fitness = fitness_class(ratio);
                     // (the same demerits as in compute_paragraph_lines)
                     let penalty = if opportunity.penalty > 0 && opportunity.penalty < 10_000 {
                         f64::from(opportunity.penalty)
@@ -556,6 +599,31 @@ mod test {
     fn line_demerits(from: usize, to: usize, offsets: &[f64], line_width: f64) -> f64 {
         let natural_width = offsets[to] - offsets[from];
         (natural_width - line_width).powi(2)
+    }
+
+    /// Words of equal width (10) with a space between: a line of width 40 holds 3 words.
+    fn uniform_words(count: usize) -> (Vec<BreakOpportunity>, Vec<f64>) {
+        let opportunities = vec![BreakOpportunity::default(); count + 1];
+        let advance = (0..=count).map(|index| index as f64 * 10.0).collect();
+        (opportunities, advance)
+    }
+
+    #[test]
+    fn the_first_lines_can_have_a_width_of_their_own() {
+        let (opportunities, advance) = uniform_words(12);
+        let metrics = |from: usize, to: usize| {
+            Some((advance[to] - advance[from], GlueTotals { stretch: 0.0, shrink: 0.0 }))
+        };
+        // two lines of 2 words, then lines of 4 words
+        let widths = |line: usize, _from: usize| if line < 2 { 20.0 } else { 40.0 };
+        let lines = compute_paragraph_lines_shaped(&opportunities, metrics, widths, 2, LineStart::PARAGRAPH, true);
+        assert_eq!(lines.breaks, vec![0, 2, 4, 8, 12]);
+        // (without a shape the lines are the ones of the width after it)
+        let plain = compute_paragraph_lines_shaped(&opportunities, metrics, |_, _| 40.0, 0, LineStart::PARAGRAPH, true);
+        assert_eq!(plain.breaks, vec![0, 4, 8, 12]);
+        // (and the lines that count their number agree)
+        let variants = compute_paragraph_variants_shaped(&opportunities, metrics, widths, 2, LineStart::PARAGRAPH, true, 1);
+        assert_eq!(variants[0].breaks, lines.breaks);
     }
 
     #[test]

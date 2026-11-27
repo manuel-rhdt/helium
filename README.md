@@ -402,12 +402,16 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   break), and `float-reference: page` makes it a float of the page, as wide as the page, which is
   placed at the top or bottom of the next page and takes room from the container that continues
   there. Not supported: floats in paragraphs, and in tables and in flex and grid containers.
-- **Floats beside the text (first step):** `float: left` and `right` on a block between the blocks
-  of a block container, placed by Taffy. The blocks that follow it are boxes beside it (or below
-  it if they do not fit): their text does not flow around the float, so it stays in the narrower
-  column however tall it is. Not supported yet: `clear`, text that flows under a float, and a
-  float that is taller than a page or that the paginator knows of (it is not part of the flow, so
-  a page break next to it is not aware of it).
+- **Floats beside the text:** `float: left` and `right` on a block between the blocks of a block
+  container. Taffy places the float, and the lines of the paragraph that follows it (or follow
+  them, if floats at both sides) go around it, as long as the float reaches below the top of the
+  paragraph, and are as wide as the room between the floats; after that they have the full width
+  (the breaker takes the line number into account, like TeX's `\parshape`). The paragraph is as high
+  as the float, so what follows it is below the float. Not supported yet: `clear`, a paragraph
+  that is not the next sibling of the float (a float does not reach into the second paragraph after
+  it), a float that is not between the blocks of a block container, and pages: the lines of a
+  paragraph that a page break cuts are as wide as the paragraph after the break, and the paginator
+  does not know of the float (one that is taller than a page overflows it).
 - **Multi-column layout:** `column-count`, `column-width`, `columns`, `column-gap` (`normal` is
   `1em`; also `gap` and `row-gap` take `normal`, which is no gap in a grid and a flex container),
   `column-rule` with `-width`, `-style` and `-color`, `column-fill` (`balance`, `balance-all` and
