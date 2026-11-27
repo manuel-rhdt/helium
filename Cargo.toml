@@ -21,6 +21,8 @@ umbruch_paginate = { path = "./umbruch_paginate" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
+harfrust = "0.16"
+read-fonts = "0.47"
 formel = "0.2"
 parking_lot = "0.11"
 thiserror = "^1"
@@ -52,9 +54,6 @@ default = ["fontconfig"]
 fontconfig = ["dep:yeslogic-fontconfig-sys"]
 
 [dev-dependencies]
-# For the differential tests of the harfbuzz port (`layout/text/shape_diff.rs`).
-harfrust = "0.16"
-read-fonts = "0.47"
 assert_cmd = "1"
 predicates = "1"
 quickcheck = "1"

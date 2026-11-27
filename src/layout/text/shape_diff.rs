@@ -1,5 +1,6 @@
 //! Differential tests for the port from harfbuzz to harfrust and read-fonts: every bundled font
-//! is shaped and measured with both stacks, and the results are compared.
+//! is shaped and measured with harfbuzz (the reference) and with the fonts of umbruch (harfrust
+//! and read-fonts), and the results are compared.
 //!
 //! The tests report every difference they find (up to a limit) rather than stopping at the first.
 //! `KNOWN_DIFFERENCES` lists the ones that are understood and accepted.
@@ -9,7 +10,7 @@ use harfbuzz_rs::{ClusterLevel, UnicodeBuffer, shape as hb_shape};
 use harfrust::{Buffer, Direction, Feature, Language, Script, ShaperFont, ShapeOptions};
 use read_fonts::model::Font as RfFont;
 use read_fonts::TableProvider;
-use read_fonts::types::{GlyphId, NameId, Tag};
+use read_fonts::types::{NameId, Tag};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -88,7 +89,7 @@ fn script_tag(script: &str) -> u32 {
     u32::from_be_bytes(script.as_bytes().try_into().unwrap())
 }
 
-fn shape_harfbuzz(font: &Font, case: &Case, text: &str) -> Shaped {
+fn shape_harfbuzz(font: &harfbuzz_rs::Font<'_>, case: &Case, text: &str) -> Shaped {
     let mut buffer = UnicodeBuffer::new()
         .add_str(text)
         .set_cluster_level(ClusterLevel::MonotoneCharacters)
@@ -111,7 +112,7 @@ fn shape_harfbuzz(font: &Font, case: &Case, text: &str) -> Shaped {
             )
         })
         .collect();
-    let result = hb_shape(&font.hb_font, buffer, &features);
+    let result = hb_shape(font, buffer, &features);
     Shaped {
         glyphs: result
             .get_glyph_infos()
@@ -145,6 +146,12 @@ fn shape_harfrust(font: &RfFont, case: &Case, text: &str) -> Shaped {
             .map(|(info, pos)| (info.glyph_id, info.cluster, pos.x_advance, pos.x_offset, pos.y_offset))
             .collect(),
     }
+}
+
+/// The reference: harfbuzz's view of the font.
+fn hb_font(data: &Arc<Vec<u8>>) -> harfbuzz_rs::Owned<harfbuzz_rs::Font<'static>> {
+    let blob = harfbuzz_rs::Blob::with_bytes_owned(data.clone(), |b| &**b);
+    harfbuzz_rs::Font::new(harfbuzz_rs::Face::new(blob, 0))
 }
 
 fn is_known(difference: &str) -> bool {
@@ -188,7 +195,8 @@ fn shaping_of_the_bundled_fonts_is_the_same() {
     let mut compared = 0;
     for (name, data) in bundled() {
         let font = Font::load(data.clone(), 0).unwrap();
-        let rf = RfFont::new(data.clone() as Arc<dyn AsRef<[u8]> + Send + Sync>, 0).expect("read-fonts parses it");
+        let reference = hb_font(&data);
+        let rf = font.face.clone();
         for case in cases() {
             let text = covered(&font, case.text);
             if text.chars().filter(|c| !c.is_whitespace()).count() < 3 {
@@ -199,7 +207,7 @@ fn shaping_of_the_bundled_fonts_is_the_same() {
                 continue;
             }
             compared += 1;
-            let hb = shape_harfbuzz(&font, &case, &text);
+            let hb = shape_harfbuzz(&reference, &case, &text);
             let rust = shape_harfrust(&rf, &case, &text);
             if hb != rust {
                 let first = hb.glyphs.iter().zip(&rust.glyphs).position(|(a, b)| a != b);
@@ -227,77 +235,83 @@ fn the_font_queries_of_the_bundled_fonts_are_the_same() {
     let mut compared = 0;
     for (name, data) in bundled() {
         let font = Font::load(data.clone(), 0).unwrap();
-        let rf = RfFont::new(data.clone() as Arc<dyn AsRef<[u8]> + Send + Sync>, 0).unwrap();
+        let reference = hb_font(&data);
+        let rf = font.face.clone();
         let mut check = |what: &str, hb: String, rust: String| {
             compared += 1;
             if hb != rust {
-                differences.push(format!("{name} {what}: harfbuzz {hb}, harfrust {rust}"));
+                differences.push(format!("{name} {what}: harfbuzz {hb}, umbruch {rust}"));
             }
         };
-        check("upem", font.upem.to_string(), rf.units_per_em().to_string());
-        check("glyph count", font.hb_font.face().glyph_count().to_string(), rf.num_glyphs().to_string());
-        check("is truetype", font.is_truetype().to_string(), rf.tables().glyf().is_ok().to_string());
-        check("has MATH", font.has_math_table().to_string(), rf.tables().math().is_ok().to_string());
+        let hb_face = reference.face();
+        let hb_name = |id| super::font::hb_name_of(&hb_face, id);
+        check("upem", hb_face.upem().to_string(), font.upem.to_string());
+        check("glyph count", hb_face.glyph_count().to_string(), rf.num_glyphs().to_string());
+        check("is truetype", hb_face.table_with_tag(b"glyf").is_some().to_string(), font.is_truetype().to_string());
         check(
-            "has COLR",
-            font.has_color_glyphs().to_string(),
-            rf.tables().colr().is_ok().to_string(),
+            "has MATH",
+            // SAFETY: the face is alive
+            unsafe { (harfbuzz_rs::sys::hb_ot_math_has_data(harfbuzz_rs::HarfbuzzObject::as_raw(&*hb_face)) != 0).to_string() },
+            font.has_math_table().to_string(),
         );
-        let names = rf.names();
-        let n = |id| names.get(id).and_then(|n| n.english_or_first()).map(|l| l.name().chars().collect::<String>());
-        check("postscript name", format!("{:?}", Some(font.postscript_name())), format!("{:?}", n(NameId::POSTSCRIPT_NAME)));
+        check(
+            "postscript name",
+            format!("{:?}", hb_name(harfbuzz_rs::sys::HB_OT_NAME_ID_POSTSCRIPT_NAME)),
+            format!("{:?}", Some(font.postscript_name())),
+        );
         check(
             "family name",
-            format!("{:?}", super::font::name_of(&font.hb_font.face(), harfbuzz_rs::sys::HB_OT_NAME_ID_FONT_FAMILY)),
-            format!("{:?}", n(NameId::FAMILY_NAME)),
+            format!("{:?}", hb_name(harfbuzz_rs::sys::HB_OT_NAME_ID_FONT_FAMILY)),
+            format!("{:?}", super::font::name_of(&rf, NameId::FAMILY_NAME)),
+        );
+        check(
+            "OS/2 table",
+            format!("{:?}", hb_face.table_with_tag(b"OS/2").map(|t| t.as_ref().to_vec())),
+            format!("{:?}", font.table_data(b"OS/2").map(|t| t.to_vec())),
         );
 
         // ascent and descent: harfbuzz's font extents
-        let extents = font.hb_font.get_font_h_extents().unwrap_or_default();
-        let metrics = rf.metrics();
-        let (asc, desc) = line_extents(metrics);
+        let extents = reference.get_font_h_extents().unwrap_or_default();
+        let (asc, desc) = font.line_extents();
         check("ascender", extents.ascender.to_string(), asc.to_string());
         check("descender", extents.descender.to_string(), desc.to_string());
+        let ot_metric = |tag| {
+            let mut position = 0;
+            // SAFETY: the font is alive and `position` is a valid out pointer.
+            let found = unsafe {
+                harfbuzz_rs::sys::hb_ot_metrics_get_position(harfbuzz_rs::HarfbuzzObject::as_raw(&*reference), tag, &mut position)
+            };
+            (found != 0).then_some(position)
+        };
         check(
             "x-height",
-            format!("{:?}", font.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_X_HEIGHT)),
-            // read-fonts reports a zero `sxHeight` as a value, harfbuzz as absent
-            format!("{:?}", metrics.x_height.map(|v| v.to_i32()).filter(|&v| v != 0)),
+            format!("{:?}", ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_X_HEIGHT).filter(|&v| v != 0)),
+            format!("{:?}", font.x_height()),
         );
         check(
             "cap-height",
-            format!("{:?}", font.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_CAP_HEIGHT)),
-            format!("{:?}", metrics.cap_height.map(|v| v.to_i32()).filter(|&v| v != 0)),
+            format!("{:?}", ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_CAP_HEIGHT).filter(|&v| v != 0)),
+            format!("{:?}", font.cap_height()),
         );
 
         // the cmap and the advances for every character of the samples
-        let charmap = rf.charmap();
-        let glyph_metrics = rf.glyph_metrics();
         let mut chars: Vec<char> = cases().iter().flat_map(|c| c.text.chars()).collect();
         chars.sort();
         chars.dedup();
         for ch in chars {
-            let hb = font.hb_font.get_nominal_glyph(ch);
-            let rust = charmap.map_unicode(ch as u32).map(|g| g.to_u32());
+            let hb = reference.get_nominal_glyph(ch);
+            let rust = font.nominal_glyph(ch);
             check("nominal glyph", format!("U+{:04X} {hb:?}", ch as u32), format!("U+{:04X} {rust:?}", ch as u32));
             if let (Some(glyph), Some(_)) = (hb, rust) {
-                let hb_advance = font.hb_font.get_glyph_h_advance(glyph);
-                let rust_advance = glyph_metrics.h_advance(GlyphId::new(glyph));
-                check("advance", format!("U+{:04X} {hb_advance}", ch as u32), format!("U+{:04X} {rust_advance}", ch as u32));
+                let hb_advance = reference.get_glyph_h_advance(glyph);
+                let rust_advance = font.advance(super::font::GlyphIndex(glyph));
+                check(
+                    "advance",
+                    format!("U+{:04X} {}", ch as u32, hb_advance as f64 * 1000.0 / font.upem as f64),
+                    format!("U+{:04X} {}", ch as u32, rust_advance.0),
+                );
             }
         }
     }
     report(&differences, compared, "font queries");
-}
-
-/// The ascender and descender (as harfbuzz reports them, descender negative) of a font.
-fn line_extents(metrics: &read_fonts::model::metrics::Metrics) -> (i32, i32) {
-    // placeholder for the port: harfbuzz uses the typo metrics if the font asks for them, then
-    // hhea, then typo, then win
-    let line = if metrics.use_typo_metrics { metrics.typo_line.or(metrics.hhea_line) } else { metrics.hhea_line };
-    let line = line.filter(|l| l.ascender.to_i32() != 0 || l.descender.to_i32() != 0).or(metrics.typo_line);
-    match line {
-        Some(l) => (l.ascender.to_i32(), l.descender.to_i32()),
-        None => metrics.win_line.map_or((0, 0), |w| (w.ascender.to_i32(), w.descender.to_i32())),
-    }
 }

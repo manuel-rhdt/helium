@@ -427,8 +427,7 @@ fn classify(font: &Font) -> Option<Class> {
 
 /// The class that the `OS/2` table of `font` says, if any.
 fn metadata_class(font: &Font) -> Option<Class> {
-    let table = font.hb_font.face().table_with_tag(b"OS/2")?;
-    let data: &[u8] = table.as_ref();
+    let data = font.table_data(b"OS/2")?;
     (data.len() >= 42)
         .then(|| class_from_metadata(data[32], data[33], data[35], data[30]))
         .flatten()

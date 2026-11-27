@@ -56,7 +56,7 @@ fn stream<D>(dict: D, bytes: &[u8], compress: bool) -> std::io::Result<Stream<D>
 fn subset_font_bytes(font: &Font, usage: &GlyphUsage) -> std::result::Result<Vec<u8>, harfbuzz_rs::subset::SubsetError> {
     use harfbuzz_rs::subset::{SubsetFlags, SubsetInput};
 
-    let face = font.hb_font.face();
+    let face = harfbuzz_rs::Face::from_bytes(&font.data, font.index);
     let mut input = SubsetInput::new()?;
     {
         let mut glyphs = input.glyph_set_mut();
@@ -161,30 +161,28 @@ fn to_font_unit(font: &Font, val: f32) -> FontUnit {
 }
 
 fn pdf_font_descriptor(font: &Font, name: Name, font_data: FontProgramRef) -> Result<FontDescriptor> {
-    let face = font.hb_font.face();
     let invalid = |reason: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, reason.to_owned());
     // xMin, yMin, xMax, yMax of the `head` table
-    let head = face.table_with_tag(b"head").ok_or_else(|| invalid("font has no head table"))?;
-    let head: &[u8] = head.as_ref();
+    let head = font.table_data(b"head").ok_or_else(|| invalid("font has no head table"))?;
     if head.len() < 44 {
         return Err(invalid("the head table is truncated"));
     }
     let bbox = [36, 38, 40, 42].map(|offset| {
         to_font_unit(font, i16::from_be_bytes([head[offset], head[offset + 1]]) as f32)
     });
-    let extents = font.hb_font.get_font_h_extents().unwrap_or_default();
+    let (ascender, descender) = font.line_extents();
 
     let mut font_descriptor = FontDescriptor {
         font_family: Some(ByteString::from(
-            crate::layout::text::font::name_of(&face, harfbuzz_rs::sys::HB_OT_NAME_ID_FONT_FAMILY)
+            crate::layout::text::font::name_of(&font.face, read_fonts::types::NameId::FAMILY_NAME)
                 .unwrap_or_else(|| font.postscript_name.clone())
                 .into_bytes(),
         )),
         font_b_box: bbox,
-        cap_height: to_font_unit(font, font.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_CAP_HEIGHT).unwrap_or(0) as f32),
-        x_height: to_font_unit(font, font.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_X_HEIGHT).unwrap_or(0) as f32),
-        ascent: to_font_unit(font, extents.ascender as f32),
-        descent: to_font_unit(font, extents.descender as f32),
+        cap_height: to_font_unit(font, font.cap_height().unwrap_or(0) as f32),
+        x_height: to_font_unit(font, font.x_height().unwrap_or(0) as f32),
+        ascent: to_font_unit(font, ascender as f32),
+        descent: to_font_unit(font, descender as f32),
         ..FontDescriptor::new(name)
     };
 
@@ -430,7 +428,7 @@ mod tests {
         let glyphs = text
             .chars()
             .map(|ch| {
-                let glyph = font.hb_font.get_nominal_glyph(ch).expect("the font has the glyph");
+                let glyph = font.nominal_glyph(ch).expect("the font has the glyph");
                 usage.record_glyph(&font.postscript_name, GlyphIndex(glyph), &ch.to_string());
                 glyph as u16
             })

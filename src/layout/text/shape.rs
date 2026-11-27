@@ -1,7 +1,8 @@
-use harfbuzz_rs::{
-    ClusterLevel, Font as HbFont, GlyphInfo as HbGlyphInfo, Shared, UnicodeBuffer,
-    shape as hb_shape,
+use harfrust::{
+    Buffer, ClusterLevel, Direction, Feature as HbFeature, GlyphInfo as HbGlyphInfo, Language as HbLanguage, Script as HbScript,
+    ShapeOptions, ShaperFont,
 };
+use read_fonts::types::Tag;
 
 use super::{Font, font::FontUnit};
 use super::fallback::TextFonts;
@@ -10,8 +11,6 @@ use std::cell::RefCell;
 use crate::style::properties::computed::Language;
 use crate::style::properties::font_features::Feature;
 use unicode_script::Script;
-
-pub type HarfbuzzFont = Shared<HbFont<'static>>;
 
 #[derive(Debug, Copy, Clone)]
 pub struct GlyphInfo {
@@ -25,7 +24,7 @@ pub struct GlyphInfo {
 impl From<HbGlyphInfo> for GlyphInfo {
     fn from(other: HbGlyphInfo) -> GlyphInfo {
         GlyphInfo {
-            codepoint: other.codepoint,
+            codepoint: other.glyph_id,
             cluster: other.cluster,
             font: 0,
         }
@@ -154,8 +153,8 @@ fn offset_clusters(
 #[derive(Default)]
 struct Scratch {
     /// Empty (it is cleared when it is put back) but with the capacity of earlier texts.
-    buffer: Option<UnicodeBuffer>,
-    features: Vec<harfbuzz_rs::Feature>,
+    buffer: Option<Buffer>,
+    features: Vec<HbFeature>,
     spans: Vec<Span>,
     /// The glyphs of the text that `with_shaped` measures.
     glyphs: Vec<(GlyphPosition, GlyphInfo)>,
@@ -275,8 +274,6 @@ fn shape_text_into(
     rtl: bool,
     out: &mut Vec<(GlyphPosition, GlyphInfo)>,
 ) {
-    // harfbuzz hands back a null glyph array for an empty buffer, which trips
-    // the slice precondition check in harfbuzz_rs.
     if text.is_empty() {
         return;
     }
@@ -480,37 +477,33 @@ fn shape_single(
         let mut scratch = scratch.borrow_mut();
         (scratch.buffer.take(), std::mem::take(&mut scratch.features))
     });
-    let mut buffer = recycled
-        .unwrap_or_default()
-        .add_str(text)
-        .set_cluster_level(ClusterLevel::MonotoneCharacters)
-        .set_direction(if rtl {
-            harfbuzz_rs::Direction::Rtl
-        } else {
-            harfbuzz_rs::Direction::Ltr
-        });
+    let mut buffer = recycled.unwrap_or_default();
+    buffer.clear();
+    buffer.push_str(text);
+    buffer.set_cluster_level(ClusterLevel::MonotoneCharacters);
+    buffer.set_direction(if rtl { Direction::RightToLeft } else { Direction::LeftToRight });
     if let Some(script) =
         script.filter(|s| !matches!(s, Script::Common | Script::Inherited | Script::Unknown))
     {
         // a harfbuzz script is the ISO 15924 tag
-        buffer = buffer.set_script(harfbuzz_rs::Tag(script.as_iso15924_tag()));
+        buffer.set_script(HbScript::from_iso15924_tag(Tag::new(&script.as_iso15924_tag().to_be_bytes())));
     }
-    if let Some(language) = lang.tag().and_then(|tag| tag.parse().ok()) {
-        buffer = buffer.set_language(language);
+    if let Some(language) = lang.tag().and_then(HbLanguage::new) {
+        buffer.set_language(Some(language));
     }
-    buffer = buffer.guess_segment_properties();
+    buffer.guess_segment_properties();
 
     // Letter spaced text does not use the optional ligatures:
     // https://www.w3.org/TR/css-text-3/#letter-spacing-property
     let no_ligatures = [
-        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('l', 'i', 'g', 'a'), 0, ..),
-        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('c', 'l', 'i', 'g'), 0, ..),
+        HbFeature::new(Tag::new(b"liga"), 0, ..),
+        HbFeature::new(Tag::new(b"clig"), 0, ..),
     ];
     // Characters that stand upright in vertical lines use the glyphs that the font has for them
     // (rotated punctuation, small kana, ...).
     let vertical = [
-        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('v', 'e', 'r', 't'), 1, ..),
-        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new('v', 'r', 't', '2'), 1, ..),
+        HbFeature::new(Tag::new(b"vert"), 1, ..),
+        HbFeature::new(Tag::new(b"vrt2"), 1, ..),
     ];
     features.clear();
     if !ligatures {
@@ -521,36 +514,49 @@ fn shape_single(
     }
     // the author's features come last: they override the ones above (letter-spaced text can have
     // ligatures if the author asks for them)
-    features.extend(toggles.features.iter().map(|&([a, b, c, d], value)| {
-        harfbuzz_rs::Feature::new(harfbuzz_rs::Tag::new(a as char, b as char, c as char, d as char), value, ..)
-    }));
-    let result = hb_shape(&font.hb_font, buffer, &features);
+    features.extend(toggles.features.iter().map(|tag_value| HbFeature::new(Tag::new(&tag_value.0), tag_value.1, ..)));
+    let shaper_font = ShaperFont::new(&font.face);
+    let plan = font.shape_plan(&buffer, &features);
+    let shaped = harfrust::shape(&shaper_font, &mut buffer, ShapeOptions::new().plan(Some(&plan)).features(&features));
 
     let scale = |val| FontUnit(val as f64 * (1000f64 / font.upem as f64));
 
     let start = out.len();
-    out.extend(
-        result
-            .get_glyph_positions()
-            .iter()
-            .map(|gp| GlyphPosition {
-                x_advance: scale(gp.x_advance),
-                x_offset: scale(gp.x_offset),
-                y_offset: scale(gp.y_offset),
-            })
-            .zip(result.get_glyph_infos().iter().map(|&gi| GlyphInfo {
-                cluster: gi.cluster + cluster_offset,
-                font: font_index,
-                ..gi.into()
-            })),
-    );
+    match shaped {
+        Ok(()) => out.extend(
+            buffer
+                .glyph_positions()
+                .iter()
+                .map(|gp| GlyphPosition {
+                    x_advance: scale(gp.x_advance),
+                    x_offset: scale(gp.x_offset),
+                    y_offset: scale(gp.y_offset),
+                })
+                .zip(buffer.glyph_infos().iter().map(|gi| GlyphInfo {
+                    cluster: gi.cluster + cluster_offset,
+                    font: font_index,
+                    ..gi.clone().into()
+                })),
+        ),
+        Err(error) => {
+            // not reachable for a font that parsed; the text shows as missing glyphs
+            log::warn!("cannot shape with {}: {error}", font.postscript_name);
+            out.extend(text.char_indices().map(|(at, _)| {
+                (
+                    GlyphPosition { x_advance: FontUnit(0.0), x_offset: FontUnit(0.0), y_offset: FontUnit(0.0) },
+                    GlyphInfo { codepoint: 0, cluster: at as u32 + cluster_offset, font: font_index },
+                )
+            }));
+        }
+    }
     if rtl {
         // harfbuzz returns right-to-left glyphs in visual order
         out[start..].reverse();
     }
     SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
-        scratch.buffer = Some(result.clear());
+        buffer.clear();
+        scratch.buffer = Some(buffer);
         scratch.features = features;
     });
 }
@@ -888,7 +894,7 @@ mod tests {
         let s = setup("abc");
         let mut input = SubsetInput::new().unwrap();
         input.unicode_set_mut().insert_str("abc-");
-        let bytes = s.font.hb_font.face().subset(&input).unwrap().face_data().as_ref().to_vec();
+        let bytes = harfbuzz_rs::Face::from_bytes(&s.font.data, s.font.index).subset(&input).unwrap().face_data().as_ref().to_vec();
         let font = Font::load(std::sync::Arc::new(bytes), 0).unwrap();
         assert!(!font.covers('\u{2010}') && font.covers('-'));
         assert_eq!(hyphen_character(&font, &TextFonts::default(), Some(2)), '-');
@@ -918,7 +924,7 @@ mod tests {
         shape_hyphenated_into("abc", '\u{2010}', &s.font, &s.fonts, Some(0), false, &mut together);
         let clusters: Vec<u32> = together.iter().map(|(_, info)| info.cluster).collect();
         assert_eq!(clusters, [0, 1, 2, 3]);
-        let hyphen = s.font.hb_font.get_nominal_glyph('\u{2010}').unwrap();
+        let hyphen = s.font.nominal_glyph('\u{2010}').unwrap();
         assert_eq!(together.last().unwrap().1.codepoint, hyphen);
     }
 
