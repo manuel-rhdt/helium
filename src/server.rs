@@ -10,7 +10,12 @@
 //! `{"id", "ok": true, "result"}` or `{"id", "ok": false, "error": {"code", "message"}}`. Requests
 //! are answered in order.
 //!
-//! **Ops.** `hello`, `measure`, `layout`, `render`, `shutdown`. `measure` takes `probes`, a list of
+//! **Ops.** `hello`, `set_stylesheet`, `measure`, `layout`, `render`, `shutdown`. `set_stylesheet`
+//! takes `{css, base_dir?}` and replaces the style sheet that the server remembers (the empty
+//! string removes it); it applies to every `measure`, `layout` and `render` after it, before the
+//! style sheets of the document (which win ties), and is where `@font-face` rules and the like are
+//! sent once instead of with every request. It returns the `warnings` of parsing it. The style
+//! sheet belongs to the process: a client that starts a new process sends it again. `measure` takes `probes`, a list of
 //! `{markup | text, css}`, and returns `metrics`: one entry per probe, either `{width, ascent, descent,
 //! height, ink, missing_glyphs}` or `{error: {code, message}}`. See the specification for their parameters;
 //! `hello` reports the `capabilities` that a client can rely on: among them `mesh_gouraud`, which
@@ -321,6 +326,7 @@ fn handle(engine: &Engine, request: &Value) -> (Result<Reply, Failure>, Next) {
     }
     match op {
         "hello" => (Ok(hello(engine)), Next::Continue),
+        "set_stylesheet" => (op_set_stylesheet(engine, params), Next::Continue),
         "measure" => (op_measure(engine, params), Next::Continue),
         "layout" => (op_layout(engine, params), Next::Continue),
         "render" => (op_render(engine, params), Next::Continue),
@@ -334,7 +340,7 @@ fn hello(engine: &Engine) -> Reply {
     Reply::plain(json!({
         "protocol": PROTOCOL,
         "umbruch": env!("CARGO_PKG_VERSION"),
-        "capabilities": ["measure", "layout", "render", "warnings", "attachments", "mesh_gouraud"],
+        "capabilities": ["measure", "layout", "render", "warnings", "attachments", "mesh_gouraud", "stylesheet"],
         "fonts": {
             "system_fonts": config.system_fonts,
             "font_dirs": config.font_dirs,
@@ -359,6 +365,35 @@ fn bool_field(object: &Value, name: &str) -> Result<bool, Failure> {
     }
 }
 
+/// A client may only point at directories inside of the resource root, if there is one.
+fn check_base_dir(engine: &Engine, dir: &std::path::Path, what: &str) -> Result<(), Failure> {
+    if let Some(root) = &engine.config().resource_root {
+        let inside = dir
+            .canonicalize()
+            .ok()
+            .zip(root.canonicalize().ok())
+            .is_some_and(|(dir, root)| dir.starts_with(root));
+        if !inside {
+            return Err(Failure::bad(format!(
+                "`{what}` {} is not inside of the resource root {}",
+                dir.display(),
+                root.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn op_set_stylesheet(engine: &Engine, params: &Value) -> Result<Reply, Failure> {
+    let css = str_field(params, "css")?.ok_or_else(|| Failure::bad("`css` is missing"))?;
+    let base_dir = str_field(params, "base_dir")?.map(std::path::PathBuf::from);
+    if let Some(dir) = &base_dir {
+        check_base_dir(engine, dir, "base_dir")?;
+    }
+    let warnings = engine.set_stylesheet(css, base_dir.as_deref());
+    Ok(Reply::plain(json!({"warnings": warnings})))
+}
+
 fn parse_document(engine: &Engine, params: &Value) -> Result<Document, Failure> {
     let document = params.get("document").filter(|d| d.is_object()).ok_or_else(|| Failure::bad("`document` is missing"))?;
     let source = str_field(document, "source")?.ok_or_else(|| Failure::bad("`document.source` is missing"))?;
@@ -369,20 +404,8 @@ fn parse_document(engine: &Engine, params: &Value) -> Result<Document, Failure> 
     };
     let mut document_ = Document::new(source, kind);
     document_.base_dir = str_field(document, "base_dir")?.map(std::path::PathBuf::from);
-    // a client may only point at directories inside of the resource root, if there is one
-    if let (Some(dir), Some(root)) = (&document_.base_dir, &engine.config().resource_root) {
-        let inside = dir
-            .canonicalize()
-            .ok()
-            .zip(root.canonicalize().ok())
-            .is_some_and(|(dir, root)| dir.starts_with(root));
-        if !inside {
-            return Err(Failure::bad(format!(
-                "`document.base_dir` {} is not inside of the resource root {}",
-                dir.display(),
-                root.display()
-            )));
-        }
+    if let Some(dir) = &document_.base_dir {
+        check_base_dir(engine, dir, "document.base_dir")?;
     }
     Ok(document_)
 }

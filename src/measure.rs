@@ -90,6 +90,10 @@ impl Cache {
         self.entries.insert(probe, (metrics, self.clock));
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }

@@ -57,6 +57,7 @@ class Server:
         self._next_id = 0
         self.version = None
         self.capabilities = frozenset()
+        self._stylesheet = None  # (css, base_dir) to send again to a process that is started
         atexit.register(self.close)
 
     def __enter__(self):
@@ -83,6 +84,21 @@ class Server:
         query = {"ids": list(ids), "dump": dump}
         result, _ = self._request("layout", {"document": _document(source, kind, base_dir), "options": options, "query": query})
         return result
+
+    def set_stylesheet(self, css, *, base_dir=None):
+        """Sends a style sheet once; it then applies to every ``measure``, ``layout`` and
+        ``render`` (before the style sheets of the document, which win ties), until it is
+        replaced by another call. ``""`` removes it. Put ``@font-face`` rules here instead of
+        in every request. Relative URLs in it are relative to ``base_dir``; without one, only
+        ``data:`` URIs load. A process that is started again gets it again. Returns the
+        warnings from parsing it."""
+        params = {"css": css}
+        if base_dir is not None:
+            params["base_dir"] = os.fspath(base_dir)
+        with self._lock:
+            result, _ = self._request("set_stylesheet", params)
+            self._stylesheet = (css, params.get("base_dir")) if css else None
+        return result["warnings"]
 
     def measure(self, probes):
         """The size of pieces of text or markup, each ``{"text" | "markup", "css"}``: a list with
@@ -142,6 +158,13 @@ class Server:
             raise Error("server", f"umbruch speaks protocol {hello.get('protocol')}, expected {PROTOCOL}")
         self.version = hello.get("umbruch")
         self.capabilities = frozenset(hello.get("capabilities", ()))
+        if self._stylesheet is not None:
+            css, base_dir = self._stylesheet
+            try:
+                self._exchange(self._proc, "set_stylesheet", {"css": css, **({"base_dir": base_dir} if base_dir else {})})
+            except Exception:
+                self._discard()
+                raise
 
     def _discard(self):
         proc, self._proc = self._proc, None

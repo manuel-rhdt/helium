@@ -304,7 +304,16 @@ pub fn layout(
     crop: bool,
     stylesheet_base_dir: &Path,
 ) -> Result<LayoutContext, String> {
-    layout_with_references(dom, device, crop, stylesheet_base_dir, Default::default())
+    layout_with_references(dom, device, crop, stylesheet_base_dir, None, Default::default())
+}
+
+/// A style sheet that applies to every document in addition to its own: it comes after the user
+/// agent style sheet and before the style sheets of the document, so that the document wins ties.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedStylesheet {
+    pub css: std::sync::Arc<str>,
+    /// What the relative URLs of the style sheet (`@font-face` sources) are relative to.
+    pub base_dir: std::path::PathBuf,
 }
 
 /// What a layout found out about the targets of cross-references, in the layout context.
@@ -330,11 +339,12 @@ pub fn layout_resolved(
     device: Device,
     crop: bool,
     stylesheet_base_dir: &Path,
+    shared: Option<&SharedStylesheet>,
 ) -> Result<(DomRef, LayoutContext), String> {
     let mut known = std::rc::Rc::new(references::References::default());
     for pass in 1.. {
         let dom = parse()?;
-        let context = layout_with_references(dom.clone(), device, crop, stylesheet_base_dir, known.clone())?;
+        let context = layout_with_references(dom.clone(), device, crop, stylesheet_base_dir, shared, known.clone())?;
         let found = std::mem::take(&mut *context.write_resource::<FoundReferences>());
         if !found.used || found.references == *known {
             return Ok((dom, context));
@@ -405,6 +415,7 @@ pub fn layout_with_references(
     device: Device,
     crop: bool,
     stylesheet_base_dir: &Path,
+    shared: Option<&SharedStylesheet>,
     known: std::rc::Rc<references::References>,
 ) -> Result<LayoutContext, String> {
     // here we set the layout passes
@@ -417,6 +428,9 @@ pub fn layout_with_references(
     let mut media = crate::style::media::MediaEnv::from(device);
     for _ in 0..3 {
         flow_constructor.styles.set_media(media);
+        if let Some(shared) = shared {
+            flow_constructor.read_shared_stylesheet(shared);
+        }
         dom.traverse(&mut construct::StylesheetReader(&mut flow_constructor));
         if crop {
             break;
