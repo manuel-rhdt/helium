@@ -171,6 +171,7 @@ impl TaffyBlockLayout {
             lines: HashMap::default(),
             flow: None,
             icb_height: 0.0,
+            page_block_size: 0.0,
             plain_root: None,
             page_fragments: HashMap::default(),
             paragraph_variants: 0,
@@ -420,6 +421,7 @@ impl TaffyBlockLayout {
                 })
                 .collect();
             tree.set_window(window, root);
+            tree.page_block_size = spec.block_size;
             taffy::compute_root_layout(
                 tree,
                 root,
@@ -431,7 +433,8 @@ impl TaffyBlockLayout {
             let height = tree.node(root).layout.size.height;
             // (the text of the page is what is left of it next to the floats)
             let text_used = fill.used - fill.floats_used - fill.repeated;
-            if !fill.overflow && (height - text_used).abs() > 0.5 {
+            // (the header rows that a table repeats push down what follows them)
+            if !fill.overflow && (height < text_used - 0.5 || height > text_used + fill.repeated + 0.5) {
                 log::warn!(
                     "page {} has {height} of text, but the paginator counted {text_used}",
                     start.index + 1,
@@ -964,6 +967,14 @@ impl<'a> Writer<'a, '_> {
         decoration.border = edges(border);
         decoration.padding = edges(padding);
         decoration.collapsed = node.collapsed;
+        if self.repeating {
+            // A repeated row group is not followed by the row that paints the border below it
+            // (the first row of the page is a later one, whose top border is a different one):
+            // its cells paint their bottom borders themselves.
+            if let Some(edges) = &mut decoration.collapsed {
+                edges.bottom.paint = edges.bottom.width.0 > 0.0;
+            }
+        }
         if clip_start {
             decoration.border.top = PixelLength(0.0);
             decoration.padding.top = PixelLength(0.0);

@@ -152,6 +152,9 @@ pub(super) struct UmbruchTree<'a, 'w> {
     pub flow: Option<Rc<super::flow::Flow>>,
     /// The height of the initial containing block of the galleys.
     pub icb_height: f32,
+    /// The height of the content area of the page that is being laid out (a repeated header is
+    /// at most a quarter of it).
+    pub page_block_size: f32,
     /// The container with columns that is laid out as a plain block, to find the extents of its
     /// content for the width of a column (see [`super::subtree`]).
     pub plain_root: Option<NodeId>,
@@ -1487,6 +1490,18 @@ impl LayoutPartialTree for UmbruchTree<'_, '_> {
                                     output.size.height,
                                 );
                                 output.size.height = bottom - top;
+                                // the header rows that the page repeats at the top of the part
+                                // of the table push down what follows it
+                                if let Some(header) = tree.repeated_header(id) {
+                                    let span = tree.node(header).span.as_ref();
+                                    let height = tree.node(header).layout.size.height;
+                                    if span.is_some_and(|span| window.start > span.end)
+                                        && window.open_at_start(node.span.as_ref().expect("a table has a span"))
+                                        && f64::from(height) * 4.0 <= f64::from(tree.page_block_size)
+                                    {
+                                        output.size.height += height;
+                                    }
+                                }
                             }
                         }
                     }
