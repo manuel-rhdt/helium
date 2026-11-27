@@ -140,3 +140,7 @@ jobs:
         merge-multiple: true
         path: dist
     - uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        # PyPI never replaces a file, and a rebuilt wheel has other bytes: a rerun after a partly
+        # failed upload only adds what is missing.
+        skip-existing: true
