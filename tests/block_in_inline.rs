@@ -46,3 +46,18 @@ fn white_space_after_the_block_and_empty_spans_make_no_line() {
 <div data-expected-height="30"> <span><div class="inner"></div></span> <span></span> </div>"#,
     );
 }
+
+#[test]
+fn anonymous_blocks_keep_the_parent_line_height() {
+    check_layout(
+        "anonymous_strut",
+        r#"<!DOCTYPE html>
+<style>
+  body { margin: 0; font: 20px/40px sans-serif }
+  span { font-size: 10px; line-height: 10px }
+</style>
+<div data-expected-height="90">
+  <span>before</span><div style="height:10px" data-offset-y="40"></div><span>after</span>
+</div>"#,
+    );
+}

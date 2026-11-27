@@ -1,10 +1,10 @@
 //! The collapsing border model of tables (`border-collapse: collapse`).
 //!
-//! The borders of adjacent cells (and of the rows, row groups and the table next to them) are
+//! The borders of adjacent cells, rows, row groups, columns, column groups and the table are
 //! resolved into one border per edge of the table grid: the widest border wins; between borders
 //! of the same width, `double` wins over `solid`, `dashed`, `dotted`, `ridge`, `outset`, `groove`
 //! and `inset` (in this order); the one of a cell wins over the one of a row, which wins over
-//! the one of a row group and then of the table; between borders of the same kind, the one
+//! a row group, a column, a column group and then the table; between borders of the same kind, the one
 //! further to the top and to the left (to the right in right-to-left tables) wins. A border
 //! with the style `hidden` wins over all others, and leaves no border.
 //!
@@ -25,7 +25,7 @@ use taffy::tree::NodeId;
 
 use crate::layout::components::{CollapsedEdge, EdgeValues};
 use crate::layout::inline_size::decoration_colors;
-use crate::style::properties::computed::{PixelLength as Px, PaintColor};
+use crate::style::properties::computed::{ComputedValues, PaintColor, PixelLength as Px};
 use crate::style::properties::specified::{BorderCollapse, BorderStyle, Direction};
 
 use super::tree::UmbruchTree;
@@ -45,6 +45,8 @@ pub(super) struct Part {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Origin {
     Table,
+    ColumnGroup,
+    Column,
     RowGroup,
     Row,
     Cell,
@@ -102,6 +104,23 @@ enum Side {
     Right,
 }
 
+fn border_of_style(
+    style: Option<&ComputedValues>,
+    side: Side,
+) -> (f32, PaintColor, BorderStyle) {
+    let Some(style) = style else {
+        return (0.0, PaintColor::transparent(), BorderStyle::None);
+    };
+    let colors = decoration_colors(style).border_color;
+    let position = &style.position;
+    match side {
+        Side::Top => (position.used_border_top_width().0, colors.top, position.border_top_style),
+        Side::Bottom => (position.used_border_bottom_width().0, colors.bottom, position.border_bottom_style),
+        Side::Left => (position.used_border_left_width().0, colors.left, position.border_left_style),
+        Side::Right => (position.used_border_right_width().0, colors.right, position.border_right_style),
+    }
+}
+
 impl UmbruchTree<'_, '_> {
     /// Whether the table has `border-collapse: collapse`.
     pub(super) fn has_collapsed_borders(&self, table: NodeId) -> bool {
@@ -112,17 +131,7 @@ impl UmbruchTree<'_, '_> {
 
     /// The width and color of the border of a box on one side.
     fn border_of(&self, id: NodeId, side: Side) -> (f32, PaintColor, BorderStyle) {
-        let Some(style) = self.computed_values.get(self.node(id).entity) else {
-            return (0.0, PaintColor::transparent(), BorderStyle::None);
-        };
-        let colors = decoration_colors(style).border_color;
-        let position = &style.position;
-        match side {
-            Side::Top => (position.used_border_top_width().0, colors.top, position.border_top_style),
-            Side::Bottom => (position.used_border_bottom_width().0, colors.bottom, position.border_bottom_style),
-            Side::Left => (position.used_border_left_width().0, colors.left, position.border_left_style),
-            Side::Right => (position.used_border_right_width().0, colors.right, position.border_right_style),
-        }
+        border_of_style(self.computed_values.get(self.node(id).entity), side)
     }
 
     /// Resolves the borders of a table with collapsing borders, gives its cells and the table
@@ -175,6 +184,20 @@ impl UmbruchTree<'_, '_> {
                 .find(|part| !part.is_row && part.start <= index && index < part.end)
         };
 
+        let table_columns = self.table_columns.get(self.node(table).entity);
+        let mut tracks: Vec<_> = table_columns
+            .into_iter()
+            .flat_map(|table| &table.columns)
+            .flat_map(|column| std::iter::repeat_n(Some(column), usize::from(column.span)))
+            .take(columns)
+            .collect();
+        tracks.resize(columns, None);
+        if rtl {
+            tracks.reverse();
+        }
+        let group_of_track = |track: usize| tracks.get(track).copied().flatten().and_then(|track| track.group);
+        let group_style = |group: usize| table_columns.map(|table| &table.groups[group]);
+
         // the horizontal borders above row `r` (`horizontal[r][c]`, `r` up to `rows`) and the
         // vertical borders left of column `c` (`vertical[r][c]`, `c` up to `columns`)
         let mut horizontal = vec![vec![Border::default(); columns]; rows + 1];
@@ -209,6 +232,15 @@ impl UmbruchTree<'_, '_> {
                         candidates.add(self.border_of(group.node, Side::Top), Origin::RowGroup);
                     }
                 }
+                if r == 0 || r == rows {
+                    let side = if r == 0 { Side::Top } else { Side::Bottom };
+                    if let Some(track) = tracks[c] {
+                        candidates.add(border_of_style(track.style.as_ref(), side), Origin::Column);
+                    }
+                    if let Some(group) = group_of_track(c) {
+                        candidates.add(border_of_style(group_style(group), side), Origin::ColumnGroup);
+                    }
+                }
                 if r == 0 {
                     candidates.add(self.border_of(table, Side::Top), Origin::Table);
                 }
@@ -237,6 +269,21 @@ impl UmbruchTree<'_, '_> {
                 let mut candidates = Candidates::default();
                 for (index, side) in sides.into_iter().flatten() {
                     candidates.add(self.border_of(cells[index].0, side), Origin::Cell);
+                }
+                let left_track = c.checked_sub(1);
+                let right_track = (c < columns).then_some(c);
+                let mut track_sides = [(left_track, Side::Right), (right_track, Side::Left)];
+                if rtl {
+                    track_sides.reverse();
+                }
+                let groups_differ = left_track.and_then(group_of_track) != right_track.and_then(group_of_track);
+                for (track, side) in track_sides {
+                    if let Some(track) = track.and_then(|track| tracks[track]) {
+                        candidates.add(border_of_style(track.style.as_ref(), side), Origin::Column);
+                        if groups_differ && let Some(group) = track.group {
+                            candidates.add(border_of_style(group_style(group), side), Origin::ColumnGroup);
+                        }
+                    }
                 }
                 let outer = if c == 0 {
                     Some(Side::Left)

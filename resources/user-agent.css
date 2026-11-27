@@ -455,7 +455,6 @@ th {
 
 th {
   font-weight: bold;
-  text-align: center;
 }
 
 /* An image is a replaced box on the line; its baseline is its bottom margin edge. */
