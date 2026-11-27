@@ -118,8 +118,7 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   MathML: its content is laid out like a small page of the size of the element, with the style
   sheets and the fonts of the page (selectors can reach from the page into it), and drawn with
   the transformations, clip paths and masks of the SVG around it, so diagram labels can be
-  formulas; it can contain `<svg>` again. Not supported: filters (ignored), the opacity of
-  gradient stops, GIF and WebP inside of SVG, `!important` in the `style` attribute of SVG
+  formulas; it can contain `<svg>` again. Gradient stops with `stop-opacity` are painted like those of CSS (a soft mask). Not supported: filters (ignored), GIF and WebP inside of SVG, `!important` in the `style` attribute of SVG
   elements (it does not win over one in a style sheet), a
   `foreignObject` in an SVG file (`<img src="x.svg">`: the content needs the document),
   hyperlinks and tags (accessibility structure) inside of a `foreignObject`.
