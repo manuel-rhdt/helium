@@ -15,7 +15,9 @@
 //! string removes it); it applies to every `measure`, `layout` and `render` after it, before the
 //! style sheets of the document (which win ties), and is where `@font-face` rules and the like are
 //! sent once instead of with every request. It returns the `warnings` of parsing it. The style
-//! sheet belongs to the process: a client that starts a new process sends it again. `measure` takes `probes`, a list of
+//! sheet belongs to the process: a client that starts a new process sends it again. A `measure` probe
+//! with a `<style>` in its markup is an error of its entry (`bad_request`), because rules in a probe
+//! would apply to some of the probes of a request only. `measure` takes `probes`, a list of
 //! `{markup | text, css}`, and returns `metrics`: one entry per probe, either `{width, ascent, descent,
 //! height, ink, missing_glyphs}` or `{error: {code, message}}`. See the specification for their parameters;
 //! `hello` reports the `capabilities` that a client can rely on: among them `mesh_gouraud`, which

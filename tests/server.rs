@@ -584,3 +584,42 @@ fn set_stylesheet_reports_parse_warnings_and_bad_requests() {
     }
     server.finish();
 }
+
+#[test]
+fn a_probe_cannot_carry_a_stylesheet() {
+    let mut server = Server::start();
+    let style = "<style>@font-face { font-family: 'zz'; src: local('DejaVu Sans') }</style>";
+    let probes = json!([{"markup": style, "css": ""}, {"markup": "<span>a<STYLE>x{}</STYLE></span>", "css": ""}, {"text": "ok", "css": DEJAVU_10}]);
+    // (twice: an error is not cached)
+    for id in [1, 2] {
+        let m = measure(&mut server, id, probes.clone());
+        for entry in &m[..2] {
+            assert_eq!(entry["error"]["code"], json!("bad_request"), "{entry}");
+            assert!(entry["error"]["message"].as_str().unwrap().contains("set_stylesheet"));
+        }
+        assert!(f(&m[2]["width"]) > 0.0);
+    }
+    server.finish();
+}
+
+#[test]
+fn a_stylesheet_applies_to_every_chunk_of_a_large_measure() {
+    let mut server = Server::start();
+    set_stylesheet(&mut server, 1, "@font-face { font-family: 'zz'; src: local('DejaVu Sans'); font-weight: 700 }");
+    let css = "font-family: zz; font-size: 10px; font-weight: 700";
+    // the same text before and after the end of the first batch of 200 probes
+    let mut probes: Vec<Value> = (0..450).map(|i| json!({"text": format!("hello{}", i % 10), "css": css})).collect();
+    let m = measure(&mut server, 2, json!(probes));
+    let widths: Vec<f64> = m.iter().map(|m| f(&m["width"])).collect();
+    assert!(widths.iter().all(|w| *w > 0.0));
+    // and it is the face of the style sheet, not the fallback
+    let direct = measure(&mut server, 3, json!([{"text": "hello0", "css": "font-family: DejaVu Sans; font-size: 10px; font-weight: 700"}]));
+    assert_eq!(widths[0], f(&direct[0]["width"]));
+    assert_eq!(widths[440], f(&direct[0]["width"]));
+    // identical texts have identical widths wherever they are in the request
+    for (i, p) in probes.iter().enumerate() {
+        let first = probes.iter().position(|q| q["text"] == p["text"]).unwrap();
+        assert_eq!(widths[i], widths[first], "probe {i}");
+    }
+    server.finish();
+}
