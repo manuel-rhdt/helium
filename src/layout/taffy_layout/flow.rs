@@ -714,7 +714,7 @@ impl Extractor<'_, '_, '_> {
         kids: &mut Vec<NodeId>,
     ) {
         let mut last_rows: Option<std::ops::Range<usize>> = None;
-        for kid in boxes {
+        for (index, kid) in boxes.iter().enumerate() {
             if let Some(before) = *previous {
                 // a row group and its rows are kids of the same table: break between the boxes
                 // unless a cell spans over the break
@@ -722,7 +722,10 @@ impl Extractor<'_, '_, '_> {
                     .as_ref()
                     .is_some_and(|rows| rows.end > 0 && self.tree.table_row_blocked(table, rows.end - 1));
                 if !blocked {
-                    self.push_break(before, kid.node, avoid);
+                    // The header that is repeated stays with the first box behind it: a page
+                    // that would end with the header alone starts the table on the next page.
+                    let header = self.level == BreakLevel::Page && owner == table && self.is_repeated_header(&boxes[..index]);
+                    self.push_break(before, kid.node, Avoid { page: avoid.page || header, ..avoid });
                 } else {
                     // no break: the boxes are in one piece
                     let _ = before;
@@ -743,6 +746,18 @@ impl Extractor<'_, '_, '_> {
             last_rows = Some(kid.rows.clone());
             kids.push(kid.node);
         }
+    }
+
+    /// Whether the last of the boxes of a table, which are the ones in front of a break, is the
+    /// header that is repeated: a row group with rows, behind captions only (see
+    /// [`UmbruchTree::repeated_header`], whose answer is not known before the table is done).
+    fn is_repeated_header(&self, boxes: &[super::table::TableKid]) -> bool {
+        let Some((header, captions)) = boxes.split_last() else {
+            return false;
+        };
+        self.display(header.node) == Some(Display::TableHeaderGroup)
+            && !header.kids.is_empty()
+            && captions.iter().all(|kid| self.display(kid.node) == Some(Display::TableCaption))
     }
 
     /// Whether a row of a table may be split over pages: it is in the flow of the page, no cell
