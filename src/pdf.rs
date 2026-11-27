@@ -13,7 +13,7 @@ pub(crate) mod color_glyph;
 mod encoding;
 pub(crate) use encoding::GlyphEncoding;
 mod font;
-mod gradient;
+pub(crate) mod gradient;
 pub(crate) mod text;
 
 use std::collections::HashMap;

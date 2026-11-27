@@ -23,7 +23,7 @@ use lemon_pdf::graphics_state::{BlendMode, ExtGState, FillRule, LineCap, LineJoi
 use lemon_pdf::image::{ColorSpace, ImageXObject};
 use lemon_pdf::object::IndirectReference;
 use lemon_pdf::shading::{
-    AxialShading, Circle, ColorStop, Gradient, Point, RadialShading, Rgb, Shading, ShadingPattern,
+    AxialShading, Circle, ColorStop, Gradient, Gray, Point, RadialShading, Rgb, Shading, ShadingPattern,
 };
 use lemon_pdf::mesh::{FreeFormMesh, Vertex};
 use lemon_pdf::stream::StreamFilter;
@@ -115,6 +115,24 @@ pub struct SvgWriter {
     /// The ICC space of the gradient that is being built, if it has a color that sRGB cannot
     /// hold: the colors of its stops are components of that space (see `prepare_gradient`).
     gradient_profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
+}
+
+/// What a shading of a gradient shows: the colors of its stops, or their opacities as gray levels.
+#[derive(Clone, Copy)]
+enum Channel {
+    Color,
+    Alpha,
+}
+
+/// The color of a gradient stop in the space of the gradient: the ICC space of the wide colors if
+/// `wide`, else device RGB.
+fn stop_color(wide: bool, color: usvg::Color) -> Rgb {
+    if !wide {
+        return rgb(color);
+    }
+    let xyz = paint_color(color).to_xyz().map(f64::from);
+    let [r, g, b] = crate::pdf::rec2020_gamma24_components(xyz);
+    Rgb(r, g, b)
 }
 
 fn matrix(t: Transform) -> Matrix {
@@ -1024,14 +1042,18 @@ impl SvgWriter {
             }
             usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
                 self.prepare_gradient(c, fill.paint())?;
-                let Some((shading, transform)) = self.gradient(fill.paint(), path) else {
+                let Some((shading, transform)) = self.gradient(fill.paint(), path, Channel::Color) else {
                     return Ok(());
                 };
                 // The path is the clipping path of the shading. The shading is the same for
                 // all paths with the same gradient (the transformation puts it in place), so
                 // it is written once.
+                let (opacity, varying) = self.gradient_alpha(fill.paint(), opacity)?;
                 self.set_alpha(c, opacity, false)?;
                 self.save(c)?;
+                if varying {
+                    self.alpha_mask(c, fill.paint(), path)?;
+                }
                 emit_path(c, path.data(), Transform::identity())?;
                 c.clip(fill_rule(fill.rule()))?;
                 c.end_path()?;
@@ -1055,18 +1077,27 @@ impl SvgWriter {
         let Some(stroke) = path.stroke() else {
             return Ok(());
         };
-        let opacity = self.alpha * f64::from(stroke.opacity().get());
+        let mut opacity = self.alpha * f64::from(stroke.opacity().get());
         if opacity <= 0.0 {
             return Ok(());
         }
+        // whether the graphics state was saved for the soft mask of a gradient
+        let mut masked = false;
         match stroke.paint() {
             usvg::Paint::Color(color) => self.set_color(c, *color, true)?,
             usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
                 // strokes cannot be clipping paths: the shading is the color of a pattern
                 self.prepare_gradient(c, stroke.paint())?;
-                let Some((shading, transform)) = self.gradient(stroke.paint(), path) else {
+                let Some((shading, transform)) = self.gradient(stroke.paint(), path, Channel::Color) else {
                     return Ok(());
                 };
+                let (uniform, varying) = self.gradient_alpha(stroke.paint(), opacity)?;
+                opacity = uniform;
+                if varying {
+                    self.save(c)?;
+                    masked = true;
+                    self.alpha_mask(c, stroke.paint(), path)?;
+                }
                 let pattern = ShadingPattern::new(shading).with_matrix(matrix(ctm.pre_concat(transform)));
                 let key = c.add_shading_pattern(pattern);
                 self.set_paint_key(c, PaintKey::Pattern(key), true)?;
@@ -1080,7 +1111,48 @@ impl SvgWriter {
         self.set_alpha(c, opacity, true)?;
         self.set_stroke_style(c, stroke)?;
         emit_path(c, path.data(), Transform::identity())?;
-        c.stroke_path()
+        c.stroke_path()?;
+        if masked {
+            self.restore(c)?;
+        }
+        Ok(())
+    }
+
+    /// The opacity to paint a gradient with, given the opacity of the fill or stroke (`opacity`) and
+    /// the opacities of its stops, and whether the gradient needs a soft mask. A gradient whose stops all have the same
+    /// opacity multiplies it into `opacity`. See `pdf::gradient::stop_alpha`, which decides this for
+    /// every gradient of the document.
+    fn gradient_alpha(&self, paint: &usvg::Paint, opacity: f64) -> Result<(f64, bool)> {
+        let stops = match paint {
+            usvg::Paint::LinearGradient(gradient) => gradient.stops(),
+            usvg::Paint::RadialGradient(gradient) => gradient.stops(),
+            _ => return Ok((opacity, false)),
+        };
+        match crate::pdf::gradient::stop_alpha(stops.iter().map(|stop| stop.opacity().get()))? {
+            crate::pdf::gradient::StopAlpha::Opaque => Ok((opacity, false)),
+            crate::pdf::gradient::StopAlpha::Uniform(alpha) => Ok((opacity * f64::from(alpha), false)),
+            crate::pdf::gradient::StopAlpha::Varying => Ok((opacity, true)),
+        }
+    }
+
+    /// Sets the soft mask of a gradient with stops of different opacities in the graphics state: a
+    /// form with the opacities as a gradient of gray levels over the box of `path`.
+    fn alpha_mask(&mut self, c: &mut PageContext<'_, '_, '_>, paint: &usvg::Paint, path: &usvg::Path) -> Result<()> {
+        let Some((shading, transform)) = self.gradient(paint, path, Channel::Alpha) else {
+            return Ok(());
+        };
+        let bounds = path.stroke_bounding_box().unwrap_or_else(|| path.data().bounds());
+        let bbox = [
+            Pt(f64::from(bounds.left())),
+            Pt(f64::from(bounds.top())),
+            Pt(f64::from(bounds.right())),
+            Pt(f64::from(bounds.bottom())),
+        ];
+        crate::pdf::gradient::apply_alpha_mask(c, bbox, |form| {
+            concat(form, transform)?;
+            let key = form.add_shading(shading);
+            form.paint_shading(&key)
+        })
     }
 
     /// Chooses the color space of the gradient `paint` (see `gradient_profile`): the ICC space of the
@@ -1105,26 +1177,33 @@ impl SvgWriter {
         Ok(())
     }
 
-    /// The color of a gradient stop in the space of the gradient.
-    fn stop_color(&self, color: usvg::Color) -> Rgb {
-        if self.gradient_profile.is_none() {
-            return rgb(color);
+    /// The shading of a gradient and the transformation from its coordinates to the current
+    /// ones, or `None` if there is nothing to paint. It has the colors of the stops or, for the soft
+    /// mask of a gradient with transparent stops, their opacities as gray levels.
+    fn gradient(&mut self, paint: &usvg::Paint, path: &usvg::Path, channel: Channel) -> Option<(Shading, Transform)> {
+        match channel {
+            Channel::Color => {
+                let profile = self.gradient_profile;
+                self.gradient_of(paint, path, move |stop| stop_color(profile.is_some(), stop.color()), profile)
+            }
+            Channel::Alpha => self.gradient_of(paint, path, |stop| Gray(f64::from(stop.opacity().get())), None),
         }
-        let xyz = paint_color(color).to_xyz().map(f64::from);
-        let [r, g, b] = crate::pdf::rec2020_gamma24_components(xyz);
-        Rgb(r, g, b)
     }
 
-    /// The shading of a gradient and the transformation from its coordinates to the current
-    /// ones, or `None` if there is nothing to paint.
-    fn gradient(&mut self, paint: &usvg::Paint, path: &usvg::Path) -> Option<(Shading, Transform)> {
+    fn gradient_of<C: lemon_pdf::shading::Color>(
+        &mut self,
+        paint: &usvg::Paint,
+        path: &usvg::Path,
+        to_color: impl Fn(&usvg::Stop) -> C,
+        profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
+    ) -> Option<(Shading, Transform)> {
         match paint {
-            usvg::Paint::LinearGradient(gradient) => {
-                self.linear_gradient(gradient, path).map(|shading| (shading, gradient.transform()))
-            }
-            usvg::Paint::RadialGradient(gradient) => {
-                self.radial_gradient(gradient, path).map(|shading| (shading, gradient.transform()))
-            }
+            usvg::Paint::LinearGradient(gradient) => self
+                .linear_gradient(gradient, path, &to_color, profile)
+                .map(|shading| (shading, gradient.transform())),
+            usvg::Paint::RadialGradient(gradient) => self
+                .radial_gradient(gradient, path, &to_color, profile)
+                .map(|shading| (shading, gradient.transform())),
             _ => None,
         }
     }
@@ -1132,25 +1211,22 @@ impl SvgWriter {
     /// The color stops of a gradient over the parameter range `from..to` (the gradient itself
     /// is `0..1`), with the offsets scaled to `0..1`. Outside of `0..1`, the spread method
     /// decides the colors.
-    fn spread_stops(
-        &mut self,
+    fn spread_stops<C: lemon_pdf::shading::Color + Copy>(
         base: &usvg::BaseGradient,
         from: i64,
         to: i64,
-    ) -> Vec<ColorStop<Rgb>> {
-        if base.stops().iter().any(|stop| stop.opacity().get() < 1.0) {
-            self.warn("the opacity of gradient stops is not supported");
-        }
-        let stops: Vec<(f64, Rgb)> = base
+        to_color: &impl Fn(&usvg::Stop) -> C,
+    ) -> Vec<ColorStop<C>> {
+        let stops: Vec<(f64, C)> = base
             .stops()
             .iter()
-            .map(|stop| (f64::from(stop.offset().get()), self.stop_color(stop.color())))
+            .map(|stop| (f64::from(stop.offset().get()), to_color(stop)))
             .collect();
         let width = (to - from) as f64;
         let mut out = Vec::new();
         for period in from..to {
             let reversed = base.spread_method() == usvg::SpreadMethod::Reflect && period.rem_euclid(2) == 1;
-            let mut push = |offset: f64, color: Rgb| {
+            let mut push = |offset: f64, color: C| {
                 out.push(ColorStop::new((period as f64 + offset - from as f64) / width, color));
             };
             if reversed {
@@ -1196,10 +1272,12 @@ impl SvgWriter {
         (from.min(0), to.max(1))
     }
 
-    fn linear_gradient(
+    fn linear_gradient<C: lemon_pdf::shading::Color + Copy>(
         &mut self,
         gradient: &usvg::LinearGradient,
         path: &usvg::Path,
+        to_color: &impl Fn(&usvg::Stop) -> C,
+        profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
     ) -> Option<Shading> {
         let base: &usvg::BaseGradient = gradient;
         let (x1, y1, x2, y2) = (
@@ -1212,12 +1290,12 @@ impl SvgWriter {
         let length_squared = dx * dx + dy * dy;
         if length_squared == 0.0 {
             // a gradient without length paints the color of its last stop
-            return self.last_stop_pattern(base);
+            return Self::last_stop_pattern(base, to_color, profile);
         }
         let (from, to) = self.period_range(base, path, |x, y| {
             ((f64::from(x) - x1) * dx + (f64::from(y) - y1) * dy) / length_squared
         });
-        let stops = self.spread_stops(base, from, to);
+        let stops = Self::spread_stops(base, from, to, to_color);
         let function = Gradient::new(&stops).ok()?.extended();
         let (from_f, to_f) = (from as f64, to as f64);
         let shading = AxialShading::new(
@@ -1225,16 +1303,18 @@ impl SvgWriter {
             Point::new(x1 + to_f * dx, y1 + to_f * dy),
             &function,
         );
-        Some(match self.gradient_profile {
+        Some(match profile {
             Some(profile) => shading.with_icc_profile(profile).into(),
             None => shading.into(),
         })
     }
 
-    fn radial_gradient(
+    fn radial_gradient<C: lemon_pdf::shading::Color + Copy>(
         &mut self,
         gradient: &usvg::RadialGradient,
         path: &usvg::Path,
+        to_color: &impl Fn(&usvg::Stop) -> C,
+        profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
     ) -> Option<Shading> {
         let base: &usvg::BaseGradient = gradient;
         let (cx, cy, r) = (
@@ -1248,7 +1328,7 @@ impl SvgWriter {
             f64::from(gradient.fr().get()),
         );
         if r <= 0.0 {
-            return self.last_stop_pattern(base);
+            return Self::last_stop_pattern(base, to_color, profile);
         }
         let concentric = fx == cx && fy == cy;
         let (from, to) = if concentric && base.spread_method() != usvg::SpreadMethod::Pad {
@@ -1264,9 +1344,9 @@ impl SvgWriter {
             (0, 1)
         };
         let stops = if concentric || base.spread_method() == usvg::SpreadMethod::Pad {
-            self.spread_stops(base, from, to)
+            Self::spread_stops(base, from, to, to_color)
         } else {
-            self.spread_stops(base, 0, 1)
+            Self::spread_stops(base, 0, 1, to_color)
         };
         let function = Gradient::new(&stops).ok()?.extended();
         let shading = RadialShading::new(
@@ -1274,20 +1354,24 @@ impl SvgWriter {
             Circle { x: Pt(cx), y: Pt(cy), radius: Pt(fr + to as f64 * (r - fr)) },
             &function,
         );
-        Some(match self.gradient_profile {
+        Some(match profile {
             Some(profile) => shading.with_icc_profile(profile).into(),
             None => shading.into(),
         })
     }
 
     /// A shading that has the color of the last stop everywhere.
-    fn last_stop_pattern(&mut self, base: &usvg::BaseGradient) -> Option<Shading> {
-        let color = self.stop_color(base.stops().last()?.color());
+    fn last_stop_pattern<C: lemon_pdf::shading::Color + Copy>(
+        base: &usvg::BaseGradient,
+        to_color: &impl Fn(&usvg::Stop) -> C,
+        profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
+    ) -> Option<Shading> {
+        let color = to_color(base.stops().last()?);
         let function = Gradient::new(&[ColorStop::new(0.0, color), ColorStop::new(1.0, color)])
             .ok()?
             .extended();
         let shading = AxialShading::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &function);
-        Some(match self.gradient_profile {
+        Some(match profile {
             Some(profile) => shading.with_icc_profile(profile).into(),
             None => shading.into(),
         })
