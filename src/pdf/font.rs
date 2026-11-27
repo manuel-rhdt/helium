@@ -175,23 +175,16 @@ fn complete_to_unicode(font: &Font, usage: &GlyphUsage) -> BTreeMap<GlyphIndex, 
     if missing.is_empty() {
         return map;
     }
-    if let Ok(face) = ttf_parser::Face::parse(&font.data, font.index) {
-        if let Some(cmap) = face.tables().cmap {
-            for subtable in cmap.subtables.into_iter().filter(|s| s.is_unicode()) {
-                subtable.codepoints(|codepoint| {
-                    let Some(glyph) = subtable.glyph_index(codepoint) else { return };
-                    let glyph = GlyphIndex(glyph.0 as u32);
-                    if missing.contains(&glyph) {
-                        // the lowest code point wins, so the result does not depend on
-                        // the order of the subtables
-                        if let Some(ch) = char::from_u32(codepoint) {
-                            let entry = map.entry(glyph).or_insert_with(|| ch.to_string());
-                            if entry.chars().next().is_some_and(|old| ch < old) {
-                                *entry = ch.to_string();
-                            }
-                        }
-                    }
-                });
+    for (codepoint, glyph) in font.face.charmap().unicodes() {
+        let glyph = GlyphIndex(glyph.to_u32());
+        if missing.contains(&glyph) {
+            // the lowest code point wins, so the result does not depend on the order of
+            // the subtables
+            if let Some(ch) = char::from_u32(codepoint) {
+                let entry = map.entry(glyph).or_insert_with(|| ch.to_string());
+                if entry.chars().next().is_some_and(|old| ch < old) {
+                    *entry = ch.to_string();
+                }
             }
         }
     }
@@ -408,10 +401,11 @@ mod tests {
         (usage, glyphs)
     }
 
-    fn cids(font_bytes: &[u8], glyphs: &[u16]) -> Vec<Option<u16>> {
-        let face = ttf_parser::Face::parse(font_bytes, 0).unwrap();
-        let cff = face.tables().cff.as_ref().expect("a CFF font");
-        glyphs.iter().map(|g| cff.glyph_cid(ttf_parser::GlyphId(*g))).collect()
+    /// The CID that a CID-keyed CFF font has for each of `glyphs`.
+    fn cids(font: &read_fonts::model::Font, glyphs: &[u16]) -> Vec<Option<u16>> {
+        let outlines = font.outline_glyphs();
+        let charset = outlines.cff_font().expect("a CFF font").charset().expect("a charset");
+        glyphs.iter().map(|&g| charset.string_id(read_fonts::types::GlyphId::new(u32::from(g))).map(|sid| sid.to_u16())).collect()
     }
 
     /// The codes of the glyphs of `text` and the embedded font program of `font` for them.
@@ -474,11 +468,16 @@ mod tests {
         let (codes, bytes) = embed(&font, "道可名非常");
         // the premise: the CIDs of the bundled font are not its glyph indices
         let glyphs: Vec<u16> = codes.iter().map(|&(glyph, _)| glyph).collect();
-        let original = cids(&font.data, &glyphs);
+        let original = cids(&font.face, &glyphs);
         assert!(original.iter().zip(&glyphs).any(|(cid, glyph)| *cid != Some(*glyph)), "{original:?} {glyphs:?}");
         // in the embedded font the CID of a code is the code
         let numbers: Vec<u16> = codes.iter().map(|&(_, code)| code).collect();
+        let embedded = read_fonts::model::Font::new(
+            std::sync::Arc::new(bytes) as std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>,
+            0,
+        )
+        .unwrap();
         let expected: Vec<_> = numbers.iter().map(|&code| Some(code)).collect();
-        assert_eq!(cids(&bytes, &numbers), expected);
+        assert_eq!(cids(&embedded, &numbers), expected);
     }
 }

@@ -161,7 +161,7 @@ impl Font {
         let name = name_of(&face, NameId::POSTSCRIPT_NAME)
             .or_else(|| name_of(&face, NameId::FULL_NAME))
             .or_else(|| name_of(&face, NameId::FAMILY_NAME))?;
-        let color = ttf_parser::Face::parse(&data, index).is_ok_and(|face| face.tables().colr.is_some());
+        let color = face.tables().colr().is_ok();
         Some(Font {
             color,
             upem,
@@ -262,8 +262,7 @@ impl Font {
     /// Whether `glyph` is painted from the `COLR` table.
     pub fn is_color_glyph(&self, glyph: GlyphIndex) -> bool {
         self.color
-            && ttf_parser::Face::parse(&self.data, self.index)
-                .is_ok_and(|face| face.is_color_glyph(ttf_parser::GlyphId(glyph.0 as u16)))
+            && self.face.color_glyphs().get(GlyphId::new(glyph.0)).is_some()
     }
 
     /// Whether `other` is the same face of the same font file.
@@ -517,7 +516,8 @@ pub(crate) fn color_emoji_font() -> Option<Font> {
                     .filter(|face| face.families.iter().any(|(name, _)| name.eq_ignore_ascii_case(family)))
                     .find_map(|face| {
                         let (data, index) = face_data(db, face.id)?;
-                        let colr = ttf_parser::Face::parse(&data, index).is_ok_and(|face| face.tables().colr.is_some());
+                        let colr = Face::new(data.clone() as Arc<dyn AsRef<[u8]> + Send + Sync>, index)
+                            .is_some_and(|face| face.tables().colr().is_ok());
                         colr.then_some((data, index))
                     })
             })
@@ -850,7 +850,7 @@ fn load_face(system: &fontdb::Database, rule: &FontFaceRule) -> Option<fontdb::F
                     log::warn!("@font-face \"{}\": `{}` is not a valid font", rule.family, url);
                     continue;
                 };
-                let monospaced = ttf_parser::Face::parse(&data, 0).is_ok_and(|face| face.is_monospaced());
+                let monospaced = font.face.tables().post().is_ok_and(|post| post.is_fixed_pitch() != 0);
                 return Some(fontdb::FaceInfo {
                     id: fontdb::ID::dummy(),
                     source: fontdb::Source::Binary(data),

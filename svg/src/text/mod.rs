@@ -281,8 +281,9 @@ fn has_char(fontdb: &Database, id: ID, c: char) -> bool {
     // TODO: Cache the charmaps of fallback candidates, building one for every lookup is expensive.
     fontdb
         .with_face_data(id, |data, face_index| {
-            let face = ttf_parser::Face::parse(data, face_index).ok()?;
-            face.glyph_index(c)
+            use read_fonts::TableProvider;
+            let font = read_fonts::FontRef::from_index(data, face_index).ok()?;
+            font.cmap().ok()?.map_codepoint(c)
         })
         .flatten()
         .is_some()
