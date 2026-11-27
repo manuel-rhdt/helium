@@ -21,7 +21,7 @@ umbruch_paginate = { path = "./umbruch_paginate" }
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
-formel = "0.1.0"
+formel = "0.2"
 parking_lot = "0.11"
 thiserror = "^1"
 env_logger = "0.8"
@@ -61,13 +61,6 @@ quickcheck_macros = "1"
 fontdb = { version = "0.24", default-features = false, features = ["std"] }
 flate2 = "1"
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
-
-# Make every crate in the graph (e.g. formel) use the same harfbuzz_rs,
-# since only one package may link to native harfbuzz.
-[patch.crates-io]
-harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main" }
-# `MathTree::token_content`, for foreign content (an image) inside `<mtext>`. Drop this once it is released.
-formel = { git = "https://github.com/manuel-rhdt/formel.git", branch = "master" }
 
 # The build script subsets the bundled fonts; do not run harfbuzz unoptimized.
 [profile.dev.build-override]
