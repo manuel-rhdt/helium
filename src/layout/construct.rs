@@ -2073,6 +2073,69 @@ impl EntityConstructor {
         }
     }
 
+    /// Puts every run of consecutive table-internal boxes (row groups, rows, cells and captions)
+    /// among the flat `elements` of a block formatting context into an anonymous table box.
+    fn wrap_in_anonymous_tables(
+        elements: &mut Vec<BlockLevelElement>,
+        entities: &Entities,
+        computed_values: &mut WriteStorage<ComputedValues>,
+        style: &ComputedValues,
+    ) {
+        let is_internal = |computed_values: &WriteStorage<ComputedValues>, entity: Entity| {
+            computed_values.get(entity).is_some_and(|style| {
+                let display = style.box_.display;
+                display.is_table_row_group()
+                    || matches!(
+                        display,
+                        Display::TableRow | Display::TableCell | Display::TableCaption
+                    )
+            })
+        };
+        let mut result = Vec::with_capacity(elements.len());
+        let mut depth = 0usize;
+        let mut in_table = false;
+        let mut table_start = None;
+        for &element in elements.iter() {
+            match element {
+                BlockLevelElement::ContainerStart(entity) => {
+                    if depth == 0 {
+                        if is_internal(computed_values, entity) {
+                            if !in_table {
+                                in_table = true;
+                                let mut table_style = style.anonymous_block();
+                                std::sync::Arc::make_mut(&mut table_style.box_).display = Display::Table;
+                                let table = entities.build_entity().with(table_style, computed_values).build();
+                                table_start = Some(table);
+                                result.push(BlockLevelElement::ContainerStart(table));
+                            }
+                        } else if in_table {
+                            result.push(BlockLevelElement::ContainerEnd(table_start.take().unwrap()));
+                            in_table = false;
+                        }
+                    }
+                    depth += 1;
+                    result.push(element);
+                }
+                BlockLevelElement::ContainerEnd(_) => {
+                    depth = depth.saturating_sub(1);
+                    result.push(element);
+                }
+                BlockLevelElement::Absolute(_) if depth == 0 && in_table => result.push(element),
+                _ => {
+                    if depth == 0 && in_table {
+                        result.push(BlockLevelElement::ContainerEnd(table_start.take().unwrap()));
+                        in_table = false;
+                    }
+                    result.push(element);
+                }
+            }
+        }
+        if in_table {
+            result.push(BlockLevelElement::ContainerEnd(table_start.take().unwrap()));
+        }
+        *elements = result;
+    }
+
     // called on bottom-up traversal
     fn build_block_formatting_context<'a>(&mut self, node: &'a impl AbstractNode<'a>) {
         // An `<input>` has no children: the text it shows comes from its attributes. It has to be
@@ -2151,6 +2214,20 @@ impl EntityConstructor {
                 )
                 .unwrap();
             return;
+        }
+
+        // Table-internal boxes outside of a table are in an anonymous table box.
+        // https://www.w3.org/TR/CSS22/tables.html#anonymous-boxes
+        if !(style.box_.display.is_table()
+            || style.box_.display.is_table_row_group()
+            || style.box_.display == Display::TableRow)
+        {
+            Self::wrap_in_anonymous_tables(
+                &mut block_level_elements,
+                &entities,
+                &mut computed_values,
+                &style,
+            );
         }
 
         // push last anonymous block, should there be one

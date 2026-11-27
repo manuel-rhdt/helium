@@ -239,6 +239,7 @@ css/CSS2/normal-flow/replaced-intrinsic-004.xht
 css/CSS2/normal-flow/replaced-intrinsic-005.xht
 css/CSS2/normal-flow/resizable-iframe-paint-order.html
 css/CSS2/normal-flow/root-box-001.xht
+css/CSS2/normal-flow/table-in-inline-001.xht
 css/CSS2/normal-flow/width-applies-to-006.xht
 css/CSS2/visudet/height-percentage-003a.xht
 css/CSS2/visudet/replaced-elements-all-auto.html
@@ -462,11 +463,10 @@ css/css-tables/display-contents-003.html
 css/css-tables/fixed-table-layout-collapsed-border-rtl-001.html
 css/css-tables/max-height-table.html
 css/css-tables/min-max-size-table-content-box.html
+css/css-tables/percent-height-replaced-in-percent-cell-002.html
 css/css-tables/percent-height-replaced-in-percent-cell-003.html
 css/css-tables/percent-height-replaced-in-percent-cell-004.html
 css/css-tables/percent-height-table-cell-child.html
-css/css-tables/percentages-grandchildren-quirks-mode-001.html
-css/css-tables/percentages-grandchildren-quirks-mode-002.html
 css/css-tables/row-group-order.html
 css/css-tables/rules-groups.html
 css/css-tables/subpixel-collapsed-borders-003.html
