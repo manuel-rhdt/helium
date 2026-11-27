@@ -5,7 +5,7 @@ use super::specified::{
     self, ApplyToComputedValues, AutoBool, BorderStyle, ComputedValue, MathFamily, MathOperatorForm,
 };
 pub use super::specified::{
-    BoxSizing, ContentAlignment, Display, FlexDirection, FlexWrap, FontFamily, FontStyle,
+    BoxSizing, ContentAlignment, Display, TableLayout, FlexDirection, FlexWrap, FontFamily, FontStyle,
     GridAutoFlow, GridPlacement, ItemAlignment, MathDepth, MathShift, MathStyle, Break, BreakInside, BookmarkLabel, BookmarkLevel, BookmarkState, Float, FloatReference,
     Percentage, PositionSpec, SelfAlignment, TextAlign,
 };
@@ -24,20 +24,32 @@ pub struct SrgbColor {
     pub alpha: u8,
 }
 
-/// A colour in Display P3 (the primaries of DCI-P3, the white of D65 and the curve of sRGB), with
-/// the encoded components from 0 to 1 and an alpha channel. The components are kept as their bits,
-/// so that colours can be compared and hashed.
+/// An RGB space with an ICC profile of its own, written to the PDF when a colour is authored in it
+/// (`color(display-p3 …)` and the like) and fits inside of it.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct DisplayP3Color {
+pub enum IccSpace {
+    SrgbLinear,
+    DisplayP3,
+    DisplayP3Linear,
+    A98Rgb,
+    ProphotoRgb,
+    Rec2020,
+}
+
+/// A colour in one of the [`IccSpace`]s, with the encoded components from 0 to 1 and an alpha
+/// channel. The components are kept as their bits, so that colours can be compared and hashed.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct IccColor {
+    pub space: IccSpace,
     red: u32,
     green: u32,
     blue: u32,
     pub alpha: u8,
 }
 
-impl DisplayP3Color {
-    pub fn new(red: f32, green: f32, blue: f32, alpha: u8) -> Self {
-        DisplayP3Color { red: red.to_bits(), green: green.to_bits(), blue: blue.to_bits(), alpha }
+impl IccColor {
+    pub fn new(space: IccSpace, red: f32, green: f32, blue: f32, alpha: u8) -> Self {
+        IccColor { space, red: red.to_bits(), green: green.to_bits(), blue: blue.to_bits(), alpha }
     }
 
     /// The encoded red, green and blue.
@@ -47,7 +59,7 @@ impl DisplayP3Color {
 }
 
 /// A colour as CIE XYZ (D65, Y of 1 for the white), which holds every colour there is, with an
-/// alpha channel. The components are kept as their bits, like those of [`DisplayP3Color`].
+/// alpha channel. The components are kept as their bits, like those of [`IccColor`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct XyzColor {
     x: u32,
@@ -67,17 +79,19 @@ impl XyzColor {
     }
 }
 
-/// A colour that is painted.
+/// A colour that is painted, in the space that it was written in (so that the PDF can say it).
 ///
-/// It is sRGB if sRGB can hold it; else Display P3 if that can (a colour of a wide gamut, like
-/// `color(display-p3 1 0 0)`); else CIE XYZ, which holds every colour. The colour has no channels
-/// to read: a consumer that can paint every case matches on them, and one that only has sRGB has
-/// to call [`PaintColor::clip_to_srgb`], which says what it does to the colours that sRGB cannot
-/// hold.
+/// A colour of `rgb()`, `hsl()`, `hwb()`, a hex code or a name is sRGB (a device colour in the PDF,
+/// which is sRGB for the page). One of `color()` in a space with a profile of its own is in that space
+/// if it fits in it. One of `lab()`, `lch()`, `xyz` and the one of `oklab()` or `oklch()` that sRGB
+/// cannot hold, and every colour that is out of the space it was written in, is CIE XYZ, which holds
+/// every colour (the PDF writes it as CIELAB). The colour has no channels to read: a consumer that can
+/// paint every case matches on them, and one that only has sRGB has to call
+/// [`PaintColor::clip_to_srgb`], which says what it does to the colours that sRGB cannot hold.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum PaintColor {
     Srgb(SrgbColor),
-    DisplayP3(DisplayP3Color),
+    Icc(IccColor),
     Xyz(XyzColor),
 }
 
@@ -100,7 +114,7 @@ impl PaintColor {
     pub const fn alpha(self) -> u8 {
         match self {
             PaintColor::Srgb(color) => color.alpha,
-            PaintColor::DisplayP3(color) => color.alpha,
+            PaintColor::Icc(color) => color.alpha,
             PaintColor::Xyz(color) => color.alpha,
         }
     }
@@ -109,7 +123,7 @@ impl PaintColor {
     pub fn with_alpha(self, alpha: u8) -> Self {
         match self {
             PaintColor::Srgb(color) => PaintColor::Srgb(SrgbColor { alpha, ..color }),
-            PaintColor::DisplayP3(color) => PaintColor::DisplayP3(DisplayP3Color { alpha, ..color }),
+            PaintColor::Icc(color) => PaintColor::Icc(IccColor { alpha, ..color }),
             PaintColor::Xyz(color) => PaintColor::Xyz(XyzColor { alpha, ..color }),
         }
     }
@@ -131,6 +145,11 @@ impl PaintColor {
         super::color::extended_srgb_to_xyz(rgb)
     }
 
+    /// The colour as CIE XYZ (D65, Y of 1 for the white), whatever space it is in.
+    pub fn to_xyz(self) -> [f32; 3] {
+        super::color::paint_to_xyz(self)
+    }
+
     /// The colour in sRGB, the nearest one that fits if it has none: the channels of a colour
     /// outside of the gamut are clipped to the range. This loses the colour; use it only where
     /// nothing but sRGB can be painted, and where the colour is painted by the PDF writer match
@@ -138,7 +157,7 @@ impl PaintColor {
     pub fn clip_to_srgb(self) -> SrgbColor {
         match self {
             PaintColor::Srgb(color) => color,
-            PaintColor::DisplayP3(color) => super::color::p3_to_srgb_clipped(color),
+            PaintColor::Icc(color) => super::color::icc_to_srgb_clipped(color),
             PaintColor::Xyz(color) => super::color::xyz_to_srgb_clipped(color),
         }
     }
@@ -178,6 +197,12 @@ impl FontSizes {
 
 thread_local! {
     static VIEWPORT: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((793.7, 1123.0)) };
+}
+
+/// The size of the page area that `vw`, `vh`, `vmin` and `vmax` are relative to.
+pub fn viewport() -> (PixelLength, PixelLength) {
+    let (width, height) = VIEWPORT.with(|viewport| viewport.get());
+    (PixelLength(width), PixelLength(height))
 }
 
 /// Sets the size of the page area that `vw`, `vh`, `vmin` and `vmax` are relative to.
@@ -313,10 +338,15 @@ impl Div<f32> for PixelLength {
 pub enum LengthPercentage {
     PixelLength(PixelLength),
     Percentage(Percentage),
+    /// `length + percentage`, the computed value of a math function such as `calc(100% - 2em)`.
     Both {
         length: PixelLength,
         percentage: Percentage,
     },
+    /// Any other math function with a percentage, such as `min(100%, 40em)`, or a sum that is
+    /// clamped to the range of its property (`padding: calc(50% - 10px)` is not negative). Its
+    /// lengths are in pixels.
+    Calc(super::calc::Calc),
 }
 
 impl Default for LengthPercentage {
@@ -362,6 +392,26 @@ impl LengthPercentage {
             LengthPercentage::PixelLength(len) => len,
             LengthPercentage::Percentage(percentage) => container_size * percentage,
             LengthPercentage::Both { length, percentage } => length + container_size * percentage,
+            LengthPercentage::Calc(calc) => PixelLength(calc.resolve(container_size.0)),
+        }
+    }
+
+    /// The value with no size for percentages to refer to: the length, with percentages as 0.
+    pub fn without_percentages(self) -> PixelLength {
+        self.absolute(PixelLength(0.0))
+    }
+
+    /// `100% - self`, the offset from the far edge of a box (`background-position: right 10px`).
+    pub fn complement(self) -> LengthPercentage {
+        match self {
+            LengthPercentage::PixelLength(length) => {
+                LengthPercentage::Both { length: -length, percentage: Percentage(1.0) }
+            }
+            LengthPercentage::Percentage(Percentage(p)) => LengthPercentage::Percentage(Percentage(1.0 - p)),
+            LengthPercentage::Both { length, percentage: Percentage(p) } => {
+                LengthPercentage::Both { length: -length, percentage: Percentage(1.0 - p) }
+            }
+            LengthPercentage::Calc(calc) => LengthPercentage::Calc(calc.complement()),
         }
     }
 }
@@ -381,6 +431,7 @@ impl super::ComputedValue<specified::QuantityOrPercentage> for LengthPercentage 
                 ))
             }
             QuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
+            QuantityOrPercentage::Calc(calc) => calc.computed(style),
         }
     }
 }
@@ -435,6 +486,7 @@ impl super::ComputedValue<specified::AutoOrQuantityOrPercentage> for GenericSize
         match spec {
             specified::AutoOrQuantityOrPercentage::Auto => GenericSize::Auto,
             specified::AutoOrQuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
+            specified::AutoOrQuantityOrPercentage::Calc(calc) => GenericSize::LengthPercentage(calc.computed(style)),
             specified::AutoOrQuantityOrPercentage::Quantity(specified::Quantity {
                 value,
                 unit,
@@ -455,6 +507,7 @@ impl super::ComputedValue<specified::SizeValue> for GenericSize {
             SizeValue::FitContent => GenericSize::Keyword(SizingKeyword::FitContent),
             SizeValue::Stretch => GenericSize::Keyword(SizingKeyword::Stretch),
             SizeValue::Percentage(percentage) => percentage.into(),
+            SizeValue::Calc(calc) => GenericSize::LengthPercentage(calc.computed(style)),
             SizeValue::Quantity(quantity) => {
                 <GenericSize as super::ComputedValue<specified::AutoOrQuantityOrPercentage>>::from_specified(
                     &specified::AutoOrQuantityOrPercentage::Quantity(quantity),
@@ -471,6 +524,7 @@ impl super::ComputedValue<specified::Gap> for GenericSize {
         match spec {
             specified::Gap::Normal => GenericSize::Auto,
             specified::Gap::Percentage(percentage) => (*percentage).into(),
+            specified::Gap::Calc(calc) => GenericSize::LengthPercentage(calc.computed(style)),
             specified::Gap::Quantity(specified::Quantity { value, unit }) => {
                 GenericSize::LengthPercentage(LengthPercentage::PixelLength(PixelLength::from_val_unit(
                     *value,
@@ -494,6 +548,7 @@ impl super::ComputedValue<specified::ColumnWidth> for ColumnWidth {
     fn from_specified(spec: &specified::ColumnWidth, style: &ComputedValues) -> Self {
         match spec {
             specified::ColumnWidth::Auto => ColumnWidth::Auto,
+            specified::ColumnWidth::Calc(calc) => ColumnWidth::Length(calc.to_px(style)),
             specified::ColumnWidth::Quantity(specified::Quantity { value, unit }) => {
                 ColumnWidth::Length(PixelLength::from_val_unit(*value, *unit, FontSizes::of(style)))
             }
@@ -511,6 +566,7 @@ impl super::ComputedValue<specified::NoneOrQuantityOrPercentage> for GenericSize
         match spec {
             specified::NoneOrQuantityOrPercentage::None => GenericSize::Auto,
             specified::NoneOrQuantityOrPercentage::Percentage(percentage) => (*percentage).into(),
+            specified::NoneOrQuantityOrPercentage::Calc(calc) => GenericSize::LengthPercentage(calc.computed(style)),
             specified::NoneOrQuantityOrPercentage::Quantity(specified::Quantity {
                 value,
                 unit,
@@ -850,6 +906,9 @@ impl StyleBuilder {
                 text_indent: inherited_values.text.text_indent,
                 text_align: inherited_values.text.text_align,
                 hyphens: inherited_values.text.hyphens,
+                hyphenate_limit_chars: inherited_values.text.hyphenate_limit_chars,
+                hyphenate_limit_last: inherited_values.text.hyphenate_limit_last,
+                hanging_punctuation: inherited_values.text.hanging_punctuation,
                 letter_spacing: inherited_values.text.letter_spacing,
                 word_spacing: inherited_values.text.word_spacing,
                 text_transform: inherited_values.text.text_transform,
@@ -1079,6 +1138,7 @@ pub struct Box {
     pub vertical_align: VerticalAlign,
     pub aspect_ratio: specified::AspectRatio,
     pub box_sizing: BoxSizing,
+    pub table_layout: TableLayout,
 
     /// What replaces the content of a `::before` or `::after` pseudo-element.
     pub content: super::generated::Content,
@@ -1142,6 +1202,7 @@ impl Default for Box {
             vertical_align: Default::default(),
             aspect_ratio: Default::default(),
             box_sizing: Default::default(),
+            table_layout: Default::default(),
             content: Default::default(),
             counter_reset: Default::default(),
             counter_increment: Default::default(),
@@ -1398,6 +1459,9 @@ pub struct Text {
     pub text_indent: LengthPercentage,
     pub text_align: specified::TextAlign,
     pub hyphens: specified::Hyphens,
+    pub hyphenate_limit_chars: specified::HyphenateLimitChars,
+    pub hyphenate_limit_last: specified::HyphenateLimitLast,
+    pub hanging_punctuation: specified::HangingPunctuation,
     /// The extra space after every character; `normal` is 0.
     pub letter_spacing: PixelLength,
     /// The extra space at every word separator (a space, for one); `normal` is 0.
@@ -1416,6 +1480,7 @@ impl ComputedValue<specified::NormalOrQuantity> for PixelLength {
     fn from_specified(spec: &specified::NormalOrQuantity, style: &ComputedValues) -> Self {
         match spec {
             specified::NormalOrQuantity::Normal => PixelLength(0.0),
+            specified::NormalOrQuantity::Calc(calc) => calc.to_px(style),
             specified::NormalOrQuantity::Quantity(q) => {
                 PixelLength::from_val_unit(q.value, q.unit, FontSizes::of(style))
             }
@@ -1432,13 +1497,7 @@ pub struct BorderSpacing {
 
 impl ComputedValue<specified::BorderSpacing> for BorderSpacing {
     fn from_specified(spec: &specified::BorderSpacing, style: &ComputedValues) -> Self {
-        let length = |q: specified::Quantity| {
-            PixelLength::from_val_unit(q.value, q.unit, FontSizes::of(style))
-        };
-        BorderSpacing {
-            horizontal: length(spec.horizontal),
-            vertical: length(spec.vertical),
-        }
+        BorderSpacing { horizontal: spec.horizontal.to_px(style), vertical: spec.vertical.to_px(style) }
     }
 }
 

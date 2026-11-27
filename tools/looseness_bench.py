@@ -5,8 +5,8 @@
                                      [--knob NAME=VALUE ...] [--kinds a,b] [FILE.html ...]
 
 The knobs are the environment variables of the engine (`Tuning` in
-`src/layout/taffy_layout/mod.rs`): HELIUM_LINE_TOLERANCE (the exchange rate of lines and room;
-default 200, greater takes looser lines more readily) and HELIUM_VARIANT_TOLERANCE (the worst
+`src/layout/taffy_layout/mod.rs`): UMBRUCH_LINE_TOLERANCE (the exchange rate of lines and room;
+default 200, greater takes looser lines more readily) and UMBRUCH_VARIANT_TOLERANCE (the worst
 badness of a line of another breaking; default 200). `--knob LINE_TOLERANCE=400` sets the first.
 
 For each kind of document (and each seed) the document is rendered with `looseness` 0, 1, 2, ...
@@ -29,7 +29,7 @@ every chapter, whose last page is free; `figures` has boxes that cannot be broke
 """
 import argparse, json, os, random, re, subprocess, sys, tempfile
 
-BIN = os.environ.get("HELIUM", os.path.join(os.path.dirname(__file__), "..", "target", "release", "helium"))
+BIN = os.environ.get("UMBRUCH", os.path.join(os.path.dirname(__file__), "..", "target", "release", "umbruch"))
 LINE, TOP, HEIGHT = 20.0, 40.0, 480.0
 WORDS = ("the of and to in a is that it was for on are as with his they at be this from have or by one had not but what all "
          "were when we there can an your which their said if do will each about how up out them then she many some so these "
@@ -166,7 +166,7 @@ def main():
     levels = [int(level) for level in args.levels.split(",")]
     for knob in args.knob:
         name, _, value = knob.partition("=")
-        KNOBS["HELIUM_" + name.removeprefix("HELIUM_")] = value
+        KNOBS["UMBRUCH_" + name.removeprefix("UMBRUCH_")] = value
     directory = args.keep or tempfile.mkdtemp(prefix="looseness_")
     os.makedirs(directory, exist_ok=True)
     if args.files:

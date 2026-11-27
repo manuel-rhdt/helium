@@ -2,12 +2,14 @@
 
 mod common;
 
+use assert_cmd::prelude::*;
+
 fn render(name: &str, html: &str) -> String {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("gradients__{}.html", name));
     let output = dir.join(format!("gradients__{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-compression", "--no-system-fonts"])
         .arg(&input)
@@ -325,4 +327,60 @@ fn background_shorthand_resets_size_position_and_repeat() {
         &box_with("background-size: 10px 10px; background: linear-gradient(red, blue)"),
     );
     assert!(!pdf.contains("/PatternType"), "{}", pdf);
+}
+
+/// SVG gradients with `stop-opacity` go through the same code as the CSS ones.
+fn svg_with(gradient: &str, shape: &str) -> String {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"50\"><defs>{gradient}</defs>{shape}</svg>"
+    )
+}
+
+const FADE: &str = "<linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"red\"/><stop offset=\"1\" stop-color=\"red\" stop-opacity=\"0\"/></linearGradient>";
+const RECT: &str = "<rect width=\"100\" height=\"50\" fill=\"url(#g)\"/>";
+
+#[test]
+fn svg_stop_opacities_use_a_soft_mask() {
+    let pdf = render("svg_fade", &svg_with(FADE, RECT));
+    assert!(pdf.contains("/SMask"), "{}", pdf);
+    assert!(pdf.contains("/Luminosity"), "{}", pdf);
+    assert_eq!(shading_types(&pdf), [2, 2]);
+    assert!(pdf.contains("/DeviceGray"));
+}
+
+#[test]
+fn svg_radial_and_stroke_gradients_have_soft_masks_too() {
+    let radial = "<radialGradient id=\"g\"><stop offset=\"0\" stop-color=\"blue\"/><stop offset=\"1\" stop-color=\"blue\" stop-opacity=\"0.2\"/></radialGradient>";
+    let pdf = render("svg_radial_fade", &svg_with(radial, RECT));
+    assert!(pdf.contains("/SMask"), "{}", pdf);
+    assert_eq!(shading_types(&pdf), [3, 3]);
+    let stroke = "<rect x=\"5\" y=\"5\" width=\"90\" height=\"40\" fill=\"none\" stroke=\"url(#g)\" stroke-width=\"6\"/>";
+    let pdf = render("svg_stroke_fade", &svg_with(FADE, stroke));
+    assert!(pdf.contains("/SMask"), "{}", pdf);
+    assert_eq!(shading_types(&pdf), [2, 2]);
+}
+
+#[test]
+fn svg_gradients_with_one_opacity_need_no_soft_mask() {
+    let half = "<linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"red\" stop-opacity=\"0.5\"/><stop offset=\"1\" stop-color=\"blue\" stop-opacity=\"0.5\"/></linearGradient>";
+    let pdf = render("svg_half", &svg_with(half, RECT));
+    assert!(!pdf.contains("/SMask"), "{}", pdf);
+    assert!(pdf.contains("/ca 0.5"), "{}", pdf);
+    assert_eq!(shading_types(&pdf), [2]);
+}
+
+#[test]
+fn opaque_svg_gradients_have_no_soft_mask() {
+    let opaque = "<linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"red\"/><stop offset=\"1\" stop-color=\"blue\"/></linearGradient>";
+    let pdf = render("svg_opaque", &svg_with(opaque, RECT));
+    assert!(!pdf.contains("/SMask"));
+    assert!(!pdf.contains("/ca "));
+}
+
+#[test]
+fn transparent_svg_gradients_are_an_error_in_pdfa1() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("gradients__svg_pdfa1.html");
+    std::fs::write(&input, svg_with(FADE, RECT)).unwrap();
+    common::umbruch().unwrap().args(["--no-system-fonts", "--pdfa", "1b"]).arg(&input).arg(dir.join("gradients__svg_pdfa1.pdf")).assert().failure();
 }

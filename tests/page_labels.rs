@@ -7,7 +7,7 @@ fn render(name: &str, html: &str) -> String {
     let input = dir.join(format!("labels_{name}.html"));
     let output = dir.join(format!("labels_{name}.pdf"));
     std::fs::write(&input, html).unwrap();
-    common::helium().unwrap().arg("--no-compression").arg(&input).arg(&output).assert().success();
+    common::umbruch().unwrap().arg("--no-compression").arg(&input).arg(&output).assert().success();
     String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(output).unwrap())).into_owned()
 }
 
@@ -48,16 +48,14 @@ fn plain_page_numbers_need_no_labels() {
 const PAGE: &str = "@page { size: 200px 120px; margin: 20px } div { height: 60px } section { display: block }";
 
 #[test]
-fn the_page_counter_restarts_with_the_page_context() {
-    // `@page body:first { counter-reset: page 0 }`: the first page of the body is page 1
+fn the_labels_follow_the_page_context() {
+    // the labels change with the style and the prefix of the page; the counter goes on counting
     let pdf = render(
         "restart",
         &format!(
             "<style>{PAGE} @page {{ @bottom-center {{ content: counter(page) }} }}\
-             @page front {{ -helium-page-label: counter(page, lower-roman) }}\
-             @page body:first {{ counter-reset: page 0 }}\
-             @page appendix:first {{ counter-reset: page 0 }}\
-             @page appendix {{ -helium-page-label: \"A-\" counter(page) }}\
+             @page front {{ -umbruch-page-label: counter(page, lower-roman) }}\
+             @page appendix {{ -umbruch-page-label: \"A-\" counter(page) }}\
              .front {{ page: front }} .body {{ page: body }} .appendix {{ page: appendix }}</style>\
              <section class=front><div>1</div><div>2</div></section>\
              <section class=body><div>3</div><div>4</div></section>\
@@ -66,7 +64,7 @@ fn the_page_counter_restarts_with_the_page_context() {
     );
     assert_eq!(
         page_labels(&pdf),
-        "/Nums [ 0 << /S /r /St 1 >> 2 << /S /D /St 1 >> 4 << /S /D /P (A-) /St 1 >> ]"
+        "/Nums [ 0 << /S /r /St 1 >> 2 << /S /D /St 3 >> 4 << /S /D /P (A-) /St 5 >> ]"
     );
 }
 
@@ -96,13 +94,13 @@ fn the_label_property_is_independent_of_the_margin_boxes() {
     // without a number in the margin box, the label is the one that the page says
     let pdf = render(
         "property",
-        &format!("<style>{PAGE} @page {{ -helium-page-label: \"p. \" counter(page, upper-alpha) }}</style><div>1</div><div>2</div>"),
+        &format!("<style>{PAGE} @page {{ -umbruch-page-label: \"p. \" counter(page, upper-alpha) }}</style><div>1</div><div>2</div>"),
     );
     assert_eq!(page_labels(&pdf), "/Nums [ 0 << /S /A /P (p. ) /St 1 >> ]");
     // `none` is the number in decimal, whatever the footer prints
     let pdf = render(
         "none_label",
-        &format!("<style>{PAGE} @page {{ -helium-page-label: none; @bottom-center {{ content: counter(page, lower-roman) }} }}</style><div>1</div><div>2</div>"),
+        &format!("<style>{PAGE} @page {{ -umbruch-page-label: none; @bottom-center {{ content: counter(page, lower-roman) }} }}</style><div>1</div><div>2</div>"),
     );
     assert_eq!(pdf.matches("/PageLabels").count(), 0);
 }

@@ -1,5 +1,5 @@
 # Known failures of the vendored web-platform-tests reftests, one path per line (relative to
-# tests/wpt). A test listed here must keep failing: once helium passes it, the runner asks for its
+# tests/wpt). A test listed here must keep failing: once umbruch passes it, the runner asks for its
 # removal. Run `cargo test --test wpt_reftest` to see why a test fails.
 
 # Fails on purpose: it expects a counter that a previous sibling made to stay in scope for the next
@@ -43,6 +43,63 @@ css/CSS2/normal-flow/inline-table-width-002a.xht
 
 # Their references paint the background of an inline box (now painted); the tests need a column group background, opacity groups and attr()
 css/CSS2/box-display/display-012.xht
+
+# needs colour hints (a bare position between two colours) in conic-gradient(); the math functions of its stops work
+css/css-images/conic-gradient-calc-angle-percentage.html
+
+# needs sibling-index() (CSS Values 5)
+css/css-images/conic-gradient-color-with-sibling-index.html
+
+# needs sibling-index() (CSS Values 5)
+css/css-images/linear-gradient-body-sibling-index.html
+
+# needs sibling-index() (CSS Values 5)
+css/css-images/linear-gradient-sibling-index.html
+
+# needs the cap unit (calc() only made it run)
+css/css-values/cap-unit-001.html
+
+# needs @font-face (calc() only made it run)
+css/css-values/ch-unit-016.html
+
+# needs @font-face (calc() only made it run)
+css/css-values/ch-unit-018.html
+
+# needs @font-face (calc() only made it run)
+css/css-values/ch-unit-019.html
+
+# needs the ic unit (calc() only made it run)
+css/css-values/ic-unit-013.html
+
+# needs the ic unit (calc() only made it run)
+css/css-values/ic-unit-014.html
+
+# needs the ic unit (calc() only made it run)
+css/css-values/ic-unit-015.html
+
+# needs the ic unit (calc() only made it run)
+css/css-values/ic-unit-016.html
+
+# needs @counter-style
+css/css-values/negative-calc-to-non-negative-integer.html
+
+# fails like vh-support.html: the box is sized by the page area, the root background covers the page margins too
+css/css-values/vh-calc-support-pct.html
+
+# fails like vh-support.html: the box is sized by the page area, the root background covers the page margins too
+css/css-values/vh-calc-support.html
+
+# @media screen does not match: umbruch is print media
+css/mediaqueries/mq-calc-008.html
+
+# needs <resolution> (dppx) in math functions
+css/mediaqueries/mq-calc-resolution.html
+
+# @media screen does not match: umbruch is print media
+css/mediaqueries/mq-calc-sign-function-003.html
+
+# needs <resolution> (dppx) in math functions
+css/mediaqueries/mq-calc-sign-function-004.html
 
 # Not investigated yet (`WPT_UPDATE_EXPECTATIONS=1` writes this list from what the tests do)
 css/CSS2/borders/border-005.xht
@@ -103,12 +160,10 @@ css/CSS2/margin-padding-clear/margin-border-padding-002.xht
 css/CSS2/margin-padding-clear/margin-border-padding-003.xht
 css/CSS2/margin-padding-clear/margin-bottom-103.xht
 css/CSS2/margin-padding-clear/margin-bottom-104.xht
-css/CSS2/margin-padding-clear/margin-bottom-applies-to-008.xht
 css/CSS2/margin-padding-clear/margin-bottom-applies-to-012.xht
 css/CSS2/margin-padding-clear/margin-bottom-applies-to-013.xht
 css/CSS2/margin-padding-clear/margin-bottom-applies-to-014.xht
 css/CSS2/margin-padding-clear/margin-bottom-applies-to-015.xht
-css/CSS2/margin-padding-clear/margin-collapse-001.xht
 css/CSS2/margin-padding-clear/margin-collapse-002.xht
 css/CSS2/margin-padding-clear/margin-collapse-005.xht
 css/CSS2/margin-padding-clear/margin-collapse-012.xht
@@ -130,16 +185,13 @@ css/CSS2/margin-padding-clear/margin-collapse-138.xht
 css/CSS2/margin-padding-clear/margin-collapse-156.xht
 css/CSS2/margin-padding-clear/margin-collapse-159.xht
 css/CSS2/margin-padding-clear/margin-em-inherit-001.xht
-css/CSS2/margin-padding-clear/margin-inline-001.xht
 css/CSS2/margin-padding-clear/margin-left-113.xht
 css/CSS2/margin-padding-clear/margin-percentage-inherit-001.xht
 css/CSS2/margin-padding-clear/margin-shorthand-001.xht
 css/CSS2/margin-padding-clear/margin-shorthand-002.xht
 css/CSS2/margin-padding-clear/margin-shorthand-003.xht
 css/CSS2/margin-padding-clear/margin-shorthand-004.xht
-css/CSS2/margin-padding-clear/padding-bottom-applies-to-014.xht
 css/CSS2/margin-padding-clear/padding-em-inherit-001.xht
-css/CSS2/margin-padding-clear/padding-right-applies-to-012.xht
 css/CSS2/margin-padding-clear/padding-shorthand-001.xht
 css/CSS2/margin-padding-clear/padding-shorthand-002.xht
 css/CSS2/margin-padding-clear/padding-shorthand-003.xht
@@ -148,21 +200,16 @@ css/CSS2/normal-flow/block-formatting-contexts-004.xht
 css/CSS2/normal-flow/block-in-inline-align-001.html
 css/CSS2/normal-flow/block-in-inline-align-last-001.html
 css/CSS2/normal-flow/block-in-inline-first-line-002.html
-css/CSS2/normal-flow/block-non-replaced-height-005.xht
 css/CSS2/normal-flow/block-non-replaced-width-004.xht
 css/CSS2/normal-flow/block-replaced-height-002.xht
 css/CSS2/normal-flow/block-replaced-height-006.xht
-css/CSS2/normal-flow/block-replaced-width-002.xht
 css/CSS2/normal-flow/blocks-018.xht
 css/CSS2/normal-flow/blocks-019.xht
 css/CSS2/normal-flow/cross-domain-iframe-paint-order.sub.html
-css/CSS2/normal-flow/inline-block-non-replaced-width-004.xht
 css/CSS2/normal-flow/inline-block-replaced-height-002.xht
 css/CSS2/normal-flow/inline-block-replaced-height-006.xht
 css/CSS2/normal-flow/inline-block-replaced-height-009.xht
-css/CSS2/normal-flow/inline-block-replaced-width-002.xht
 css/CSS2/normal-flow/inline-block-replaced-width-007.xht
-css/CSS2/normal-flow/inline-block-replaced-width-008.xht
 css/CSS2/normal-flow/inline-block-valign-001.xht
 css/CSS2/normal-flow/inline-block-valign-002.xht
 css/CSS2/normal-flow/inline-block-zorder-004.xht
@@ -170,9 +217,7 @@ css/CSS2/normal-flow/inline-block-zorder-005.xht
 css/CSS2/normal-flow/inline-replaced-height-002.xht
 css/CSS2/normal-flow/inline-replaced-height-006.xht
 css/CSS2/normal-flow/inline-replaced-height-009.xht
-css/CSS2/normal-flow/inline-replaced-width-002.xht
 css/CSS2/normal-flow/inline-replaced-width-008.xht
-css/CSS2/normal-flow/inline-replaced-width-009.xht
 css/CSS2/normal-flow/inline-replaced-width-014.xht
 css/CSS2/normal-flow/inline-table-002a.xht
 css/CSS2/normal-flow/inline-table-002b.xht
@@ -263,9 +308,6 @@ css/css-backgrounds/background-origin-006.html
 css/css-backgrounds/background-origin/origin-content-box.html
 css/css-backgrounds/background-origin/origin-content-box_with_radius.html
 css/css-backgrounds/background-origin/origin-padding-box.html
-css/css-backgrounds/background-position-calc-minmax-001.html
-css/css-backgrounds/background-position-negative-percentage-comparison-002.html
-css/css-backgrounds/background-position-negative-percentage-comparison.html
 css/css-backgrounds/background-position-subpixel-at-border.tentative.html
 css/css-backgrounds/background-position/background-position-right-in-body.html
 css/css-backgrounds/background-size-043.html
@@ -301,7 +343,6 @@ css/css-color/currentcolor-004.html
 css/css-color/currentcolor-visited-fallback.html
 css/css-color/hsl-009.html
 css/css-color/hsl-010.html
-css/css-color/hsl-011.html
 css/css-color/lch-009.html
 css/css-color/lch-010.html
 css/css-color/oklch-009.html
@@ -410,6 +451,46 @@ css/css-lists/marker-webkit-text-fill-color.html
 css/css-lists/outside-marker-covered-by-relpos-block-link.html
 css/css-lists/outside-marker-taller-than-content.html
 css/css-lists/outside-marker-with-align-content.html
+css/css-tables/anonymous-table-cell-margin-collapsing.html
+css/css-tables/caption-relative-positioning.html
+css/css-tables/collapsed-border-fragmentation-001-print.html
+css/css-tables/collapsed-border-fragmentation-002-print.html
+css/css-tables/collapsed-border-paint-phase-002.html
+css/css-tables/display-contents-001.html
+css/css-tables/display-contents-002.html
+css/css-tables/display-contents-003.html
+css/css-tables/fixed-table-layout-collapsed-border-rtl-001.html
+css/css-tables/max-height-table.html
+css/css-tables/min-max-size-table-content-box.html
+css/css-tables/percent-height-replaced-in-percent-cell-003.html
+css/css-tables/percent-height-replaced-in-percent-cell-004.html
+css/css-tables/percent-height-table-cell-child.html
+css/css-tables/percentages-grandchildren-quirks-mode-001.html
+css/css-tables/percentages-grandchildren-quirks-mode-002.html
+css/css-tables/row-group-order.html
+css/css-tables/rules-groups.html
+css/css-tables/subpixel-collapsed-borders-003.html
+css/css-tables/table-cell-percent-height-row-groups-print.html
+css/css-tables/table-cell-percent-height-rowspan-fragmented-print.html
+css/css-tables/table-cell-tiny-width-excess-width-distribution.html
+css/css-tables/table-intrinsic-size-001.html
+css/css-tables/table-intrinsic-size-002.html
+css/css-tables/table-intrinsic-size-003.html
+css/css-tables/table-intrinsic-size-004.html
+css/css-tables/table-row-group-nested-anonymous-001.html
+css/css-tables/table_grid_size_col_colspan.html
+css/css-tables/tentative/collapsed-borders-painting-order-001.html
+css/css-tables/tentative/collapsed-borders-painting-order-002.html
+css/css-tables/tentative/collapsed-borders-painting-order-003.html
+css/css-tables/tentative/collapsed-borders-painting-order-004.html
+css/css-tables/tentative/collapsed-borders-painting-order-007.html
+css/css-tables/tentative/collapsed-borders-painting-order-008.html
+css/css-tables/tentative/collapsed-borders-painting-order-011.html
+css/css-tables/th-text-align.html
+css/css-tables/visibility-collapse-border-spacing-002.html
+css/css-tables/visibility-collapse-colspan-003.html
+css/css-tables/visibility-hidden-collapsed-borders.html
+css/css-tables/whitespace-001.html
 css/css-values/attr-namespace-case-sensitivity.xhtml
 css/css-values/attr-namespace-non-existing.html
 css/css-values/attr-namespace-valid.xhtml
@@ -451,3 +532,15 @@ css/mediaqueries/negation-001.html
 css/mediaqueries/prefers-color-scheme-svg-as-image.html
 css/mediaqueries/scripting-print-noscript.html
 css/mediaqueries/scripting-print-script.html
+
+# Page fragmentation of flex and grid containers: a table inside of an item (which is not split), and
+# margins and gaps at a cut with items that have `contain: size` (the container does not grow where
+# an item is pushed to the next page)
+css/css-break/flexbox/multi-line-row-flex-fragmentation-064-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-075-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-076-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-060-print.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-065-print.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-042-print.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-045-print.html
+css/css-break/grid/monolithic-overflow-print.html

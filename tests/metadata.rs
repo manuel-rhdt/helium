@@ -7,7 +7,7 @@ fn render_with(name: &str, html: &str, source_date_epoch: Option<&str>) -> Strin
     let input = dir.join(format!("metadata_{name}.html"));
     let output = dir.join(format!("metadata_{name}.pdf"));
     std::fs::write(&input, html).unwrap();
-    let mut command = common::helium().unwrap();
+    let mut command = common::umbruch().unwrap();
     command.env_remove("SOURCE_DATE_EPOCH");
     if let Some(epoch) = source_date_epoch {
         command.env("SOURCE_DATE_EPOCH", epoch);
@@ -35,7 +35,7 @@ fn meta_elements_go_to_the_information_dictionary() {
     assert!(pdf.contains("/Creator (Hand)"));
     assert!(pdf.contains("/CreationDate (D:20240305143007Z)"));
     assert!(pdf.contains("/ModDate (D:20240305143007Z)"));
-    assert!(pdf.contains("/Producer (Helium "));
+    assert!(pdf.contains("/Producer (Umbruch "));
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn meta_elements_go_to_the_xmp_packet() {
 fn there_are_no_dates_unless_the_document_or_the_environment_gives_one() {
     let pdf = render("no_date", "<title>T</title><p>text</p>");
     assert!(!pdf.contains("CreationDate") && !pdf.contains("xmp:CreateDate"));
-    assert!(pdf.contains("/Producer (Helium "));
+    assert!(pdf.contains("/Producer (Umbruch "));
     // `SOURCE_DATE_EPOCH` gives the date, and the document wins over it
     let pdf = render_with("epoch", "<title>T</title><p>text</p>", Some("1709649007"));
     assert!(pdf.contains("/CreationDate (D:20240305143007Z)"));

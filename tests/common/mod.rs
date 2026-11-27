@@ -201,12 +201,12 @@ pub fn expand_object_streams(pdf: &[u8]) -> Vec<u8> {
     result
 }
 
-/// The `helium` binary, set up to use only its built-in fonts (`HELIUM_NO_SYSTEM_FONTS`), so
+/// The `umbruch` binary, set up to use only its built-in fonts (`UMBRUCH_NO_SYSTEM_FONTS`), so
 /// that the tests do not depend on the fonts installed on the machine.
-pub fn helium() -> Result<std::process::Command, assert_cmd::cargo::CargoError> {
+pub fn umbruch() -> Result<std::process::Command, assert_cmd::cargo::CargoError> {
     use assert_cmd::prelude::*;
     let mut cmd = std::process::Command::cargo_bin(env!("CARGO_PKG_NAME"))?;
-    cmd.env("HELIUM_NO_SYSTEM_FONTS", "1");
+    cmd.env("UMBRUCH_NO_SYSTEM_FONTS", "1");
     Ok(cmd)
 }
 
@@ -235,7 +235,7 @@ fn css_of(html: &str) -> String {
     css.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-/// The texts of `unsupported.txt`: CSS that helium does not implement on purpose.
+/// The texts of `unsupported.txt`: CSS that umbruch does not implement on purpose.
 fn unsupported_features() -> &'static [String] {
     static FEATURES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     FEATURES.get_or_init(|| {

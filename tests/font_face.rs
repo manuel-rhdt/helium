@@ -23,7 +23,7 @@ fn render(dir: &Path, html: &str) -> (Vec<String>, String) {
     let input = dir.join("index.html");
     let output = dir.join("index.pdf");
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-compression", "--no-system-fonts"])
         .arg(&input)

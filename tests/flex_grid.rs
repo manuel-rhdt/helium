@@ -10,7 +10,7 @@ fn run(name: &str, html: &str, args: &[&str]) -> Output {
     let input = dir.join(format!("flex_grid__{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    common::helium()
+    common::umbruch()
         .unwrap()
         .args(args)
         .arg(&input)
@@ -196,8 +196,8 @@ fn grid_area_shorthand() {
     );
 }
 
-/// A flex container that does not fit on the rest of a page is moved to the next page as a
-/// whole, with all of its items.
+/// A flex container with one line that does not fit on the rest of a page is moved to the next
+/// page as a whole, with all of its items.
 #[test]
 fn flex_container_is_not_broken_across_pages() {
     let dump = dump(
@@ -206,8 +206,8 @@ fn flex_container_is_not_broken_across_pages() {
 <style>
   body { margin: 0; }
   #filler { height: 850px; }
-  #row { display: flex; flex-wrap: wrap; width: 200px; }
-  #row div { width: 100px; height: 60px; }
+  #row { display: flex; width: 200px; }
+  #row div { width: 50px; height: 200px; }
 </style>
 <div id="filler"></div>
 <div id="row"><div id="a"></div><div id="b"></div><div id="c"></div><div id="d"></div></div>"#,
@@ -221,6 +221,25 @@ fn flex_container_is_not_broken_across_pages() {
             id
         );
     }
+}
+
+/// A flex container with several lines is split between them.
+#[test]
+fn flex_container_with_lines_is_split_between_them() {
+    let dump = dump(
+        "flex_lines_split",
+        r#"<!DOCTYPE html>
+<style>
+  body { margin: 0; }
+  #filler { height: 850px; }
+  #row { display: flex; flex-wrap: wrap; width: 200px; }
+  #row div { width: 100px; height: 200px; }
+</style>
+<div id="filler"></div>
+<div id="row"><div id="a"></div><div id="b"></div><div id="c"></div><div id="d"></div></div>"#,
+    );
+    assert_eq!(page_of(&dump, "a"), page_of(&dump, "b"));
+    assert_eq!(page_of(&dump, "c"), page_of(&dump, "d"));
 }
 
 /// A flex container that is taller than a page cannot be kept on one page. It must still be
@@ -303,7 +322,7 @@ fn bare_text_in_a_flex_container_is_aligned_like_an_item() {
             ),
         )
         .unwrap();
-        let output = common::helium()
+        let output = common::umbruch()
             .unwrap()
             .arg("--dump-layout")
             .arg("-")

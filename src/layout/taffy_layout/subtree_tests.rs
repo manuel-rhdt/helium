@@ -8,7 +8,7 @@ use super::*;
 use crate::layout::construct::AssignLayoutEntity;
 use crate::style::device::Device;
 use crate::tree::{DomRef, TreeLinked};
-use helium_paginate::{BoxRef, Item, LayoutService, ParId};
+use umbruch_paginate::{BoxRef, Item, LayoutService, ParId};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -374,7 +374,7 @@ fn the_boxes_around_a_subtree_are_laid_out_again_behind_a_question_about_it() {
 #[test]
 fn a_part_of_a_paragraph_can_end_at_any_break() {
     use super::tree::LineCut;
-    use helium_paginate::ParLine;
+    use umbruch_paginate::ParLine;
     let html = document("", &format!("<p id=a>{TEXT}{TEXT}{TEXT}{TEXT}</p>"));
     type Found = (Vec<ParLine>, Vec<ParLine>, Vec<ParLine>, Vec<ParLine>, Vec<ParLine>, usize);
     let found: Rc<RefCell<Option<Found>>> = Rc::new(RefCell::new(None));
@@ -424,7 +424,7 @@ fn narrow_pages(paragraph: &str) -> String {
 #[test]
 fn a_solution_with_pages_that_end_at_any_break_of_a_paragraph_is_laid_out() {
     use super::tree::LineCut;
-    use helium_paginate::{Position as FlowPosition, Solution};
+    use umbruch_paginate::{Position as FlowPosition, Solution};
     use specs::Join;
     // a solver that fills every page as the paragraph is broken for it, and then ends it one break
     // earlier, wherever that is
@@ -477,7 +477,7 @@ fn a_solution_with_pages_that_end_at_any_break_of_a_paragraph_is_laid_out() {
 
 // The ways to break a paragraph.
 
-fn variants_of(extra: u32, justified: bool) -> (Vec<Rc<[helium_paginate::ParLine]>>, Rc<[helium_paginate::ParLine]>, Vec<Rc<[helium_paginate::ParLine]>>, Rc<[helium_paginate::ParLine]>) {
+fn variants_of(extra: u32, justified: bool) -> (Vec<Rc<[umbruch_paginate::ParLine]>>, Rc<[umbruch_paginate::ParLine]>, Vec<Rc<[umbruch_paginate::ParLine]>>, Rc<[umbruch_paginate::ParLine]>) {
     let style = if justified { "looseness: 2; text-align: justify" } else { "looseness: 2" };
     let html = document(style, &format!("<p id=a>{TEXT}{TEXT}{TEXT}{TEXT}</p>"));
     let found = Rc::new(RefCell::new(None));
@@ -500,7 +500,7 @@ fn variants_of(extra: u32, justified: bool) -> (Vec<Rc<[helium_paginate::ParLine
     found.take().expect("the probe was called")
 }
 
-fn total(lines: &[helium_paginate::ParLine]) -> f64 {
+fn total(lines: &[umbruch_paginate::ParLine]) -> f64 {
     lines.iter().map(|line| line.demerits).sum()
 }
 

@@ -1,4 +1,4 @@
-//! The fonts built into Helium: deflated by `build.rs` and inflated when first used.
+//! The fonts built into Umbruch: deflated by `build.rs` and inflated when first used.
 //!
 //! Registering a font in the font database does not need its data, only its metadata, which
 //! `build.rs` reads once and stores next to the compressed font (`EmbeddedFaceInfo`). The data

@@ -8,7 +8,7 @@ fn dump(name: &str, html: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("white_space__{}.html", name));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")
@@ -212,4 +212,23 @@ fn nowrap_text_with_breaks_between_letters_keeps_its_width() {
     );
     let width = |dump: &Value| rects_with(dump, [0, 255, 0])[0]["width"].as_f64().unwrap();
     assert!((width(&four) - 4.0 * width(&one)).abs() < 0.5, "{} vs {}", width(&four), width(&one));
+}
+
+#[test]
+fn no_break_spaces_are_not_break_opportunities() {
+    // a box with no width breaks the text at every opportunity: the no-break spaces (U+00A0,
+    // U+202F, U+2007) glue the words together, as UAX #14 says, though they are white space
+    let glued = dump(
+        "no_break_spaces",
+        "<p style='width:0'>aa\u{a0}bb\u{202f}cc\u{2007}dd ee</p>",
+    );
+    assert_eq!(lines(&glued), 2);
+    let spaced = dump("ordinary_spaces", "<p style='width:0'>aa bb cc dd ee</p>");
+    assert_eq!(lines(&spaced), 5);
+    // a no-break space is content, not a space that hangs at the end of a `nowrap` line
+    let nowrap = dump(
+        "no_break_space_nowrap",
+        "<p style='width:0;white-space:nowrap'>aa bb<span>\u{a0}</span></p>",
+    );
+    assert_eq!(lines(&nowrap), 1);
 }

@@ -128,6 +128,7 @@ fn write_glyph(
         return Ok(None);
     }
     let Some(root) = collector.finish() else { return Ok(None) };
+    super::pdfa1_forbid("colour glyphs (emoji), which are transparency groups")?;
     let upem = f64::from(face.units_per_em());
     // the page of the glyphs is much smaller than this; the clip box of the glyph does the rest
     let extent = Pt(8.0 * upem);
@@ -137,7 +138,10 @@ fn write_glyph(
         bbox,
         Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
         filter,
-        |form| emit_all(form, &root, &reach),
+        |form| {
+            super::set_device_defaults(form)?;
+            emit_all(form, &root, &reach)
+        },
     )?;
     Ok(Some(form))
 }
@@ -440,7 +444,10 @@ fn composite(ctx: &mut PageContext<'_, '_, '_>, children: &[Node], reach: &Reach
             reach.bbox(),
             Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
             reach.filter,
-            |form| emit_all(form, nodes, reach),
+            |form| {
+                super::set_device_defaults(form)?;
+                emit_all(form, nodes, reach)
+            },
         )
     };
     let draw = |ctx: &mut PageContext<'_, '_, '_>, form, state: Option<ExtGState>| -> Result<(), Error> {

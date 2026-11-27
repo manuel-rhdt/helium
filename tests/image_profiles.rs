@@ -18,7 +18,29 @@ fn render(name: &str, images: &[&str], args: &[&str]) -> (String, PathBuf) {
     let html: String = images.iter().map(|image| format!("<img src=\"{image}\" width=40 height=40>")).collect();
     std::fs::write(dir.join("index.html"), format!("<!doctype html><html lang=en><title>Profiles</title>{html}")).unwrap();
     let output = dir.join("out.pdf");
-    common::helium().unwrap().args(["--no-system-fonts", "--no-compression"]).args(args).arg(dir.join("index.html")).arg(&output).assert().success();
+    common::umbruch().unwrap().args(["--no-system-fonts", "--no-compression"]).args(args).arg(dir.join("index.html")).arg(&output).assert().success();
+    (String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(&output).unwrap())).into_owned(), output)
+}
+
+/// Like `render`, but the images are `<image>` elements of an SVG file (`img.svg`, shown by an `<img>`)
+/// or of an inline `<svg>`.
+fn render_svg(name: &str, images: &[&str], inline: bool, args: &[&str]) -> (String, PathBuf) {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("image_profiles_{name}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    for file in FILES.iter().chain(&["rgb.jpg", "cmyk.jpg"]) {
+        std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(file), dir.join(file)).unwrap();
+    }
+    let elements: String = images.iter().map(|image| format!("<image href=\"{image}\" width=\"40\" height=\"40\"/>")).collect();
+    let svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"40\" height=\"{}\" viewBox=\"0 0 40 {}\">{elements}</svg>", 40, 40);
+    let body = if inline {
+        svg.clone()
+    } else {
+        std::fs::write(dir.join("img.svg"), &svg).unwrap();
+        "<img src=\"img.svg\" width=40 height=40>".to_owned()
+    };
+    std::fs::write(dir.join("index.html"), format!("<!doctype html><html lang=en><title>Profiles</title>{body}")).unwrap();
+    let output = dir.join("out.pdf");
+    common::umbruch().unwrap().args(["--no-system-fonts", "--no-compression"]).args(args).arg(dir.join("index.html")).arg(&output).assert().success();
     (String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(&output).unwrap())).into_owned(), output)
 }
 
@@ -70,4 +92,40 @@ fn images_with_a_profile_conform_to_pdfa() {
         let text = String::from_utf8_lossy(&result.stdout);
         assert!(text.lines().any(|line| line.starts_with("PASS")), "{level}: {text}");
     }
+}
+
+#[test]
+fn svg_images_with_a_profile_have_it() {
+    for inline in [false, true] {
+        let (pdf, _) = render_svg(&format!("svg_have_{inline}"), &["p3-profile.jpg", "p3-profile.png", "p3-profile-alpha.png"], inline, &[]);
+        assert_eq!(icc_images(&pdf), 3, "{}", pdf.lines().filter(|line| line.contains("ColorSpace")).collect::<Vec<_>>().join("\n"));
+        // the profile is written once, besides the sRGB profile of the page
+        assert_eq!(pdf.matches("/N 3").count(), 2);
+    }
+}
+
+#[test]
+fn svg_images_without_or_with_a_misfit_profile_keep_device_colors() {
+    let (pdf, _) = render_svg("svg_without", &["rgb.jpg"], false, &[]);
+    assert_eq!(icc_images(&pdf), 0);
+    assert!(pdf.contains("/ColorSpace /DeviceRGB"));
+    let (pdf, _) = render_svg("svg_misfit", &["gray-with-rgb-profile.png", "bad-profile.png"], false, &[]);
+    assert_eq!(icc_images(&pdf), 0);
+    assert!(pdf.contains("/ColorSpace /DeviceGray"));
+}
+
+#[test]
+fn a_cmyk_image_in_an_svg_is_embedded_as_it_is() {
+    let (pdf, _) = render_svg("svg_cmyk", &["cmyk.jpg"], false, &[]);
+    assert!(pdf.contains("/ColorSpace /DeviceCMYK"), "{}", pdf.lines().filter(|line| line.contains("ColorSpace")).collect::<Vec<_>>().join("\n"));
+}
+
+#[test]
+fn a_cmyk_image_in_an_svg_is_an_error_for_pdfa() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("image_profiles_svg_cmyk_pdfa");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/cmyk.jpg"), dir.join("cmyk.jpg")).unwrap();
+    std::fs::write(dir.join("img.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"40\"><image href=\"cmyk.jpg\" width=\"40\" height=\"40\"/></svg>").unwrap();
+    std::fs::write(dir.join("index.html"), "<!doctype html><html lang=en><title>T</title><img src=\"img.svg\" width=40 height=40>").unwrap();
+    common::umbruch().unwrap().args(["--no-system-fonts", "--pdfa", "2b"]).arg(dir.join("index.html")).arg(dir.join("out.pdf")).assert().failure();
 }

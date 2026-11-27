@@ -1,14 +1,14 @@
-//! Conversion of helium's computed style to Taffy's [`taffy::Style`].
+//! Conversion of umbruch's computed style to Taffy's [`taffy::Style`].
 
 use crate::style::properties::computed::{SizingKeyword, 
     BoxSizing, ComputedValues, ContentAlignment, FlexDirection, FlexWrap, GenericSize, GridAutoFlow,
     GridPlacement, ItemAlignment, LengthPercentage, SelfAlignment, TrackList, TrackSize, TrackEntry, Breadth,
 };
 use crate::layout::writing_mode::Flow;
+use crate::style::properties::calc::Calc;
 use crate::style::properties::specified::{Display, PositionSpec};
 use taffy::style_helpers::{
-    TaffyAuto, TaffyMaxContent, TaffyMinContent, auto, fr, length, line, max_content, min_content,
-    percent, span,
+    TaffyAuto, TaffyMaxContent, TaffyMinContent, auto, fr, line, max_content, min_content, span,
 };
 
 use taffy::geometry::{Rect, Size};
@@ -16,18 +16,22 @@ use taffy::style::{
     BoxSizing as TBoxSizing, Dimension, LengthPercentage as TLengthPercentage, LengthPercentageAuto, Position,
 };
 
+/// The calculation of a value that Taffy can only hold as a `calc()`: a length plus a
+/// percentage, or a math function. [`super::tree::calc`] evaluates it.
+fn calc_ptr(value: LengthPercentage) -> Option<*const ()> {
+    match value {
+        LengthPercentage::PixelLength(_) | LengthPercentage::Percentage(_) => None,
+        LengthPercentage::Both { length, percentage } => Some(Calc::linear(length, percentage).as_ptr()),
+        LengthPercentage::Calc(calc) => Some(calc.as_ptr()),
+    }
+}
+
 fn length_percentage(value: LengthPercentage) -> TLengthPercentage {
     match value {
         LengthPercentage::PixelLength(px) => TLengthPercentage::length(px.0),
         LengthPercentage::Percentage(p) => TLengthPercentage::percent(p.0),
-        LengthPercentage::Both { length, percentage } => {
-            // TODO: map to a Taffy calc() value
-            log::warn!(
-                "length + percentage ({:?} + {:?}) is not supported by the Taffy layout, using the length",
-                length,
-                percentage
-            );
-            TLengthPercentage::length(length.0)
+        LengthPercentage::Both { .. } | LengthPercentage::Calc(_) => {
+            TLengthPercentage::calc(calc_ptr(value).unwrap())
         }
     }
 }
@@ -46,7 +50,9 @@ fn length_percentage_auto(value: GenericSize) -> LengthPercentageAuto {
         GenericSize::LengthPercentage(lp) => match lp {
             LengthPercentage::PixelLength(px) => LengthPercentageAuto::length(px.0),
             LengthPercentage::Percentage(p) => LengthPercentageAuto::percent(p.0),
-            LengthPercentage::Both { .. } => LengthPercentageAuto::from(length_percentage(lp)),
+            LengthPercentage::Both { .. } | LengthPercentage::Calc(_) => {
+                LengthPercentageAuto::from(length_percentage(lp))
+            }
         },
     }
 }
@@ -63,7 +69,7 @@ fn dimension(value: GenericSize) -> Dimension {
         GenericSize::LengthPercentage(lp) => match lp {
             LengthPercentage::PixelLength(px) => Dimension::length(px.0),
             LengthPercentage::Percentage(p) => Dimension::percent(p.0),
-            LengthPercentage::Both { .. } => Dimension::from(length_percentage(lp)),
+            LengthPercentage::Both { .. } | LengthPercentage::Calc(_) => Dimension::from(length_percentage(lp)),
         },
     }
 }
@@ -120,16 +126,15 @@ where
         + TaffyMaxContent
         + taffy::style_helpers::FromLength
         + taffy::style_helpers::FromPercent
-        + taffy::style_helpers::FromFr,
+        + taffy::style_helpers::FromFr
+        + From<TLengthPercentage>,
 {
     match size {
         Breadth::Auto => auto(),
         Breadth::MinContent => min_content(),
         Breadth::MaxContent => max_content(),
         Breadth::Fraction(value) => fr(value),
-        Breadth::Length(LengthPercentage::PixelLength(px)) => length(px.0),
-        Breadth::Length(LengthPercentage::Percentage(p)) => percent(p.0),
-        Breadth::Length(LengthPercentage::Both { length: px, .. }) => length(px.0),
+        Breadth::Length(value) => T::from(length_percentage(value)),
     }
 }
 
@@ -143,11 +148,7 @@ fn track_size(size: TrackSize) -> taffy::TrackSizingFunction {
                 Breadth::Auto => taffy::MinTrackSizingFunction::auto(),
                 Breadth::MinContent => taffy::MinTrackSizingFunction::min_content(),
                 Breadth::MaxContent => taffy::MinTrackSizingFunction::max_content(),
-                Breadth::Length(LengthPercentage::PixelLength(px))
-                | Breadth::Length(LengthPercentage::Both { length: px, .. }) => {
-                    taffy::MinTrackSizingFunction::length(px.0)
-                }
-                Breadth::Length(LengthPercentage::Percentage(p)) => taffy::MinTrackSizingFunction::percent(p.0),
+                Breadth::Length(value) => taffy::MinTrackSizingFunction::from(length_percentage(value)),
             },
             max: breadth(max),
         },
@@ -155,8 +156,9 @@ fn track_size(size: TrackSize) -> taffy::TrackSizingFunction {
             min: taffy::MinTrackSizingFunction::auto(),
             max: match limit {
                 LengthPercentage::Percentage(p) => taffy::MaxTrackSizingFunction::fit_content_percent(p.0),
-                LengthPercentage::PixelLength(px) | LengthPercentage::Both { length: px, .. } => {
-                    taffy::MaxTrackSizingFunction::fit_content_px(px.0)
+                LengthPercentage::PixelLength(px) => taffy::MaxTrackSizingFunction::fit_content_px(px.0),
+                LengthPercentage::Both { .. } | LengthPercentage::Calc(_) => {
+                    taffy::MaxTrackSizingFunction::fit_content_calc(calc_ptr(limit).unwrap())
                 }
             },
         },
@@ -239,7 +241,7 @@ fn physical_style(style: &ComputedValues) -> taffy::Style {
         Display::Block | Display::ListItem | Display::Inline | Display::InlineBlock => taffy::Display::Block,
         Display::Flex | Display::InlineFlex => taffy::Display::Flex,
         Display::Grid | Display::InlineGrid => taffy::Display::Grid,
-        // A table is laid out as a grid (see `tree::HeliumTree::build_table`). The internal
+        // A table is laid out as a grid (see `tree::UmbruchTree::build_table`). The internal
         // table boxes are no Taffy nodes of their own, except for cells and captions, which are
         // block containers.
         Display::Table | Display::InlineTable => taffy::Display::Grid,

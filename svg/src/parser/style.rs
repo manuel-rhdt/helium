@@ -3,7 +3,7 @@
 
 use super::converter::{self, SvgColorExt};
 use super::paint_server;
-use super::svgtree::{AId, FromValue, SvgNode};
+use super::svgtree::{AId, CssColor, FromValue, SvgNode};
 use crate::tree::ContextElement;
 use crate::{
     ApproxEqUlps, Color, Fill, FillRule, LineCap, LineJoin, Opacity, Paint, Stroke,
@@ -145,9 +145,29 @@ fn convert_paint(
     opacity: &mut Opacity,
     cache: &mut converter::Cache,
 ) -> Option<(Paint, Option<ContextElement>)> {
+    // The colors that `svgtypes` cannot read are asked from the color parser of the options:
+    // a paint that is one, or a `url()` with one as its fallback.
+    let mut wide_fallback = None;
     let paint = match svgtypes::Paint::from_str(value) {
         Ok(v) => v,
-        Err(_) => {
+        Err(_) => 'unreadable: {
+            let text = value.trim();
+            if let Some(color) = CssColor::parse_text(node.document(), text) {
+                *opacity = color.opacity;
+                return Some((Paint::Color(color.color), None));
+            }
+            if text.starts_with("url(") {
+                if let Some(end) = text.find(')') {
+                    let (reference, rest) = text.split_at(end + 1);
+                    if let (Ok(svgtypes::Paint::FuncIRI(iri, None)), Some(color)) = (
+                        svgtypes::Paint::from_str(reference),
+                        CssColor::parse_text(node.document(), rest),
+                    ) {
+                        wide_fallback = Some(color);
+                        break 'unreadable svgtypes::Paint::FuncIRI(iri, None);
+                    }
+                }
+            }
             if aid == AId::Fill {
                 log::warn!(
                     "Failed to parse fill value: '{}'. Fallback to black.",
@@ -180,12 +200,11 @@ fn convert_paint(
             .and_then(|(_, s)| s)
             .map(|s| (s.paint, s.context_element)),
         svgtypes::Paint::CurrentColor => {
-            let svg_color: svgtypes::Color = node
+            let svg_color: CssColor = node
                 .find_attribute(AId::Color)
-                .unwrap_or_else(svgtypes::Color::black);
-            let (color, alpha) = svg_color.split_alpha();
-            *opacity = alpha;
-            Some((Paint::Color(color), None))
+                .unwrap_or_else(CssColor::black);
+            *opacity = svg_color.opacity;
+            Some((Paint::Color(svg_color.color), None))
         }
         svgtypes::Paint::Color(svg_color) => {
             let (color, alpha) = svg_color.split_alpha();
@@ -204,7 +223,7 @@ fn convert_paint(
                             // See SVG spec 7.11 for details.
 
                             if !has_bbox && paint.units() == Units::ObjectBoundingBox {
-                                from_fallback(node, fallback, opacity).map(|p| (p, None))
+                                from_fallback(node, fallback, opacity, wide_fallback).map(|p| (p, None))
                             } else {
                                 Some((paint, None))
                             }
@@ -213,14 +232,14 @@ fn convert_paint(
                             *opacity = so;
                             Some((Paint::Color(color), None))
                         }
-                        None => from_fallback(node, fallback, opacity).map(|p| (p, None)),
+                        None => from_fallback(node, fallback, opacity, wide_fallback).map(|p| (p, None)),
                     }
                 } else {
                     log::warn!("'{}' cannot be used to {} a shape.", tag_name, aid);
                     None
                 }
             } else {
-                from_fallback(node, fallback, opacity).map(|p| (p, None))
+                from_fallback(node, fallback, opacity, wide_fallback).map(|p| (p, None))
             }
         }
     }
@@ -230,16 +249,21 @@ fn from_fallback(
     node: SvgNode,
     fallback: Option<svgtypes::PaintFallback>,
     opacity: &mut Opacity,
+    wide_fallback: Option<CssColor>,
 ) -> Option<Paint> {
-    match fallback? {
+    let Some(fallback) = fallback else {
+        let color = wide_fallback?;
+        *opacity = color.opacity;
+        return Some(Paint::Color(color.color));
+    };
+    match fallback {
         svgtypes::PaintFallback::None => None,
         svgtypes::PaintFallback::CurrentColor => {
-            let svg_color: svgtypes::Color = node
+            let svg_color: CssColor = node
                 .find_attribute(AId::Color)
-                .unwrap_or_else(svgtypes::Color::black);
-            let (color, alpha) = svg_color.split_alpha();
-            *opacity = alpha;
-            Some(Paint::Color(color))
+                .unwrap_or_else(CssColor::black);
+            *opacity = svg_color.opacity;
+            Some(Paint::Color(svg_color.color))
         }
         svgtypes::PaintFallback::Color(svg_color) => {
             let (color, alpha) = svg_color.split_alpha();

@@ -16,7 +16,7 @@ use cssparser::{CowRcStr, ParseError, Parser};
 use super::computed::ComputedValues;
 use super::specified::{
     ApplyToComputedValues, AutoOrQuantityOrPercentage, CssWide, CssWideProperties, Direction,
-    NoneOrQuantityOrPercentage, ParseDeclaration, Position, PropertyValue, QuantityOrPercentage,
+    NonNegative, NoneOrQuantityOrPercentage, ParseDeclaration, Position, PropertyValue, QuantityOrPercentage,
     WritingMode,
 };
 use crate::style::parse::StyleParseError;
@@ -42,6 +42,17 @@ struct Edges<T> {
     block_end: Option<T>,
     inline_start: Option<T>,
     inline_end: Option<T>,
+}
+
+impl<T> Edges<T> {
+    fn map(self, f: impl Fn(T) -> T) -> Edges<T> {
+        Edges {
+            block_start: self.block_start.map(&f),
+            block_end: self.block_end.map(&f),
+            inline_start: self.inline_start.map(&f),
+            inline_end: self.inline_end.map(&f),
+        }
+    }
 }
 
 impl<T> Default for Edges<T> {
@@ -117,14 +128,14 @@ impl<'i> ParseDeclaration<'i> for Logical {
         match (property, rest) {
             ("inline" | "block", "size") => {
                 let axis = if property == "inline" { Axis::Inline } else { Axis::Block };
-                return Ok(Logical::Size(axis, super::specified::SizeValue::from_css_property_value(input)?));
+                return Ok(Logical::Size(axis, super::specified::SizeValue::from_css_property_value(input)?.non_negative()));
             }
             ("min" | "max", "inline-size" | "block-size") => {
                 let axis = if rest.starts_with("inline") { Axis::Inline } else { Axis::Block };
                 return Ok(if property == "min" {
-                    Logical::MinSize(axis, AutoOrQuantityOrPercentage::from_css_property_value(input)?)
+                    Logical::MinSize(axis, AutoOrQuantityOrPercentage::from_css_property_value(input)?.non_negative())
                 } else {
-                    Logical::MaxSize(axis, NoneOrQuantityOrPercentage::from_css_property_value(input)?)
+                    Logical::MaxSize(axis, NoneOrQuantityOrPercentage::from_css_property_value(input)?.non_negative())
                 });
             }
             _ => {}
@@ -163,7 +174,7 @@ impl<'i> ParseDeclaration<'i> for Logical {
         }
         match property {
             "margin" => Ok(Logical::Margin(edges!(AutoOrQuantityOrPercentage))),
-            "padding" => Ok(Logical::Padding(edges!(QuantityOrPercentage))),
+            "padding" => Ok(Logical::Padding(edges!(QuantityOrPercentage).map(NonNegative::non_negative))),
             "inset" => Ok(Logical::Inset(edges!(AutoOrQuantityOrPercentage))),
             _ => Err(unknown()),
         }

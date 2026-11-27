@@ -1,9 +1,9 @@
 //! Box layout with [Taffy](https://github.com/DioxusLabs/taffy).
 //!
 //! Taffy computes the sizes and positions of all boxes (block, flex and grid containers and
-//! absolutely positioned boxes). Helium keeps doing what Taffy cannot do: inline content is
+//! absolutely positioned boxes). Umbruch keeps doing what Taffy cannot do: inline content is
 //! broken into lines by [`InlineFormattingContext`]. The pages are chosen by the kernel of
-//! `helium_paginate`, and every page is laid out for its own geometry (see `docs/pagination.md`).
+//! `umbruch_paginate`, and every page is laid out for its own geometry (see `docs/pagination.md`).
 //!
 //! The result is written to the same components the rest of the layout pipeline reads:
 //! [`Position`] (content box in document coordinates), [`Decoration`], the [`TextList`] of the
@@ -14,6 +14,7 @@ mod columns;
 mod flow;
 mod paginate;
 mod replaced;
+mod rows;
 mod service;
 mod style;
 mod subtree;
@@ -21,7 +22,8 @@ mod table;
 mod tree;
 mod window;
 
-use helium_paginate::FxHashMap as HashMap;
+use rustc_hash::FxHashMap as HashMap;
+use std::rc::Rc;
 
 use specs::{Entities, Entity, ReadStorage, World, WorldExt, WriteStorage};
 use taffy::geometry::{Point, Size};
@@ -38,7 +40,7 @@ use crate::layout::normal_formatting::BlockFormattingContext;
 use crate::style::properties::computed::{ComputedValues, PixelLength, TextAlign};
 
 use crate::layout::writing_mode::Flow;
-use tree::{Content, HeliumTree, Node, lines_between};
+use tree::{Content, UmbruchTree, Node, lines_between};
 use window::Window;
 
 /// Distance between the z indices of boxes at different levels of nested absolutely positioned
@@ -61,7 +63,7 @@ pub(super) mod probe {
     pub type Hook = Box<dyn FnOnce(&mut TreeService<'_, '_, '_>)>;
 
     /// A solver that the tests give to the layout instead of the exact one.
-    pub type Solve = Box<dyn for<'k, 'a> FnOnce(&'k mut helium_paginate::Kernel<'a>) -> helium_paginate::Solution>;
+    pub type Solve = Box<dyn for<'k, 'a> FnOnce(&'k mut umbruch_paginate::Kernel<'a>) -> umbruch_paginate::Solution>;
 
     thread_local! {
         pub static BEFORE: RefCell<Option<Hook>> = const { RefCell::new(None) };
@@ -91,7 +93,7 @@ pub struct TaffyBlockLayout {
 #[derive(Debug, Clone, Copy)]
 struct PlacedFloat {
     id: NodeId,
-    side: helium_paginate::FloatSide,
+    side: umbruch_paginate::FloatSide,
     /// The margins of the float, and the extent of its margin box.
     margin: taffy::geometry::Rect<f32>,
     outer: f32,
@@ -151,7 +153,7 @@ impl TaffyBlockLayout {
 
         let content_width = (self.page_width - self.margin.left - self.margin.right).0;
         let page_width_unmeasured = self.page_width;
-        let mut tree = HeliumTree {
+        let mut tree = UmbruchTree {
             nodes: vec![],
             computed_values: &computed_values,
             inline_ctxs: &mut inline_ctxs,
@@ -172,7 +174,7 @@ impl TaffyBlockLayout {
             plain_root: None,
             page_fragments: HashMap::default(),
             paragraph_variants: 0,
-            variants_config: helium_paginate::Variants::default(),
+            variants_config: umbruch_paginate::Variants::default(),
             earlier_fragments: 3,
             page_variants: HashMap::default(),
         };
@@ -190,6 +192,10 @@ impl TaffyBlockLayout {
             page_margins.rtl,
             self.page_height.0 > 0.0,
             self.shrink_wrap,
+            (
+                (self.page_width - self.margin.left - self.margin.right).0.max(0.0),
+                (self.page_height - self.margin.top - self.margin.bottom).0.max(0.0),
+            ),
         ));
         tree.flow = Some(flow.clone());
 
@@ -220,10 +226,11 @@ impl TaffyBlockLayout {
             size: (page_width, self.page_height),
             margin: self.margin,
         };
-        let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow));
-        let first_class = classes.of(helium_paginate::Position::Item(0)).clone();
+        let group_elements = paginate::group_elements(&tree, &flow, &geometry.margins.keys);
+        let classes = std::sync::Arc::new(paginate::Classes::new(&tree, &flow, &group_elements));
+        let first_class = classes.of(umbruch_paginate::Position::Item(0)).clone();
         let first_spec = geometry.spec(&geometry.context(0, &first_class));
-        let problem = helium_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone())
+        let problem = umbruch_paginate::Problem::new(geometry.table(classes.clone()), flow.items.clone())
             .with_repeats(flow.repeats.clone());
         // the pages choose among the ways to break the paragraphs that ask for it (`looseness`)
         let looseness = flow
@@ -234,10 +241,10 @@ impl TaffyBlockLayout {
             .unwrap_or(0);
         let tuning = Tuning::from_environment();
         let problem = problem.with_variants(looseness, tuning.variant_tolerance);
-        let objective = helium_paginate::CssObjective { line_tolerance: tuning.line_tolerance };
+        let objective = umbruch_paginate::CssObjective { rtl: page_margins.rtl, line_tolerance: tuning.line_tolerance };
         tree.paragraph_variants = looseness;
         tree.earlier_fragments = tuning.earlier_fragments;
-        tree.variants_config = helium_paginate::Variants {
+        tree.variants_config = umbruch_paginate::Variants {
             extra: looseness,
             tolerance: tuning.variant_tolerance,
             line_tolerance: tuning.line_tolerance,
@@ -255,6 +262,17 @@ impl TaffyBlockLayout {
                 Some((table, (header, whole)))
             })
             .collect();
+        // the footer rows that the pages repeat inside of a table
+        let footers: HashMap<NodeId, (NodeId, window::Window)> = (0..tree.nodes.len())
+            .map(NodeId::from)
+            .filter(|&id| tree.node(id).content == Content::Table)
+            .filter_map(|table| {
+                let footer = tree.repeated_footer(table)?;
+                let span = tree.node(footer).span.as_ref()?;
+                let whole = window::Window::over(span.start, span.end);
+                Some((table, (footer, whole)))
+            })
+            .collect();
         // choose the pages
         let before = std::time::Instant::now();
         let mut service = service::TreeService::new(&mut tree, &flow, first_spec.block_size);
@@ -263,27 +281,27 @@ impl TaffyBlockLayout {
         // (start of the page, its end, the page)
         // (and the fragments of the containers that are on the page)
         let mut planned: Vec<(
-            helium_paginate::PageStart,
-            helium_paginate::Position,
-            helium_paginate::Position,
-            helium_paginate::PageFill,
-            Vec<helium_paginate::PageFragment>,
+            umbruch_paginate::PageStart,
+            umbruch_paginate::Position,
+            umbruch_paginate::Position,
+            umbruch_paginate::PageFill,
+            Vec<umbruch_paginate::PageFragment>,
             // the ways to break the paragraphs of the page that are not the first
-            Vec<helium_paginate::Choice>,
+            Vec<umbruch_paginate::Choice>,
             // the floats on the page
-            Vec<(helium_paginate::BoxRef, helium_paginate::FloatSide)>,
+            Vec<(umbruch_paginate::BoxRef, umbruch_paginate::FloatSide)>,
         )> = vec![];
         {
-            use helium_paginate::Solver;
-            let mut kernel = helium_paginate::Kernel::new(&problem, &mut service);
+            use umbruch_paginate::Solver;
+            let mut kernel = umbruch_paginate::Kernel::new(&problem, &mut service);
             #[cfg(test)]
             let custom = probe::SOLVE.with(|slot| slot.borrow_mut().take()).map(|solve| solve(&mut kernel));
             #[cfg(not(test))]
-            let custom: Option<helium_paginate::Solution> = None;
+            let custom: Option<umbruch_paginate::Solution> = None;
             let solution = custom
-                .unwrap_or_else(|| helium_paginate::ExactSolver::new(objective).solve(&mut kernel));
+                .unwrap_or_else(|| umbruch_paginate::ExactSolver::new(objective).solve(&mut kernel));
             let fills = kernel.realize(&solution).map_err(|error| format!("invalid pagination: {error:?}"))?;
-            let end = helium_paginate::Position::Item(flow.items.len());
+            let end = umbruch_paginate::Position::Item(flow.items.len());
             for (page, fill) in fills.iter().enumerate() {
                 let start = solution.pages[page];
                 let finish = kernel.position(fill.end);
@@ -295,24 +313,26 @@ impl TaffyBlockLayout {
             if fills.is_empty() {
                 planned.push((
                     solution.pages[0],
-                    helium_paginate::Position::Item(0),
+                    umbruch_paginate::Position::Item(0),
                     end,
-                    helium_paginate::PageFill {
+                    umbruch_paginate::PageFill {
                         end: solution.pages[0].at,
                         spec: first_spec,
-                        kind: helium_paginate::PageKind::First,
+                        kind: umbruch_paginate::PageKind::First,
                         used: 0.0,
-                        end_kind: helium_paginate::BreakKind::Allowed,
+                        hyphen_end: umbruch_paginate::HyphenLimit::None,
+                        hyphen_extent: 0.0,
+                        end_kind: umbruch_paginate::BreakKind::Allowed,
                         orphan_violation: false,
                         widow_violation: false,
                         overflow: false,
                         line_demerits: 0.0,
                         line_extent: 0.0,
-                        choices: helium_paginate::ChoiceId::NONE,
+                        choices: umbruch_paginate::ChoiceId::NONE,
                         floats_used: 0.0,
                         repeated: 0.0,
-                        placed: helium_paginate::FloatList::NONE,
-                        carry: helium_paginate::FloatList::NONE,
+                        placed: umbruch_paginate::FloatList::NONE,
+                        carry: umbruch_paginate::FloatList::NONE,
                     },
                     vec![],
                     vec![],
@@ -337,6 +357,11 @@ impl TaffyBlockLayout {
         let mut decorations = world.write_storage::<Decoration>();
         let mut text_list_resource = world.write_resource::<TextList>();
         let mut groups_resource = world.write_resource::<AbsoluteGroups>();
+        // the number of every page in the page groups that it is part of
+        let page_groups = paginate::group_positions(
+            &group_elements,
+            &planned.iter().map(|(start, from, to, ..)| (start.index, *from, *to)).collect::<Vec<_>>(),
+        );
         for (number, (start, from, to, fill, on_page, choices, floats)) in planned.iter().enumerate() {
             // the pages that a break to a left or right page left empty
             while page_contexts.len() < start.index {
@@ -344,30 +369,24 @@ impl TaffyBlockLayout {
                 page_contexts.push(crate::layout::pages::PageContext {
                     index,
                     name: None,
-                    first_in_group: false,
                     rtl: page_margins.rtl,
+                    groups: vec![],
                 });
             }
-            let class = if start.index == 0 {
-                let mut class = classes.of(*from).clone();
-                class.1 = true;
-                class
-            } else {
-                classes.of(*from).clone()
-            };
+            let class = classes.of(*from).clone();
             let context = geometry.context(start.index, &class);
             let (edges, _) = geometry.of_page(&context);
             let spec = geometry.spec(&context);
             let window = paginate::window(
                 &flow.items,
                 &flow.leaves,
-                helium_paginate::BreakLevel::Page,
+                umbruch_paginate::BreakLevel::Page,
                 None,
                 *from,
                 *to,
                 |item| match flow.items[item] {
-                    helium_paginate::Item::Gap { node } => {
-                        helium_paginate::LayoutService::extent(&mut service, node, spec.inline_size) as f32
+                    umbruch_paginate::Item::Gap { node } => {
+                        umbruch_paginate::LayoutService::extent(&mut service, node, spec.inline_size) as f32
                     }
                     _ => 0.0,
                 },
@@ -385,7 +404,7 @@ impl TaffyBlockLayout {
                 placed_floats.iter().filter(|placed| placed.side == side).map(|placed| placed.outer).sum()
             };
             let (top_floats, bottom_floats) =
-                (floats_height(helium_paginate::FloatSide::Top), floats_height(helium_paginate::FloatSide::Bottom));
+                (floats_height(umbruch_paginate::FloatSide::Top), floats_height(umbruch_paginate::FloatSide::Bottom));
             tree.page_fragments = on_page
                 .iter()
                 .map(|fragment| {
@@ -396,7 +415,7 @@ impl TaffyBlockLayout {
             tree.page_variants = choices
                 .iter()
                 .filter_map(|choice| match flow.items[choice.item] {
-                    helium_paginate::Item::Paragraph { id, .. } => Some((flow.paragraphs[id.0 as usize], choice.variant)),
+                    umbruch_paginate::Item::Paragraph { id, .. } => Some((flow.paragraphs[id.0 as usize], choice.variant)),
                     _ => None,
                 })
                 .collect();
@@ -428,7 +447,7 @@ impl TaffyBlockLayout {
                     spec.block_size
                 );
             }
-            let HeliumTree {
+            let UmbruchTree {
                 nodes, window, inline_ctxs, lines, text_runs, aligns, intrinsic_sizes, page_variants, paragraph_variants, ..
             } = tree;
             let mut paragraphs_log: Vec<serde_json::Value> = vec![];
@@ -458,12 +477,16 @@ impl TaffyBlockLayout {
                 page_bottom: edges.top.0 + spec.block_size - bottom_floats,
                 fragments: &mut fragments,
                 headers: &headers,
+                footers: &footers,
+                block_size: spec.block_size,
                 repeating: false,
                 repeated: &mut repeated,
                 overlay: None,
                 rules: &mut rules,
                 line_stats: &mut line_stats,
                 paragraphs_log: report.as_ref().map(|_| &mut paragraphs_log),
+                clip: None,
+                row: None,
             };
             // The floats at the top of the page, in order, then the text below them, then the floats
             // at the bottom, which end at the bottom of the content area of the page (the order
@@ -476,7 +499,7 @@ impl TaffyBlockLayout {
                 }
                 Ok(())
             };
-            write_floats(&mut writer, helium_paginate::FloatSide::Top, edges.top.0)?;
+            write_floats(&mut writer, umbruch_paginate::FloatSide::Top, edges.top.0)?;
             // The root is placed at the top left corner of the content area of the page, below
             // the floats at its top.
             writer.write_box(
@@ -491,7 +514,7 @@ impl TaffyBlockLayout {
             )?;
             write_floats(
                 &mut writer,
-                helium_paginate::FloatSide::Bottom,
+                umbruch_paginate::FloatSide::Bottom,
                 edges.top.0 + spec.block_size - bottom_floats,
             )?;
             if reporting {
@@ -513,7 +536,7 @@ impl TaffyBlockLayout {
                     .collect();
                 pages_report.push(page_report(start, from, to, fill, on_page, choices, &objective, &flow, std::mem::take(&mut paragraphs_log), containers, number + 1 == planned.len()));
             }
-            page_contexts.push(context);
+            page_contexts.push(crate::layout::pages::PageContext { groups: page_groups[number].clone(), ..context });
         }
         if reporting {
             let report = serde_json::json!({
@@ -657,6 +680,11 @@ struct Writer<'a, 'w> {
     /// The header rows that the tables repeat, by table: the row group and a window of the items
     /// that it has.
     headers: &'a HashMap<NodeId, (NodeId, window::Window)>,
+    /// The footer rows that the tables repeat, by table: the row group and a window of the items
+    /// that it has.
+    footers: &'a HashMap<NodeId, (NodeId, window::Window)>,
+    /// The height of the content area of the page, which decides whether a footer is repeated.
+    block_size: f32,
     /// Whether the header of a table is being written again, behind a page break. It is written
     /// as parts of the boxes (the box is on the page that it was first written on, too), and it
     /// is not part of the structure of the document.
@@ -672,6 +700,25 @@ struct Writer<'a, 'w> {
     line_stats: &'a mut LineStats,
     /// What is written of the paragraphs of the page, if the choices of the pages are reported.
     paragraphs_log: Option<&'a mut Vec<serde_json::Value>>,
+    /// The part of the page (its top and its bottom) that a table row split over pages shows,
+    /// while the boxes in it are written: what is outside of it is on another page.
+    clip: Option<(f32, f32)>,
+    /// The row that is being written, if it is split over pages: its cuts and the part of it that
+    /// the page has, from which the cells find theirs.
+    row: Option<RowOnPage>,
+}
+
+/// A table row split over pages, on one page.
+#[derive(Clone)]
+struct RowOnPage {
+    /// The box that is split over pages (a table row, or a grid).
+    container: NodeId,
+    cuts: Rc<rows::RowCuts>,
+    /// The cuts at the start and at the end of the part on the page.
+    start: u32,
+    end: u32,
+    /// Where the part starts on the page.
+    top: f32,
 }
 
 /// A rule between two columns: a filled rectangle.
@@ -770,6 +817,51 @@ impl<'a> Writer<'a, '_> {
         z: i64,
         z_base: i64,
     ) -> Result<(), String> {
+        // A table row that the page has a part of: the part is between two cuts, and the row is
+        // written whole, above the page where it starts in it.
+        let node = self.node(id);
+        let part = (self.clip.is_none()
+            && self.group_stack.is_empty()
+            && node.columns.is_none()
+            && node.content == Content::Blocks
+            && (self.window.start_container == Some(id) || self.window.end_container == Some(id)))
+        .then(|| window::row_part(self.window, node, id))
+        .flatten();
+        let (clip_before, row_before) = (self.clip, self.row.take());
+        let mut origin = origin;
+        if let (Some(part), Some(cuts)) = (part, node.row_cuts.clone()) {
+            let (start, end) = self.window.row_cut_offsets(id);
+            // A grid is where its part starts on the page, and is written whole above it, like the
+            // row of a table is (the row is written from the table, which is cut).
+            if cuts.stacked {
+                origin.y -= part.top;
+            }
+            let top = origin.y + part.top;
+            self.clip = Some((top, top + part.height));
+            self.row = Some(RowOnPage {
+                container: id,
+                start: start.unwrap_or(0),
+                end: end.unwrap_or(cuts.height),
+                cuts,
+                top,
+            });
+        } else {
+            self.row = row_before.clone();
+        }
+        let written = self.write_box_in(id, origin, parent_flow, z, z_base);
+        self.clip = clip_before;
+        self.row = row_before;
+        written
+    }
+
+    fn write_box_in(
+        &mut self,
+        id: NodeId,
+        origin: Point<f32>,
+        parent_flow: Flow,
+        z: i64,
+        z_base: i64,
+    ) -> Result<(), String> {
         let node = self.node(id);
         let entity = node.entity;
         let layout = self.layout_of(id);
@@ -777,6 +869,8 @@ impl<'a> Writer<'a, '_> {
         let in_flow_box = node.span.as_ref().filter(|span| !span.anchored && self.group_stack.is_empty());
         let open_start = in_flow_box.is_some_and(|span| self.window.cut_at_start(id, span));
         let open_end = in_flow_box.is_some_and(|span| self.window.cut_at_end(id, span));
+        // the part of the page that a row split over pages shows (the boxes of a group are not)
+        let clip = if self.group_stack.is_empty() { self.clip } else { None };
         // A table or a row group is laid out as a whole: the part on the page is cut from it.
         let table_part = node
             .span
@@ -785,11 +879,14 @@ impl<'a> Writer<'a, '_> {
         // A page that goes on inside of a table has the header rows of the table at its top.
         let repeat = if open_start && content == Content::Table { self.repeat_of(id) } else { None };
         let repeat_height = repeat.map_or(0.0, |(_, height)| height);
+        // A page that ends inside of a table has the footer rows of the table behind its last row.
+        let footer = if open_end && content == Content::Table { self.footer_of(id) } else { None };
+        let footer_height = footer.map_or(0.0, |(_, height)| height);
         let (cut_top, cut_height) = match table_part {
             Some(_) => {
                 let (top, bottom) =
                     window::table_fragment(self.nodes, self.window, node, layout.size.height);
-                (top, Some(bottom - top + repeat_height))
+                (top, Some(bottom - top + repeat_height + footer_height))
             }
             None => (0.0, None),
         };
@@ -800,6 +897,28 @@ impl<'a> Writer<'a, '_> {
         if let Some(cut) = cut_height {
             height = cut;
         }
+        // the layout of a grid that is split over pages is as high as its part: it is written whole
+        if let Some(row) = self.row.as_ref().filter(|row| row.container == id && row.cuts.stacked) {
+            height = rows::dequantize(row.cuts.height);
+        }
+        // A box that is outside of the part of a row on the page is on another page; one that is
+        // across its edge goes on there.
+        const EDGE: f32 = 0.01;
+        let (mut clip_start, mut clip_end) = (false, false);
+        if let Some((visible_top, visible_bottom)) = clip {
+            let (top, bottom) = (origin.y, origin.y + height);
+            let outside = if bottom - top <= EDGE {
+                top < visible_top - EDGE || top >= visible_bottom - EDGE
+            } else {
+                bottom <= visible_top + EDGE || top >= visible_bottom - EDGE
+            };
+            if outside {
+                return Ok(());
+            }
+            clip_start = top < visible_top - EDGE;
+            clip_end = bottom > visible_bottom + EDGE;
+        }
+        let (open_start, open_end) = (open_start || clip_start, open_end || clip_end);
         let margin = parent_flow.edges_to_physical(layout.margin);
         let border = parent_flow.edges_to_physical(layout.border);
         let padding = parent_flow.edges_to_physical(layout.padding);
@@ -814,10 +933,20 @@ impl<'a> Writer<'a, '_> {
         let content_y = origin.y + border.top + padding.top;
         let content_width = width - (border.left + border.right) - (padding.left + padding.right);
         let content_height = height - (border.top + border.bottom) - (padding.top + padding.bottom);
+        // what is written of the box: the edges of the part of a row on the page have no padding
+        // and no border
+        let (rec_y, rec_height) = match clip {
+            Some((visible_top, visible_bottom)) => {
+                let top = if clip_start { visible_top } else { content_y };
+                let bottom = if clip_end { visible_bottom } else { content_y + content_height };
+                (top, (bottom - top).max(0.0))
+            }
+            None => (content_y, content_height),
+        };
         if self.repeating {
             self.repeated.insert(entity);
         } else if !open_start {
-            self.set_position(entity, content_x, content_y, content_width, content_height, z);
+            self.set_position(entity, content_x, rec_y, content_width, rec_height, z);
         }
 
         let mut decoration = self
@@ -835,6 +964,14 @@ impl<'a> Writer<'a, '_> {
         decoration.border = edges(border);
         decoration.padding = edges(padding);
         decoration.collapsed = node.collapsed;
+        if clip_start {
+            decoration.border.top = PixelLength(0.0);
+            decoration.padding.top = PixelLength(0.0);
+        }
+        if clip_end {
+            decoration.border.bottom = PixelLength(0.0);
+            decoration.padding.bottom = PixelLength(0.0);
+        }
         // A box that goes on over the page break has no border and padding at the break (they are
         // not in its layout) and no rounded corners there.
         if open_start {
@@ -862,14 +999,14 @@ impl<'a> Writer<'a, '_> {
             // The part of a box that goes on on the next page reaches the bottom of the content
             // area of its page, also where the content on the page ends above it.
             let fragment_height = if open_end {
-                content_height.max(self.page_bottom - content_y)
+                rec_height.max(self.page_bottom - rec_y)
             } else {
-                content_height
+                rec_height
             };
             self.fragments.entry(entity).or_default().push(Fragment {
                 position: Position {
                     x: PixelLength(content_x),
-                    y: PixelLength(content_y),
+                    y: PixelLength(rec_y),
                     width: PixelLength(content_width.max(0.0)),
                     height: PixelLength(fragment_height.max(0.0)),
                     z: ZIndex(z),
@@ -894,8 +1031,23 @@ impl<'a> Writer<'a, '_> {
             }
         }
 
-        // the content of a table cell that `vertical-align` moves down
-        let shift = self.shift_of(id);
+        // the content of a table cell that `vertical-align` moves down, and the one of a cell of a
+        // row that is split over pages, which starts where its part of the row does
+        let (cell_shift, content_clip) = match (&self.row, self.group_stack.is_empty()) {
+            (Some(row), true) => match row.cuts.cell_part(id, row.start, row.end) {
+                Some((shift, until)) => (
+                    rows::dequantize(shift),
+                    Some((row.top, until.map_or(f32::INFINITY, |until| row.top + rows::dequantize(until)))),
+                ),
+                None => (0.0, None),
+            },
+            _ => (0.0, None),
+        };
+        let shift = self.shift_of(id) + cell_shift;
+        let clip_of_row = self.clip;
+        if let Some(visible) = content_clip {
+            self.clip = Some(visible);
+        }
         let kid_shift = shift - cut_top;
         let columns = node.columns.as_ref().and_then(|columns| columns.layouts.as_ref());
         match content {
@@ -913,14 +1065,18 @@ impl<'a> Writer<'a, '_> {
                 )?;
             }
             Content::Blocks if table_part.is_some() => {
+                // (the rows that are cut are higher than their part of the layout: the boxes
+                // behind them are moved down)
+                let mut extra = 0.0;
                 for &child in &table_part.unwrap().kids {
                     if !self.in_window(child) {
                         continue;
                     }
                     let mut child_origin = frame.child_origin(&self.layout_of(child));
-                    child_origin.y += kid_shift + self.part_top(child);
+                    child_origin.y += kid_shift + self.part_top(child) + extra;
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
+                    extra += window::part_extra(self.nodes, self.window, child);
                 }
             }
             Content::Blocks => {
@@ -932,6 +1088,11 @@ impl<'a> Writer<'a, '_> {
                     }
                     let mut child_origin = frame.child_origin(&self.layout_of(child));
                     child_origin.y += shift;
+                    // (the items of a grid that start behind the cut are moved down with the ones
+                    // that are moved to start at it)
+                    if let Some(row) = self.row.as_ref().filter(|row| row.container == id) {
+                        child_origin.y += rows::dequantize(row.cuts.box_shift(child, row.start));
+                    }
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
                 }
@@ -976,15 +1137,40 @@ impl<'a> Writer<'a, '_> {
                     self.window = window_before;
                     written?;
                 }
+                // (what goes on on the next page reaches down to the footer, not to the bottom of
+                // the page)
+                let bottom_before = self.page_bottom;
+                if footer.is_some() {
+                    self.page_bottom = frame.origin.y + shift + (inline_size.1 - footer_height);
+                }
+                let mut extra = 0.0;
                 for child in parts {
                     let mut child_origin = frame.child_origin(&self.layout_of(child));
-                    child_origin.y += kid_shift + repeat_height + if table_part.is_some() { self.part_top(child) } else { 0.0 };
+                    child_origin.y += kid_shift + repeat_height + extra + if table_part.is_some() { self.part_top(child) } else { 0.0 };
                     let (child_z, child_base) = self.child_z(child, z, z_base);
                     self.write_box(child, child_origin, flow, child_z, child_base)?;
+                    extra += window::part_extra(self.nodes, self.window, child);
+                }
+                self.page_bottom = bottom_before;
+                if let Some((footer, _)) = footer {
+                    // the footer rows again, directly behind the last row of the part of the table
+                    // on this page
+                    let footer_layout = self.layout_of(footer);
+                    let mut footer_origin = frame.child_origin(&footer_layout);
+                    footer_origin.y = frame.origin.y + shift + (inline_size.1 - footer_height);
+                    let (footer_z, footer_base) = self.child_z(footer, z, z_base);
+                    let footers = self.footers;
+                    let window_before = std::mem::replace(&mut self.window, &footers[&id].1);
+                    let repeating_before = std::mem::replace(&mut self.repeating, true);
+                    let written = self.write_box(footer, footer_origin, flow, footer_z, footer_base);
+                    self.repeating = repeating_before;
+                    self.window = window_before;
+                    written?;
                 }
             }
         }
 
+        self.clip = clip_of_row;
         if anchored {
             self.group_stack.pop();
         }
@@ -992,8 +1178,10 @@ impl<'a> Writer<'a, '_> {
             self.emit(BlockLevelElement::ContainerEnd(entity));
         }
 
-        // the absolutely positioned boxes this box is the containing block of
-        for &child in &node.hoisted {
+        // the absolutely positioned boxes this box is the containing block of (the ones of a grid
+        // that is split over pages are written with its first part)
+        let continued = open_start && node.row_cuts.as_ref().is_some_and(|cuts| cuts.stacked);
+        for &child in node.hoisted.iter().filter(|_| !continued) {
             self.open_group(None);
             let child_origin = frame.child_origin(&self.layout_of(child));
             let abs_base = z_base + ABS_Z_STEP;
@@ -1058,7 +1246,7 @@ impl<'a> Writer<'a, '_> {
                 floats.iter().filter(|placed| placed.side == side).map(|placed| placed.outer).sum()
             };
             let (top_floats, bottom_floats) =
-                (height_of(helium_paginate::FloatSide::Top), height_of(helium_paginate::FloatSide::Bottom));
+                (height_of(umbruch_paginate::FloatSide::Top), height_of(umbruch_paginate::FloatSide::Bottom));
             // the part of a box that goes on in the next column is painted down to the bottom of
             // the column's text
             let bottom_before = std::mem::replace(&mut self.page_bottom, content_y + plan.height - bottom_floats);
@@ -1070,8 +1258,8 @@ impl<'a> Writer<'a, '_> {
             };
             let mut written = Ok(());
             for (side, mut y) in [
-                (helium_paginate::FloatSide::Top, content_y),
-                (helium_paginate::FloatSide::Bottom, content_y + plan.height - bottom_floats),
+                (umbruch_paginate::FloatSide::Top, content_y),
+                (umbruch_paginate::FloatSide::Bottom, content_y + plan.height - bottom_floats),
             ] {
                 for placed in floats.iter().filter(|placed| placed.side == side) {
                     let origin = Point { x: column_x(index) + placed.margin.left, y: y + placed.margin.top };
@@ -1139,11 +1327,25 @@ impl<'a> Writer<'a, '_> {
     }
 
     /// The header rows that the page repeats at the top of a table that it goes on in, and their
-    /// height: the page starts behind the header (and behind the break that follows it).
+    /// height: the page starts behind the header (and behind the break that follows it), and the
+    /// header is not more than a quarter of the page.
     fn repeat_of(&self, table: NodeId) -> Option<(NodeId, f32)> {
         let (header, _) = self.headers.get(&table)?;
         let span = self.node(*header).span.as_ref()?;
-        (self.window.start > span.end).then(|| (*header, self.layout_of(*header).size.height))
+        let height = self.layout_of(*header).size.height;
+        // (not more than a quarter of the page, as the kernel has it)
+        (self.window.start > span.end && f64::from(height) * 4.0 <= f64::from(self.block_size))
+            .then(|| (*header, height))
+    }
+
+    /// The footer rows that the page repeats behind the last row of a table that it ends in, and
+    /// their height: the footer is not on the page, and it is not more than a quarter of it (CSS
+    /// Tables 3, 6.2).
+    fn footer_of(&self, table: NodeId) -> Option<(NodeId, f32)> {
+        let (footer, _) = self.footers.get(&table)?;
+        let span = self.node(*footer).span.as_ref()?;
+        let height = self.layout_of(*footer).size.height;
+        (self.window.end <= span.start && f64::from(height) * 4.0 <= f64::from(self.block_size)).then(|| (*footer, height))
     }
 
     /// How far the top of the part of a row group that is on the page is below its top.
@@ -1254,6 +1456,27 @@ impl<'a> Writer<'a, '_> {
                 log.push(entry);
             }
         }
+        // The lines of a paragraph in a row that is split over pages: the ones that are on the
+        // part of the row on the page, which are what the page has of the paragraph.
+        let clip = if self.group_stack.is_empty() { self.clip } else { None };
+        let mut kept_y: Vec<f32> = vec![];
+        let mut first_line_kept = true;
+        let mut offset = content_offset.1;
+        let mut kept = vec![];
+        for (index, line) in measured.into_iter().enumerate() {
+            let (_, py, _, ph) = frame.to_physical((0.0, offset, 1.0, line.height.0));
+            // (the cuts are in 1/64 pixel, and a line is not less than a pixel high)
+            let visible = clip.is_none_or(|(top, bottom)| py >= top - 0.1 && py + ph <= bottom + 0.1);
+            if index == 0 {
+                first_line_kept = visible;
+            }
+            if visible {
+                kept_y.push(offset);
+                kept.push(line);
+            }
+            offset += line.height.0;
+        }
+        let measured = kept;
         let first = ifc.push_lines(measured, self.entities);
         let align = ifc.resolved_text_align();
         let indent_offset = ifc.indent_offset(PixelLength(indent)).0;
@@ -1263,30 +1486,32 @@ impl<'a> Writer<'a, '_> {
                 (
                     line.entity,
                     line.height.0,
-                    ifc.content_width(line.from_break, line.to_break).0,
+                    ifc.line_extent(line).0,
+                    // a line with a `leader()` fills the paragraph, whatever the alignment
+                    ifc.leaders_on(line.from_break, line.to_break) > 0,
                 )
             })
             .collect();
 
-        let mut y = content_offset.1;
         let mut line_boxes: Vec<[f32; 4]> = vec![];
-        for (index, (line_entity, height, advance)) in lines.into_iter().enumerate() {
-            let (x0, w0) = if index == 0 {
+        for (index, (line_entity, height, advance, has_leader)) in lines.into_iter().enumerate() {
+            let (x0, w0) = if index == 0 && first_line_kept {
                 (content_offset.0 + indent_offset, width - indent)
             } else {
                 (content_offset.0, width)
             };
             let (x, w) = match align {
+                _ if has_leader => (x0, w0.max(advance)),
                 TextAlign::Left | TextAlign::Start | TextAlign::End => (x0, advance),
                 TextAlign::Right => (x0 + (w0 - advance), advance),
                 TextAlign::Center => (x0 + (w0 - advance) / 2.0, advance),
                 TextAlign::Justify => (x0, w0),
             };
+            let y = kept_y[index];
             let (px, py, pw, ph) = frame.to_physical((x, y, w, height));
             line_boxes.push([px, py, pw, ph]);
             self.set_position(line_entity, px, py, pw, ph, z);
             self.emit(BlockLevelElement::Leaf(line_entity));
-            y += height;
         }
         // (where the lines are, for the report of the choices of the pages)
         if let Some(entry) = self.paragraphs_log.as_mut().and_then(|log| log.last_mut()) {
@@ -1301,22 +1526,22 @@ impl<'a> Writer<'a, '_> {
 /// and the paragraphs that are on it.
 #[allow(clippy::too_many_arguments)]
 fn page_report(
-    start: &helium_paginate::PageStart,
-    from: &helium_paginate::Position,
-    to: &helium_paginate::Position,
-    fill: &helium_paginate::PageFill,
-    fragments: &[helium_paginate::PageFragment],
-    choices: &[helium_paginate::Choice],
-    objective: &helium_paginate::CssObjective,
+    start: &umbruch_paginate::PageStart,
+    from: &umbruch_paginate::Position,
+    to: &umbruch_paginate::Position,
+    fill: &umbruch_paginate::PageFill,
+    fragments: &[umbruch_paginate::PageFragment],
+    choices: &[umbruch_paginate::Choice],
+    objective: &umbruch_paginate::CssObjective,
     flow: &flow::Flow,
     paragraphs: Vec<serde_json::Value>,
     containers: Vec<serde_json::Value>,
     last: bool,
 ) -> serde_json::Value {
-    use helium_paginate::Objective;
+    use umbruch_paginate::Objective;
     let cost = objective.page_cost(fill, last).unwrap_or_default();
     let line_room = objective.line_room(fill);
-    let unit = helium_paginate::CssCost::SLACK_UNIT;
+    let unit = umbruch_paginate::CssCost::SLACK_UNIT;
     serde_json::json!({
         "page": start.index + 1,
         "kind": format!("{:?}", fill.kind),
@@ -1368,15 +1593,15 @@ pub fn take_pagination_report() -> Option<String> {
 
 /// The numbers that decide how much a page gives up for better lines. They are the values of an
 /// experiment, and can be changed to try others (`tools/looseness_bench.py`): the environment
-/// variables `HELIUM_LINE_TOLERANCE` (the exchange rate of lines and room,
-/// [`helium_paginate::CssObjective::line_tolerance`]) and `HELIUM_VARIANT_TOLERANCE` (the worst
-/// badness of a line of another way to break a paragraph, [`helium_paginate::Variants`]).
+/// variables `UMBRUCH_LINE_TOLERANCE` (the exchange rate of lines and room,
+/// [`umbruch_paginate::CssObjective::line_tolerance`]) and `UMBRUCH_VARIANT_TOLERANCE` (the worst
+/// badness of a line of another way to break a paragraph, [`umbruch_paginate::Variants`]).
 #[derive(Debug, Copy, Clone)]
 struct Tuning {
     line_tolerance: f64,
     variant_tolerance: f64,
     /// The fragments of a container that end earlier than the one that fills the page, which it
-    /// offers the pages besides it (`HELIUM_EARLIER_FRAGMENTS`, 3 by default; 0 gives only the one that fills it).
+    /// offers the pages besides it (`UMBRUCH_EARLIER_FRAGMENTS`, 3 by default; 0 gives only the one that fills it).
     earlier_fragments: u32,
 }
 
@@ -1396,9 +1621,9 @@ impl Tuning {
             Err(_) => default,
         };
         Tuning {
-            line_tolerance: number("HELIUM_LINE_TOLERANCE", helium_paginate::CssObjective::LINE_TOLERANCE),
-            variant_tolerance: number("HELIUM_VARIANT_TOLERANCE", helium_paginate::Variants::TOLERANCE),
-            earlier_fragments: match std::env::var("HELIUM_EARLIER_FRAGMENTS").ok().and_then(|value| value.parse().ok()) {
+            line_tolerance: number("UMBRUCH_LINE_TOLERANCE", umbruch_paginate::CssObjective::LINE_TOLERANCE),
+            variant_tolerance: number("UMBRUCH_VARIANT_TOLERANCE", umbruch_paginate::Variants::TOLERANCE),
+            earlier_fragments: match std::env::var("UMBRUCH_EARLIER_FRAGMENTS").ok().and_then(|value| value.parse().ok()) {
                 Some(count) => count,
                 None => 3,
             },

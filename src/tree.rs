@@ -342,6 +342,24 @@ impl Clone for NodeData {
     }
 }
 
+/// Dropping a node drops its strong links to the next sibling and the first child, which would
+/// recurse once per sibling (and per level of nesting): a document with a few ten thousand
+/// children of one parent (e.g. many comments) overflowed the stack. Unlink the nodes that this
+/// node owns exclusively onto a worklist instead.
+impl Drop for NodeData {
+    fn drop(&mut self) {
+        let mut pending: Vec<Rc<NodeData>> = Vec::new();
+        pending.extend(self.links.next.take());
+        pending.extend(self.links.first_child.take());
+        while let Some(node) = pending.pop() {
+            if let Ok(mut node) = Rc::try_unwrap(node) {
+                pending.extend(node.links.next.take());
+                pending.extend(node.links.first_child.take());
+            }
+        }
+    }
+}
+
 impl Debug for NodeData {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         f.debug_struct("NodeData")

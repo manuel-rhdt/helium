@@ -26,10 +26,18 @@ pub fn with<R>(sheet_dir: &Path, document_dir: &Path, parse: impl FnOnce() -> R)
         sheet_dir: Some(sheet_dir.to_path_buf()),
         document_dir: Some(document_dir.to_path_buf()),
     };
-    let previous = CONTEXT.with(|current| current.replace(context));
-    let result = parse();
-    CONTEXT.with(|current| *current.borrow_mut() = previous);
-    result
+    // restored by a guard, so that a panic (which a long-lived process may catch) cannot leave the
+    // context of one document behind for the next
+    struct Restore(Option<UrlContext>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                CONTEXT.with(|current| *current.borrow_mut() = previous);
+            }
+        }
+    }
+    let _restore = Restore(Some(CONTEXT.with(|current| current.replace(context))));
+    parse()
 }
 
 /// The context of the style sheet that is being parsed.

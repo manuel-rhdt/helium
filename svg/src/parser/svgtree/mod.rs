@@ -30,6 +30,8 @@ pub struct Document<'input> {
     circular_references: HashSet<(NodeId, AId)>,
     /// The handles that the builder of the XML document attached to elements.
     handles: HashMap<NodeId, crate::xml::Handle>,
+    /// Reads the colors that `svgtypes` rejects.
+    color_parser: Option<std::sync::Arc<dyn crate::ColorParser>>,
 }
 
 impl<'input> Document<'input> {
@@ -1015,6 +1017,51 @@ impl<'a, 'input: 'a> FromValue<'a, 'input> for svgtypes::Color {
                 .and_then(|parent| parent.find_attribute(AId::Color))
         } else {
             node.find_attribute(AId::Color)
+        };
+
+        Some(color.unwrap_or_else(Self::black))
+    }
+}
+
+/// A `<color>` and its opacity, with the wide-gamut colors that `svgtypes` cannot read (the
+/// [`crate::ColorParser`] of the options reads them).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CssColor {
+    pub color: crate::Color,
+    pub opacity: Opacity,
+}
+
+impl CssColor {
+    pub fn black() -> Self {
+        CssColor { color: crate::Color::black(), opacity: Opacity::ONE }
+    }
+
+    /// Reads a color that is not `currentColor`.
+    pub fn parse_text(doc: &Document, text: &str) -> Option<Self> {
+        let text = text.trim();
+        if let Ok(color) = <svgtypes::Color as std::str::FromStr>::from_str(text) {
+            return Some(CssColor {
+                color: crate::Color::new_rgb(color.red, color.green, color.blue),
+                opacity: Opacity::new_u8(color.alpha),
+            });
+        }
+        let (color, alpha) = doc.color_parser.as_ref()?.parse(text)?;
+        Some(CssColor { color, opacity: Opacity::new_u8(alpha) })
+    }
+}
+
+impl<'a, 'input: 'a> FromValue<'a, 'input> for CssColor {
+    fn parse(node: SvgNode, aid: AId, value: &str) -> Option<Self> {
+        if value.trim() != "currentColor" {
+            return Self::parse_text(node.document(), value);
+        }
+
+        // In `color`, `currentColor` resolves to the inherited value.
+        let color = if aid == AId::Color {
+            node.parent_element()
+                .and_then(|parent| parent.find_attribute::<CssColor>(AId::Color))
+        } else {
+            node.find_attribute::<CssColor>(AId::Color)
         };
 
         Some(color.unwrap_or_else(Self::black))

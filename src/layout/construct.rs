@@ -38,10 +38,24 @@ pub struct IslandSpec {
 enum ContentPiece {
     Text(String),
     Image(crate::style::properties::gradient::UrlImage),
+    /// `leader()`: the string that is repeated.
+    Leader(String),
+}
+
+/// The attribute of the inline element that a `leader()` of `content` makes: its value is the
+/// string that fills the line.
+const GENERATED_LEADER: &str = "data-umbruch-leader";
+
+/// The string of the leader that the element makes, if it is one.
+fn leader_pattern(data: &ParsedData) -> Option<String> {
+    let ParsedData::Element(element) = data else { return None };
+    let attributes = element.attributes.borrow();
+    let key = QualName::new(None, ns!(), html5ever::LocalName::from(GENERATED_LEADER));
+    attributes.get(&key).map(|attribute| attribute.value.to_string())
 }
 
 /// The attribute that marks the `<img>` that the `content: url()` of a pseudo-element makes.
-const GENERATED_IMAGE: &str = "data-helium-generated";
+const GENERATED_IMAGE: &str = "data-umbruch-generated";
 
 /// Whether the node is the image of a `content: url()`.
 fn is_generated_image(node: &DomRef) -> bool {
@@ -84,6 +98,14 @@ pub struct FlowConstructor {
     island_root: Option<(DomRef, f32, f32)>,
     /// The counters and quotation marks, which follow the traversal of the tree.
     counters: super::counters::CounterState,
+    /// What the previous layout found out about the targets of `target-counter()` and the like.
+    known: std::rc::Rc<super::references::References>,
+    /// The counters at every element with an `id` (the first with that `id`), in scope at the
+    /// start of its content.
+    pub recorded_counters: HashMap<String, HashMap<String, Vec<i64>>>,
+    /// Whether the content of some element reads a target that the document has to be laid out
+    /// again for.
+    pub uses_references: bool,
 }
 
 impl FlowConstructor {
@@ -118,6 +140,12 @@ impl FlowConstructor {
             .insert(entity, components::ElementAlign(step));
     }
 
+    /// Gives the constructor what a previous layout found out about the targets of
+    /// `target-counter()`, `target-counters()` and `target-text()`.
+    pub fn set_known_references(&mut self, known: std::rc::Rc<super::references::References>) {
+        self.known = known;
+    }
+
     pub fn new(world: World, stylesheet_base_dir: PathBuf) -> Self {
         Self::with_styles(world, stylesheet_base_dir, Default::default())
     }
@@ -133,6 +161,9 @@ impl FlowConstructor {
             islands: vec![],
             island_root: None,
             counters: Default::default(),
+            known: Default::default(),
+            recorded_counters: HashMap::new(),
+            uses_references: false,
         }
     }
 
@@ -203,6 +234,14 @@ impl FlowConstructor {
             &self.stylesheet_base_dir,
             &self.entity_constructor.fonts,
             style.font.font_size.0,
+            match &node.html_data {
+                ParsedData::Element(element) => !element
+                    .attributes
+                    .borrow()
+                    .iter()
+                    .any(|(name, _)| (*name.local).eq_ignore_ascii_case("viewBox")),
+                _ => false,
+            },
         ) {
             Ok(image) => {
                 if let crate::image::LoadedImage::Svg(svg) = &image {
@@ -410,6 +449,12 @@ impl FlowConstructor {
                     }
                     pieces.push(ContentPiece::Image(image.clone()));
                 }
+                ContentItem::Leader(pattern) => {
+                    if !text.is_empty() {
+                        pieces.push(ContentPiece::Text(std::mem::take(&mut text)));
+                    }
+                    pieces.push(ContentPiece::Leader(pattern.clone()));
+                }
                 ContentItem::Counter(name, counter_style) => {
                     text.push_str(&super::counters::format_counter(self.counters.value(name), *counter_style))
                 }
@@ -430,6 +475,28 @@ impl FlowConstructor {
                         None => text.push_str(fallback.as_deref().unwrap_or("")),
                     }
                 }
+                ContentItem::TargetCounter(target, name, counter_style) => {
+                    self.uses_references = true;
+                    let values = self.target_of(origin, target).and_then(|id| self.known.counter_values(&id, name));
+                    if let Some(value) = values.and_then(|values| values.last().copied()) {
+                        text.push_str(&super::counters::format_counter(value, *counter_style));
+                    }
+                }
+                ContentItem::TargetCounters(target, name, separator, counter_style) => {
+                    self.uses_references = true;
+                    let values = self.target_of(origin, target).and_then(|id| self.known.counter_values(&id, name));
+                    if let Some(values) = values {
+                        let values: Vec<String> =
+                            values.into_iter().map(|value| super::counters::format_counter(value, *counter_style)).collect();
+                        text.push_str(&values.join(separator));
+                    }
+                }
+                ContentItem::TargetText(target) => {
+                    self.uses_references = true;
+                    if let Some(id) = self.target_of(origin, target) {
+                        text.push_str(self.known.text(&id).unwrap_or(""));
+                    }
+                }
                 ContentItem::OpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, true)),
                 ContentItem::NoOpenQuote => text.push_str(&self.counters.open_quote(&style.text.quotes, &lang, false)),
                 ContentItem::CloseQuote => text.push_str(&self.counters.close_quote(&style.text.quotes, &lang, true)),
@@ -442,13 +509,31 @@ impl FlowConstructor {
         pieces
     }
 
+    /// The `id` that the link of `target` points at, for the element `origin`.
+    fn target_of(
+        &self,
+        origin: Option<&crate::tree::ElementRef>,
+        target: &crate::style::properties::generated::LinkTarget,
+    ) -> Option<String> {
+        use crate::style::properties::generated::LinkTarget;
+        let url = match target {
+            LinkTarget::Url(url) => url.clone(),
+            LinkTarget::Attr(name) => {
+                let key = QualName::new(None, ns!(), html5ever::LocalName::from(name.to_ascii_lowercase()));
+                let attributes = origin?.attributes.borrow();
+                attributes.get(&key)?.value.to_string()
+            }
+        };
+        super::references::References::fragment(&url).map(str::to_owned)
+    }
+
     /// The text of the `content` (the images do not count), as the text of a marker.
     fn content_text(&mut self, origin: Option<&crate::tree::ElementRef>, style: &ComputedValues) -> String {
         self.content_pieces(origin, style)
             .into_iter()
             .filter_map(|piece| match piece {
                 ContentPiece::Text(text) => Some(text),
-                ContentPiece::Image(_) => None,
+                ContentPiece::Image(_) | ContentPiece::Leader(_) => None,
             })
             .collect()
     }
@@ -462,10 +547,29 @@ impl FlowConstructor {
                 ContentPiece::Text(text) => {
                     node.append(DomRef::new(NodeData::from_html_data(ParsedData::Text(std::cell::RefCell::new(text)))));
                 }
+                ContentPiece::Leader(pattern) => {
+                    // an inline box with a zero-width placeholder, which the line is filled for
+                    // where the lines are made (see `LineBoxCreator`)
+                    let name = QualName::new(None, ns!(), html5ever::LocalName::from(GENERATED_LEADER));
+                    let span = DomRef::new(NodeData::from_html_data(ParsedData::Element(ElementData {
+                        name: QualName::new(None, ns!(html), local_name!("span")),
+                        attributes: std::cell::RefCell::new(
+                            [(name.clone(), Attribute { name, value: pattern.as_str().into() })].into_iter().collect(),
+                        ),
+                        template_contents: None,
+                    })));
+                    let mut span_style = StyleBuilder::new(style.clone()).build();
+                    std::sync::Arc::make_mut(&mut span_style.box_).display = Display::Inline;
+                    span.set_style(span_style);
+                    span.append(DomRef::new(NodeData::from_html_data(ParsedData::Text(std::cell::RefCell::new(
+                        "\u{2060}".to_owned(),
+                    )))));
+                    node.append(span);
+                }
                 ContentPiece::Image(url) => {
                     let Some(image) = url.load().cloned() else { continue };
                     // the image is handed over under a name that no `src` can have
-                    let src = format!("helium-content-image:{}", self.entity_constructor.images.len());
+                    let src = format!("umbruch-content-image:{}", self.entity_constructor.images.len());
                     self.entity_constructor.images.insert(src.clone(), Some(image));
                     let attribute = |name: &str, value: &str| {
                         let name = QualName::new(None, ns!(), html5ever::LocalName::from(name));
@@ -627,6 +731,18 @@ impl FlowConstructor {
             }
         }
         self.counters.enter(parent, style, hints);
+        if let ParsedData::Element(data) = &node.html_data {
+            let id = data
+                .attributes
+                .borrow()
+                .get(&QualName::new(None, ns!(), local_name!("id")))
+                .map(|attribute| attribute.value.to_string())
+                .filter(|id| !id.is_empty());
+            if let Some(id) = id {
+                let snapshot = self.counters.snapshot();
+                self.recorded_counters.entry(id).or_insert(snapshot);
+            }
+        }
     }
 
     /// Computes the style of the node, and before that the one of its ancestors, if they do not
@@ -691,7 +807,7 @@ impl FlowConstructor {
 
     /// Resolves the styles and fonts of the margin boxes (headers and footers) of the document.
     pub fn resolve_margin_boxes(&mut self) -> MarginBoxes {
-        let names = pages::selected_names(&self.styles);
+        let keys = pages::selected_names(&self.styles);
         let rtl = self.is_rtl();
         let mut resolve = |page: &PageContext| {
             let mut resolved = vec![];
@@ -746,10 +862,10 @@ impl FlowConstructor {
         };
         let mut boxes = MarginBoxes {
             pages: HashMap::new(),
-            names: names.clone(),
+            keys: keys.clone(),
             ..Default::default()
         };
-        for page in pages::representative_pages(&names, rtl) {
+        for page in pages::representative_pages(&keys, rtl, pages::Scope::Full) {
             boxes.pages.insert(page.clone(), resolve(&page));
             // the `page` counter and the label of the page: the last rule that sets a property
             // (the most specific one) decides, as for any property
@@ -788,6 +904,13 @@ impl FlowConstructor {
         let missing = self.entity_constructor.font_resolver.take_missing_glyphs();
         self.entity_constructor.world.insert(missing);
         self.entity_constructor.world
+    }
+
+    /// Reads the style sheet that applies to all documents (before the ones of the document).
+    pub fn read_shared_stylesheet(&mut self, shared: &super::SharedStylesheet) {
+        crate::style::url_context::with(&shared.base_dir, &shared.base_dir, || {
+            self.styles.parse_css_in(&shared.css, &shared.base_dir)
+        })
     }
 
     fn read_stylesheet(&mut self, node: &DomRef) {
@@ -1471,13 +1594,30 @@ impl EntityConstructor {
                 let is_image = canvas.is_some()
                     || svg.is_some()
                     || element_data.name == QualName::new(None, ns!(html), local_name!("img"));
+                let has = |wanted: &str| {
+                    element_data
+                        .attributes
+                        .borrow()
+                        .iter()
+                        .any(|(name, _)| (*name.local).eq_ignore_ascii_case(wanted))
+                };
+                // an `<svg>` element with neither a `viewBox` nor both sizes has no ratio: the
+                // side that has no length is 300 or 150 pixels, whatever the other one is
+                let svg_ratioless = svg.is_some() && !has("viewBox") && !(has("width") && has("height"));
+                let svg_size = svg.as_ref().map(|svg| svg.size());
                 let image = match svg {
                     Some(svg) => {
                         let (width, height) = svg.size();
+                        let ratio_only = has("viewBox")
+                            && !has("width")
+                            && !has("height")
+                            && width > 0.0
+                            && height > 0.0;
                         Some(components::ImageBox {
                             image: Arc::new(svg),
                             width,
                             height,
+                            ratio_only,
                         })
                     }
                     None => is_image.then(|| self.image_of(element_data)).flatten(),
@@ -1511,6 +1651,12 @@ impl EntityConstructor {
                     self.world
                         .write_storage::<components::CanvasSize>()
                         .insert(entity.0, components::CanvasSize { width, height, ratioless })
+                        .unwrap();
+                }
+                if let (true, Some((width, height)), None) = (svg_ratioless, svg_size, canvas) {
+                    self.world
+                        .write_storage::<components::CanvasSize>()
+                        .insert(entity.0, components::CanvasSize { width, height, ratioless: true })
                         .unwrap();
                 }
                 if let Some(span) = span {
@@ -1595,7 +1741,13 @@ impl EntityConstructor {
                     );
                     let background = inline_background(&node);
                     let edges = inline_box_edges(&node);
+                    let leader = node.parent_node().and_then(|parent| leader_pattern(parent.html_data()));
                     let built = self.build_text_entity(style, transformed.as_deref().unwrap_or(&*text));
+                    if let Some(pattern) = leader {
+                        if let Some(run) = self.world.write_storage::<components::TextRun>().get_mut(built.0) {
+                            run.leader = Some(pattern.into());
+                        }
+                    }
                     if background.is_some() || edges.is_some() {
                         if let Some(run) = self.world.write_storage::<components::TextRun>().get_mut(built.0) {
                             run.background = background;
@@ -1658,6 +1810,7 @@ impl EntityConstructor {
             image,
             width,
             height,
+            ratio_only: false,
         })
     }
 
@@ -1715,6 +1868,7 @@ impl EntityConstructor {
 
         let decoration = style.font.text_decoration;
         let hyphens = style.text.hyphens;
+        let hyphenate_limits = style.text.hyphenate_limit_chars.resolved();
         let lang = style.font.lang.clone();
         let entity = self
             .world
@@ -1731,6 +1885,8 @@ impl EntityConstructor {
                 hyphens,
                 manual_hyphen_points,
                 lang,
+                leader: None,
+                hyphenate_limits: hyphenate_limits,
             })
             .build();
         LayoutEntity(entity)

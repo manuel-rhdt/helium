@@ -8,7 +8,7 @@ fn dump(name: &str, html: &str) -> Value {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("justification__{}.html", name));
     std::fs::write(&input, html).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")
@@ -151,4 +151,53 @@ fn the_end_of_a_very_long_paragraph_is_justified_like_its_start() {
     let full = &means[1..means.len() - 1];
     let (low, high) = full.iter().fold((f64::MAX, f64::MIN), |(low, high), x| (low.min(*x), high.max(*x)));
     assert!(high - low < 1.0, "the adjustments of the lines range from {low} to {high}");
+}
+
+/// The adjustments of the glyphs of all lines (where the spaces are stretched or shrunk), with
+/// the text in Ahem, whose glyphs are all one em wide.
+fn ahem_adjustments(name: &str, text: &str) -> Vec<f64> {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join(format!("justification__{}.html", name));
+    std::fs::write(
+        &input,
+        format!(
+            "<body style='margin:0;font:10px Ahem;width:200px'><p style='margin:0;text-align:justify'>{}</p>",
+            text
+        ),
+    )
+    .unwrap();
+    let output = common::umbruch()
+        .unwrap()
+        .arg("--font-dir")
+        .arg(common::wpt_fonts())
+        .arg("--dump-layout")
+        .arg("-")
+        .arg(&input)
+        .arg(dir.join(format!("justification__{}.pdf", name)))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let dump: Value = serde_json::from_slice(&output.stdout).unwrap();
+    dump["paint"]["text"][0]["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|op| op["op"] == "kerned")
+        .flat_map(|op| op["items"].as_array().unwrap().iter().filter_map(Value::as_f64).collect::<Vec<_>>())
+        .collect()
+}
+
+#[test]
+fn no_break_spaces_stretch_and_shrink_like_spaces() {
+    // a no-break space is not a break, but justification stretches it like any other space: the
+    // same text with a space there is set alike (the line breaks are the same)
+    for (name, text) in [
+        ("stretched", "aaaaa bbbbb cc{}dd eeeeeee fffffffffffffffff"),
+        ("shrunk", "aaa bbb ccc ddd eee fff ggg hh{}ii jjj kkk lll mmm nnn ooo ppp qqq rrr sss ttt"),
+    ] {
+        let spaced = ahem_adjustments(&format!("{}_space", name), &text.replace("{}", " "));
+        let tied = ahem_adjustments(&format!("{}_nbsp", name), &text.replace("{}", "\u{a0}"));
+        assert!(spaced.iter().any(|&adjustment| adjustment != 0.0), "{}: {:?}", name, spaced);
+        assert_eq!(spaced, tied, "{}", name);
+    }
 }

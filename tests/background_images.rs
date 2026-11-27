@@ -12,7 +12,7 @@ fn render(dir: &std::path::Path, name: &str, html: &str) -> (String, usize) {
     let input = dir.join(format!("{name}.html"));
     std::fs::write(&input, html).unwrap();
     let output = dir.join(format!("{name}.pdf"));
-    let result = common::helium()
+    let result = common::umbruch()
         .unwrap()
         .arg("--no-compression")
         .arg(&input)

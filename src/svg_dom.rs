@@ -3,7 +3,7 @@
 //! The SVG parser (`svg/`, a fork of `usvg`) does not read XML text: it reads a
 //! `usvg::xml::Document`, which is built here from the DOM that the HTML parser made. So an
 //! inline `<svg>` is part of the document: the style sheets of the document apply to its
-//! elements, with the selector matching and the cascade of the rest of Helium, and the
+//! elements, with the selector matching and the cascade of the rest of Umbruch, and the
 //! elements of one `<svg>` can refer to the ones of another (`<use href="#icon">`, a gradient
 //! in a hidden `<svg>` of the page).
 
@@ -150,6 +150,25 @@ fn add(
                                 namespace: None,
                                 name: Arc::from(name),
                                 value: Arc::from(value.as_str()),
+                            });
+                        }
+                    }
+                }
+            }
+            if inherited.is_some() {
+                // An `<svg>` element in a page without a `viewBox` has no ratio: a side without
+                // a length is 300 by 150 pixels (CSS Sizing 3, 5.1), not the 100 by 100 pixels
+                // that usvg uses for an image file.
+                let has = |attributes: &[AttributeData], name: &str| {
+                    attributes.iter().any(|a| a.namespace.is_none() && &*a.name == name)
+                };
+                if !has(&attributes, "viewBox") {
+                    for (name, value) in [("width", "300"), ("height", "150")] {
+                        if !has(&attributes, name) {
+                            attributes.push(AttributeData {
+                                namespace: None,
+                                name: Arc::from(name),
+                                value: Arc::from(value),
                             });
                         }
                     }

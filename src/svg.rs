@@ -23,8 +23,9 @@ use lemon_pdf::graphics_state::{BlendMode, ExtGState, FillRule, LineCap, LineJoi
 use lemon_pdf::image::{ColorSpace, ImageXObject};
 use lemon_pdf::object::IndirectReference;
 use lemon_pdf::shading::{
-    AxialShading, Circle, ColorStop, Gradient, Point, RadialShading, Rgb, Shading, ShadingPattern,
+    AxialShading, Circle, ColorStop, Gradient, Gray, Point, RadialShading, Rgb, Shading, ShadingPattern,
 };
+use lemon_pdf::mesh::{FreeFormMesh, Vertex};
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::content::PageContext;
 use lemon_pdf::{DocumentContext, Matrix, Pt};
@@ -41,10 +42,16 @@ const MAX_PERIODS: i64 = 256;
 /// `SvgWriter::is_flat`).
 const MAX_FLAT_CHILDREN: usize = 128;
 
+/// The most triangles that one shading of a Gouraud mesh holds (an `sh` stream of this many
+/// triangles is a few hundred kilobytes before compression).
+const MESH_TRIANGLES: usize = 32768;
+
 /// A color of the graphics state, as far as the writer knows it.
 #[derive(Clone, PartialEq)]
 enum PaintKey {
     Rgb([u8; 3]),
+    /// A color that sRGB cannot hold (see [`crate::pdf::set_fill_color`]).
+    Wide(crate::style::properties::computed::PaintColor),
     Pattern(lemon_pdf::object::Name),
 }
 
@@ -105,6 +112,27 @@ pub struct SvgWriter {
     /// `usvg` object (and the transformation for the patterns), for the ones that are used again.
     tilings: HashMap<(usize, [u32; 6]), IndirectReference<lemon_pdf::pattern::TilingPattern>>,
     masks: HashMap<usize, FormReference>,
+    /// The ICC space of the gradient that is being built, if it has a color that sRGB cannot
+    /// hold: the colors of its stops are components of that space (see `prepare_gradient`).
+    gradient_profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
+}
+
+/// What a shading of a gradient shows: the colors of its stops, or their opacities as gray levels.
+#[derive(Clone, Copy)]
+enum Channel {
+    Color,
+    Alpha,
+}
+
+/// The color of a gradient stop in the space of the gradient: the ICC space of the wide colors if
+/// `wide`, else device RGB.
+fn stop_color(wide: bool, color: usvg::Color) -> Rgb {
+    if !wide {
+        return rgb(color);
+    }
+    let xyz = paint_color(color).to_xyz().map(f64::from);
+    let [r, g, b] = crate::pdf::rec2020_gamma24_components(xyz);
+    Rgb(r, g, b)
 }
 
 fn matrix(t: Transform) -> Matrix {
@@ -245,6 +273,7 @@ impl SvgWriter {
             alpha: 1.0,
             tilings: HashMap::new(),
             masks: HashMap::new(),
+            gradient_profile: None,
         }
     }
 
@@ -322,13 +351,20 @@ impl SvgWriter {
             (PaintKey::Rgb([r, g, b]), true) => {
                 c.device_rgb_stroke_color(channel(r), channel(g), channel(b))
             }
+            (PaintKey::Wide(color), false) => crate::pdf::set_fill_color(c, color).map_err(std::io::Error::other),
+            (PaintKey::Wide(color), true) => crate::pdf::set_stroke_color(c, color).map_err(std::io::Error::other),
             (PaintKey::Pattern(name), false) => c.set_fill_pattern(&name),
             (PaintKey::Pattern(name), true) => c.set_stroke_pattern(&name),
         }
     }
 
     fn set_color(&mut self, c: &mut PageContext<'_, '_, '_>, color: usvg::Color, stroke: bool) -> Result<()> {
-        self.set_paint_key(c, PaintKey::Rgb([color.red, color.green, color.blue]), stroke)
+        let key = if color.wide.is_some() {
+            PaintKey::Wide(paint_color(color))
+        } else {
+            PaintKey::Rgb([color.red, color.green, color.blue])
+        };
+        self.set_paint_key(c, key, stroke)
     }
 
     /// Sets the opacity of fills (and text, images and forms) or strokes.
@@ -337,6 +373,9 @@ impl SvgWriter {
         let known = if stroke { &mut state.stroke_alpha } else { &mut state.fill_alpha };
         if *known == Some(alpha) {
             return Ok(());
+        }
+        if alpha != 1.0 {
+            crate::pdf::pdfa1_forbid("an SVG with opacity")?;
         }
         *known = Some(alpha);
         if stroke {
@@ -400,14 +439,19 @@ impl SvgWriter {
         &mut self,
         context: &mut DocumentContext<'_>,
         tree: &usvg::Tree,
+        unscaled: bool,
     ) -> Result<FormReference> {
         let size = tree.size();
-        let bbox = [Pt(0.0), Pt(0.0), Pt(f64::from(size.width())), Pt(f64::from(size.height()))];
+        // (the viewport of an element without a `viewBox` is the box that it is in, which the
+        // page clips to: the form does not cut at the size of its attributes)
+        let (width, height) = if unscaled { (1.0e5, 1.0e5) } else { (size.width(), size.height()) };
+        let bbox = [Pt(0.0), Pt(0.0), Pt(f64::from(width)), Pt(f64::from(height))];
         let filter = self.filter;
         // the addresses of the objects of an earlier tree may be used again
         self.tilings.clear();
         self.masks.clear();
         let form = context.write_form(bbox, None, filter, |form| {
+            crate::pdf::set_device_defaults(form)?;
             self.in_stream(|this| this.draw_group(form, tree.root(), Transform::identity()))
         });
         self.tilings.clear();
@@ -504,6 +548,9 @@ impl SvgWriter {
             }
         };
         let effects = opacity < 1.0 || group.mask().is_some() || blend != BlendMode::Normal;
+        if effects {
+            crate::pdf::pdfa1_forbid("an SVG with opacity, a mask or a blend mode")?;
+        }
         let flat = effects && Self::is_flat(group);
 
         // a group that changes nothing in the graphics state needs no `q` and `Q`; the opacity of
@@ -537,9 +584,7 @@ impl SvgWriter {
             }
             let outer = self.alpha;
             self.alpha *= opacity;
-            for child in group.children() {
-                self.draw_node(c, child, ctm)?;
-            }
+            self.draw_children(c, group, ctm)?;
             self.alpha = outer;
         } else if effects {
             // the group is composited as a whole: opacity, mask and blend mode apply to the
@@ -556,12 +601,8 @@ impl SvgWriter {
                     Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
                     filter,
                     |form| {
-                        self.in_stream(|this| {
-                            for child in group.children() {
-                                this.draw_node(form, child, Transform::identity())?;
-                            }
-                            Ok(())
-                        })
+                        crate::pdf::set_device_defaults(form)?;
+                        self.in_stream(|this| this.draw_children(form, group, Transform::identity()))
                     },
                 )?;
                 let mut state = ExtGState::new();
@@ -583,12 +624,102 @@ impl SvgWriter {
                 c.draw_xobject(&key)?;
             }
         } else {
-            for child in group.children() {
-                self.draw_node(c, child, ctm)?;
-            }
+            self.draw_children(c, group, ctm)?;
         }
         if scoped {
             self.restore(c)?;
+        }
+        Ok(())
+    }
+
+    /// Draws the content of a group: the children, or, for a group with a Gouraud mesh that can
+    /// be painted as one shading, the mesh.
+    fn draw_children(
+        &mut self,
+        c: &mut PageContext<'_, '_, '_>,
+        group: &usvg::Group,
+        ctm: Transform,
+    ) -> Result<()> {
+        if let Some(mesh) = group.gouraud() {
+            if self.draw_mesh(c, mesh)? {
+                return Ok(());
+            }
+        }
+        for child in group.children() {
+            self.draw_node(c, child, ctm)?;
+        }
+        Ok(())
+    }
+
+    /// Paints the triangles of a Gouraud mesh (`<g data-umbruch-mesh="gouraud">`) as type 4
+    /// shadings, `MESH_TRIANGLES` triangles to a shading. Returns `false`, having painted
+    /// nothing, if the mesh cannot be painted this way and the flat triangles of the children
+    /// have to be drawn: a shading has no alpha per vertex, so the vertices must have one alpha.
+    ///
+    /// The coordinates of the triangles are the ones inside of the group, which is the current
+    /// user space. The colors are device RGB like the ones of the fills (the form has the sRGB
+    /// space as the default for it), and are interpolated as such, like Matplotlib does.
+    fn draw_mesh(&mut self, c: &mut PageContext<'_, '_, '_>, mesh: &usvg::GouraudMesh) -> Result<bool> {
+        let alpha = mesh.triangles[0].colors[0][3];
+        let same_alpha = mesh
+            .triangles
+            .iter()
+            .all(|triangle| triangle.colors.iter().all(|color| (color[3] - alpha).abs() <= 1.0 / 512.0));
+        if !same_alpha {
+            self.warn("a Gouraud mesh with an alpha that changes between the vertices is drawn with flat triangles");
+            return Ok(false);
+        }
+        let opacity = self.alpha * f64::from(alpha);
+        if opacity <= 0.0 {
+            return Ok(true);
+        }
+        if opacity >= 1.0 {
+            self.paint_mesh_shadings(c, mesh)?;
+            return Ok(true);
+        }
+        // A shading is not reliably drawn with the alpha constant of the graphics state: poppler
+        // ignores it for a gradient (it only applies it to a shading of one color), pdfium and
+        // mupdf apply it. A transparency group that is painted with the opacity is the same in all
+        // of them.
+        crate::pdf::pdfa1_forbid("an SVG with opacity")?;
+        let (mut min, mut max) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+        for point in mesh.triangles.iter().flat_map(|triangle| triangle.points) {
+            min = (min.0.min(point.x), min.1.min(point.y));
+            max = (max.0.max(point.x), max.1.max(point.y));
+        }
+        let bbox = [Pt(f64::from(min.0)), Pt(f64::from(min.1)), Pt(f64::from(max.0)), Pt(f64::from(max.1))];
+        let filter = self.filter;
+        let form = c.pdf_context.write_form(bbox, Some(TransparencyGroup::new(ColorSpace::DeviceRGB)), filter, |form| {
+            crate::pdf::set_device_defaults(form)?;
+            self.in_stream(|this| this.paint_mesh_shadings(form, mesh))
+        })?;
+        self.save(c)?;
+        c.apply_ext_gstate(ExtGState::new().with_fill_alpha(opacity).with_stroke_alpha(opacity))?;
+        let key = c.add_xobject(form);
+        c.draw_xobject(&key)?;
+        self.restore(c)?;
+        Ok(true)
+    }
+
+    /// Paints the triangles of a mesh with an opaque shading per `MESH_TRIANGLES` triangles.
+    fn paint_mesh_shadings(&mut self, c: &mut PageContext<'_, '_, '_>, mesh: &usvg::GouraudMesh) -> Result<()> {
+        let vertex = |triangle: &usvg::GouraudTriangle, i: usize| {
+            let [r, g, b, _] = triangle.colors[i];
+            Vertex::new(
+                f64::from(triangle.points[i].x),
+                f64::from(triangle.points[i].y),
+                Rgb(f64::from(r), f64::from(g), f64::from(b)),
+            )
+        };
+        let vertices = |triangle: &usvg::GouraudTriangle| [vertex(triangle, 0), vertex(triangle, 1), vertex(triangle, 2)];
+        for chunk in mesh.triangles.chunks(MESH_TRIANGLES) {
+            let mut stream = FreeFormMesh::new(vertices(&chunk[0]));
+            for triangle in &chunk[1..] {
+                stream = stream.triangle(vertices(triangle));
+            }
+            let shading = c.pdf_context.write_mesh_shading(&stream).map_err(std::io::Error::other)?;
+            let key = c.add_shading(shading);
+            c.paint_shading(&key)?;
         }
         Ok(())
     }
@@ -617,6 +748,7 @@ impl SvgWriter {
         });
         let filter = self.filter;
         let form = c.pdf_context.write_form(bbox, Some(group), filter, |form| {
+            crate::pdf::set_device_defaults(form)?;
             self.in_stream(|this| {
                 if let Some(inner) = mask.mask() {
                     // a mask of the mask: it limits the content that makes the mask
@@ -909,14 +1041,19 @@ impl SvgWriter {
                 c.fill_path_with_rule(fill_rule(fill.rule()))
             }
             usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
-                let Some((shading, transform)) = self.gradient(fill.paint(), path) else {
+                self.prepare_gradient(c, fill.paint())?;
+                let Some((shading, transform)) = self.gradient(fill.paint(), path, Channel::Color) else {
                     return Ok(());
                 };
                 // The path is the clipping path of the shading. The shading is the same for
                 // all paths with the same gradient (the transformation puts it in place), so
                 // it is written once.
+                let (opacity, varying) = self.gradient_alpha(fill.paint(), opacity)?;
                 self.set_alpha(c, opacity, false)?;
                 self.save(c)?;
+                if varying {
+                    self.alpha_mask(c, fill.paint(), path)?;
+                }
                 emit_path(c, path.data(), Transform::identity())?;
                 c.clip(fill_rule(fill.rule()))?;
                 c.end_path()?;
@@ -940,17 +1077,27 @@ impl SvgWriter {
         let Some(stroke) = path.stroke() else {
             return Ok(());
         };
-        let opacity = self.alpha * f64::from(stroke.opacity().get());
+        let mut opacity = self.alpha * f64::from(stroke.opacity().get());
         if opacity <= 0.0 {
             return Ok(());
         }
+        // whether the graphics state was saved for the soft mask of a gradient
+        let mut masked = false;
         match stroke.paint() {
             usvg::Paint::Color(color) => self.set_color(c, *color, true)?,
             usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
                 // strokes cannot be clipping paths: the shading is the color of a pattern
-                let Some((shading, transform)) = self.gradient(stroke.paint(), path) else {
+                self.prepare_gradient(c, stroke.paint())?;
+                let Some((shading, transform)) = self.gradient(stroke.paint(), path, Channel::Color) else {
                     return Ok(());
                 };
+                let (uniform, varying) = self.gradient_alpha(stroke.paint(), opacity)?;
+                opacity = uniform;
+                if varying {
+                    self.save(c)?;
+                    masked = true;
+                    self.alpha_mask(c, stroke.paint(), path)?;
+                }
                 let pattern = ShadingPattern::new(shading).with_matrix(matrix(ctm.pre_concat(transform)));
                 let key = c.add_shading_pattern(pattern);
                 self.set_paint_key(c, PaintKey::Pattern(key), true)?;
@@ -964,19 +1111,99 @@ impl SvgWriter {
         self.set_alpha(c, opacity, true)?;
         self.set_stroke_style(c, stroke)?;
         emit_path(c, path.data(), Transform::identity())?;
-        c.stroke_path()
+        c.stroke_path()?;
+        if masked {
+            self.restore(c)?;
+        }
+        Ok(())
+    }
+
+    /// The opacity to paint a gradient with, given the opacity of the fill or stroke (`opacity`) and
+    /// the opacities of its stops, and whether the gradient needs a soft mask. A gradient whose stops all have the same
+    /// opacity multiplies it into `opacity`. See `pdf::gradient::stop_alpha`, which decides this for
+    /// every gradient of the document.
+    fn gradient_alpha(&self, paint: &usvg::Paint, opacity: f64) -> Result<(f64, bool)> {
+        let stops = match paint {
+            usvg::Paint::LinearGradient(gradient) => gradient.stops(),
+            usvg::Paint::RadialGradient(gradient) => gradient.stops(),
+            _ => return Ok((opacity, false)),
+        };
+        match crate::pdf::gradient::stop_alpha(stops.iter().map(|stop| stop.opacity().get()))? {
+            crate::pdf::gradient::StopAlpha::Opaque => Ok((opacity, false)),
+            crate::pdf::gradient::StopAlpha::Uniform(alpha) => Ok((opacity * f64::from(alpha), false)),
+            crate::pdf::gradient::StopAlpha::Varying => Ok((opacity, true)),
+        }
+    }
+
+    /// Sets the soft mask of a gradient with stops of different opacities in the graphics state: a
+    /// form with the opacities as a gradient of gray levels over the box of `path`.
+    fn alpha_mask(&mut self, c: &mut PageContext<'_, '_, '_>, paint: &usvg::Paint, path: &usvg::Path) -> Result<()> {
+        let Some((shading, transform)) = self.gradient(paint, path, Channel::Alpha) else {
+            return Ok(());
+        };
+        let bounds = path.stroke_bounding_box().unwrap_or_else(|| path.data().bounds());
+        let bbox = [
+            Pt(f64::from(bounds.left())),
+            Pt(f64::from(bounds.top())),
+            Pt(f64::from(bounds.right())),
+            Pt(f64::from(bounds.bottom())),
+        ];
+        crate::pdf::gradient::apply_alpha_mask(c, bbox, |form| {
+            concat(form, transform)?;
+            let key = form.add_shading(shading);
+            form.paint_shading(&key)
+        })
+    }
+
+    /// Chooses the color space of the gradient `paint` (see `gradient_profile`): the ICC space of the
+    /// wide colors of CSS (Rec. 2020 primaries, gamma 2.4) if a stop has a color that sRGB cannot
+    /// hold, else the device space.
+    fn prepare_gradient(&mut self, c: &mut PageContext<'_, '_, '_>, paint: &usvg::Paint) -> Result<()> {
+        let base: Option<&usvg::BaseGradient> = match paint {
+            usvg::Paint::LinearGradient(gradient) => Some(gradient),
+            usvg::Paint::RadialGradient(gradient) => Some(gradient),
+            _ => None,
+        };
+        self.gradient_profile = None;
+        if !base.is_some_and(|base| base.stops().iter().any(|stop| stop.color().wide.is_some())) {
+            return Ok(());
+        }
+        if crate::pdf::pdfa1_active() {
+            // the ICC space of the wide colors is a profile of version 4, which PDF/A-1 does not allow
+            self.warn("the wide-gamut colors of a gradient are clipped to sRGB: PDF/A-1 does not allow ICC profiles of version 4");
+            return Ok(());
+        }
+        self.gradient_profile = Some(crate::pdf::wide_color_space(c).map_err(std::io::Error::other)?);
+        Ok(())
     }
 
     /// The shading of a gradient and the transformation from its coordinates to the current
-    /// ones, or `None` if there is nothing to paint.
-    fn gradient(&mut self, paint: &usvg::Paint, path: &usvg::Path) -> Option<(Shading, Transform)> {
+    /// ones, or `None` if there is nothing to paint. It has the colors of the stops or, for the soft
+    /// mask of a gradient with transparent stops, their opacities as gray levels.
+    fn gradient(&mut self, paint: &usvg::Paint, path: &usvg::Path, channel: Channel) -> Option<(Shading, Transform)> {
+        match channel {
+            Channel::Color => {
+                let profile = self.gradient_profile;
+                self.gradient_of(paint, path, move |stop| stop_color(profile.is_some(), stop.color()), profile)
+            }
+            Channel::Alpha => self.gradient_of(paint, path, |stop| Gray(f64::from(stop.opacity().get())), None),
+        }
+    }
+
+    fn gradient_of<C: lemon_pdf::shading::Color>(
+        &mut self,
+        paint: &usvg::Paint,
+        path: &usvg::Path,
+        to_color: impl Fn(&usvg::Stop) -> C,
+        profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
+    ) -> Option<(Shading, Transform)> {
         match paint {
-            usvg::Paint::LinearGradient(gradient) => {
-                self.linear_gradient(gradient, path).map(|shading| (shading, gradient.transform()))
-            }
-            usvg::Paint::RadialGradient(gradient) => {
-                self.radial_gradient(gradient, path).map(|shading| (shading, gradient.transform()))
-            }
+            usvg::Paint::LinearGradient(gradient) => self
+                .linear_gradient(gradient, path, &to_color, profile)
+                .map(|shading| (shading, gradient.transform())),
+            usvg::Paint::RadialGradient(gradient) => self
+                .radial_gradient(gradient, path, &to_color, profile)
+                .map(|shading| (shading, gradient.transform())),
             _ => None,
         }
     }
@@ -984,25 +1211,22 @@ impl SvgWriter {
     /// The color stops of a gradient over the parameter range `from..to` (the gradient itself
     /// is `0..1`), with the offsets scaled to `0..1`. Outside of `0..1`, the spread method
     /// decides the colors.
-    fn spread_stops(
-        &mut self,
+    fn spread_stops<C: lemon_pdf::shading::Color + Copy>(
         base: &usvg::BaseGradient,
         from: i64,
         to: i64,
-    ) -> Vec<ColorStop<Rgb>> {
-        if base.stops().iter().any(|stop| stop.opacity().get() < 1.0) {
-            self.warn("the opacity of gradient stops is not supported");
-        }
-        let stops: Vec<(f64, Rgb)> = base
+        to_color: &impl Fn(&usvg::Stop) -> C,
+    ) -> Vec<ColorStop<C>> {
+        let stops: Vec<(f64, C)> = base
             .stops()
             .iter()
-            .map(|stop| (f64::from(stop.offset().get()), rgb(stop.color())))
+            .map(|stop| (f64::from(stop.offset().get()), to_color(stop)))
             .collect();
         let width = (to - from) as f64;
         let mut out = Vec::new();
         for period in from..to {
             let reversed = base.spread_method() == usvg::SpreadMethod::Reflect && period.rem_euclid(2) == 1;
-            let mut push = |offset: f64, color: Rgb| {
+            let mut push = |offset: f64, color: C| {
                 out.push(ColorStop::new((period as f64 + offset - from as f64) / width, color));
             };
             if reversed {
@@ -1048,10 +1272,12 @@ impl SvgWriter {
         (from.min(0), to.max(1))
     }
 
-    fn linear_gradient(
+    fn linear_gradient<C: lemon_pdf::shading::Color + Copy>(
         &mut self,
         gradient: &usvg::LinearGradient,
         path: &usvg::Path,
+        to_color: &impl Fn(&usvg::Stop) -> C,
+        profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
     ) -> Option<Shading> {
         let base: &usvg::BaseGradient = gradient;
         let (x1, y1, x2, y2) = (
@@ -1064,12 +1290,12 @@ impl SvgWriter {
         let length_squared = dx * dx + dy * dy;
         if length_squared == 0.0 {
             // a gradient without length paints the color of its last stop
-            return self.last_stop_pattern(base);
+            return Self::last_stop_pattern(base, to_color, profile);
         }
         let (from, to) = self.period_range(base, path, |x, y| {
             ((f64::from(x) - x1) * dx + (f64::from(y) - y1) * dy) / length_squared
         });
-        let stops = self.spread_stops(base, from, to);
+        let stops = Self::spread_stops(base, from, to, to_color);
         let function = Gradient::new(&stops).ok()?.extended();
         let (from_f, to_f) = (from as f64, to as f64);
         let shading = AxialShading::new(
@@ -1077,13 +1303,18 @@ impl SvgWriter {
             Point::new(x1 + to_f * dx, y1 + to_f * dy),
             &function,
         );
-        Some(shading.into())
+        Some(match profile {
+            Some(profile) => shading.with_icc_profile(profile).into(),
+            None => shading.into(),
+        })
     }
 
-    fn radial_gradient(
+    fn radial_gradient<C: lemon_pdf::shading::Color + Copy>(
         &mut self,
         gradient: &usvg::RadialGradient,
         path: &usvg::Path,
+        to_color: &impl Fn(&usvg::Stop) -> C,
+        profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
     ) -> Option<Shading> {
         let base: &usvg::BaseGradient = gradient;
         let (cx, cy, r) = (
@@ -1097,7 +1328,7 @@ impl SvgWriter {
             f64::from(gradient.fr().get()),
         );
         if r <= 0.0 {
-            return self.last_stop_pattern(base);
+            return Self::last_stop_pattern(base, to_color, profile);
         }
         let concentric = fx == cx && fy == cy;
         let (from, to) = if concentric && base.spread_method() != usvg::SpreadMethod::Pad {
@@ -1113,9 +1344,9 @@ impl SvgWriter {
             (0, 1)
         };
         let stops = if concentric || base.spread_method() == usvg::SpreadMethod::Pad {
-            self.spread_stops(base, from, to)
+            Self::spread_stops(base, from, to, to_color)
         } else {
-            self.spread_stops(base, 0, 1)
+            Self::spread_stops(base, 0, 1, to_color)
         };
         let function = Gradient::new(&stops).ok()?.extended();
         let shading = RadialShading::new(
@@ -1123,16 +1354,27 @@ impl SvgWriter {
             Circle { x: Pt(cx), y: Pt(cy), radius: Pt(fr + to as f64 * (r - fr)) },
             &function,
         );
-        Some(shading.into())
+        Some(match profile {
+            Some(profile) => shading.with_icc_profile(profile).into(),
+            None => shading.into(),
+        })
     }
 
     /// A shading that has the color of the last stop everywhere.
-    fn last_stop_pattern(&mut self, base: &usvg::BaseGradient) -> Option<Shading> {
-        let color = rgb(base.stops().last()?.color());
+    fn last_stop_pattern<C: lemon_pdf::shading::Color + Copy>(
+        base: &usvg::BaseGradient,
+        to_color: &impl Fn(&usvg::Stop) -> C,
+        profile: Option<lemon_pdf::color_space::IccBasedColorSpace>,
+    ) -> Option<Shading> {
+        let color = to_color(base.stops().last()?);
         let function = Gradient::new(&[ColorStop::new(0.0, color), ColorStop::new(1.0, color)])
             .ok()?
             .extended();
-        Some(AxialShading::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &function).into())
+        let shading = AxialShading::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &function);
+        Some(match profile {
+            Some(profile) => shading.with_icc_profile(profile).into(),
+            None => shading.into(),
+        })
     }
 
     fn tiling_pattern(
@@ -1162,7 +1404,10 @@ impl SvgWriter {
             Pt(height),
             matrix(t),
             filter,
-            |cell| self.in_stream(|this| this.draw_group(cell, pattern.root(), Transform::identity())),
+            |cell| {
+                crate::pdf::set_device_defaults(cell)?;
+                self.in_stream(|this| this.draw_group(cell, pattern.root(), Transform::identity()))
+            },
         )?;
         self.tilings.insert(key, tiling);
         Ok(tiling)
@@ -1204,12 +1449,9 @@ impl SvgWriter {
         let reference = match known {
             Some(reference) => reference,
             None => {
+                // like the image of an `<img>`: with its ICC profile as the colour space
                 let embedded = RasterImage::from_bytes(data.as_ref().clone())
-                    .and_then(|raster| raster.to_pdf_image())
-                    .map_err(|error| error.to_string())
-                    .and_then(|pdf_image| {
-                        c.pdf_context.write_image(pdf_image).map_err(|error| error.to_string())
-                    });
+                    .and_then(|raster| crate::pdf::write_raster(c.pdf_context, &raster));
                 let reference = match embedded {
                     Ok(reference) => Some(reference),
                     Err(error) => {
@@ -1232,4 +1474,89 @@ impl SvgWriter {
         c.draw_xobject(&name)?;
         self.restore(c)
     }
+}
+
+/// Whether the tree has a CMYK JPEG image, also in a nested SVG image, a pattern or a mask.
+pub fn has_cmyk_image(tree: &usvg::Tree) -> bool {
+    fn paint(paint: Option<&usvg::Paint>) -> bool {
+        match paint {
+            Some(usvg::Paint::Pattern(pattern)) => group(pattern.root()),
+            _ => false,
+        }
+    }
+    fn mask(mask: Option<&usvg::Mask>) -> bool {
+        mask.is_some_and(|m| group(m.root()) || mask_ref(m.mask()))
+    }
+    fn mask_ref(m: Option<&usvg::Mask>) -> bool {
+        mask(m)
+    }
+    fn group(g: &usvg::Group) -> bool {
+        mask(g.mask())
+            || g.children().iter().any(|node| match node {
+                Node::Group(inner) => group(inner),
+                Node::Path(path) => paint(path.fill().map(|f| f.paint())) || paint(path.stroke().map(|s| s.paint())),
+                Node::Image(image) => match image.kind() {
+                    usvg::ImageKind::JPEG(data) => crate::image::is_cmyk_jpeg(data),
+                    usvg::ImageKind::SVG(tree) => has_cmyk_image(tree),
+                    _ => false,
+                },
+                Node::Text(_) | Node::Foreign(_) => false,
+            })
+    }
+    group(tree.root())
+}
+
+/// Reads the colours of SVG that `svgtypes` rejects (`color()`, `lab()`, `oklch()`, `color-mix()`, …)
+/// with the colour code of the style sheets, so that the colours of an SVG are the ones that CSS means.
+#[derive(Debug)]
+pub struct SvgColorParser;
+
+impl usvg::ColorParser for SvgColorParser {
+    fn parse(&self, text: &str) -> Option<(usvg::Color, u8)> {
+        use crate::style::properties::computed::{IccSpace, PaintColor};
+        use usvg::{WideColor, WideSpace};
+        let color = crate::style::properties::specified::parse_color_text(text)?;
+        if matches!(color, cssparser_color::Color::CurrentColor) {
+            return None;
+        }
+        let paint = crate::style::properties::color::color_to_paint(color);
+        let srgb = paint.clip_to_srgb();
+        let mut out = usvg::Color::new_rgb(srgb.red, srgb.green, srgb.blue);
+        out.wide = match paint {
+            PaintColor::Srgb(_) => None,
+            PaintColor::Icc(icc) => Some(WideColor {
+                space: match icc.space {
+                    IccSpace::SrgbLinear => WideSpace::SrgbLinear,
+                    IccSpace::DisplayP3 => WideSpace::DisplayP3,
+                    IccSpace::DisplayP3Linear => WideSpace::DisplayP3Linear,
+                    IccSpace::A98Rgb => WideSpace::A98Rgb,
+                    IccSpace::ProphotoRgb => WideSpace::ProphotoRgb,
+                    IccSpace::Rec2020 => WideSpace::Rec2020,
+                },
+                components: icc.components(),
+            }),
+            PaintColor::Xyz(xyz) => Some(WideColor { space: WideSpace::Xyz, components: xyz.components() }),
+        };
+        Some((out, paint.alpha()))
+    }
+}
+
+/// The colour that the PDF paints for `color`: the wide one where there is one, else sRGB.
+fn paint_color(color: usvg::Color) -> crate::style::properties::computed::PaintColor {
+    use crate::style::properties::computed::{IccColor, IccSpace, PaintColor, XyzColor};
+    use usvg::WideSpace;
+    let Some(wide) = color.wide else {
+        return PaintColor::srgb(color.red, color.green, color.blue, 255);
+    };
+    let [a, b, c] = wide.components;
+    let space = match wide.space {
+        WideSpace::Xyz => return PaintColor::Xyz(XyzColor::new(a, b, c, 255)),
+        WideSpace::SrgbLinear => IccSpace::SrgbLinear,
+        WideSpace::DisplayP3 => IccSpace::DisplayP3,
+        WideSpace::DisplayP3Linear => IccSpace::DisplayP3Linear,
+        WideSpace::A98Rgb => IccSpace::A98Rgb,
+        WideSpace::ProphotoRgb => IccSpace::ProphotoRgb,
+        WideSpace::Rec2020 => IccSpace::Rec2020,
+    };
+    PaintColor::Icc(IccColor::new(space, a, b, c, 255))
 }

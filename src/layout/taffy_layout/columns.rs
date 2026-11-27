@@ -4,7 +4,7 @@
 //! for Taffy, like a paragraph: its width comes from its container, and its height from the
 //! columns (see `docs/pagination.md`).
 //!
-//! - **The plan.** The columns are chosen by the kernel of `helium_paginate` from the flow of the
+//! - **The plan.** The columns are chosen by the kernel of `umbruch_paginate` from the flow of the
 //!   content of the container ([`super::flow::Inner`]). The problem has the columns as its pages: as
 //!   many as the container has, as wide as a column, and as high as the content needs (balanced)
 //!   or as the container is, if it has a height. The extents and the lines are those of the
@@ -27,15 +27,15 @@
 use super::flow::Inner;
 use super::paginate;
 use super::service::TreeService;
-use super::tree::{Content, HeliumTree, calc};
+use super::tree::{Content, UmbruchTree, calc};
 use super::window::Window;
 use crate::style::properties::computed::{ColumnWidth, GenericSize, PixelLength};
 use crate::style::properties::specified::{ColumnCount, ColumnFill, Display};
-use helium_paginate::{
+use umbruch_paginate::{
     BoxRef, BreakLevel, ContainerCut, Cut, Item, Kernel, LayoutService, NodeRef, PageSpec, PageTable,
     ParId, ParLine, Position, Problem, balance, plan_fragment,
 };
-use helium_paginate::FxHashMap as HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 use taffy::geometry::{Line, Size};
 use taffy::style::AvailableSpace;
@@ -80,7 +80,7 @@ pub(super) struct ColumnPlan {
     /// pages).
     pub used: Vec<f32>,
     /// The floats of every column, in order.
-    pub floats: Vec<Vec<(NodeId, helium_paginate::FloatSide)>>,
+    pub floats: Vec<Vec<(NodeId, umbruch_paginate::FloatSide)>>,
 }
 
 /// What the layout of one box in a column found out, which the layout of the next column
@@ -157,7 +157,7 @@ impl LayoutService for InColumns<'_, '_, '_, '_> {
     }
 }
 
-impl HeliumTree<'_, '_> {
+impl UmbruchTree<'_, '_> {
     /// Finds the multi-column containers: boxes with block or inline content that have a
     /// `column-count` or a `column-width`. Not the root, not tables and not flex or grid
     /// containers, and not boxes with a vertical flow (a column is a fragmentainer of the block
@@ -410,7 +410,7 @@ impl HeliumTree<'_, '_> {
     }
 
     /// Mirrors the in-flow children of a right-to-left container with columns in a column that
-    /// is `width` wide (see `Node::mirror_rtl`, [`HeliumTree::mirror_children`]).
+    /// is `width` wide (see `Node::mirror_rtl`, [`UmbruchTree::mirror_children`]).
     fn mirror_in(&mut self, id: NodeId, width: f32) {
         if !self.node(id).mirror_rtl {
             return;
@@ -447,7 +447,7 @@ impl HeliumTree<'_, '_> {
 }
 
 /// The ways to break the paragraphs of a column that are not the first, by paragraph.
-fn ways_of(inner: &Inner, choices: &[helium_paginate::Choice]) -> HashMap<NodeId, usize> {
+fn ways_of(inner: &Inner, choices: &[umbruch_paginate::Choice]) -> HashMap<NodeId, usize> {
     choices
         .iter()
         .filter_map(|choice| inner.leaves.get(choice.item).copied().flatten().map(|node| (node, choice.variant)))
@@ -466,7 +466,7 @@ fn choose(
     width: f32,
     gap: f32,
     height: Option<f32>,
-    config: helium_paginate::Variants,
+    config: umbruch_paginate::Variants,
 ) -> ColumnPlan {
     let whole = || Window {
         start: 0,
@@ -478,6 +478,8 @@ fn choose(
         scope: Some(id),
         start_container: None,
         end_container: None,
+        start_offset: None,
+        end_offset: None,
     };
     if inner.items.is_empty() {
         return ColumnPlan { width, gap, height: height.unwrap_or(0.0), columns: vec![], variants: vec![], used: vec![], floats: vec![] };
@@ -537,7 +539,7 @@ fn choose(
 }
 
 /// The nodes of the boxes of floats.
-fn float_nodes(boxes: Vec<(BoxRef, helium_paginate::FloatSide)>) -> Vec<(NodeId, helium_paginate::FloatSide)> {
+fn float_nodes(boxes: Vec<(BoxRef, umbruch_paginate::FloatSide)>) -> Vec<(NodeId, umbruch_paginate::FloatSide)> {
     boxes.into_iter().map(|(float, side)| (NodeId::from(float.0 as usize), side)).collect()
 }
 
@@ -564,7 +566,7 @@ pub(super) fn fragment_plan(
     top: f32,
     bottom: f32,
     planned: f64,
-) -> (Rc<ColumnPlan>, helium_paginate::FragmentPlan) {
+) -> (Rc<ColumnPlan>, umbruch_paginate::FragmentPlan) {
     let tree = &*service.tree;
     let (count, width, gap) = tree.column_geometry(id, content_width);
     let inner = tree
@@ -578,9 +580,9 @@ pub(super) fn fragment_plan(
         .get(tree.node(id).entity)
         .map_or(ColumnFill::Balance, |style| style.box_.column_fill);
     let fill = match fill {
-        ColumnFill::Balance => helium_paginate::ColumnFill::Balance,
-        ColumnFill::BalanceAll => helium_paginate::ColumnFill::BalanceAll,
-        ColumnFill::Auto => helium_paginate::ColumnFill::Auto,
+        ColumnFill::Balance => umbruch_paginate::ColumnFill::Balance,
+        ColumnFill::BalanceAll => umbruch_paginate::ColumnFill::BalanceAll,
+        ColumnFill::Auto => umbruch_paginate::ColumnFill::Auto,
     };
     let root = BoxRef(usize::from(id) as u32);
     let mut inside = InColumns { service, root };

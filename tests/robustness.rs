@@ -1,4 +1,4 @@
-//! Documents that made Helium panic: they must be rendered (or at least rejected with an
+//! Documents that made Umbruch panic: they must be rendered (or at least rejected with an
 //! error), never abort.
 
 mod common;
@@ -11,7 +11,7 @@ fn render(name: &str, html: &str) -> serde_json::Value {
     let input = dir.join(format!("robustness__{}.html", name));
     let output = dir.join(format!("robustness__{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--dump-layout", "-"])
         .arg(&input)
@@ -45,6 +45,18 @@ fn a_comment_next_to_the_head_is_not_a_box() {
         "<html><!-- a comment --><head><style>p { margin: 0 }</style></head><body><p>text</p></body></html>",
     );
     assert_eq!(painted_runs(&dump), 1);
+}
+
+#[test]
+fn a_megabyte_of_comments_does_not_overflow_the_stack() {
+    // dropping the DOM used to recurse once per sibling
+    let html = format!("<p>text</p>{}", "<!---->".repeat(150_000));
+    let dump = render("many_comments", &html);
+    assert_eq!(painted_runs(&dump), 1);
+    // and one comment of a megabyte
+    let html = format!("<p>text</p><!--{}--><p>more</p>", "a".repeat(1 << 20));
+    let dump = render("big_comment", &html);
+    assert_eq!(painted_runs(&dump), 2);
 }
 
 #[test]

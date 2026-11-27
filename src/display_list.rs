@@ -256,11 +256,7 @@ fn resolve_radii(
     height: PixelLength,
 ) -> [(PixelLength, PixelLength); 4] {
     use crate::style::properties::computed::LengthPercentage as Lp;
-    let resolve = |lp: Lp, container: PixelLength| match lp {
-        Lp::PixelLength(px) => px,
-        Lp::Percentage(pc) => container * pc,
-        Lp::Both { length, percentage } => length + container * percentage,
-    };
+    let resolve = |lp: Lp, container: PixelLength| lp.absolute(container);
     let resolve_corner = |lp: Lp| {
         let rx = resolve(lp, width);
         let ry = resolve(lp, height);

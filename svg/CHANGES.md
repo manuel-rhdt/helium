@@ -20,3 +20,8 @@
 - Font fallback replaces the clusters that have a missing glyph (by their bytes in the text)
   instead of assuming that every font makes the same number of glyphs, which dropped the fallback
   of the whole text when a font made a single glyph of a cluster (an emoji with U+FE0F).
+- `Color` has a `wide` field: the color as it was written when sRGB cannot hold it (`WideColor`, in
+  a `WideSpace`; the 8-bit channels are the nearest sRGB color). `svgtypes` cannot read `color()`,
+  `lab()`, `lch()`, `oklab()` and `oklch()`, so `Options` takes a `ColorParser`, which is asked for
+  every color value that `svgtypes` rejects (in `fill`, `stroke`, `stop-color`, `color`, and as the
+  fallback of a `url()`). Without one the behaviour is the one of usvg.

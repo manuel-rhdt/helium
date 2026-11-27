@@ -7,7 +7,7 @@ fn render(name: &str, html: &str) -> (String, String) {
     let input = dir.join(format!("border_radius__{}.html", name));
     let output = dir.join(format!("border_radius__{}.pdf", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-compression", "--no-system-fonts"])
         .arg(&input)

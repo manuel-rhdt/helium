@@ -54,7 +54,7 @@ fn layout_with_cut_off(name: &str, html: &str) -> Layout {
     let output = dir.join(format!("multicol__{}.pdf", name));
     let dump = dir.join(format!("multicol__{}.json", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])
@@ -676,7 +676,7 @@ fn a_link_in_a_column_is_where_the_text_is() {
         ),
     )
     .unwrap();
-    let out = common::helium().unwrap().args(["--no-system-fonts"]).arg(&input).arg(&output).output().unwrap();
+    let out = common::umbruch().unwrap().args(["--no-system-fonts"]).arg(&input).arg(&output).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let pdf = common::expand_object_streams(&std::fs::read(&output).unwrap());
     let text = String::from_utf8_lossy(&pdf);
@@ -1206,7 +1206,7 @@ fn a_link_in_a_column_on_the_second_page_is_where_the_text_is() {
         ),
     )
     .unwrap();
-    let out = common::helium().unwrap().args(["--no-system-fonts"]).arg(&input).arg(&output).output().unwrap();
+    let out = common::umbruch().unwrap().args(["--no-system-fonts"]).arg(&input).arg(&output).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let pdf = common::expand_object_streams(&std::fs::read(&output).unwrap());
     let text = String::from_utf8_lossy(&pdf);
@@ -1419,7 +1419,7 @@ fn a_container_in_a_document_that_is_cropped_is_one_box() {
          <div class=i id=i3></div><div class=i id=i4></div></div>",
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .args(["--no-system-fonts", "--crop", "--dump-layout"])
         .arg(&dump)

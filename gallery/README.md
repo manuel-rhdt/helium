@@ -1,6 +1,6 @@
 # Gallery
 
-Documents written in plain HTML and CSS, rendered to PDF by Helium. The `Gallery` workflow
+Documents written in plain HTML and CSS, rendered to PDF by Umbruch. The `Gallery` workflow
 renders them on every push and, on `master`, publishes them with thumbnails to GitHub Pages.
 
 | Directory | Shows |
@@ -9,7 +9,7 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 | `letter/` | letterhead, a different first page, running headers, hyphenated justified text |
 | `report/` | a cover card, linked contents, a JPEG figure, data table, a flexbox bar chart, code |
 | `math-notes/` | MathML: integrals, sums, matrices, theorem boxes, numbered equations, an SVG plot |
-| `book/` | a whole novel as a trade paperback: all 61 chapters of Pride and Prejudice (368 pages), facing pages, running heads, linked contents, chapter openings and headings in real small capitals, old-style folios |
+| `book/` | a whole novel as a trade paperback in three volumes: all 61 chapters of Pride and Prejudice (372 pages), facing pages and running heads, a tagged table of contents with dot leaders (`leader()`) and page numbers that `target-counter()` looks up, page groups (`:nth(1 of volume)`, `:nth(1 of chapter)`) for the volume title pages and the chapter openings, roman folios for the front matter and a new count for the body, a list of scenes with chapter numbers in roman numerals, an outline of volumes and chapters, hyphenation limits as TeX has them for English (`hyphenate-limit-chars`) and no hyphen at the end of a right-hand page (`hyphenate-limit-last: spread`), hanging punctuation (`hanging-punctuation`: quotes, full stops, commas and hyphens stand in the margin), small capitals and old-style folios |
 | `poetry/` | verse on small pages |
 | `scripts/` | one sentence in 30 languages and more than 20 scripts |
 | `figures/` | a one-page figure sheet: inline SVG with the CSS of the page, MathML labels and equation cards inside of the figures (`foreignObject`), an icon sprite, patterns, markers, gradients |
@@ -39,7 +39,7 @@ Create `gallery/<name>/index.html` (with its images next to it) and add the name
 - `<title>`, `<meta name="description">` and `<meta name="keywords">` (comma-separated tags);
 - `<meta name="gallery-thumbnail" content="3">` to use another page than the first;
 - `<meta name="gallery-fonts" content="system">` to render with the fonts installed on the
-  machine. By default only the fonts built into Helium are used (they include Noto fonts for
+  machine. By default only the fonts built into Umbruch are used (they include Noto fonts for
   most scripts), so the output is the same everywhere.
 
 References in the document (stylesheets, images) are resolved relative to its directory, and

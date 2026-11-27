@@ -13,7 +13,7 @@ pub(super) const FALLBACK_FAMILIES: &[&str] = &[
     "Noto Sans",
     "Noto Sans Symbols",
     "Noto Sans Symbols 2",
-    // the name of the font built into Helium
+    // the name of the font built into Umbruch
     "Noto Sans Symbols2",
     "Noto Sans Math",
     "DejaVu Serif",

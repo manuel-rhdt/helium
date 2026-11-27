@@ -12,7 +12,7 @@ use crate::tree::ElementRef;
 
 use cssparser::{
     AtRuleParser, BasicParseErrorKind, CowRcStr, ParseError, Parser, ParserState,
-    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss,
+    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss, Token,
 };
 use html5ever::{LocalName, Namespace};
 use log::warn;
@@ -59,7 +59,7 @@ impl Default for Styles {
     fn default() -> Self {
         let ua_style = include_str!("../../resources/user-agent.css");
         let mut styles = Styles::empty();
-        styles.parse_css(ua_style);
+        crate::engine::without_warnings(|| styles.parse_css(ua_style));
         styles.user_agent_rules = styles.rules.len();
         styles
     }
@@ -194,11 +194,43 @@ pub enum GeneralizedSelector {
 }
 
 /// The pseudo-class of an `@page` selector.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PagePseudo {
     First,
     Left,
     Right,
+    /// `:nth(An+B)`, `:nth(An+B of name)`: CSS GCPM 3, 3.1.
+    Nth(PageNth),
+}
+
+/// The argument of `:nth()` of an `@page` selector: the pages whose number (counted from 1) is
+/// `a * n + b` for some `n >= 0`, in the document or, with a name, in the page groups with that
+/// name (the pages that an element with that `page` and a forced break creates).
+/// https://www.w3.org/TR/css-gcpm-3/#document-page-selectors
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageNth {
+    pub a: i32,
+    pub b: i32,
+    pub of: Option<std::sync::Arc<str>>,
+}
+
+impl PageNth {
+    /// Whether the page with the number `position` (counted from 1) is one of the pages.
+    pub fn matches(&self, position: usize) -> bool {
+        let position = position as i64;
+        let (a, b) = (i64::from(self.a), i64::from(self.b));
+        if a == 0 {
+            return position == b;
+        }
+        let distance = position - b;
+        distance % a == 0 && distance / a >= 0
+    }
+
+    /// Whether it selects exactly the first page of a group: the one case that the size and
+    /// the margins of a page can follow (see `layout::pages`).
+    pub fn is_first_of_group(&self) -> bool {
+        self.of.is_some() && self.a == 0 && self.b == 1
+    }
 }
 
 /// The selector of an `@page` rule: an optional page name (see the `page` property) and an
@@ -226,7 +258,7 @@ impl PageSelector {
         let name = if self.name.is_some() { 100 } else { 0 };
         let pseudo = match self.pseudo {
             None => 0,
-            Some(PagePseudo::First) => 10,
+            Some(PagePseudo::First | PagePseudo::Nth(_)) => 10,
             Some(PagePseudo::Left | PagePseudo::Right) => 1,
         };
         name + pseudo
@@ -326,7 +358,7 @@ pub enum ContentItem {
     Counter(CounterName, CounterStyle),
 }
 
-/// The value of `-helium-page-label`, the label of the page in the PDF (what the page box of a
+/// The value of `-umbruch-page-label`, the label of the page in the PDF (what the page box of a
 /// viewer shows). There is no CSS property for this.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PageLabelSpec {
@@ -354,7 +386,7 @@ pub struct QualifiedRule {
     selectors: GeneralizedSelector,
     pub properties: PropertyDeclarationBlock,
     pub margin_boxes: Vec<MarginBoxRule>,
-    /// `-helium-page-label` of an `@page` rule.
+    /// `-umbruch-page-label` of an `@page` rule.
     pub page_label: Option<PageLabelSpec>,
 }
 
@@ -444,7 +476,7 @@ impl QualifiedRule {
 
 /// A declaration as it is written: the name of the property and the text of its value. Every
 /// declaration is kept, also those of properties that are not known, for the CSS of the SVG
-/// elements, which Helium does not interpret itself.
+/// elements, which Umbruch does not interpret itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawDeclaration {
     pub name: String,
@@ -633,11 +665,28 @@ impl<'i> AtRuleParser<'i> for TopLevelParser {
             return Ok(AtPrelude::Page(PageSelector { name, pseudo: None }));
         }
         input.expect_colon()?;
-        let ident = input.expect_ident()?.clone();
-        let pseudo = match_ignore_ascii_case! { &ident,
-            "first" => PagePseudo::First,
-            "left" => PagePseudo::Left,
-            "right" => PagePseudo::Right,
+        let token = input.next()?.clone();
+        let pseudo = match token {
+            Token::Ident(ident) => match_ignore_ascii_case! { &ident,
+                "first" => PagePseudo::First,
+                "left" => PagePseudo::Left,
+                "right" => PagePseudo::Right,
+                _ => return Err(invalid()),
+            },
+            Token::Function(function) if function.eq_ignore_ascii_case("nth") => {
+                input.parse_nested_block(|input| {
+                    let (a, b) = cssparser::parse_nth(input)?;
+                    let of = if input.is_exhausted() {
+                        None
+                    } else {
+                        input.expect_ident_matching("of")?;
+                        let group = input.expect_ident()?.clone();
+                        input.expect_exhausted()?;
+                        Some(std::sync::Arc::<str>::from(&*group))
+                    };
+                    Ok(PagePseudo::Nth(PageNth { a, b, of }))
+                })?
+            }
             _ => return Err(invalid()),
         };
         if !input.is_exhausted() {
@@ -817,7 +866,7 @@ impl<'i> cssparser::DeclarationParser<'i> for PageBodyParser {
         if name.eq_ignore_ascii_case("content") {
             return Ok(PageBodyItem::Content(parse_content(input)?));
         }
-        if name.eq_ignore_ascii_case("-helium-page-label") {
+        if name.eq_ignore_ascii_case("-umbruch-page-label") {
             return Ok(PageBodyItem::PageLabel(parse_page_label(input)?));
         }
         let declaration =
@@ -1217,7 +1266,7 @@ impl<'i> cssparser::DeclarationParser<'i> for StyleBodyParser<'_> {
         input: &mut Parser<'i>,
         _declaration_start: &ParserState,
     ) -> Result<Self::Declaration, ParseError<Self::Error>> {
-        // keep the text of the value, whether Helium knows the property or not
+        // keep the text of the value, whether Umbruch knows the property or not
         let state = input.state();
         let start = input.position();
         let mut has_block = false;
@@ -1330,11 +1379,13 @@ pub(crate) fn parse_property<'i>(
     PropertyDeclaration::parse_declaration(name, input)
 }
 
-/// The properties whose lengths must not be negative.
+/// The properties whose lengths (or numbers) must not be negative. The math functions in their
+/// values are clamped instead, by `#[non_negative]` (see `specified::NonNegative`).
 fn is_non_negative_property(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name == "padding"
         || name == "border-width"
+        || matches!(name.as_str(), "line-height" | "flex" | "flex-grow" | "flex-shrink" | "border-spacing")
         || name.starts_with("padding-")
         || (name.starts_with("border-") && name.ends_with("-width"))
         || matches!(

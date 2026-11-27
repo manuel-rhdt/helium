@@ -5,7 +5,7 @@ use predicates::prelude::*;
 
 #[test]
 fn file_doesnt_exist() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = common::helium()?;
+    let mut cmd = common::umbruch()?;
     cmd.args(&["test/file/doesnt/exist", "never.pdf"]);
     cmd.assert()
         .failure()
@@ -26,7 +26,7 @@ fn converts_loremipsum_to_pdf() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::remove_file(&output)?;
     }
 
-    let mut cmd = common::helium()?;
+    let mut cmd = common::umbruch()?;
     cmd.arg(input).arg(&output);
     cmd.assert().success();
 
@@ -76,7 +76,7 @@ fn convert_to_pdf(name: &str, html: &str) -> Result<Vec<u8>, Box<dyn std::error:
         std::fs::remove_file(&output)?;
     }
 
-    common::helium()?
+    common::umbruch()?
         .arg(&input)
         .arg(&output)
         .assert()
@@ -126,7 +126,7 @@ fn dumps_layout_as_json() -> Result<(), Box<dyn std::error::Error>> {
         r#"<!DOCTYPE html><div id="a" style="width: 100px; height: 20px; padding: 5px; margin: 3px"></div>"#,
     )?;
 
-    let mut cmd = common::helium()?;
+    let mut cmd = common::umbruch()?;
     cmd.arg("--dump-layout")
         .arg("-")
         .arg(&input)
@@ -161,7 +161,7 @@ fn loads_relative_external_stylesheets() -> Result<(), Box<dyn std::error::Error
         "<html><head><link rel=\"stylesheet\" href=\"external_stylesheet_assets/print.css\"></head><body><div id=\"styled\"></div></body></html>",
     )?;
 
-    let mut cmd = common::helium()?;
+    let mut cmd = common::umbruch()?;
     cmd.arg("--dump-layout")
         .arg("-")
         .arg(&input)
@@ -187,12 +187,12 @@ fn loads_full_quarto_html_from_document() -> Result<(), Box<dyn std::error::Erro
     );
     assert!(html.contains("<pre class=\"sourceCode python"));
 
-    let mut cmd = common::helium()?;
+    let mut cmd = common::umbruch()?;
     cmd.arg("--dump-layout").arg("-").arg(input).arg(&output);
     let result = cmd.output()?;
     assert!(
         result.status.success(),
-        "Helium failed: {}",
+        "Umbruch failed: {}",
         String::from_utf8_lossy(&result.stderr)
     );
     let layout: serde_json::Value = serde_json::from_slice(&result.stdout)?;
@@ -263,7 +263,7 @@ fn higher_specificity_beats_later_rule() -> Result<(), Box<dyn std::error::Error
          <body><div id=\"header\"><p>Centered</p></div><p>Justified</p></body></html>",
     )
     .unwrap();
-    let mut cmd = common::helium()?;
+    let mut cmd = common::umbruch()?;
     cmd.arg("--dump-layout")
         .arg("-")
         .arg(&input)
@@ -303,7 +303,7 @@ fn sibling_selectors_terminate() {
          <body><h1>One</h1><p>Hi</p><h1>Two</h1></body></html>",
     )
     .unwrap();
-    common::helium()
+    common::umbruch()
         .unwrap()
         .arg(&input)
         .arg(dir.join("sibling_selectors.pdf"))
@@ -438,5 +438,39 @@ fn tagged_documents_are_marked() -> Result<(), Box<dyn std::error::Error>> {
         squeezed.contains("/MarkInfo << /Marked true >>"),
         "the catalog does not mark the document as tagged"
     );
+    Ok(())
+}
+
+#[test]
+fn check_layout_evaluates_client_sizes() -> Result<(), Box<dyn std::error::Error>> {
+    // clientWidth/clientHeight: the padding box, and zero for an inline box
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("check_layout_client.html");
+    let output = dir.join("check_layout_client.pdf");
+    std::fs::write(
+        &input,
+        "<div style='width:50px;height:20px;padding:3px 4px;border:5px solid' \
+         data-expected-client-width='58' data-expected-client-height='26'></div>\
+         <p><span data-expected-client-width='0'>inline</span></p>",
+    )?;
+    common::umbruch()?
+        .arg("--check-layout")
+        .arg(&input)
+        .arg(&output)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("3 expectations").or(predicate::str::contains("checked 3")));
+
+    std::fs::write(
+        &input,
+        "<div style='width:50px' data-expected-client-width='51'></div>",
+    )?;
+    common::umbruch()?
+        .arg("--check-layout")
+        .arg(&input)
+        .arg(&output)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("data-expected-client-width expected 51 but got 50"));
     Ok(())
 }

@@ -1,25 +1,106 @@
 //! The pages of the document: the geometry of the page that starts at every place of the flow,
 //! the choice of the pages, and the windows that the pages are laid out from.
 //!
-//! The kernel and the solvers of `helium_paginate` do the choosing. This module tells them what
-//! a page looks like at a place (its name, whether it is the first of a page group, and its
-//! kind decide the margins and the size), and turns what they choose into a window for every
+//! The kernel and the solvers of `umbruch_paginate` do the choosing. This module tells them what
+//! a page looks like at a place (its name and its kind decide the margins and the
+//! size), and turns what they choose into a window for every
 //! page (see [`super::window`]).
 
 use super::flow::Flow;
 use taffy::tree::NodeId;
-use super::tree::HeliumTree;
+use super::tree::UmbruchTree;
 use super::window::{Leading, Window};
 use crate::layout::components::EdgeValues;
 use crate::layout::pages::{PageContext, PageMargins};
 use crate::style::properties::computed::PixelLength;
-use helium_paginate::{BreakLevel, Item, PageKind, PageSpec, PageTable, Position};
+use umbruch_paginate::{BreakLevel, Item, PageKind, PageSpec, PageTable, Position};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// What decides the geometry of a page, other than its kind: the name of the first content on
-/// it and whether it starts a page group.
-type Class = (Option<Arc<str>>, bool);
+/// it, and the page groups that it starts (of the names that `:nth(1 of name)` selectors mention).
+type Class = (Option<Arc<str>>, Vec<Arc<str>>);
+
+/// A page group: the pages of an element with a `page` name and a forced break (CSS GCPM 3, 3.2).
+#[derive(Debug, Clone)]
+pub(super) struct GroupElement {
+    pub name: Arc<str>,
+    /// The items of the flow that the element is made of.
+    pub start: usize,
+    pub end: usize,
+}
+
+/// The elements that make page groups, for the names that the selectors of the style sheet use.
+///
+/// The `page` property is applied to the element: a name that an element has because it inherits
+/// it (`auto` is the name of the parent) makes no group. (The computed value does not say it
+/// was inherited, so an element inside another one of the same name makes no group either.)
+pub(super) fn group_elements(tree: &UmbruchTree, flow: &Flow, keys: &crate::layout::pages::PageKeys) -> Vec<GroupElement> {
+    use crate::style::properties::specified::Break;
+    let forced = |value: Break| matches!(value, Break::Always | Break::Page | Break::Left | Break::Right | Break::Recto | Break::Verso);
+    let mut elements = vec![];
+    for index in 0..tree.nodes.len() {
+        let node = tree.node(NodeId::from(index));
+        let (Some(span), Some(style)) = (&node.span, tree.computed_values.get(node.entity)) else { continue };
+        let Some(name) = style.page.page.0.clone() else { continue };
+        if !keys.nth.contains_key(&Some(name.clone())) {
+            continue;
+        }
+        let parent_name = flow.parents[index]
+            .and_then(|parent| tree.computed_values.get(tree.node(parent).entity))
+            .and_then(|style| style.page.page.0.clone());
+        if parent_name.as_ref() == Some(&name) {
+            continue;
+        }
+        if forced(style.page.break_before) || forced(style.page.break_after) {
+            elements.push(GroupElement { name, start: span.start as usize, end: span.end as usize });
+        }
+    }
+    elements
+}
+
+/// The item that a position is in or in front of.
+pub(super) fn item_of(position: Position) -> usize {
+    match position {
+        Position::Item(item) | Position::InParagraph { item, .. } | Position::InContainer { item, .. } => item,
+    }
+}
+
+/// For every page, its number in the page groups that it is part of, by the name of the group
+/// (the innermost group if there are several of a name). `pages` are the index of every page and
+/// the first and last position of it. A page is part of a group if it has an item of it.
+pub(super) fn group_positions(
+    elements: &[GroupElement],
+    pages: &[(usize, Position, Position)],
+) -> Vec<Vec<(Arc<str>, usize)>> {
+    let mut first_page: Vec<Option<usize>> = vec![None; elements.len()];
+    pages
+        .iter()
+        .map(|&(page, from, to)| {
+            let start = item_of(from);
+            let end = match to {
+                Position::Item(item) => item,
+                other => item_of(other) + 1,
+            }
+            .max(start + 1);
+            let mut groups: Vec<(Arc<str>, usize, usize)> = vec![];
+            for (number, element) in elements.iter().enumerate() {
+                if start < element.end && end > element.start {
+                    let first = *first_page[number].get_or_insert(page);
+                    let position = page - first + 1;
+                    // (the innermost is the one that starts last)
+                    match groups.iter_mut().find(|(name, _, _)| *name == element.name) {
+                        Some(known) if known.2 <= element.start => *known = (element.name.clone(), position, element.start),
+                        Some(_) => {}
+                        None => groups.push((element.name.clone(), position, element.start)),
+                    }
+                }
+            }
+            groups.sort_by(|a, b| a.0.cmp(&b.0));
+            groups.into_iter().map(|(name, position, _)| (name, position)).collect()
+        })
+        .collect()
+}
 
 /// The class of the page that starts at every place of the flow where one can start.
 pub(super) struct Classes {
@@ -31,7 +112,7 @@ pub(super) struct Classes {
 }
 
 impl Classes {
-    pub fn new(tree: &HeliumTree, flow: &Flow) -> Self {
+    pub fn new(tree: &UmbruchTree, flow: &Flow, groups: &[GroupElement]) -> Self {
         let len = flow.items.len();
         let name_of = |node| {
             tree.computed_values
@@ -51,44 +132,38 @@ impl Classes {
                 classes.len() - 1
             }
         };
+        // The groups that a page starts that starts in front of an item: the groups of the
+        // elements whose first content is the first content of the page. (The page can start in
+        // front of the edges of boxes that are before the element, like the root's.)
+        let mut starts: Vec<Vec<Arc<str>>> = vec![vec![]; len + 1];
+        for element in groups {
+            if next_leaf.get(element.start).copied().flatten().is_none() {
+                continue;
+            }
+            let mut item = element.start;
+            loop {
+                if !starts[item].contains(&element.name) {
+                    starts[item].push(element.name.clone());
+                }
+                if item == 0 || flow.leaves[item - 1].is_some() {
+                    break;
+                }
+                item -= 1;
+            }
+        }
+        for names in &mut starts {
+            names.sort();
+        }
         let mut at_item = Vec::with_capacity(len + 1);
-        let mut previous_leaf: Option<usize> = None;
         for item in 0..=len {
             let leaf = next_leaf[item].and_then(|leaf| flow.leaves[leaf].map(|node| (leaf, node)));
             let name = leaf.and_then(|(_, node)| name_of(node));
-            // a page starts a page group if the box that the name comes from (the outermost box
-            // around its first box that has the name) does not contain the content in front of
-            // it
-            let first_in_group = item == 0
-                || match (&name, leaf) {
-                    (Some(name), Some((_, node))) => {
-                        let mut source = node;
-                        while let Some(parent) = flow.parents[usize::from(source)] {
-                            if name_of(parent).as_ref() == Some(name) {
-                                source = parent;
-                            } else {
-                                break;
-                            }
-                        }
-                        let contains = |item: usize| {
-                            tree.node(source)
-                                .span
-                                .as_ref()
-                                .is_some_and(|span| (span.start as usize..span.end as usize).contains(&item))
-                        };
-                        !previous_leaf.is_some_and(contains)
-                    }
-                    _ => false,
-                };
-            at_item.push(id_of((name, first_in_group)));
-            if item < len && flow.leaves[item].is_some() {
-                previous_leaf = Some(item);
-            }
+            at_item.push(id_of((name, starts[item].clone())));
         }
         let mut in_paragraph = HashMap::new();
         for (item, entry) in flow.items.iter().enumerate() {
             if let (Item::Paragraph { .. } | Item::Container { .. }, Some(node)) = (entry, flow.leaves[item]) {
-                in_paragraph.insert(item, id_of((name_of(node), false)));
+                in_paragraph.insert(item, id_of((name_of(node), vec![])));
             }
         }
         Classes { classes, at_item, in_paragraph }
@@ -117,14 +192,15 @@ impl Geometry<'_> {
         PageContext {
             index,
             name: class.0.clone(),
-            first_in_group: class.1,
             rtl: self.margins.rtl,
+            // a page that starts a group is the first page of it
+            groups: class.1.iter().map(|name| (name.clone(), 1)).collect(),
         }
     }
 
     /// The margins of a page, and its width and height.
     pub fn of_page(&self, page: &PageContext) -> (EdgeValues<PixelLength>, (PixelLength, PixelLength)) {
-        let edges = self.margins.pages.get(&crate::layout::pages::normalize(page, &self.margins.names));
+        let edges = self.margins.pages.get(&crate::layout::pages::normalize(page, &self.margins.keys, crate::layout::pages::Scope::Geometry));
         (
             edges.copied().unwrap_or(self.margin),
             self.margins.size(page, self.size),
@@ -223,6 +299,14 @@ pub(super) fn window(
         },
         end_container: match end {
             Position::InContainer { item, .. } => Some(paragraph(item)),
+            _ => None,
+        },
+        start_offset: match start {
+            Position::InContainer { cut, .. } => Some(cut.item),
+            _ => None,
+        },
+        end_offset: match end {
+            Position::InContainer { cut, .. } => Some(cut.item),
             _ => None,
         },
     }

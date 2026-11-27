@@ -4,7 +4,7 @@
 # does not depend on it: when the download or the checksum fails, this script warns and exits
 # successfully, and the tile falls back to Noto Sans Mongolian.
 # Usage: fetch-mongolian-font.sh [directory]
-dest="${1:-$HOME/.fonts/helium-poster}"
+dest="${1:-$HOME/.fonts/umbruch-poster}"
 file=mngltitleotf.ttf
 sha256=e84fd1b17876ac49674ff7542ea9de6b787af2a66980500cf79e92854036bb04
 url="http://www.mongolfont.com/jAlmas/cms/documents/mongolfont/font/$file"

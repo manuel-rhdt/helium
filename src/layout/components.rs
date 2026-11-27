@@ -463,6 +463,12 @@ pub struct TextRun {
     pub manual_hyphen_points: Vec<usize>,
     /// The language of the text, for shaping, fallback fonts and hyphenation.
     pub lang: crate::style::properties::computed::Language,
+    /// If the run is the placeholder of a `leader()`: the string that fills the rest of the line
+    /// (the text of the run is a zero-width character).
+    pub leader: Option<std::sync::Arc<str>>,
+    /// `hyphenate-limit-chars`: the fewest characters of a word that is hyphenated, and the
+    /// fewest before and after the hyphen.
+    pub hyphenate_limits: (usize, usize, usize),
 }
 
 /// The border and the padding of an inline box, as far as they are painted behind and around a
@@ -1039,6 +1045,10 @@ pub struct ImageBox {
     /// `height` attributes ask for.
     pub width: f32,
     pub height: f32,
+    /// The image has a ratio (the one of `width` to `height`) but no size of its own: an `<svg>`
+    /// element with a `viewBox` and no `width` and `height`. Its width is then the one that is
+    /// available, and zero when the box is sized by its content.
+    pub ratio_only: bool,
 }
 
 impl Component for ImageBox {

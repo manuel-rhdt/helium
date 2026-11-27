@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "umbruch"
+dynamic = ["version"]
+description = "umbruch: an HTML/CSS/MathML/SVG to PDF renderer (the umbruch executable as a Python package)"
+readme = "README.md"
+requires-python = ">=3.9"
+license-files = ["resources/fonts/LICENSE-*.txt"]
+classifiers = ["Programming Language :: Rust", "Topic :: Printing"]
+
+[tool.maturin]
+# A wheel with the compiled `umbruch` executable, installed into the environment's scripts
+# directory.  No Python extension module: other programs talk to it over stdio (--serve).
+bindings = "bin"
+python-source = "python"
+module-name = "umbruch"
+# Fonts are embedded in the binary and fontconfig cannot be linked into a portable wheel.
+no-default-features = true
+strip = true

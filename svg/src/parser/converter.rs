@@ -743,6 +743,9 @@ pub(crate) fn convert_group(
         ..Group::empty()
     };
     collect_children(cache, &mut g);
+    if state.parent_clip_path.is_none() {
+        g.gouraud = gouraud_mesh(node, state);
+    }
 
     let object_bbox = || g.bounding_box().and_then(|r| r.to_non_zero_rect());
 
@@ -816,6 +819,145 @@ pub(crate) fn convert_group(
     g.filters = filters;
 
     Some(g)
+}
+
+/// The mesh of a `<g data-umbruch-mesh="gouraud">` group (see [`GouraudMesh`]), or `None` if the
+/// element is no such group or has children that are not valid triangles: the group is then
+/// painted like any other.
+fn gouraud_mesh(node: SvgNode, state: &State) -> Option<Arc<GouraudMesh>> {
+    if node.tag_name() != Some(EId::G)
+        || node.attribute::<&str>(AId::DataUmbruchMesh) != Some("gouraud")
+    {
+        return None;
+    }
+    if node.has_attribute(AId::DataVertices) || node.has_attribute(AId::DataTriangles) {
+        // the compact form: the mesh is in the attributes of the group and has no children
+        return match compact_gouraud_mesh(node) {
+            Some(mesh) => Some(Arc::new(mesh)),
+            None => {
+                log::warn!("a `data-umbruch-mesh` group has malformed `data-vertices` or `data-triangles`: it is not drawn as a mesh");
+                None
+            }
+        };
+    }
+    let mut triangles = Vec::new();
+    for child in node.children() {
+        if !child.is_element() {
+            continue;
+        }
+        if !child.is_visible_element(state.opt) {
+            // not drawn in the flat version either
+            continue;
+        }
+        match gouraud_triangle(child, state) {
+            Some(Some(triangle)) => triangles.push(triangle),
+            // a triangle with no area paints nothing
+            Some(None) => {}
+            None => {
+                log::warn!("a `data-umbruch-mesh` group has a child that is not a valid triangle with `data-colors`: it is drawn with flat triangles");
+                return None;
+            }
+        }
+    }
+    if triangles.is_empty() {
+        return None;
+    }
+    Some(Arc::new(GouraudMesh { triangles }))
+}
+
+/// The compact form of a mesh: `data-vertices` has six numbers per vertex (x, y, then red, green,
+/// blue and alpha in 0..=1) and `data-triangles` three indices into the vertices per triangle;
+/// numbers are separated by white space and commas. The vertices are shared by the triangles that
+/// meet in them, so this is much smaller than a path per triangle for a mesh of a grid, and it is
+/// much faster to read. A triangle with no area is left out; `None` if anything is malformed.
+fn compact_gouraud_mesh(node: SvgNode) -> Option<GouraudMesh> {
+    fn numbers<T: FromStr>(text: &str) -> Option<Vec<T>> {
+        text.split(|c: char| c.is_ascii_whitespace() || c == ',')
+            .filter(|part| !part.is_empty())
+            .map(|part| part.parse().ok())
+            .collect()
+    }
+    let values: Vec<f32> = numbers(node.attribute::<&str>(AId::DataVertices)?)?;
+    let indices: Vec<u32> = numbers(node.attribute::<&str>(AId::DataTriangles)?)?;
+    if values.len() % 6 != 0 || indices.len() % 3 != 0 || !values.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let count = values.len() / 6;
+    let vertex = |index: u32| -> Option<(tiny_skia_path::Point, [f32; 4])> {
+        let v = values.get(index as usize * 6..index as usize * 6 + 6)?;
+        let color = [v[2], v[3], v[4], v[5]].map(|c| c.clamp(0.0, 1.0));
+        Some((tiny_skia_path::Point::from_xy(v[0], v[1]), color))
+    };
+    let mut triangles = Vec::with_capacity(indices.len() / 3);
+    for corner in indices.chunks_exact(3) {
+        if corner.iter().any(|&i| i as usize >= count) {
+            return None;
+        }
+        let (a, b, c) = (vertex(corner[0])?, vertex(corner[1])?, vertex(corner[2])?);
+        let area = (b.0.x - a.0.x) * (c.0.y - a.0.y) - (c.0.x - a.0.x) * (b.0.y - a.0.y);
+        if area == 0.0 || !area.is_finite() {
+            continue;
+        }
+        triangles.push(GouraudTriangle { points: [a.0, b.0, c.0], colors: [a.1, b.1, c.1] });
+    }
+    if triangles.is_empty() {
+        return None;
+    }
+    Some(GouraudMesh { triangles })
+}
+
+/// `Some(Some(_))` for a valid triangle, `Some(None)` for a valid one without an area, `None` if
+/// the element is not a valid triangle.
+fn gouraud_triangle(node: SvgNode, state: &State) -> Option<Option<GouraudTriangle>> {
+    use tiny_skia_path::PathSegment;
+    if node.tag_name() != Some(EId::Path) {
+        return None;
+    }
+    let path = super::shapes::convert_path_data(node.attribute::<&str>(AId::D)?)?;
+    let mut points = Vec::with_capacity(3);
+    for (index, segment) in path.segments().enumerate() {
+        match (index, segment) {
+            (0, PathSegment::MoveTo(p)) => points.push(p),
+            (1 | 2, PathSegment::LineTo(p)) => points.push(p),
+            (3, PathSegment::Close) => {}
+            _ => return None,
+        }
+    }
+    if points.len() != 3 {
+        return None;
+    }
+    node.resolve_transform(AId::Transform, state).map_points(&mut points);
+    if !points.iter().all(|p| p.x.is_finite() && p.y.is_finite()) {
+        return None;
+    }
+
+    let mut colors = [[0.0f32; 4]; 3];
+    let mut vertices = node.attribute::<&str>(AId::DataColors)?.split(';');
+    for color in &mut colors {
+        let mut parts = vertices.next()?.split(',');
+        let mut components = [0.0f32, 0.0, 0.0, 1.0];
+        for (i, slot) in components.iter_mut().enumerate() {
+            match parts.next() {
+                Some(text) => *slot = text.trim().parse::<f32>().ok().filter(|v| v.is_finite())?,
+                None if i == 3 => {}
+                None => return None,
+            }
+        }
+        if parts.next().is_some() {
+            return None;
+        }
+        *color = components.map(|v| v.clamp(0.0, 1.0));
+    }
+    if vertices.next().is_some_and(|rest| !rest.trim().is_empty()) {
+        return None;
+    }
+
+    let area = (points[1].x - points[0].x) * (points[2].y - points[0].y)
+        - (points[2].x - points[0].x) * (points[1].y - points[0].y);
+    if area == 0.0 || !area.is_finite() {
+        return Some(None);
+    }
+    Some(Some(GouraudTriangle { points: [points[0], points[1], points[2]], colors }))
 }
 
 fn convert_path(

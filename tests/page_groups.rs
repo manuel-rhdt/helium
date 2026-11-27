@@ -1,5 +1,4 @@
-//! Page groups: the first page of a named group of pages and the first page of the document have
-//! their own margins.
+//! The first page of the document has its own margins.
 
 mod common;
 
@@ -17,7 +16,7 @@ fn layout(name: &str, html: &str) -> (Vec<Item>, String) {
     let output = dir.join(format!("page_groups__{}.pdf", name));
     let dump = dir.join(format!("page_groups__{}.json", name));
     std::fs::write(&input, html).unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])
@@ -150,4 +149,35 @@ fn the_pages_have_their_own_height() {
     );
     let pages: Vec<u64> = boxes(&items, "div").iter().map(|d| d.page).collect();
     assert_eq!(pages, [0, 0, 1], "{items:?}");
+}
+
+const CHAPTERS: &str = "<style>@page { size: 300pt 300pt; margin: 50pt; } @page :nth(1 of chapter) { margin-top: 10pt; }
+    section { page: chapter; break-before: page } .box { height: 150pt; }</style>
+    <section><div class=\"box\"></div><div class=\"box\"></div></section>
+    <section><div class=\"box\"></div><div class=\"box\"></div></section>";
+
+#[test]
+fn the_first_page_of_a_page_group_has_its_own_margins() {
+    // the content area is 200pt high, so a box of 150pt fills a page; the first page of every
+    // chapter (a page group) has a margin of 10pt on top, the others of 50pt
+    let (items, log) = layout("group_margins", CHAPTERS);
+    let divs = boxes(&items, "div");
+    assert_eq!(divs.iter().map(|d| d.page).collect::<Vec<_>>(), [0, 1, 2, 3], "{log}");
+    let tops: Vec<f64> = divs.iter().map(|d| d.rect[1]).collect();
+    for (actual, expected) in tops.iter().zip([10.0, 50.0, 10.0, 50.0]) {
+        assert!((actual - expected).abs() < 0.1, "{tops:?}");
+    }
+}
+
+#[test]
+fn only_the_first_page_of_a_group_is_known_where_the_pages_are_chosen() {
+    // the size and the margins follow `:nth(1 of name)` only: that the second page of a group
+    // has other margins would change how many boxes fit before the pages are chosen. The rule is
+    // for the margin boxes and the counters of the page.
+    let (items, _) = layout(
+        "group_later",
+        &CHAPTERS.replace("@page :nth(1 of chapter) { margin-top: 10pt; }", "@page :nth(2 of chapter) { margin-top: 10pt; }"),
+    );
+    let tops: Vec<f64> = boxes(&items, "div").iter().map(|d| d.rect[1]).collect();
+    assert!(tops.iter().all(|top| (top - 50.0).abs() < 0.1), "{tops:?}");
 }

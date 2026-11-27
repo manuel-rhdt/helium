@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
-/helium_derive/target
+/umbruch_derive/target
 testbook_site/
-/helium_paginate/target
+/umbruch_paginate/target
 __pycache__/
+/svg/target

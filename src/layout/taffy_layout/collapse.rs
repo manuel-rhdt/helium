@@ -28,7 +28,7 @@ use crate::layout::inline_size::decoration_colors;
 use crate::style::properties::computed::{PixelLength as Px, PaintColor};
 use crate::style::properties::specified::{BorderCollapse, BorderStyle, Direction};
 
-use super::tree::HeliumTree;
+use super::tree::UmbruchTree;
 
 /// A cell placed in the table grid: `(cell, row, column, rows, columns)`, with the column in
 /// logical order (the first column is at the right in a right-to-left table).
@@ -102,7 +102,7 @@ enum Side {
     Right,
 }
 
-impl HeliumTree<'_, '_> {
+impl UmbruchTree<'_, '_> {
     /// Whether the table has `border-collapse: collapse`.
     pub(super) fn has_collapsed_borders(&self, table: NodeId) -> bool {
         self.computed_values

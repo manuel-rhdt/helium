@@ -7,8 +7,8 @@ use strict_num::PositiveF32;
 use svgtypes::{Length, LengthUnit as Unit};
 
 use super::OptionLog;
-use super::converter::{self, Cache, SvgColorExt};
-use super::svgtree::{AId, EId, SvgNode};
+use super::converter::{self, Cache};
+use super::svgtree::{AId, CssColor, EId, SvgNode};
 use crate::*;
 
 pub(crate) enum ServerOrColor {
@@ -296,10 +296,10 @@ fn convert_stops(grad: SvgNode) -> Vec<Stop> {
             prev_offset = Length::new_number(offset);
             let offset = crate::f32_bound(0.0, offset as f32, 1.0);
 
-            let (color, opacity) = stop
-                .attribute(AId::StopColor)
-                .unwrap_or_else(svgtypes::Color::black)
-                .split_alpha();
+            let stop_color = stop
+                .attribute::<CssColor>(AId::StopColor)
+                .unwrap_or_else(CssColor::black);
+            let (color, opacity) = (stop_color.color, stop_color.opacity);
 
             let stop_opacity = stop
                 .attribute::<Opacity>(AId::StopOpacity)

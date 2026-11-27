@@ -9,7 +9,7 @@ fn dump(name: &str, html: &str) -> Value {
     let input = dir.join(format!("{}.html", name));
     std::fs::write(&input, html).unwrap();
     std::fs::create_dir_all(dir.join("wpt-pdfs")).unwrap();
-    let output = common::helium()
+    let output = common::umbruch()
         .unwrap()
         .arg("--dump-layout")
         .arg("-")
@@ -347,4 +347,46 @@ fn boxes_separated_by_white_space_are_not_duplicated() {
     let mut ys: Vec<f64> = boxes.iter().map(|b| f(b, "y")).collect();
     ys.dedup();
     assert_eq!(ys.len(), 3, "each box is on its own line");
+}
+
+/// The `y` of the paint rect of `color` (the first one).
+fn y_of(dump: &Value, color: [u8; 3]) -> f64 {
+    f(&rects_with(dump, color)[0], "y")
+}
+
+#[test]
+fn white_space_after_a_box_that_fills_the_line_does_not_make_a_line() {
+    // The box is as wide as the container or wider; the space behind it, in front of the block,
+    // hangs: the green block follows the line of the box at the same distance as with a narrower
+    // box, and not a line lower.
+    let page = |width: u32| {
+        dump(
+            &format!("full_line_{}", width),
+            &format!(
+                "<style>body{{margin:0}}</style><div style='width:288px'>\
+                 <span style='display:inline-block;width:{}px;height:50px;background:#f00'></span>\n\
+                 <div style='height:10px;background:#0f0'></div></div>",
+                width
+            ),
+        )
+    };
+    let narrow = y_of(&page(250), GREEN) - y_of(&page(250), RED);
+    for width in [288, 300] {
+        let dump = page(width);
+        assert_eq!(y_of(&dump, GREEN) - y_of(&dump, RED), narrow, "width {}", width);
+    }
+}
+
+#[test]
+fn a_box_without_width_is_on_its_line() {
+    // 100px wide with a margin of -100px: its margin box has no width at all
+    let dump = dump(
+        "zero_width",
+        "<style>body{margin:0}</style>\
+         <span style='display:inline-block;width:100px;height:100px;margin-left:-100px;background:#0f0'></span> ",
+    );
+    let green = &rects_with(&dump, GREEN)[0];
+    assert_eq!(f(green, "width"), 100.0);
+    // (without a line the box stayed at the origin of the page, at its negative margin)
+    assert!(f(green, "y") > 1.0 && f(green, "x") > -99.0, "{green}");
 }

@@ -36,12 +36,12 @@ Floats (`float: top` and `bottom`) are done in the basic form that the section "
 The pipeline in `src/layout/mod.rs` (`layout`) is:
 
 1. `FindPossibleLineBreaks` finds the break opportunities of every paragraph.
-2. `TaffyBlockLayout` (`src/layout/taffy_layout/mod.rs`) builds `HeliumTree` once and does the
+2. `TaffyBlockLayout` (`src/layout/taffy_layout/mod.rs`) builds `UmbruchTree` once and does the
    rest of the work on it:
    - `flow.rs` makes the *flow* from the tree: the items of the kernel. A block container is
      the box of its top edge, its kids with a break and a gap between each two of them, and the
      box of its bottom edge. A paragraph is its two edges and a paragraph item. Boxes that are
-     not split (replaced boxes, flex and grid containers, boxes with a `height`, orthogonal
+     not split (replaced boxes, flex containers, boxes with a `height`, orthogonal
      flows) are one box. A table is split between its rows, row groups and captions, where no
      cell spans over the break. A container with columns is one item, `Item::Container`, which
      the kernel asks the layout service for the fragments of. Every box knows its items
@@ -58,7 +58,7 @@ The pipeline in `src/layout/mod.rs` (`layout`) is:
      with columns that fits in what is left of a page (`fragment`; see "A container that is
      split over pages").
    - `paginate.rs` gives the kernel the geometry of the page that starts at every place: the
-     name of the first content on it, whether it starts a page group, and its kind decide the
+     name of the first content on it, the page groups that it starts and its kind decide the
      margins and the size. The exact solver with `CssObjective` chooses the pages.
    - `columns.rs` chooses and lays out the columns of a container with columns (see "Multi-column
      layout"): for a container that is not split, its balanced columns, for one that is split, the
@@ -76,23 +76,95 @@ Limits of this, in order of importance:
 - **Paragraphs are rigid.** There are no profiles and no joint optimisation (step 5). A paragraph
   that continues on a page of another width is broken again from the cut on, without the state of
   the line breaker.
-- **Monolithic containers.** Flex and grid containers and table rows are never split. A table is
-  split between rows, but it is laid out as a whole, again for the width of every page that it
+- **Monolithic containers.** A flex or grid container (see "Grids that are split") that has a
+  `height` or a `min-height`, an `inline-flex` or `inline-grid`, or one that is inside of another
+  flex or grid container, a table cell or a container with columns, or is the root. A table is split between
+  rows, and a table row that is taller than a page is split too (see "Table rows that are split").
+  A table is laid out as a whole, again for the width of every page that it
   is on (the window shows Taffy all its cells, and the galley of each width lays out all of
   it). The rows of a page are therefore laid out for that page and the paginator counts them
   so, but the columns of a table follow the width of each page instead of staying the ones of
   the page where it starts. Pinning the columns is step 6 of "Order of work" (the test
   `the_columns_of_a_table_stay_the_ones_of_the_page_where_it_starts` is ignored until then).
   The header rows of a table (the first `thead`, if only captions are in front of it) are
-  repeated at the top of every page that goes on inside of the table. The kernel reserves their
+  repeated at the top of every page that goes on inside of the table, if the header is not more
+  than a quarter of the page. The kernel reserves their
   height there (`Problem::repeats`, `PageFill::repeated`, the page starts behind the break that
   follows the header), and the writer paints the rows again, as parts of the boxes
   (`Writer::repeating`), with no element of their own in the structure tree: their text belongs to the cells of the
   header (the content of a tagged element may be on several pages). The gap between the header and
   the first row (`border-spacing`) is not repeated, and a header that comes after the rows in
-  the source is laid out first but not repeated.
+  the source is laid out first but not repeated. The room of the header is kept on a page that
+  starts inside of a row that is split over pages, too. The footer rows of a table (the first
+  `tfoot`, which is laid out last) are repeated directly behind the last row of every page that
+  ends inside of the table, as CSS Tables 3 (6.2) has it, if the footer is not more than a quarter
+  of the page (`Repeat::footer`): the kernel adds the room of the footer to a page that ends in
+  front of it (`PageFill::repeated`), and the writer writes the rows again, as parts of the boxes,
+  behind the part of the table that is on the page, where what goes on on the next page ends at
+  the top of the footer. The page that has the footer has it where it is, once.
   A box with a `height` is not split either (a minimum height is dropped for a box that is
   cut).
+- **Table rows that are split.** A row that may be taller than a page is a container item
+  (`Item::Container`) of the flow, like a multi-column container, and the layout service finds its
+  fragments (`rows.rs`). The row is laid out whole with the table, as before, and the page has a
+  part of it. The cuts are offsets from the top of the row in 1/64 pixel, which is the cut of the
+  container (`ContainerCut::item`); there is one number for the whole row, whatever the number of
+  its cells. Each cell is cut where its own pieces end: a line of text, or a box that is not
+  split (a replaced box, a nested table, a flex or grid container, a box with a `height`), is on
+  the fragment its bottom is in. A cell with a line across the cut goes on with that line, at
+  its top, on the next page, so each cell is moved down by how far its first line on the page is
+  above the cut, and the fragment is as high as its highest cell. Nothing in a fragment depends on
+  the earlier cuts (a piece is on the fragment that its bottom is in), so the cut is the only
+  state that the kernel keeps. The writer (`write_box`) writes the row whole above the page, shifted
+  up by the start of the part, and clips what it writes to the part (`Writer::clip`): boxes outside
+  of it are not written, the ones across it are written as parts with no padding and border at the
+  cut, and the lines of a paragraph are the ones in the part. A row that is at most half as high as
+  the page, and as wide, is kept whole, as CSS Tables 3 (6.1) has it; the other rows are "freely
+  fragmentable": the page takes as much of them as fits, so a long row does not leave the room
+  below the rows in front of it empty. A row is only a container item if the text in its cells is
+  estimated to take a quarter of a page or more (`row_may_split`), so most rows are the boxes that
+  they were. The cuts inside a paragraph of a cell that leave fewer lines than `orphans` in front
+  of the cut or than `widows` behind it are fragments with a violation, which the pages avoid like
+  the ones of the paragraphs of the flow. Not done: a cell that spans rows (`rowspan`) is not
+  split, nor a row behind or in front of one; a nested table or a flex or grid container in a cell
+  is one piece; the header and footer rows are not split; a table on pages of
+  different widths is cut by the offsets of the last width that the layout service was asked
+  about.
+- **Grids that are split.** (Flex containers are the same: their items are the cells, the lines of a
+  wrapping container are the rows, and a column container is a stack of items.) A grid container whose height is the one of its content is a container
+  item (`Item::Container`) of the flow, like a table row that may be taller than a page, and its
+  fragments are found by the layout service with the same machinery (`rows.rs`: `RowCuts` with
+  `stacked` set). The grid is laid out whole, the items are the cells, and what is on a page is the
+  part of it between two cuts, in 1/64 pixel from its top. The differences to a row are the ones that
+  come from the items being in more rows than one:
+  - An item that is not taller than half a page is one piece, so no cut is in it (an item with
+    nothing in it that can be cut is one, too). A cut that is across such an item is not a
+    candidate. Of a taller item the pieces are the lines and the boxes that are not split, and the
+    padding and the border of the item are those of its first and last piece (no cut leaves them
+    on a page of their own). The space that a stretched item has below its content is not.
+  - A grid has no "kept whole if it is at most half a page" rule: it has no place to be cut in if
+    it has one row of items that are not cut. A grid of several short rows is cut between them.
+  - A fragment that starts at a cut that no piece is across starts at the top of the first piece
+    behind it, so the gap between two rows (and the space an item is aligned by) is not at the top
+    of the page. A fragment that starts where pieces are across the cut starts at the cut, as the
+    ones of a row do, and the items that are below the items that are moved down to start at the cut
+    are moved down with them (by the most of how far those are), so that nothing overlaps. Items
+    beside them are not.
+  - For the page layout the grid is as high as its part (`compute_child_layout`), laid out whole
+    with the style that the grid has (a window keeps its padding, border and minimum height); the
+    writer writes it whole above the page, shifted up by the start of the part, and clips what is
+    written to the part (`Writer::clip`), as it does for a row. The absolutely positioned
+    children of the grid are written with its first part.
+  - Forced breaks: `break-before` and `break-after` (`page`, `always`, `left`, `right`, `recto` and
+    `verso`; recto and verso as for a document that is set from left to right) of an item, of its first
+    and last box (propagated), and of the boxes in an item that are between each other, are
+    cuts of the container (`RowCuts::forced`). The fragments of the container end at the next one at
+    the latest and none goes on behind it, so a break in front of an item in a row of a wrapping flex
+    container or of a grid is a break in front of the whole row. A forced break behind the last piece
+    or in front of the first is none. Not done: `break-inside: avoid` and the `avoid` values of the
+    items and of the boxes in them (only the ones of the grid count), and `break-before: column`.
+    The orphans and widows of the items are only the ones of the paragraphs in them. A grid is cut
+    by the offsets of the last width that the layout service was asked about, as a row is.
 - **Multi-column containers.** A container with columns whose height is the one of its content
   is split over pages. One that has a `height`, `max-height`, `min-height` or `aspect-ratio`, one
   inside of another container with columns, a flex or grid container or a table cell, and any in a
@@ -119,7 +191,7 @@ Limits of this, in order of importance:
 
 Two properties of the code that the design builds on:
 
-- helium implements Taffy's tree traits itself (`HeliumTree` in `taffy_layout/tree.rs`)
+- umbruch implements Taffy's tree traits itself (`UmbruchTree` in `taffy_layout/tree.rs`)
   instead of using `TaffyTree`. It controls which children and which styles Taffy sees.
 - `paragraph::compute_paragraph_breakpoints` takes the line width as a function of the line
   number, and `InlineFormattingContext::compute_lines_from` breaks a paragraph from a break
@@ -157,7 +229,7 @@ lays out the document as a whole.
   solver and of any objective.
 
 The kernel, the paragraph breaker, the solvers and the metrics live in a crate
-of their own, `helium_paginate`, next to `helium_derive`. It has no dependency
+of their own, `umbruch_paginate`, next to `umbruch_derive`. It has no dependency
 on the ECS, on fonts or on Taffy, so it builds in seconds and can run on
 recorded problems.
 
@@ -180,10 +252,17 @@ pub struct PageStart {
 ```
 
 The geometry of a page follows from its `PageKind`, from the page name of the
-first content on it, and from whether it starts a page group. The name and the
-group are properties of the break at which the page starts: a change of the
-name already forces a break. The only thing that depends on the path taken is
-the `PageKind`. The full state of a solver is therefore
+first content on it and from the page groups that it starts (CSS GCPM 3, 3.2: the
+pages of an element with a `page` name and a forced break). The name and the groups
+are properties of the break at which the page starts: a change of the name already
+forces a break, and a group starts where its element does, behind the edges of the
+boxes in front of it that have no content (`paginate::Classes`). `:nth(1 of name)`
+is the page that starts a group, so it is known here and can set the size and the
+margins. The number of a page in a group (`:nth(2 of name)`) is not: it depends on the
+pages that are chosen, so it is computed behind the solver (`paginate::group_positions`)
+and is for what is decided after it: the margin boxes, the `page` counter, the labels
+and the background. (`name:first` is the first page of the document, if it has that name:
+CSS Paged Media 3, 4.2.2.) The only thing that depends on the path taken is the `PageKind`. The full state of a solver is therefore
 (`BreakToken`, `PageKind`), which keeps an exact search small.
 
 The inline size of a page is known before anything is laid out for it. A
@@ -373,7 +452,7 @@ page continues with ways of its own from the cut, so the state of a node is as i
 ways. A way whose worst line is worse than the tolerance (TeX's `\tolerance`, 200) is left out,
 and the first way is never left out. `Solution::choices` has the ways of the pages, and
 `realize` checks them; the layout breaks the paragraphs of a page as the page chose
-(`HeliumTree::page_variants`, `lines_between`).
+(`UmbruchTree::page_variants`, `lines_between`).
 
 **The exchange rate.** TeX has none: its page builder does not change how paragraphs are broken,
 and an author who wants another number of lines sets `\looseness` by hand. What TeX gives are the
@@ -428,7 +507,7 @@ The profile tables are the existing dynamic program in
 program is quadratic in the number of opportunities of a paragraph and keeps no
 list of active nodes. It needs one before it is run per width and per cut.
 
-`paragraph.rs` moves into `helium_paginate`. The live and the recorded
+`paragraph.rs` moves into `umbruch_paginate`. The live and the recorded
 implementation of `Paragraphs` then run the same code.
 
 ### Page fills
@@ -673,7 +752,7 @@ page on. For plain block flow this must never happen, and a test asserts it.
 ### How Taffy serves a part of the document
 
 Taffy has no notion of fragmentation and no way to stop early. The service
-answers through a *window* on `HeliumTree`:
+answers through a *window* on `UmbruchTree`:
 
 - `child_ids` yields only the children inside the window;
 - the style of a box that is cut has no padding and no border at the cut edge,
@@ -694,7 +773,7 @@ laid out whole.
 
 `LayoutService::content_extent(root, inline)` and its companions `extent_in` and `lines_in` answer
 for the box `root` laid out on its own. `BoxRef` names a box of the flow (in the engine, the index
-of its node in `HeliumTree`).
+of its node in `UmbruchTree`).
 
 - **What `inline` is.** The width of the *content box* of `root`. `root` is laid out as the root
   of a formatting context: its own `width`, `min-width` and `max-width` do not apply, its padding
@@ -792,7 +871,7 @@ multiplies the state of the search for little gain.
 For solver work without the engine, a problem is recorded:
 
 ```
-helium --dump-pagination problem.json input.html out.pdf
+umbruch --dump-pagination problem.json input.html out.pdf
 ```
 
 The file holds the `Problem` and what a `RecordedService` needs to answer the
@@ -805,7 +884,7 @@ dependency behind a feature.
 Recorded problems cover the flow only. Containers that are split need the real
 service.
 
-A binary in `helium_paginate` runs named solvers over a directory of problems
+A binary in `umbruch_paginate` runs named solvers over a directory of problems
 and prints the metrics and the time of each. The corpus starts with the
 gallery (`gallery/book`, `gallery/report`, ...) and the documents in
 `tests/documents`.
@@ -823,7 +902,7 @@ Tests:
   under the same objective.
 
 For a search such as OpenEvolve, the unit that is evolved is one Rust file
-with a `Solver`. The evaluator builds `helium_paginate`, runs the harness and
+with a `Solver`. The evaluator builds `umbruch_paginate`, runs the harness and
 scores the metrics. The exact solver on small problems gives the reference.
 
 ## Changes to the engine
@@ -831,7 +910,7 @@ scores the metrics. The exact solver on small problems gives the reference.
 The pipeline is now:
 
 1. Construct, find line break opportunities (unchanged).
-2. Build `HeliumTree` once. Make the flow from it.
+2. Build `UmbruchTree` once. Make the flow from it.
 3. Solve, with the layout service answering the kernel.
 4. Apply: lay out every page through its window and write the positions. The decorations of
    boxes on more than one page are made from the parts that were written for each page. There
@@ -870,7 +949,7 @@ the first page.
 
 ## Order of work
 
-1. Done. `helium_paginate` with tokens, the flat flow, the kernel and `CssObjective`;
+1. Done. `umbruch_paginate` with tokens, the flat flow, the kernel and `CssObjective`;
    `paragraph.rs` moves there. The exact solver passes the equivalence test.
 2. Done. The windowed view and the layout of a page for block flow. Pages of differing
    width work. Page groups, the shift, the guessed page class and `stop_at_forced` are removed.
@@ -883,7 +962,9 @@ the first page.
    follows its scales (done, opt-in with `looseness`); the harness that says whether it is better;
    a better rate from it; profiles after that.
 6. `fragment` for tables between rows, with pinned columns.
-7. `fragment` for grid and flex, with parallel parts.
+7. `fragment` for grid and flex, with parallel parts. Done for grids, without a token with parallel
+   parts: the grid is one container item that has a cut for all its items (see "Grids that are split").
+   Flex is done the same way.
 
 Steps 1 to 3 are the base for iterating on solvers. Steps 5 to 7 are
 independent of each other.
@@ -1092,11 +1173,11 @@ level; the `break-inside` of the boxes around a container does not reach the col
 another fragmentation context. The breaks do not propagate out of a container: the `break-before`
 of its first child is a break between columns of it, not before the container.
 
-**A layout mode in `HeliumTree`.** Taffy has no multi-column layout. A container with columns is a
+**A layout mode in `UmbruchTree`.** Taffy has no multi-column layout. A container with columns is a
 leaf for Taffy, like a paragraph: `compute_cached_layout` calls `compute_columns_layout`, which
 asks the plan for a height and returns the size that `compute_leaf_layout` makes of it, with the
 width, padding, border, `min-` and `max-` sizes and `height` of the box as for any block. The
-columns are then laid out by helium, as a table is turned into a grid: for every column of the plan
+columns are then laid out by umbruch, as a table is turned into a grid: for every column of the plan
 the window is set to the part of the content that is in the column (the box of the container
 is a window root: `Window::scope`), the container is laid out as a block of the width of the
 column with no padding, border and margin, and the layouts of the boxes that Taffy has just laid
@@ -1225,7 +1306,7 @@ container what it asked and what it was answered. This is what a page needs to f
 the fragment again, so that the layout of the page and the choice of the pages cannot disagree
 (the numbers are the ones the kernel asked with, and the same arguments give the same answer).
 
-**The inner problem of a fragment.** `helium_paginate::plan_fragment` makes the answer; it is in
+**The inner problem of a fragment.** `umbruch_paginate::plan_fragment` makes the answer; it is in
 the crate so that the kernel tests can run it, and the engine only gives it the extents and lines
 of the content at the width of a column (`InColumns`, as for a container that is not split).
 
@@ -1265,7 +1346,7 @@ span says nothing about that, so the window knows the containers that it starts 
 (`Window::start_container` and `end_container`): the box is cut there (no padding, border or margin
 at the cut, no minimum height, and it has a fragment of its own for the decoration), as a box with
 items on both sides of the window is. In the layout of the page the container is a leaf for Taffy, as
-high as the plan found for it (`HeliumTree::page_fragments`, set from `Kernel::fragments` for the
+high as the plan found for it (`UmbruchTree::page_fragments`, set from `Kernel::fragments` for the
 page). Its columns are laid out one after the other, every one through a window of its own that
 replaces the one of the page while it is set (`save_window` and `restore_window`), and written with
 the layouts of that column. The windows are therefore nested: the one of the page, and the ones of
@@ -1482,7 +1563,7 @@ more within the tolerance of 200 are 5 of 78), so these numbers are a lower boun
 set to a longer measure.
 
 The two numbers that decide how much is taken can be changed without rebuilding
-(`HELIUM_LINE_TOLERANCE`, the exchange rate of lines and room, and `HELIUM_VARIANT_TOLERANCE`, the
+(`UMBRUCH_LINE_TOLERANCE`, the exchange rate of lines and room, and `UMBRUCH_VARIANT_TOLERANCE`, the
 worst badness of a line of another breaking; both 200 by default), and the harness takes them as
 `--knob LINE_TOLERANCE=400`. With `looseness: 2`, 20 documents of each kind:
 
@@ -1528,7 +1609,7 @@ choice cannot know: the page has to choose among fragments (see "Multi-column la
 fragment in it (the `end` of a fragment is part of what the page records, `PageFragment`), but the
 tree service gave only the fragment that fills the page. It gives now that one and up to three
 that end earlier: the columns are chosen again for the room less one, two and three lines of the
-first paragraph (`HELIUM_EARLIER_FRAGMENTS`, 3 by default, 0 for the old behaviour), and the ones
+first paragraph (`UMBRUCH_EARLIER_FRAGMENTS`, 3 by default, 0 for the old behaviour), and the ones
 that end at a place that another has are left out. The plans are kept by where the fragment starts,
 the page, the room, and where it ends. The page takes a fragment that ends earlier where that
 costs less in total, which is where the room left on the pages is spread better.
@@ -1583,7 +1664,7 @@ Two results of the first runs looked like bugs, and one was.
 
 ### Looking at the choices
 
-`helium --dump-pagination FILE` (`-` for stdout) writes what the paginator chose and why, as JSON:
+`umbruch --dump-pagination FILE` (`-` for stdout) writes what the paginator chose and why, as JSON:
 for every page its room, how it ends, orphans, widows, avoided breaks and overflow, its cost in
 the parts of the typed cost, the price of its lines in room (`line_room`), the ways chosen for its
 paragraphs, and for every paragraph on it the lines it has with their badness and the ways it
@@ -1616,7 +1697,7 @@ a mean badness that goes from 31 to 46: that is the exchange that the two knobs 
 In the columns of a container that goes over pages it does not work as well: 66.8% of the columns are full,
 and `looseness` gets that to 76.8% (78.5% with the tolerances open), and the first
 fragment of a container is always full. The fragments that start in the middle of a paragraph are the ones that are
-short (and `HELIUM_EARLIER_FRAGMENTS` takes about four points of this away, on purpose: it leaves room
+short (and `UMBRUCH_EARLIER_FRAGMENTS` takes about four points of this away, on purpose: it leaves room
 to the pages where that is cheaper, see above). In a container with one column the tolerances open give 89%, with three
 columns `looseness` changes nothing, and a way of a paragraph is hardly ever taken there. This has not
 been explained: the same machinery gives 100% for the pages of the book.
@@ -1628,7 +1709,7 @@ been explained: the same machinery gives 100% for the pages of the book.
   the known size, the available space and the size of the parent; the mode (sizing mode and
   whether the margins are collapsible) is kept once for the node. Neither the style nor the
   children are in the key. A node that is laid out in a window (other children, other style)
-  must therefore not use the cache: `HeliumTree` returns no entry and stores none for the
+  must therefore not use the cache: `UmbruchTree` returns no entry and stores none for the
   nodes that the window changes (`Node::windowed`). The nodes inside the window that are not
   changed keep sharing their entries, and since a parent that is laid out for another width
   replaces the final entry of its child, the layout of a node's descendants is always the one

@@ -195,6 +195,46 @@ fn conic<C: Color>(
     context.pdf_context.write_mesh_shading(&mesh).map_err(|error| Error::new(ErrorKind::InvalidData, error.to_string()))
 }
 
+/// How the opacities of the stops of a gradient are painted.
+pub(crate) enum StopAlpha {
+    /// All stops are opaque.
+    Opaque,
+    /// All stops have the same opacity, which is that of the fill.
+    Uniform(f32),
+    /// The opacity changes along the gradient: it is a second gradient of gray levels that is the
+    /// soft mask of the first (see [`apply_alpha_mask`]).
+    Varying,
+}
+
+/// Decides how a gradient with stops of these opacities is painted. This, and [`apply_alpha_mask`],
+/// are the only place that handles the transparency of gradients: the gradients of CSS and of SVG
+/// both go through them. Transparency is not allowed in PDF/A-1.
+pub(crate) fn stop_alpha(alphas: impl Iterator<Item = f32>) -> Result<StopAlpha, Error> {
+    let (min, max) = alphas.fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), a| (min.min(a), max.max(a)));
+    if max - min >= 1e-4 {
+        super::pdfa1_forbid("a gradient with transparent colours")?;
+        Ok(StopAlpha::Varying)
+    } else if max < 1.0 {
+        super::pdfa1_forbid("a gradient with transparent colours")?;
+        Ok(StopAlpha::Uniform(max))
+    } else {
+        Ok(StopAlpha::Opaque)
+    }
+}
+
+/// Sets a luminosity soft mask in the graphics state, in the coordinates that are current, whose
+/// form is `bbox` large and which `paint_alpha` fills with the opacities as gray levels. What is
+/// painted afterwards is as opaque as the mask is bright. The caller saves the graphics state
+/// before and restores it after.
+pub(crate) fn apply_alpha_mask(
+    context: &mut PageContext<'_, '_, '_>,
+    bbox: [Pt; 4],
+    paint_alpha: impl FnOnce(&mut PageContext<'_, '_, '_>) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let mask = context.pdf_context.write_form(bbox, Some(TransparencyGroup::new(ColorSpace::DeviceGray)), None, paint_alpha)?;
+    context.apply_ext_gstate(ExtGState::new().with_soft_mask(SoftMask::luminosity(mask)))
+}
+
 /// Paints a shading over the current clip. `artifact` marks it as an artifact of the page, which
 /// content in a form that is only a mask does not need.
 fn paint_built(context: &mut PageContext<'_, '_, '_>, built: Built, artifact: bool) -> Result<(), Error> {
@@ -239,6 +279,7 @@ pub fn paint(
         let (x_step, y_step) = (Pt(space.length(tiling.step.0)), Pt(space.length(tiling.step.1)));
         let cell_height = PixelLength(height);
         let pattern = context.pdf_context.write_tiling_pattern(bbox, x_step, y_step, matrix, filter, |cell| {
+            super::set_device_defaults(cell)?;
             paint_plain(cell, gradient, cell_height, false)
         })?;
         let key = context.add_tiling_pattern(pattern);
@@ -279,14 +320,15 @@ fn paint_plain(
     artifact: bool,
 ) -> Result<(), Error> {
     let space = Space { page_height };
-    let alphas = gradient.stops.iter().map(|stop| stop.color[3]);
-    let min_alpha = alphas.clone().fold(f32::INFINITY, f32::min);
-    let max_alpha = alphas.fold(f32::NEG_INFINITY, f32::max);
-
     // The colours of a gradient with one that sRGB cannot hold are in the ICC space of the wide colours
     // (the channels of the stops are the extended sRGB ones; the stops are close enough for the shading to
     // interpolate in that space). A conic gradient is a mesh with device colours: it is clipped to sRGB.
-    let wide = gradient.has_wide_colors() && !matches!(gradient.geometry, Geometry::Conic { .. });
+    let mut wide = gradient.has_wide_colors() && !matches!(gradient.geometry, Geometry::Conic { .. });
+    if wide && super::pdfa1_active() {
+        // the ICC space of the wide colours is a profile of version 4, which PDF/A-1 does not allow
+        log::warn!("the wide-gamut colours of a gradient are clipped to sRGB: PDF/A-1 does not allow ICC profiles of version 4");
+        wide = false;
+    }
     let profile = if wide { Some(super::wide_color_space(context)?) } else { None };
     let mut color = build(context, space, gradient, |c| {
         if wide {
@@ -305,31 +347,24 @@ fn paint_plain(
             other => other,
         };
     }
-    if max_alpha - min_alpha < 1e-4 {
-        // one opacity for the whole gradient
-        if max_alpha < 1.0 {
-            context.set_fill_alpha(f64::from(max_alpha))?;
-        }
-    } else {
-        // The opacities are a second gradient, of gray levels, which is the soft mask. It
-        // covers the box that the gradient is painted into.
-        let paint = gradient.paint;
-        let bbox = [
-            Pt(space.x(paint.x)),
-            Pt(space.y(paint.y + paint.height)),
-            Pt(space.x(paint.x + paint.width)),
-            Pt(space.y(paint.y)),
-        ];
-        let mask = context.pdf_context.write_form(
-            bbox,
-            Some(TransparencyGroup::new(ColorSpace::DeviceGray)),
-            None,
-            |form| {
+    match stop_alpha(gradient.stops.iter().map(|stop| stop.color[3]))? {
+        StopAlpha::Opaque => {}
+        StopAlpha::Uniform(alpha) => context.set_fill_alpha(f64::from(alpha))?,
+        StopAlpha::Varying => {
+            // The opacities are a second gradient, of gray levels, which is the soft mask. It
+            // covers the box that the gradient is painted into.
+            let paint = gradient.paint;
+            let bbox = [
+                Pt(space.x(paint.x)),
+                Pt(space.y(paint.y + paint.height)),
+                Pt(space.x(paint.x + paint.width)),
+                Pt(space.y(paint.y)),
+            ];
+            apply_alpha_mask(context, bbox, |form| {
                 let alpha = build(form, space, gradient, |c| Gray(f64::from(c[3])))?;
                 paint_built(form, alpha, false)
-            },
-        )?;
-        context.apply_ext_gstate(ExtGState::new().with_soft_mask(SoftMask::luminosity(mask)))?;
+            })?;
+        }
     }
     paint_built(context, color, artifact)
 }
@@ -373,11 +408,13 @@ pub fn paint_blend_group(
         Pt(space.x(rect.x.0 + rect.width.0)),
         Pt(space.y(rect.y.0)),
     ];
+    super::pdfa1_forbid("`background-blend-mode` (a layer with a blend mode)")?;
     let form = context.pdf_context.write_form(
         bbox,
         Some(TransparencyGroup::new(ColorSpace::DeviceRGB)),
         filter,
         |form| {
+            super::set_device_defaults(form)?;
             form.save_graphics_state()?;
             super::emit_path(form, &group.clip, page_height)?;
             form.clip(FillRule::NonZero)?;

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Renders every gallery/<name>/index.html to a PDF and builds a static page that shows them.
 
-    python3 gallery/build.py [--helium target/release/helium] [--out _site] [names...]
+    python3 gallery/build.py [--umbruch target/release/umbruch] [--out _site] [names...]
 
 Each document is a directory with an `index.html`; its `<title>`, `<meta name="description">`
 and `<meta name="keywords">` describe it on the page. `<meta name="gallery-thumbnail"
 content="3">` picks the page of the thumbnail (the first by default), and `<meta
 name="gallery-fonts" content="system">` renders with the fonts installed on the machine
-instead of only the fonts built into Helium. The PDF is rendered with the directory of
+instead of only the fonts built into Umbruch. The PDF is rendered with the directory of
 the document as working directory, so relative references (stylesheets, images) resolve.
 Needs `pdftoppm` and `pdfinfo` (poppler-utils) for the thumbnails and page counts.
 """
@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-REPO = "https://github.com/manuel-rhdt/helium"
+REPO = "https://github.com/manuel-rhdt/umbruch"
 
 
 def meta(source: str, name: str) -> str:
@@ -41,13 +41,13 @@ def pages(pdf: Path) -> int:
     return int(m.group(1)) if m else 0
 
 
-def render(helium: Path, doc: Path, out: Path, source: str) -> tuple[bool, str, float]:
+def render(umbruch: Path, doc: Path, out: Path, source: str) -> tuple[bool, str, float]:
     started = time.time()
     # The built-in fonts make the output the same on every machine. A document that needs fonts
     # for other scripts asks for the installed ones with <meta name="gallery-fonts" content="system">.
     flags = [] if meta(source, "gallery-fonts") == "system" else ["--no-system-fonts"]
     result = subprocess.run(
-        [str(helium.resolve()), *flags, "index.html", str(out.resolve())],
+        [str(umbruch.resolve()), *flags, "index.html", str(out.resolve())],
         cwd=doc, capture_output=True, text=True, env={**os.environ, "RUST_LOG": "warn"},
     )
     log = (result.stdout + result.stderr).strip()
@@ -68,7 +68,7 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Helium gallery</title>
+<title>Umbruch gallery</title>
 <style>
 :root {{ --bg:#f5f5f2; --fg:#1b1b1f; --muted:#62626b; --card:#ffffff; --line:#e2e2dc; --accent:#b4540a; }}
 @media (prefers-color-scheme: dark) {{
@@ -104,8 +104,8 @@ footer a {{ color:inherit; }}
 <body>
 <main>
 <header>
-<h1>Helium <span>gallery</span></h1>
-<p>Documents written in plain HTML and CSS, rendered to PDF by <a href="{repo}" style="color:inherit">Helium</a> on every push. Open a card to read the PDF, or look at its source.</p>
+<h1>Umbruch <span>gallery</span></h1>
+<p>Documents written in plain HTML and CSS, rendered to PDF by <a href="{repo}" style="color:inherit">Umbruch</a> on every push. Open a card to read the PDF, or look at its source.</p>
 </header>
 <section class="grid">
 {cards}
@@ -129,12 +129,12 @@ CARD = """<article class="card{cls}">
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--helium", default="target/release/helium")
+    parser.add_argument("--umbruch", default="target/release/umbruch")
     parser.add_argument("--out", default="_site")
     parser.add_argument("names", nargs="*")
     args = parser.parse_args()
 
-    helium = Path(args.helium)
+    umbruch = Path(args.umbruch)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -152,7 +152,7 @@ def main() -> int:
         slug = doc.name
         source = (doc / "index.html").read_text(encoding="utf-8")
         pdf = out / f"{slug}.pdf"
-        ok, log, seconds = render(helium, doc, pdf, source)
+        ok, log, seconds = render(umbruch, doc, pdf, source)
         warnings = [l for l in log.splitlines() if "WARN" in l or "ERROR" in l]
         print(f"{'ok  ' if ok else 'FAIL'} {slug} ({seconds:.1f}s, {len(warnings)} warnings)", flush=True)
         if not ok:

@@ -67,7 +67,7 @@ fn subset_font_bytes(font: &Font, usage: &GlyphUsage) -> std::result::Result<Vec
     // `Identity-H` text selects glyphs by CID, and a PDF viewer finds the glyph of a CID in a
     // CID-keyed CFF font (the Noto CJK fonts) through the charset of the font. The shaper
     // returns glyph indices, which are the same as the CIDs only if the charset is the
-    // identity. A subset of the font (like the one bundled with Helium, whose glyphs are
+    // identity. A subset of the font (like the one bundled with Umbruch, whose glyphs are
     // numbered anew) keeps the CIDs of the original, so the charset is renumbered:
     // together with the retained glyph indices CID = glyph index. This has no effect on
     // other fonts.
@@ -251,9 +251,15 @@ pub(crate) fn embed_into_pdf(
         FontProgram::TrueType(stream) => FontProgramRef::TrueType(pdf_context.write_object(stream)?),
         FontProgram::Cff(stream) => FontProgramRef::Cff(pdf_context.write_object(stream)?),
     };
-    let fd = pdf_context.write_object(
-        pdf_font_descriptor(font, Name::from(name.clone()), font_data)?,
-    )?;
+    let mut descriptor = pdf_font_descriptor(font, Name::from(name.clone()), font_data)?;
+    if super::pdfa1_active() {
+        // ISO 19005-1, 6.3.5: the CIDs of a font subset, which are the glyphs that are drawn (and the
+        // glyph 0, `.notdef`, that every font program has)
+        let cids = std::iter::once(0).chain(usage.glyphs().map(|glyph| encoding.code(glyph)));
+        let bytes = lemon_pdf::font::descriptor::cid_set(cids);
+        descriptor.cid_set = Some(pdf_context.write_object(stream(lemon_pdf::font::descriptor::CidSetDict {}, &bytes, compress)?)?);
+    }
+    let fd = pdf_context.write_object(descriptor)?;
 
     let mut metrics_h = vec![];
     let mut unfinished_entry: Option<MetricsEntry> = None;

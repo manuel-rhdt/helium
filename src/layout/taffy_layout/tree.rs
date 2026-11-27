@@ -1,11 +1,12 @@
 //! The box tree as seen by Taffy.
 //!
-//! The tree is an arena of [`Node`]s built from helium's formatting contexts at the start of
-//! every layout. Taffy's low-level traits are implemented on [`HeliumTree`], which also gives
+//! The tree is an arena of [`Node`]s built from umbruch's formatting contexts at the start of
+//! every layout. Taffy's low-level traits are implemented on [`UmbruchTree`], which also gives
 //! the measure functions access to the inline formatting contexts.
 
+use crate::style::properties::calc::Calc;
 use specs::{Entity, ReadStorage, WriteStorage};
-use helium_paginate::FxHashMap as HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 use taffy::geometry::{Line, Point, Size};
 use taffy::style::{AvailableSpace, Position};
@@ -71,7 +72,7 @@ pub(super) struct Node {
     /// inline content only has out-of-flow children.
     pub children: Vec<NodeId>,
     /// The `inline-block` boxes in the inline content of this node. They are not children of
-    /// the node but laid out on their own (see [`HeliumTree::layout_atom`]).
+    /// the node but laid out on their own (see [`UmbruchTree::layout_atom`]).
     pub atoms: Vec<NodeId>,
     /// Whether the sizes of the `inline-block` boxes were given to the inline context.
     pub atoms_done: bool,
@@ -86,7 +87,7 @@ pub(super) struct Node {
     pub detailed: taffy::DetailedLayoutInfo<String>,
     /// Whether the in-flow children are laid out from right to left: the node is a block, flex or
     /// grid container or a table with `direction: rtl`. Taffy only lays out left to right, so the
-    /// layout is mirrored afterwards (see [`HeliumTree::mirror_children`]).
+    /// layout is mirrored afterwards (see [`UmbruchTree::mirror_children`]).
     pub mirror_rtl: bool,
     /// Whether the left and right insets and margins of this out-of-flow box were swapped, because
     /// its parent is mirrored: the box is mirrored with the layout of its containing block.
@@ -94,6 +95,9 @@ pub(super) struct Node {
     /// How far the content of a table cell is moved down in the cell, for `vertical-align:
     /// middle` and `bottom` (the cell box itself fills its row).
     pub content_shift: f32,
+    /// Where a table row that is split over pages can be cut, as it is laid out for the last
+    /// width of a page that the layout service was asked about (see [`super::rows`]).
+    pub row_cuts: Option<Rc<super::rows::RowCuts>>,
     /// The borders of a cell, row, row group or table of a table with collapsing borders (see
     /// [`super::collapse`]).
     pub collapsed: Option<crate::layout::components::EdgeValues<crate::layout::components::CollapsedEdge>>,
@@ -117,7 +121,7 @@ pub(super) struct Node {
     pub layout: Layout,
 }
 
-pub(super) struct HeliumTree<'a, 'w> {
+pub(super) struct UmbruchTree<'a, 'w> {
     pub nodes: Vec<Node>,
     pub computed_values: &'a ReadStorage<'w, ComputedValues>,
     pub inline_ctxs: &'a mut WriteStorage<'w, InlineFormattingContext>,
@@ -160,7 +164,7 @@ pub(super) struct HeliumTree<'a, 'w> {
     /// broken, if it is not the first: the number in the list of the ways of the paragraph.
     pub paragraph_variants: u32,
     /// The ways to break paragraphs that the pages and the columns choose among.
-    pub variants_config: helium_paginate::Variants,
+    pub variants_config: umbruch_paginate::Variants,
     /// How many fragments of a container that end earlier than the one that fills the page the
     /// kernel is given (see `LayoutService::fragment`).
     pub earlier_fragments: u32,
@@ -169,7 +173,7 @@ pub(super) struct HeliumTree<'a, 'w> {
 
 // --- building the tree ---
 
-impl<'a, 'w> HeliumTree<'a, 'w> {
+impl<'a, 'w> UmbruchTree<'a, 'w> {
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[usize::from(id)]
     }
@@ -252,6 +256,7 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
             mirror_rtl: false,
             mirrored_oof: false,
             content_shift: 0.0,
+            row_cuts: None,
             collapsed: None,
             span: None,
             window_style: None,
@@ -687,11 +692,14 @@ impl<'a, 'w> HeliumTree<'a, 'w> {
 
 // --- layout of the leaves ---
 
-pub(super) fn calc(_val: *const (), _basis: f32) -> f32 {
-    0.0
+/// The value of a `calc()` of a Taffy style, with percentages of `basis`: the pointers are those
+/// of [`Calc::as_ptr`], from `style::length_percentage`.
+pub(super) fn calc(val: *const (), basis: f32) -> f32 {
+    // SAFETY: umbruch gives Taffy no other `calc()` pointers, and calculations are never freed
+    unsafe { Calc::from_ptr(val) }.resolve(basis)
 }
 
-impl HeliumTree<'_, '_> {
+impl UmbruchTree<'_, '_> {
     /// Lays out the `inline-block` boxes of an inline context, once, and tells the context their
     /// widths, which it needs to break lines.
     fn ensure_atoms(&mut self, id: NodeId, inputs: &LayoutInput) {
@@ -791,7 +799,11 @@ impl HeliumTree<'_, '_> {
             },
             vertical_margins_are_collapsible: Line::FALSE,
         };
-        let width = if width_is_auto {
+        // (a replaced box with a ratio but no size of its own fills the line, CSS 2.1 10.3.4)
+        let ratio_only = self.images.get(self.node(atom).entity).is_some_and(|image| image.ratio_only);
+        let width = if width_is_auto && ratio_only {
+            Some(available)
+        } else if width_is_auto {
             let min = self
                 .compute_child_layout(atom, size_input(AvailableSpace::MinContent))
                 .size
@@ -905,7 +917,7 @@ impl HeliumTree<'_, '_> {
             let definite_width = known.width.or(available.width.into_option());
             let indent = match (text_indent, definite_width) {
                 (Some(indent), Some(width)) => indent.absolute(PixelLength(width)),
-                (Some(indent), None) => indent.length().unwrap_or_default(),
+                (Some(indent), None) => indent.without_percentages(),
                 (None, _) => PixelLength(0.0),
             };
             let (min, max) = ifc.intrinsic_widths(indent);
@@ -1019,7 +1031,8 @@ impl HeliumTree<'_, '_> {
         let to_content = |value: Option<f32>, extra: f32| {
             value.map(|value| if border_box { (value - extra).max(0.0) } else { value })
         };
-        let limits = image.filter(|_| !node.flow.is_vertical()).map(|natural| {
+        let ratio_only = self.images.get(node.entity).is_some_and(|image| image.ratio_only);
+        let limits = image.filter(|_| !node.flow.is_vertical() && !ratio_only).map(|natural| {
             // an `aspect-ratio` that is not `auto` replaces the ratio of the image
             let natural = match node.style.aspect_ratio {
                 Some(ratio) if ratio > 0.0 => (natural.0, natural.0 / ratio),
@@ -1106,13 +1119,24 @@ impl HeliumTree<'_, '_> {
         } else {
             extras
         };
-        let mut output = compute_leaf_layout(inputs, style, calc, |known, _available| Size {
+        let mut output = compute_leaf_layout(inputs, style, calc, |known, available| Size {
             width: known.width.unwrap_or_else(|| match (known.height, ratio) {
-                (Some(height), Some(ratio)) => ((height - ratio_extras.1).max(0.0) * ratio + ratio_extras.0),
+                (Some(height), Some(ratio)) => ((height - ratio_extras.1).max(0.0) * ratio + ratio_extras.0 - extras.0).max(0.0),
+                // a ratio without a size takes the width that is there (none for a box that is
+                // sized by its content)
+                _ if ratio_only => available
+                    .width
+                    .into_option()
+                    .or(inputs.parent_size.width)
+                    .unwrap_or(0.0)
+                    .max(0.0),
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.width()).map_or(0.0, |w| w.0), |i| i.0),
             }),
             height: known.height.unwrap_or_else(|| match (known.width, ratio) {
-                (Some(width), Some(ratio)) => ((width - ratio_extras.0).max(0.0) / ratio + ratio_extras.1),
+                (Some(width), Some(ratio)) => ((width - ratio_extras.0).max(0.0) / ratio + ratio_extras.1 - extras.1).max(0.0),
+                (None, Some(ratio)) if ratio_only => {
+                    available.width.into_option().or(inputs.parent_size.width).unwrap_or(0.0).max(0.0) / ratio
+                }
                 _ => image.map_or_else(|| intrinsic.and_then(|s| s.height()).map_or(0.0, |h| h.0), |i| i.1),
             }),
         });
@@ -1125,7 +1149,7 @@ impl HeliumTree<'_, '_> {
 
 /// Whether the `aspect-ratio` of a box has `auto` (or is not given): the natural ratio of an
 /// image then is the one of its content box.
-fn natural_ratio_of(tree: &HeliumTree<'_, '_>, entity: Entity) -> bool {
+fn natural_ratio_of(tree: &UmbruchTree<'_, '_>, entity: Entity) -> bool {
     tree.computed_values.get(entity).is_none_or(|style| style.box_.aspect_ratio.auto)
 }
 
@@ -1140,7 +1164,7 @@ pub(super) struct LineCut {
 }
 
 impl LineCut {
-    pub fn of(cut: helium_paginate::Cut) -> LineCut {
+    pub fn of(cut: umbruch_paginate::Cut) -> LineCut {
         LineCut {
             at: (cut.0 >> 2) as usize,
             fitness: (cut.0 & 3) as u8,
@@ -1149,8 +1173,8 @@ impl LineCut {
 
     /// The cut, which is ordered by the break first, so that the cuts of a paragraph are in the
     /// order of the paragraph.
-    pub fn cut(self) -> helium_paginate::Cut {
-        helium_paginate::Cut(((self.at as u32) << 2) | u32::from(self.fitness & 3))
+    pub fn cut(self) -> umbruch_paginate::Cut {
+        umbruch_paginate::Cut(((self.at as u32) << 2) | u32::from(self.fitness & 3))
     }
 }
 
@@ -1182,7 +1206,7 @@ pub(super) fn variants_from(
     }
     let (start, fitness, indent) = match from {
         Some(from) => (from.at, from.fitness, PixelLength(0.0)),
-        None => (0, helium_paginate::paragraph::LineStart::DECENT, indent),
+        None => (0, umbruch_paginate::paragraph::LineStart::DECENT, indent),
     };
     let found = ifc
         .compute_variants_from(start, fitness, None, extra, line_width, indent, text_runs, intrinsic_sizes, aligns)
@@ -1210,7 +1234,7 @@ pub(super) fn lines_between(
     cache: &mut LineCache,
     ifc: &InlineFormattingContext,
     node: u32,
-    cut: Option<(Option<helium_paginate::Cut>, Option<helium_paginate::Cut>)>,
+    cut: Option<(Option<umbruch_paginate::Cut>, Option<umbruch_paginate::Cut>)>,
     variant: (usize, u32),
     line_width: PixelLength,
     indent: PixelLength,
@@ -1264,7 +1288,7 @@ pub(super) fn lines_until(
     }
     let (start, fitness, indent) = match from {
         Some(from) => (from.at, from.fitness, PixelLength(0.0)),
-        None => (0, helium_paginate::paragraph::LineStart::DECENT, indent),
+        None => (0, umbruch_paginate::paragraph::LineStart::DECENT, indent),
     };
     ifc.compute_lines_from(start, fitness, Some(to.at), line_width, indent, text_runs, intrinsic_sizes, aligns)
         .unwrap_or_else(|error| {
@@ -1366,7 +1390,7 @@ impl Iterator for ChildIter<'_> {
     }
 }
 
-impl TraversePartialTree for HeliumTree<'_, '_> {
+impl TraversePartialTree for UmbruchTree<'_, '_> {
     type ChildIter<'t>
         = ChildIter<'t>
     where
@@ -1385,9 +1409,9 @@ impl TraversePartialTree for HeliumTree<'_, '_> {
     }
 }
 
-impl TraverseTree for HeliumTree<'_, '_> {}
+impl TraverseTree for UmbruchTree<'_, '_> {}
 
-impl LayoutPartialTree for HeliumTree<'_, '_> {
+impl LayoutPartialTree for UmbruchTree<'_, '_> {
     type CoreContainerStyle<'t>
         = &'t taffy::Style
     where
@@ -1396,6 +1420,10 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
 
     fn get_core_container_style(&self, id: NodeId) -> Self::CoreContainerStyle<'_> {
         self.active_style(id)
+    }
+
+    fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
+        calc(val, basis)
     }
 
     fn set_unrounded_layout(&mut self, id: NodeId, layout: &Layout) {
@@ -1419,8 +1447,23 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
             let mut output = match tree.node(id).content {
                 Content::Blocks => {
                     let output = match tree.node(id).style.display {
-                        taffy::Display::Flex => compute_flexbox_layout(tree, id, inputs),
-                        taffy::Display::Grid => compute_grid_layout(tree, id, inputs),
+                        taffy::Display::Flex | taffy::Display::Grid => {
+                            let mut output = if tree.node(id).style.display == taffy::Display::Flex {
+                                compute_flexbox_layout(tree, id, inputs)
+                            } else {
+                                compute_grid_layout(tree, id, inputs)
+                            };
+                            // a grid or flex container that the window cuts is as high as its part
+                            if inputs.run_mode == RunMode::PerformLayout && tree.node(id).windowed {
+                                if let Some(window) = &tree.window {
+                                    let node = tree.node(id);
+                                    if let Some(part) = super::window::row_part(window, node, id) {
+                                        output.size.height = part.height;
+                                    }
+                                }
+                            }
+                            output
+                        }
                         _ => compute_block_layout(tree, id, inputs, None),
                     };
                     if inputs.run_mode == RunMode::PerformLayout {
@@ -1463,7 +1506,7 @@ impl LayoutPartialTree for HeliumTree<'_, '_> {
     }
 }
 
-impl LayoutContainingBlock for HeliumTree<'_, '_> {
+impl LayoutContainingBlock for UmbruchTree<'_, '_> {
     type OofItemStyle<'t>
         = &'t taffy::Style
     where
@@ -1486,7 +1529,7 @@ impl LayoutContainingBlock for HeliumTree<'_, '_> {
     }
 }
 
-impl CacheTree for HeliumTree<'_, '_> {
+impl CacheTree for UmbruchTree<'_, '_> {
     fn cache_get(&mut self, id: NodeId, input: &LayoutInput) -> Option<LayoutOutput> {
         // (what is laid out for a window is not what the cache has been filled with, and a
         // container with columns lays out its columns whenever it is asked for a layout)
@@ -1509,7 +1552,7 @@ impl CacheTree for HeliumTree<'_, '_> {
     }
 }
 
-impl LayoutBlockContainer for HeliumTree<'_, '_> {
+impl LayoutBlockContainer for UmbruchTree<'_, '_> {
     type BlockContainerStyle<'t>
         = &'t taffy::Style
     where
@@ -1528,7 +1571,7 @@ impl LayoutBlockContainer for HeliumTree<'_, '_> {
     }
 }
 
-impl LayoutFlexboxContainer for HeliumTree<'_, '_> {
+impl LayoutFlexboxContainer for UmbruchTree<'_, '_> {
     type FlexboxContainerStyle<'t>
         = &'t taffy::Style
     where
@@ -1547,7 +1590,7 @@ impl LayoutFlexboxContainer for HeliumTree<'_, '_> {
     }
 }
 
-impl LayoutGridContainer for HeliumTree<'_, '_> {
+impl LayoutGridContainer for UmbruchTree<'_, '_> {
     type GridContainerStyle<'t>
         = &'t taffy::Style
     where
@@ -1576,7 +1619,7 @@ impl LayoutGridContainer for HeliumTree<'_, '_> {
 }
 
 /// Whether a node is taken out of the flow.
-pub(super) fn node_is_out_of_flow(tree: &HeliumTree, id: NodeId) -> bool {
+pub(super) fn node_is_out_of_flow(tree: &UmbruchTree, id: NodeId) -> bool {
     tree.computed_values
         .get(tree.node(id).entity)
         .is_some_and(is_out_of_flow)

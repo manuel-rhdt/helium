@@ -2,6 +2,7 @@ use std::borrow::{Cow, ToOwned};
 use std::str::FromStr;
 
 use super::super::parse::StyleParseError;
+use super::calc::{self, Calc};
 use super::computed::PixelLength;
 pub use super::font_features::{
     FontFeatureSettings, FontKerning, FontVariant, FontVariantCaps, FontVariantEastAsian,
@@ -9,7 +10,7 @@ pub use super::font_features::{
 };
 use cssparser::{CowRcStr, ParseError, Parser, Token, match_ignore_ascii_case};
 use cssparser_color::Color;
-use helium_derive::{ParseDeclaration, PropertyValue};
+use umbruch_derive::{ParseDeclaration, PropertyValue};
 
 use formel::unicode_math::Family as MathFamily2;
 
@@ -53,7 +54,7 @@ pub trait CssWideProperties {
 fn is_inherited_property(name: &str) -> bool {
     const INHERITED: &[&str] = &[
         "font-family", "font-style", "font-weight", "font-size", "line-height", "color",
-        "list-style-type", "list-style-position", "letter-spacing", "word-spacing", "white-space", "text-indent", "text-align", "hyphens", "direction",
+        "list-style-type", "list-style-position", "letter-spacing", "word-spacing", "white-space", "text-indent", "text-align", "hyphens", "hyphenate-limit-chars", "hyphenate-limit-last", "hanging-punctuation", "direction",
         "border-spacing", "border-collapse", "quotes", "widows", "orphans", "looseness", "page", "math-style", "math-shift",
         "math-depth",
     ];
@@ -310,7 +311,7 @@ where
     }
 }
 
-/// Holds any property declaration that is supported by helium, grouped
+/// Holds any property declaration that is supported by umbruch, grouped
 /// by style structs.
 #[derive(Debug, Clone, ParseDeclaration)]
 pub enum PropertyDeclaration<'a> {
@@ -331,18 +332,24 @@ pub enum PropertyDeclaration<'a> {
 #[computed = "super::computed::Position"]
 pub enum Position<'a> {
     #[property]
+    #[non_negative]
     Width(SizeValue),
     #[property]
+    #[non_negative]
     Height(SizeValue),
     /// https://www.w3.org/TR/CSS22/visudet.html#min-max-widths
     #[property]
+    #[non_negative]
     MinWidth(AutoOrQuantityOrPercentage),
     #[property]
+    #[non_negative]
     MaxWidth(NoneOrQuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/visudet.html#min-max-heights
     #[property]
+    #[non_negative]
     MinHeight(AutoOrQuantityOrPercentage),
     #[property]
+    #[non_negative]
     MaxHeight(NoneOrQuantityOrPercentage),
 
     /// Offsets of positioned boxes.
@@ -386,6 +393,7 @@ pub enum Position<'a> {
     MarginRight(AutoOrQuantityOrPercentage),
 
     #[property]
+    #[non_negative]
     #[shorthand("padding-top", method = "top")]
     #[shorthand("padding-bottom", method = "bottom")]
     #[shorthand("padding-left", method = "left")]
@@ -395,27 +403,36 @@ pub enum Position<'a> {
 
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-top
     #[property]
+    #[non_negative]
     PaddingTop(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-bottom
     #[property]
+    #[non_negative]
     PaddingBottom(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-left
     #[property]
+    #[non_negative]
     PaddingLeft(QuantityOrPercentage),
     /// https://www.w3.org/TR/CSS22/box.html#propdef-padding-right
     #[property]
+    #[non_negative]
     PaddingRight(QuantityOrPercentage),
 
     /// https://www.w3.org/TR/css-backgrounds-3/#border-radius
     #[property]
+    #[non_negative]
     BorderTopLeftRadius(QuantityOrPercentage),
     #[property]
+    #[non_negative]
     BorderTopRightRadius(QuantityOrPercentage),
     #[property]
+    #[non_negative]
     BorderBottomRightRadius(QuantityOrPercentage),
     #[property]
+    #[non_negative]
     BorderBottomLeftRadius(QuantityOrPercentage),
     #[property]
+    #[non_negative]
     #[shorthand("border-top-left-radius", method = "top_left")]
     #[shorthand("border-top-right-radius", method = "top_right")]
     #[shorthand("border-bottom-right-radius", method = "bottom_right")]
@@ -510,8 +527,10 @@ pub enum Font {
     #[property]
     FontWeight(FontWeight),
     #[property]
+    #[non_negative]
     FontSize(FontSize),
     #[property]
+    #[non_negative]
     LineHeight(LineHeight),
     /// https://www.w3.org/TR/css-fonts-4/#font-feature-settings-prop
     #[property]
@@ -594,6 +613,9 @@ pub enum Box {
     /// https://www.w3.org/TR/css-sizing-3/#box-sizing
     #[property]
     BoxSizing(BoxSizing),
+    /// https://www.w3.org/TR/CSS22/tables.html#width-layout
+    #[property]
+    TableLayout(TableLayout),
 
     // Generated content: https://www.w3.org/TR/css-content-3/ and
     // https://www.w3.org/TR/css-lists-3/#auto-numbering
@@ -617,12 +639,16 @@ pub enum Box {
     #[shorthand("flex-wrap", method = "wrap")]
     FlexFlow(FlexFlowShorthand),
     #[property]
+    #[non_negative]
     FlexGrow(f32),
     #[property]
+    #[non_negative]
     FlexShrink(f32),
     #[property]
+    #[non_negative]
     FlexBasis(AutoOrQuantityOrPercentage),
     #[property]
+    #[non_negative]
     #[shorthand("flex-grow", method = "grow")]
     #[shorthand("flex-shrink", method = "shrink")]
     #[shorthand("flex-basis", method = "basis")]
@@ -646,10 +672,12 @@ pub enum Box {
     #[property]
     AlignSelf(SelfAlignment),
     #[property]
+    #[non_negative]
     RowGap(Gap),
     /// Also the gap between the columns of a multi-column container.
     /// https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
     #[property]
+    #[non_negative]
     ColumnGap(Gap),
     /// `place-content: <align-content> <justify-content>?`
     #[property]
@@ -668,18 +696,22 @@ pub enum Box {
     PlaceSelf(PlaceSelfShorthand),
     /// `gap: <row-gap> <column-gap>?` (the one value is for both)
     #[property]
+    #[non_negative]
     #[shorthand("row-gap", method = "row")]
     #[shorthand("column-gap", method = "column")]
     Gap(GapShorthand),
     /// The names that `gap` and its longhands had in the grid layout module.
     #[property]
+    #[non_negative]
     #[shorthand("row-gap", method = "row")]
     #[shorthand("column-gap", method = "column")]
     GridGap(GapShorthand),
     #[property]
+    #[non_negative]
     #[shorthand("row-gap", method = "clone")]
     GridRowGap(Gap),
     #[property]
+    #[non_negative]
     #[shorthand("column-gap", method = "clone")]
     GridColumnGap(Gap),
 
@@ -769,6 +801,15 @@ pub enum Text {
     TextAlign(TextAlign),
     #[property]
     Hyphens(Hyphens),
+    /// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
+    #[property]
+    HyphenateLimitChars(HyphenateLimitChars),
+    /// https://www.w3.org/TR/css-text-4/#hyphenate-line-limits
+    #[property]
+    HyphenateLimitLast(HyphenateLimitLast),
+    /// https://www.w3.org/TR/css-text-3/#hanging-punctuation-property
+    #[property]
+    HangingPunctuation(HangingPunctuation),
     /// https://www.w3.org/TR/css-text-3/#letter-spacing-property
     #[property]
     LetterSpacing(NormalOrQuantity),
@@ -792,6 +833,7 @@ pub enum Text {
     /// Inherited like `hyphens`, so it lives in the same style struct.
     /// https://www.w3.org/TR/CSS22/tables.html#separated-borders
     #[property]
+    #[non_negative]
     BorderSpacing(BorderSpacing),
     /// Inherited like `border-spacing`.
     /// https://www.w3.org/TR/CSS22/tables.html#borders
@@ -1056,6 +1098,16 @@ pub enum FlexDirection {
     RowReverse,
     Column,
     ColumnReverse,
+}
+
+/// https://www.w3.org/TR/CSS22/tables.html#width-layout
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum TableLayout {
+    /// The widths of the columns come from the contents of the cells.
+    #[default]
+    Auto,
+    /// The widths of the columns come from the width of the table and the first row.
+    Fixed,
 }
 
 /// https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property
@@ -1353,8 +1405,8 @@ impl<'i> PropertyValue<'i> for BorderRadiusShorthand {
 /// directions, with two lengths the first is the horizontal spacing.
 #[derive(Debug, Copy, Clone)]
 pub struct BorderSpacing {
-    pub horizontal: Quantity,
-    pub vertical: Quantity,
+    pub horizontal: Length,
+    pub vertical: Length,
 }
 
 impl<'i> PropertyValue<'i> for BorderSpacing {
@@ -1362,10 +1414,10 @@ impl<'i> PropertyValue<'i> for BorderSpacing {
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         let horizontal = input
-            .try_parse(Quantity::from_css_property_value)
+            .try_parse(Length::from_css_property_value)
             .map_err(|_| input.new_error_for_next_token())?;
         let vertical = input
-            .try_parse(Quantity::from_css_property_value)
+            .try_parse(Length::from_css_property_value)
             .unwrap_or(horizontal);
         Ok(BorderSpacing {
             horizontal,
@@ -1381,6 +1433,7 @@ pub enum Gap {
     Normal,
     Quantity(Quantity),
     Percentage(Percentage),
+    Calc(CalcLengthPercentage),
 }
 
 /// The value of `gap`: the gap between the rows, and the one between the columns if it is not the
@@ -1426,6 +1479,10 @@ impl<'i> PropertyValue<'i> for ColumnCount {
         if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
             return Ok(ColumnCount::Auto);
         }
+        if let Ok(count) = calc::parse_integer(input) {
+            // a math function is clamped to the range: at least one column
+            return Ok(ColumnCount::Count(count.max(1) as usize));
+        }
         let token = input.next()?.clone();
         match token {
             Token::Number { int_value: Some(count), .. } if count >= 1 => {
@@ -1443,6 +1500,7 @@ pub enum ColumnWidth {
     #[default]
     Auto,
     Quantity(Quantity),
+    Calc(CalcLength),
 }
 
 impl<'i> PropertyValue<'i> for ColumnWidth {
@@ -1451,6 +1509,9 @@ impl<'i> PropertyValue<'i> for ColumnWidth {
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
         if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
             return Ok(ColumnWidth::Auto);
+        }
+        if let Ok(calc) = calc::parse(input, calc::Expected::Length, calc::Range::NonNegative) {
+            return Ok(ColumnWidth::Calc(CalcLength(calc)));
         }
         let quantity = Quantity::from_css_property_value(input).map_err(|_| input.new_error_for_next_token())?;
         if quantity.value < 0.0 {
@@ -1836,7 +1897,7 @@ pub enum GridAutoFlow {
     Column,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Unit {
     Px,
     Cm,
@@ -2057,10 +2118,187 @@ impl<'i> PropertyValue<'i> for Percentage {
     }
 }
 
+/// A math function (`calc()`, `min()`, ...) whose value is a `<length>`. It may be negative,
+/// unless the property makes it [`NonNegative`].
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct CalcLength(pub Calc);
+
+impl<'i> PropertyValue<'i> for CalcLength {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        calc::parse(input, calc::Expected::Length, calc::Range::All).map(CalcLength)
+    }
+}
+
+impl CalcLength {
+    pub fn to_px(&self, style: &super::computed::ComputedValues) -> PixelLength {
+        self.0.to_px(super::computed::FontSizes::of(style))
+    }
+}
+
+/// A math function whose value is a `<length-percentage>`. It may be negative, unless the
+/// property makes it [`NonNegative`].
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct CalcLengthPercentage(pub Calc);
+
+impl<'i> PropertyValue<'i> for CalcLengthPercentage {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        calc::parse(input, calc::Expected::LengthPercentage, calc::Range::All).map(CalcLengthPercentage)
+    }
+}
+
+impl CalcLengthPercentage {
+    pub fn computed(&self, style: &super::computed::ComputedValues) -> super::computed::LengthPercentage {
+        self.0.to_length_percentage(super::computed::FontSizes::of(style))
+    }
+}
+
+/// The values of the properties that do not allow negative values, marked `#[non_negative]`:
+/// their math functions are clamped to non-negative values when they are used (a negative
+/// literal is not valid, which `parse_property` checks).
+/// https://drafts.csswg.org/css-values-4/#calc-range
+pub trait NonNegative {
+    fn non_negative(self) -> Self;
+}
+
+impl NonNegative for CalcLength {
+    fn non_negative(self) -> Self {
+        CalcLength(self.0.with_range(calc::Range::NonNegative))
+    }
+}
+
+impl NonNegative for CalcLengthPercentage {
+    fn non_negative(self) -> Self {
+        CalcLengthPercentage(self.0.with_range(calc::Range::NonNegative))
+    }
+}
+
+/// A number, which is only negative if it comes from a math function (the negative literals
+/// are not valid where this is used).
+impl NonNegative for f32 {
+    fn non_negative(self) -> Self {
+        self.max(0.0)
+    }
+}
+
+/// Implements [`NonNegative`] for an enum whose only math function is its `Calc` variant.
+macro_rules! non_negative_calc_variant {
+    ($($ty:ident),*) => {$(
+        impl NonNegative for $ty {
+            fn non_negative(self) -> Self {
+                match self {
+                    $ty::Calc(calc) => $ty::Calc(calc.non_negative()),
+                    other => other,
+                }
+            }
+        }
+    )*};
+}
+
+non_negative_calc_variant!(
+    Length,
+    QuantityOrPercentage,
+    SizeValue,
+    AutoOrQuantityOrPercentage,
+    NoneOrQuantityOrPercentage,
+    Gap,
+    FontSize
+);
+
+impl<'a, T: NonNegative + Clone> NonNegative for List<'a, T>
+where
+    [T]: ToOwned<Owned = Vec<T>>,
+{
+    fn non_negative(self) -> Self {
+        List { elements: Cow::Owned(self.elements.into_owned().into_iter().map(T::non_negative).collect()) }
+    }
+}
+
+impl NonNegative for LineHeight {
+    fn non_negative(self) -> Self {
+        match self {
+            LineHeight::QuantityOrPercentage(value) => LineHeight::QuantityOrPercentage(value.non_negative()),
+            LineHeight::Number(number) => LineHeight::Number(number.non_negative()),
+            LineHeight::Normal => LineHeight::Normal,
+        }
+    }
+}
+
+impl NonNegative for FlexShorthand {
+    fn non_negative(self) -> Self {
+        FlexShorthand { grow: self.grow.non_negative(), shrink: self.shrink.non_negative(), basis: self.basis.non_negative() }
+    }
+}
+
+impl NonNegative for BorderRadiusShorthand {
+    fn non_negative(self) -> Self {
+        BorderRadiusShorthand {
+            top_left: self.top_left.non_negative(),
+            top_right: self.top_right.non_negative(),
+            bottom_right: self.bottom_right.non_negative(),
+            bottom_left: self.bottom_left.non_negative(),
+        }
+    }
+}
+
+impl NonNegative for GapShorthand {
+    fn non_negative(self) -> Self {
+        GapShorthand { row: self.row.non_negative(), column: self.column.non_negative() }
+    }
+}
+
+impl NonNegative for BorderSpacing {
+    fn non_negative(self) -> Self {
+        BorderSpacing { horizontal: self.horizontal.non_negative(), vertical: self.vertical.non_negative() }
+    }
+}
+
+/// A `<length>`: a quantity, or a math function.
+#[derive(Debug, Copy, Clone, PartialEq, PropertyValue)]
+pub enum Length {
+    Quantity(Quantity),
+    Calc(CalcLength),
+}
+
+impl Length {
+    pub const ZERO: Length = Length::Quantity(Quantity { value: 0.0, unit: Unit::Px });
+
+    pub fn to_px(&self, style: &super::computed::ComputedValues) -> PixelLength {
+        match self {
+            Length::Quantity(Quantity { value, unit }) => {
+                PixelLength::from_val_unit(*value, *unit, super::computed::FontSizes::of(style))
+            }
+            Length::Calc(calc) => calc.to_px(style),
+        }
+    }
+
+    /// Whether the length is a negative quantity, which some properties do not allow (a math
+    /// function is clamped instead).
+    pub fn is_negative(&self) -> bool {
+        matches!(self, Length::Quantity(quantity) if quantity.value < 0.0)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, PropertyValue)]
 pub enum QuantityOrPercentage {
     Quantity(Quantity),
     Percentage(Percentage),
+    Calc(CalcLengthPercentage),
+}
+
+impl QuantityOrPercentage {
+    /// Whether the value is a negative quantity or percentage (a math function is clamped to the
+    /// range of the property instead).
+    pub fn is_negative(&self) -> bool {
+        match self {
+            QuantityOrPercentage::Quantity(quantity) => quantity.value < 0.0,
+            QuantityOrPercentage::Percentage(percentage) => percentage.0 < 0.0,
+            QuantityOrPercentage::Calc(_) => false,
+        }
+    }
 }
 
 /// The value of `width` and `height`: a length, a percentage, `auto` or a sizing keyword.
@@ -2074,6 +2312,7 @@ pub enum SizeValue {
     Stretch,
     Quantity(Quantity),
     Percentage(Percentage),
+    Calc(CalcLengthPercentage),
 }
 
 impl From<AutoOrQuantityOrPercentage> for SizeValue {
@@ -2082,6 +2321,7 @@ impl From<AutoOrQuantityOrPercentage> for SizeValue {
             AutoOrQuantityOrPercentage::Auto => SizeValue::Auto,
             AutoOrQuantityOrPercentage::Quantity(quantity) => SizeValue::Quantity(quantity),
             AutoOrQuantityOrPercentage::Percentage(percentage) => SizeValue::Percentage(percentage),
+            AutoOrQuantityOrPercentage::Calc(calc) => SizeValue::Calc(calc),
         }
     }
 }
@@ -2091,6 +2331,7 @@ pub enum AutoOrQuantityOrPercentage {
     Auto,
     Quantity(Quantity),
     Percentage(Percentage),
+    Calc(CalcLengthPercentage),
 }
 
 impl Default for AutoOrQuantityOrPercentage {
@@ -2115,6 +2356,7 @@ pub enum NormalOrQuantity {
     #[default]
     Normal,
     Quantity(Quantity),
+    Calc(CalcLength),
 }
 
 /// The value of `max-width` and `max-height`: `none` means there is no limit.
@@ -2123,6 +2365,7 @@ pub enum NoneOrQuantityOrPercentage {
     None,
     Quantity(Quantity),
     Percentage(Percentage),
+    Calc(CalcLengthPercentage),
 }
 
 impl Default for NoneOrQuantityOrPercentage {
@@ -2147,6 +2390,7 @@ pub enum BorderWidth {
     Medium,
     Thick,
     Quantity(Quantity),
+    Calc(CalcLength),
 }
 
 impl<'i> PropertyValue<'i> for BorderWidth {
@@ -2167,6 +2411,9 @@ impl<'i> PropertyValue<'i> for BorderWidth {
             };
         }
         input.reset(&start);
+        if let Ok(calc) = calc::parse(input, calc::Expected::Length, calc::Range::NonNegative) {
+            return Ok(BorderWidth::Calc(CalcLength(calc)));
+        }
         let quantity = match Quantity::from_css_property_value(input) {
             Ok(quantity) => quantity,
             Err(_) => {
@@ -2197,6 +2444,7 @@ impl ComputedValue<BorderWidth> for super::computed::PixelLength {
             &BorderWidth::Quantity(Quantity { value, unit }) => {
                 PixelLength::from_val_unit(value, unit, super::computed::FontSizes::of(style))
             }
+            BorderWidth::Calc(calc) => calc.to_px(style),
         }
     }
 }
@@ -2205,6 +2453,8 @@ impl ComputedValue<BorderWidth> for super::computed::PixelLength {
 pub enum FontSize {
     Quantity(Quantity),
     Percentage(Percentage),
+    /// A math function, whose percentages are of the font size of the parent.
+    Calc(CalcLengthPercentage),
     Smaller,
     Larger,
     /// `font-size: math`. Scales the font size according to the change in
@@ -2220,6 +2470,7 @@ impl ComputedValue<FontSize> for super::computed::PixelLength {
                 PixelLength::from_val_unit(value, unit, super::computed::FontSizes::of(style))
             }
             FontSize::Percentage(percentage) => percentage.0 * style.font.font_size,
+            FontSize::Calc(calc) => calc.0.to_px_with_basis(super::computed::FontSizes::of(style), style.font.font_size),
             FontSize::Smaller => 0.8 * style.font.font_size,
             FontSize::Larger => 1.2 * style.font.font_size,
             FontSize::Math => style.font.font_size,
@@ -2280,6 +2531,199 @@ pub enum Hyphens {
 impl Default for Hyphens {
     fn default() -> Self {
         Self::Manual
+    }
+}
+
+/// `hyphenate-limit-chars`: the fewest characters of a word that is hyphenated, and the fewest
+/// before and after the hyphen. A number is `None` for `auto`.
+/// https://www.w3.org/TR/css-text-4/#hyphenate-char-limits
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct HyphenateLimitChars {
+    pub word: Option<u32>,
+    pub before: Option<u32>,
+    pub after: Option<u32>,
+}
+
+impl HyphenateLimitChars {
+    /// What `auto` is: 5 characters in a word and 2 before and after the hyphen, which is what
+    /// the specification suggests. (TeX's English patterns use 2 and 3.)
+    pub const AUTO: (usize, usize, usize) = (5, 2, 2);
+
+    /// The limits as numbers: the word, before and after.
+    pub fn resolved(self) -> (usize, usize, usize) {
+        let number = |value: Option<u32>, auto: usize| value.map_or(auto, |value| value as usize);
+        (
+            number(self.word, Self::AUTO.0),
+            number(self.before, Self::AUTO.1),
+            number(self.after, Self::AUTO.2),
+        )
+    }
+}
+
+impl<'i> PropertyValue<'i> for HyphenateLimitChars {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        // [ auto | <integer [0,∞]> ]{1,3}
+        let mut values: Vec<Option<u32>> = vec![];
+        while values.len() < 3 && !input.is_exhausted() {
+            let value = if input.try_parse(|input| input.expect_ident_matching("auto")).is_ok() {
+                None
+            } else {
+                let number = input.expect_integer()?;
+                match u32::try_from(number) {
+                    Ok(number) => Some(number),
+                    Err(_) => return Err(ParseError::custom(StyleParseError::InvalidValue)),
+                }
+            };
+            values.push(value);
+        }
+        input.expect_exhausted()?;
+        if values.is_empty() {
+            return Err(ParseError::custom(StyleParseError::InvalidValue));
+        }
+        // a missing second value is `auto`, and a missing third one is the second
+        let word = values[0];
+        let before = values.get(1).copied().flatten();
+        let after = values.get(2).copied().unwrap_or(before);
+        Ok(HyphenateLimitChars { word, before, after })
+    }
+}
+
+/// `hyphenate-limit-last`: where the last line before a break should not be hyphenated.
+/// https://www.w3.org/TR/css-text-4/#hyphenate-line-limits
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PropertyValue)]
+pub enum HyphenateLimitLast {
+    /// No restrictions (a hyphen on the line before the last of a paragraph still has the demerits
+    /// that it has in TeX).
+    #[default]
+    None,
+    /// The last full line of the element, and the last line before any column, page or spread
+    /// break in it.
+    Always,
+    /// The last line before any column, page or spread break.
+    Column,
+    /// The last line before a page or spread break.
+    Page,
+    /// The last line before a spread break.
+    Spread,
+}
+
+impl HyphenateLimitLast {
+    /// What the last line of a paragraph has for following a line that ends in a hyphen, for the
+    /// values that ask the last full line of an element not to be hyphenated: so many demerits
+    /// that it only happens if the other breaks are much worse (the specification says that it
+    /// "should not" be). `None` is TeX's `\finalhyphendemerits`.
+    pub fn final_hyphen_demerits(self) -> Option<f64> {
+        matches!(self, HyphenateLimitLast::Always).then_some(100_000.0)
+    }
+
+    /// Where a line that ends in a hyphen should not be the last one, for the pages and the
+    /// columns: `always` is about every kind of break, `column` as well, `page` is about pages
+    /// and spreads and `spread` about spreads.
+    pub fn page_end_limit(self) -> umbruch_paginate::HyphenLimit {
+        match self {
+            HyphenateLimitLast::None => umbruch_paginate::HyphenLimit::None,
+            HyphenateLimitLast::Always | HyphenateLimitLast::Column => umbruch_paginate::HyphenLimit::Column,
+            HyphenateLimitLast::Page => umbruch_paginate::HyphenLimit::Page,
+            HyphenateLimitLast::Spread => umbruch_paginate::HyphenLimit::Spread,
+        }
+    }
+}
+
+/// Which stops and commas at the end of a line hang (`hanging-punctuation`).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum HangingEnd {
+    #[default]
+    None,
+    /// `force-end`: always.
+    Force,
+    /// `allow-end`: only if the line does not fit otherwise.
+    Allow,
+}
+
+/// `hanging-punctuation`: what may hang outside of the line at its start and end, so that the
+/// text is aligned by the letters and not by the punctuation.
+/// https://www.w3.org/TR/css-text-3/#hanging-punctuation-property
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct HangingPunctuation {
+    /// An opening bracket or quote at the start of the first line.
+    pub first: bool,
+    /// A closing bracket or quote at the end of the last line.
+    pub last: bool,
+    /// A stop or comma at the end of a line (and, as the specification lets a user agent add
+    /// characters, the hyphen of a hyphenated word and a hyphen at the end of a line).
+    pub end: HangingEnd,
+}
+
+impl HangingPunctuation {
+    pub fn is_none(self) -> bool {
+        self == HangingPunctuation::default()
+    }
+
+    /// The characters of `first`: opening brackets and quotes (the categories Ps, Pf and Pi, the
+    /// apostrophe and the quotation mark) and the ideographic space.
+    pub fn is_opening(ch: char) -> bool {
+        use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+        matches!(
+            ch.general_category(),
+            GeneralCategory::OpenPunctuation | GeneralCategory::InitialPunctuation | GeneralCategory::FinalPunctuation
+        ) || matches!(ch, '\'' | '"' | '\u{3000}')
+    }
+
+    /// The characters of `last`: closing brackets and quotes (the categories Pe, Pf and Pi, the
+    /// apostrophe and the quotation mark).
+    pub fn is_closing(ch: char) -> bool {
+        use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+        matches!(
+            ch.general_category(),
+            GeneralCategory::ClosePunctuation | GeneralCategory::InitialPunctuation | GeneralCategory::FinalPunctuation
+        ) || matches!(ch, '\'' | '"')
+    }
+
+    /// The stops and commas of `force-end` and `allow-end`, and the hyphens that this adds to
+    /// them (the specification lets a user agent include others "as appropriate": TeX lets the
+    /// hyphen at the end of a line hang too).
+    pub fn is_stop_or_comma(ch: char) -> bool {
+        matches!(
+            ch,
+            ',' | '.' | '\u{60c}' | '\u{6d4}' | '\u{3001}' | '\u{3002}' | '\u{ff0c}' | '\u{ff0e}' | '\u{fe50}'
+                | '\u{fe51}' | '\u{fe52}' | '\u{ff61}' | '\u{ff64}'
+        ) || Self::is_hyphen(ch)
+    }
+
+    /// The hyphens that may hang at the end of a line (U+002D and U+2010).
+    pub fn is_hyphen(ch: char) -> bool {
+        matches!(ch, '-' | '\u{2010}')
+    }
+}
+
+impl<'i> PropertyValue<'i> for HangingPunctuation {
+    type Error = StyleParseError;
+
+    fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        // none | [ first || [ force-end | allow-end ] || last ]
+        let mut value = HangingPunctuation::default();
+        let invalid = || ParseError::custom(StyleParseError::InvalidValue);
+        if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() {
+            input.expect_exhausted()?;
+            return Ok(value);
+        }
+        let (mut seen_first, mut seen_last, mut seen_end) = (false, false, false);
+        while !input.is_exhausted() {
+            let ident = input.expect_ident()?.clone();
+            match_ignore_ascii_case! { &ident,
+                "first" if !seen_first => { seen_first = true; value.first = true; },
+                "last" if !seen_last => { seen_last = true; value.last = true; },
+                "force-end" if !seen_end => { seen_end = true; value.end = HangingEnd::Force; },
+                "allow-end" if !seen_end => { seen_end = true; value.end = HangingEnd::Allow; },
+                _ => return Err(invalid()),
+            }
+        }
+        if value.is_none() {
+            return Err(invalid());
+        }
+        Ok(value)
     }
 }
 
@@ -2631,6 +3075,14 @@ fn parse_css_color<'i>(input: &mut Parser<'i>) -> Result<Color, ()> {
     }
 }
 
+/// A CSS `<color>` (or a `color-mix()` of colours) that is the whole of `text`.
+pub fn parse_color_text(text: &str) -> Option<Color> {
+    let mut parser = Parser::new(text);
+    let color = parse_css_color(&mut parser).ok()?;
+    parser.expect_exhausted().ok()?;
+    Some(color)
+}
+
 impl<'i> PropertyValue<'i> for Color {
     type Error = StyleParseError;
 
@@ -2657,6 +3109,9 @@ impl<'i> PropertyValue<'i> for f32 {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if let Ok(value) = calc::parse_number(input, calc::Expected::Number) {
+            return Ok(value);
+        }
         let token = input.next()?;
         match token {
             Token::Number { value, .. } => Ok(*value),
@@ -2671,10 +3126,10 @@ impl<'i> PropertyValue<'i> for f32 {
 /// One shadow of `box-shadow`.
 #[derive(Debug, Clone)]
 pub struct Shadow {
-    pub x: Quantity,
-    pub y: Quantity,
-    pub blur: Quantity,
-    pub spread: Quantity,
+    pub x: Length,
+    pub y: Length,
+    pub blur: Length,
+    pub spread: Length,
     /// `None` is `currentcolor`.
     pub color: Option<Color>,
     pub inset: bool,
@@ -2693,7 +3148,7 @@ impl<'i> PropertyValue<'i> for ShadowList {
         }
         let shadows = input.parse_comma_separated(|input| {
             let (mut color, mut inset) = (None, false);
-            let mut lengths: Vec<Quantity> = vec![];
+            let mut lengths: Vec<Length> = vec![];
             // the color and `inset` may come before, after or between the lengths
             loop {
                 if !inset && input.try_parse(|input| input.expect_ident_matching("inset")).is_ok() {
@@ -2707,19 +3162,19 @@ impl<'i> PropertyValue<'i> for ShadowList {
                     }
                 }
                 if lengths.len() < 4 {
-                    if let Ok(length) = input.try_parse(Quantity::from_css_property_value) {
+                    if let Ok(length) = input.try_parse(Length::from_css_property_value) {
                         lengths.push(length);
                         continue;
                     }
                 }
                 break;
             }
-            let zero = Quantity { value: 0.0, unit: Unit::Px };
+            let zero = Length::ZERO;
             if lengths.len() < 2 {
                 return Err(ParseError::custom(StyleParseError::InvalidValue));
             }
-            // a negative blur radius is an error
-            if lengths.get(2).is_some_and(|blur| blur.value < 0.0) {
+            // a negative blur radius is an error (a math function is clamped)
+            if lengths.get(2).is_some_and(Length::is_negative) {
                 return Err(ParseError::custom(StyleParseError::InvalidValue));
             }
             Ok(Shadow {
@@ -2737,9 +3192,7 @@ impl<'i> PropertyValue<'i> for ShadowList {
 
 impl ComputedValue<ShadowList> for Vec<super::computed::BoxShadow> {
     fn from_specified(list: &ShadowList, style: &super::computed::ComputedValues) -> Self {
-        let px = |quantity: Quantity| {
-            PixelLength::from_val_unit(quantity.value, quantity.unit, super::computed::FontSizes::of(style)).0
-        };
+        let px = |length: Length| length.to_px(style).0;
         list.0
             .iter()
             .map(|shadow| super::computed::BoxShadow {
@@ -2768,6 +3221,9 @@ impl<'i> PropertyValue<'i> for Opacity {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if let Ok(value) = calc::parse_number(input, calc::Expected::NumberOrPercentage) {
+            return Ok(Opacity(value.clamp(0.0, 1.0)));
+        }
         let value = match input.next()? {
             Token::Number { value, .. } => *value,
             Token::Percentage { unit_value, .. } => *unit_value,
@@ -2782,6 +3238,9 @@ impl<'i> PropertyValue<'i> for usize {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if let Ok(value) = calc::parse_integer(input) {
+            return Ok(value.max(0) as usize);
+        }
         let token = input.next()?;
         match token {
             Token::Number {
@@ -2800,6 +3259,9 @@ impl<'i> PropertyValue<'i> for i32 {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<Self::Error>> {
+        if let Ok(value) = calc::parse_integer(input) {
+            return Ok(value);
+        }
         let token = input.next()?;
         match token {
             Token::Number {
@@ -3166,6 +3628,9 @@ impl<'i> PropertyValue<'i> for FontWeight {
     type Error = StyleParseError;
 
     fn from_css_property_value(input: &mut Parser<'i>) -> Result<Self, ParseError<StyleParseError>> {
+        if let Ok(value) = calc::parse_number(input, calc::Expected::Number) {
+            return Ok(FontWeight::Number(value.clamp(1.0, 1000.0)));
+        }
         let token = input.next()?.clone();
         match token {
             Token::Ident(ident) => match_ignore_ascii_case! { &ident,
@@ -3698,7 +4163,7 @@ impl Default for MathShift {
 }
 
 /// The `math-style` property: `normal | compact`. `normal` is display style, `compact` inline
-/// style. Unlike the standard initial value (`normal`), helium starts out compact.
+/// style. Unlike the standard initial value (`normal`), umbruch starts out compact.
 /// https://w3c.github.io/mathml-core/#the-math-style
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PropertyValue)]
 pub enum MathStyle {
@@ -3751,7 +4216,14 @@ mod function_syntax_tests {
         let list: ShadowList = parse("0 2px 8px rgb(0 0 0 / .2), inset 1px 1px red").unwrap();
         assert_eq!(list.0.len(), 2);
         let first = &list.0[0];
-        assert_eq!((first.x.value, first.y.value, first.blur.value, first.spread.value), (0.0, 2.0, 8.0, 0.0));
+        let value = |length: &Length| match length {
+            Length::Quantity(quantity) => quantity.value,
+            Length::Calc(_) => f32::NAN,
+        };
+        assert_eq!((value(&first.x), value(&first.y), value(&first.blur), value(&first.spread)), (0.0, 2.0, 8.0, 0.0));
+        // lengths may be math functions, and a negative one is clamped where it may not be negative
+        let calc = parse::<ShadowList>("calc(1px + 1px) 2px calc(-4px)").unwrap();
+        assert!(matches!(calc.0[0].x, Length::Calc(_)) && matches!(calc.0[0].blur, Length::Calc(_)));
         assert!(first.color.is_some() && !first.inset);
         assert!(list.0[1].inset);
         // the color may come first or last; no color is `currentcolor`

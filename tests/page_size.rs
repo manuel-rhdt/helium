@@ -8,7 +8,7 @@ fn page_size(name: &str, css: &str) -> (f64, f64) {
     let input = dir.join(format!("page_size_{}.html", name));
     let output = dir.join(format!("page_size_{}.pdf", name));
     std::fs::write(&input, format!("<style>{}</style><p>text</p>", css)).unwrap();
-    let result = common::helium()
+    let result = common::umbruch()
         .unwrap()
         .arg("--no-compression")
         .arg(&input)

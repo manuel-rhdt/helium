@@ -1,9 +1,8 @@
 use crate::display_list::{self, DisplayItem, PrintPages, Rect};
 use crate::font_usage::FontUsage;
 use crate::layout::components::TextOperator;
-use crate::style::properties::computed::{PixelLength, PaintColor};
+use crate::style::properties::computed::{IccSpace, PixelLength, PaintColor};
 use crate::tagging::TagRecorder;
-use std::path::PathBuf;
 
 use lemon_pdf::pagetree::MediaBox;
 use lemon_pdf::object::{ByteString, IndirectReference, Name, TextString};
@@ -14,12 +13,11 @@ pub(crate) mod color_glyph;
 mod encoding;
 pub(crate) use encoding::GlyphEncoding;
 mod font;
-mod gradient;
+pub(crate) mod gradient;
 pub(crate) mod text;
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufWriter, Error};
+use std::io::{BufWriter, Error, Write};
 
 impl From<PixelLength> for Pt {
     fn from(px: PixelLength) -> Pt {
@@ -83,7 +81,7 @@ type PageContext<'p, 'c, 'b> = lemon_pdf::content::PageContext<'p, 'c, 'b>;
 enum Embedded {
     Raster(IndirectReference<lemon_pdf::image::ImageXObject>),
     /// An SVG image as a form, with its size.
-    Svg(lemon_pdf::form::FormReference, f32, f32),
+    Svg(lemon_pdf::form::FormReference, f32, f32, bool),
 }
 
 /// The opacity (`ca` and `CA`) that is set in the graphics state of the content stream being
@@ -123,6 +121,9 @@ impl Alpha {
 
     fn set_fill(&mut self, context: &mut PageContext<'_, '_, '_>, alpha: u8) -> Result<(), Error> {
         if self.fill != u16::from(alpha) {
+            if alpha != u8::MAX {
+                pdfa1_forbid("a colour with an alpha channel, or `opacity`")?;
+            }
             context.set_fill_alpha(f64::from(alpha) / f64::from(u8::MAX))?;
             self.fill = u16::from(alpha);
         }
@@ -131,6 +132,9 @@ impl Alpha {
 
     fn set_stroke(&mut self, context: &mut PageContext<'_, '_, '_>, alpha: u8) -> Result<(), Error> {
         if self.stroke != u16::from(alpha) {
+            if alpha != u8::MAX {
+                pdfa1_forbid("a colour with an alpha channel, or `opacity`")?;
+            }
             context.set_stroke_alpha(f64::from(alpha) / f64::from(u8::MAX))?;
             self.stroke = u16::from(alpha);
         }
@@ -165,43 +169,146 @@ fn multiply(matrix: &[[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
 
 /// The coordinates of a colour (CIE XYZ, D65) in the Rec. 2020 profile with the gamma 2.4: the linear
 /// ones to the power of 1/2.4. A colour that Rec. 2020 cannot hold is clipped, the only clipping here.
-fn rec2020_gamma24_components(xyz: [f64; 3]) -> [f64; 3] {
+pub(crate) fn rec2020_gamma24_components(xyz: [f64; 3]) -> [f64; 3] {
     multiply(&XYZ_TO_REC2020, xyz).map(|linear| linear.clamp(0.0, 1.0).powf(1.0 / 2.4))
 }
 
 /// The ICC space of the colours that sRGB cannot hold (Rec. 2020 primaries, gamma 2.4), written once for the
 /// document.
-fn wide_color_space(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>) -> Result<lemon_pdf::color_space::IccBasedColorSpace, Error> {
+pub(crate) fn wide_color_space(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>) -> Result<lemon_pdf::color_space::IccBasedColorSpace, Error> {
     Ok(context.pdf_context.icc_color_space("rec2020-gamma24", lemon_pdf::icc::rec2020_gamma24_profile, 3, Some(StreamFilter::Deflate))?)
 }
 
-/// Makes the fills (or the strokes) of the page use `color`. A colour that sRGB can hold is in an ICC
-/// space of sRGB, written once for the document: CSS chooses its colours deliberately, and the file
-/// says in which space they are, whatever a viewer takes the device to be. (Device colours, which images
-/// and shadings still have, are sRGB too: the page defines `DefaultRGB`.) Any other colour is in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4, written once for the
-/// document: matrix/TRC profiles are the best supported wide-gamut encoding of PDF viewers, and this one
-/// holds Display P3 and nearly all that CSS can write. (It has a pure gamma and not the curve of
-/// Rec. 2020 because an iPhone decodes every Rec. 2020 profile with a gamma of 2.4.) Only a colour that
-/// Rec. 2020 cannot hold is clipped, to it. The alpha is not set.
+/// Bradford adaptation from D65 to D50 (CSS Color 4, "Sample code for color conversions").
+#[rustfmt::skip]
+const D65_TO_D50: [[f64; 3]; 3] = [
+    [ 1.047_929_820_840_548_8,  0.022_946_793_341_019_088, -0.050_192_229_543_135_57],
+    [ 0.029_627_815_688_159_344, 0.990_434_484_573_249,    -0.017_073_825_029_385_14],
+    [-0.009_243_058_152_591_178, 0.015_055_144_896_577_895,  0.751_874_289_958_000_8],
+];
+#[rustfmt::skip]
+const SRGB_TO_XYZ: [[f64; 3]; 3] = [
+    [0.412_390_799_265_959_5, 0.357_584_339_383_878, 0.180_480_788_401_834_3],
+    [0.212_639_005_871_510_36, 0.715_168_678_767_756, 0.072_192_315_360_733_7],
+    [0.019_330_818_715_591_85, 0.119_194_779_794_626, 0.950_532_152_249_660_7],
+];
+#[rustfmt::skip]
+const A98_TO_XYZ: [[f64; 3]; 3] = [
+    [0.576_669_042_910_131_1, 0.185_558_237_906_546_4, 0.188_228_646_234_245_6],
+    [0.297_344_975_250_535_9, 0.627_363_566_255_466_3, 0.075_291_458_493_997_8],
+    [0.027_031_361_386_412_36, 0.070_688_852_535_827_6, 0.991_337_536_837_639_2],
+];
+#[rustfmt::skip]
+const REC2020_TO_XYZ: [[f64; 3]; 3] = [
+    [0.636_958_048_301_291, 0.144_616_903_586_208_4, 0.168_880_975_164_172_1],
+    [0.262_700_212_011_267_0, 0.677_998_071_518_871_0, 0.059_301_716_469_861_9],
+    [0.0,                     0.028_072_693_049_087_5, 1.060_985_057_710_791_3],
+];
+/// The colorants of ProPhoto RGB, which is relative to D50 already.
+#[rustfmt::skip]
+const PROPHOTO_TO_XYZ_D50: [[f64; 3]; 3] = [
+    [0.797_766_6, 0.135_181_3, 0.031_347_73],
+    [0.288_074_8, 0.711_835_2, 0.000_089_94],
+    [0.0,         0.0,         0.825_104_6],
+];
+
+/// The ICC space of a colour of `space`: the profile has its primaries and its curve, as CSS Color 4
+/// says them, written once for the document.
+fn icc_space(
+    context: &mut lemon_pdf::content::PageContext<'_, '_, '_>,
+    space: IccSpace,
+) -> Result<lemon_pdf::color_space::IccBasedColorSpace, Error> {
+    use lemon_pdf::icc::{ParametricCurve, rgb_matrix_profile};
+    const LINEAR: ParametricCurve = ParametricCurve { g: 1.0, a: 1.0, b: 0.0, c: 0.0, d: 0.0 };
+    let colorants = |to_xyz: &[[f64; 3]; 3], adapt: bool| -> [(f64, f64, f64); 3] {
+        [0, 1, 2].map(|column| {
+            let xyz = [to_xyz[0][column], to_xyz[1][column], to_xyz[2][column]];
+            let [x, y, z] = if adapt { multiply(&D65_TO_D50, xyz) } else { xyz };
+            (x, y, z)
+        })
+    };
+    let (key, name, to_xyz, adapt, curve) = match space {
+        IccSpace::SrgbLinear => ("srgb-linear", "sRGB linear", SRGB_TO_XYZ, true, LINEAR),
+        IccSpace::DisplayP3 => ("display-p3", "Display P3", P3_TO_XYZ, true, ParametricCurve::SRGB),
+        IccSpace::DisplayP3Linear => ("display-p3-linear", "Display P3 linear", P3_TO_XYZ, true, LINEAR),
+        IccSpace::A98Rgb => ("a98-rgb", "Adobe RGB (1998)", A98_TO_XYZ, true, ParametricCurve { g: 563.0 / 256.0, a: 1.0, b: 0.0, c: 0.0, d: 0.0 }),
+        IccSpace::ProphotoRgb => (
+            "prophoto-rgb",
+            "ProPhoto RGB",
+            PROPHOTO_TO_XYZ_D50,
+            false,
+            ParametricCurve { g: 1.8, a: 1.0, b: 0.0, c: 1.0 / 16.0, d: 16.0 / 512.0 },
+        ),
+        // pure gamma 2.4, as CSS Color 4 says, and the one that an iPhone decodes every Rec. 2020 profile with
+        IccSpace::Rec2020 => return wide_color_space(context),
+    };
+    let [red, green, blue] = colorants(&to_xyz, adapt);
+    Ok(context.pdf_context.icc_color_space(key, || rgb_matrix_profile(name, red, green, blue, curve), 3, Some(StreamFilter::Deflate))?)
+}
+
+/// Makes the fills (or the strokes) of the page use `color`, in the space that CSS wrote it in:
+///
+/// - sRGB (`rgb()`, `hsl()`, a hex code, a name, `color(srgb …)`) is a device colour; every page and form
+///   defines `DefaultRGB` as sRGB, so that it is sRGB in every viewer that honours it ([`set_device_defaults`]);
+/// - a colour of `color()` in a space with a profile (Display P3, Adobe RGB, ProPhoto RGB, Rec. 2020, and the
+///   linear ones) is in an ICC space of that profile, written once for the document;
+/// - every other colour (`lab()`, `lch()`, `xyz`, an `oklab()` or `oklch()` that sRGB cannot hold, a colour
+///   that is outside of the space it was written in) is CIELAB (D50): the PDF has no Oklab, so those are
+///   converted. A device may show a* and b* only within ±128 (an iPhone scales the range), so a colour
+///   beyond is in the Rec. 2020 ICC space if that holds it, else its chroma is reduced to fit.
+///
+/// The alpha is not set.
 fn set_color(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>, color: PaintColor, stroke: bool) -> Result<(), Error> {
     let xyz = match color {
         PaintColor::Srgb(color) => {
             let channel = |value: u8| f64::from(value) / f64::from(u8::MAX);
-            let space = context.pdf_context.icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
-            let space = context.add_color_space(space);
-            let components = [channel(color.red), channel(color.green), channel(color.blue)];
-            return if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) };
+            let (r, g, b) = (channel(color.red), channel(color.green), channel(color.blue));
+            return if stroke { context.device_rgb_stroke_color(r, g, b) } else { context.device_rgb_fill_color(r, g, b) };
         }
-        PaintColor::DisplayP3(color) => {
-            let decode = |value: f64| if value <= 0.040_45 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) };
-            multiply(&P3_TO_XYZ, color.components().map(|c| decode(f64::from(c))))
+        // PDF/A-1 does not allow the profiles of version 4 that the ICC spaces are: the colour is CIELAB
+        PaintColor::Icc(_) if pdfa1_active() => color.to_xyz().map(f64::from),
+        PaintColor::Icc(color) => {
+            let space = icc_space(context, color.space)?;
+            let space = context.add_color_space(space);
+            let components = color.components().map(|value| (f64::from(value) * 100_000.0).round() / 100_000.0);
+            return if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) };
         }
         PaintColor::Xyz(color) => color.components().map(f64::from),
     };
-    let space = wide_color_space(context)?;
-    let space = context.add_color_space(space);
-    let components = rec2020_gamma24_components(xyz).map(|value| (value * 100_000.0).round() / 100_000.0);
-    if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) }
+    let [x, y, z] = multiply(&D65_TO_D50, xyz);
+    let white = lemon_pdf::color_space::D50_WHITE_POINT;
+    let f = |t: f64| if t > 216.0 / 24389.0 { t.cbrt() } else { (24389.0 / 27.0 * t + 16.0) / 116.0 };
+    let (fx, fy, fz) = (f(x / white[0]), f(y / white[1]), f(z / white[2]));
+    let (lightness, a, b) = (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz));
+    let round = |value: f64| (value * 10_000.0).round() / 10_000.0;
+    let lab = lemon_pdf::color_space::LabColorSpace::d50();
+    let limit = lab.range[1];
+    let (mut a, mut b) = (a, b);
+    if a.abs() > limit || b.abs() > limit {
+        // A device may show a* and b* only within ±128 (an iPhone scales the range), so a colour beyond is in the
+        // ICC space of Rec. 2020 if that holds it, and else its chroma is reduced (the lightness and the hue stay).
+        let linear = multiply(&XYZ_TO_REC2020, xyz);
+        if linear.iter().all(|v| (-0.000_5..=1.000_5).contains(v)) {
+            let space = wide_color_space(context)?;
+            let space = context.add_color_space(space);
+            let components = rec2020_gamma24_components(xyz).map(|value| (value * 100_000.0).round() / 100_000.0);
+            return if stroke { context.set_stroke_color_components(&space, &components) } else { context.set_fill_color_components(&space, &components) };
+        }
+        let scale = limit / a.abs().max(b.abs());
+        (a, b) = (a * scale, b * scale);
+    }
+    let name = context.add_lab_color_space(lab);
+    let lightness = round(lightness.clamp(0.0, 100.0));
+    if stroke { context.lab_stroke_color(&name, lightness, round(a), round(b)) } else { context.lab_fill_color(&name, lightness, round(a), round(b)) }
+}
+
+/// Defines what a device colour means in the resources of the page or form `context` (`DefaultRGB`):
+/// sRGB. A form has resources of its own, which the page's do not reach, so every form and pattern
+/// has to call this before it paints.
+pub(crate) fn set_device_defaults(context: &mut lemon_pdf::content::PageContext<'_, '_, '_>) -> Result<(), Error> {
+    let srgb = context.pdf_context.icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
+    context.set_default_color_space(lemon_pdf::color_space::DefaultColorSpace::Rgb, srgb);
+    Ok(())
 }
 
 /// Makes the fills of the page use `color`, see [`set_color`].
@@ -293,6 +400,7 @@ fn paint_slice(
                     Pt::from(bbox.x + bbox.width),
                     Pt::from(page_height - bbox.y),
                 ];
+                pdfa1_forbid("`opacity` on an element")?;
                 let form = page_context.pdf_context.write_form(
                     area,
                     Some(lemon_pdf::form::TransparencyGroup::new(
@@ -300,6 +408,7 @@ fn paint_slice(
                     )),
                     filter,
                     |form| {
+                        set_device_defaults(form)?;
                         // Content of a form is not part of the structure of the page: it is
                         // not tagged.
                         paint_slice(
@@ -491,14 +600,17 @@ fn paint_item(
                             Pt::from(rect.height),
                         )?;
                     }
-                    Embedded::Svg(form, width, height) => {
+                    Embedded::Svg(form, width, height, unscaled) => {
                         // like `object-fit: contain`: the SVG keeps its proportions
-                        // and is centered in the box
+                        // and is centered in the box (an element without a `viewBox` keeps its
+                        // scale and the corner, and what is outside of the box is clipped)
                         let (box_w, box_h) = (rect.width.0, rect.height.0);
-                        let scale = (box_w / width).min(box_h / height);
+                        let scale = if unscaled { 1.0 } else { (box_w / width).min(box_h / height) };
+                        let (free_w, free_h) =
+                            if unscaled { (0.0, 0.0) } else { (box_w - width * scale, box_h - height * scale) };
                         // layout is in pixels, the PDF in points
-                        let x = Pt::from(rect.x + PixelLength((box_w - width * scale) / 2.0));
-                        let y = Pt::from(page_height - rect.y - PixelLength((box_h - height * scale) / 2.0));
+                        let x = Pt::from(rect.x + PixelLength(free_w / 2.0));
+                        let y = Pt::from(page_height - rect.y - PixelLength(free_h / 2.0));
                         let scale = f64::from(Pt::from(PixelLength(scale)).0);
                         let key = page_context.add_xobject(form);
                         page_context.save_graphics_state()?;
@@ -687,8 +799,8 @@ fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::Ra
         return image;
     };
     let components = image.color_space().components();
-    match lemon_pdf::icc::inspect_profile(&profile) {
-        Ok(info) if info.components == components => {}
+    let info = match lemon_pdf::icc::inspect_profile(&profile) {
+        Ok(info) if info.components == components => info,
         Ok(info) => {
             log::warn!("the ICC profile of an image has {} components and the image {}: it is ignored", info.components, components);
             return image;
@@ -697,6 +809,9 @@ fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::Ra
             log::warn!("the ICC profile of an image is ignored: {why}");
             return image;
         }
+    };
+    if info.major_version >= 3 {
+        let _ = pdfa1_forbid("an image with an ICC profile of version 4 (the profile has to be version 2)");
     }
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -709,6 +824,21 @@ fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::Ra
             image
         }
     }
+}
+
+/// Writes a JPEG or PNG image into the PDF with the colour space of its file (see [`with_icc_profile`]).
+/// Both `<img>` and the `<image>` elements of SVG images embed their rasters with it, so that they
+/// have the same colour handling.
+pub(crate) fn write_raster(
+    context: &mut DocumentContext<'_>,
+    raster: &crate::image::RasterImage,
+) -> Result<lemon_pdf::object::IndirectReference<lemon_pdf::image::ImageXObject>, String> {
+    let pdf_image = raster.to_pdf_image()?;
+    if pdf_image.has_alpha() {
+        let _ = pdfa1_forbid("an image with an alpha channel (it is a soft mask)");
+    }
+    let pdf_image = with_icc_profile(context, raster, pdf_image);
+    context.write_image(pdf_image).map_err(|error| error.to_string())
 }
 
 /// Embeds the images of the items of a display list that are not embedded yet.
@@ -727,16 +857,10 @@ fn embed_images(
             continue;
         }
         let embedded = match &**image {
-            crate::image::LoadedImage::Raster(raster) => raster
-                .to_pdf_image()
-                .and_then(|pdf_image| {
-                    let pdf_image = with_icc_profile(context, raster, pdf_image);
-                    context.write_image(pdf_image).map_err(|error| error.to_string())
-                })
-                .map(Embedded::Raster),
+            crate::image::LoadedImage::Raster(raster) => write_raster(context, raster).map(Embedded::Raster),
             crate::image::LoadedImage::Svg(svg) => svg_writer
-                .write(context, &svg.tree)
-                .map(|form| Embedded::Svg(form, svg.tree.size().width(), svg.tree.size().height()))
+                .write(context, &svg.tree, svg.unscaled)
+                .map(|form| Embedded::Svg(form, svg.tree.size().width(), svg.tree.size().height(), svg.unscaled))
                 .map_err(|error| error.to_string()),
         };
         match embedded {
@@ -750,14 +874,16 @@ fn embed_images(
 
 /// The level of PDF/A (ISO 19005) that a file is written for, like `2b` or `3u`.
 ///
-/// Parts 2 and 3 are the ones that fit the PDF 1.7 that is written (part 1 forbids the
-/// transparency that the pages use, part 4 is for PDF 2.0). Level `b` is about the looks of the
-/// pages, `u` adds that the text can be extracted, `a` that the file is tagged. Helium always
+/// Parts 2 and 3 are the ones that fit the PDF 1.7 that is written (part 4 is for PDF 2.0). Part 1
+/// forbids transparency, object streams and version 4 of ICC profiles, so a file of level `1b` is
+/// written without the first two, and a document that needs any of the things that it forbids is an
+/// error (see [`pdfa1_forbid`]); only the level `b` of part 1 is supported. Level `b` is about the looks
+/// of the pages, `u` adds that the text can be extracted, `a` that the file is tagged. Umbruch always
 /// writes the maps from the glyphs to Unicode, so `u` costs nothing; `a` needs the structure tree,
 /// so it does not go with `--no-tags`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdfALevel {
-    /// 2 or 3.
+    /// 1, 2 or 3.
     pub part: u8,
     /// `A`, `B` or `U`.
     pub conformance: char,
@@ -777,12 +903,44 @@ impl std::str::FromStr for PdfALevel {
         let text = text.trim().to_ascii_uppercase();
         let mut chars = text.chars();
         match (chars.next(), chars.next(), chars.next()) {
+            (Some('1'), Some('B'), None) => Ok(PdfALevel { part: 1, conformance: 'B' }),
+            (Some('1'), Some('A' | 'U'), None) => Err(format!(
+                "`{text}` is not supported: of PDF/A-1 only the level 1b is (the level 1a needs a tagged PDF of version 1.4)"
+            )),
             (Some(part @ ('2' | '3')), Some(conformance @ ('A' | 'B' | 'U')), None) => {
                 Ok(PdfALevel { part: part as u8 - b'0', conformance })
             }
-            _ => Err(format!("`{text}` is not a level of PDF/A that is supported: 2a, 2b, 2u, 3a, 3b or 3u")),
+            _ => Err(format!("`{text}` is not a level of PDF/A that is supported: 1b, 2a, 2b, 2u, 3a, 3b or 3u")),
         }
     }
+}
+
+thread_local! {
+    /// While a file of PDF/A-1 is written: the things that the document needs and that PDF/A-1 forbids,
+    /// in the order they were found.
+    static PDFA1_VIOLATIONS: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Whether the file that is written is one of PDF/A-1.
+pub(crate) fn pdfa1_active() -> bool {
+    PDFA1_VIOLATIONS.with(|violations| violations.borrow().is_some())
+}
+
+/// Called where the writer is about to use something that PDF/A-1 forbids (transparency: `what` says which
+/// kind, for the message): in a file of PDF/A-1 it notes `what` and returns an error, so that the
+/// writer does not write it; the error is also reported when the caller makes light of it (an
+/// image that cannot be embedded is only a warning otherwise), because [`write_pdf`] fails with
+/// everything that was noted. In every other file it does nothing.
+pub(crate) fn pdfa1_forbid(what: &str) -> Result<(), Error> {
+    PDFA1_VIOLATIONS.with(|violations| match violations.borrow_mut().as_mut() {
+        Some(list) => {
+            if !list.iter().any(|known| known == what) {
+                list.push(what.to_owned());
+            }
+            Err(Error::new(std::io::ErrorKind::InvalidInput, format!("{what} is not allowed in PDF/A-1")))
+        }
+        None => Ok(()),
+    })
 }
 
 /// The output intent of a PDF/A file is RGB, and PDF/A does not allow device CMYK colours without
@@ -796,7 +954,11 @@ fn check_pdfa_images(print_pages: &mut PrintPages) -> Result<(), Error> {
     for list in lists {
         for item in list.items() {
             if let DisplayItem::Image { image, .. } = item {
-                if matches!(&**image, crate::image::LoadedImage::Raster(raster) if raster.is_cmyk()) {
+                let cmyk = match &**image {
+                    crate::image::LoadedImage::Raster(raster) => raster.is_cmyk(),
+                    crate::image::LoadedImage::Svg(svg) => crate::svg::has_cmyk_image(&svg.tree),
+                };
+                if cmyk {
                     return Err(Error::new(
                         std::io::ErrorKind::InvalidInput,
                         "the document has a CMYK image, which PDF/A does not allow (the colours are sRGB): convert it to RGB",
@@ -808,10 +970,41 @@ fn check_pdfa_images(print_pages: &mut PrintPages) -> Result<(), Error> {
     Ok(())
 }
 
-/// Writes the pages as a PDF file. If `tagged`, it is a tagged PDF whose structure tree is the
+/// Writes the pages as a PDF to `output`. If `tagged`, it is a tagged PDF whose structure tree is the
 /// `structure` of the pages. With a `pdfa` level the file is written to conform to it.
-pub fn write_pdf(
-    output_path: PathBuf,
+///
+/// With PDF/A-1 the whole file is held back until it is known to conform, so that nothing is written
+/// for a document that does not.
+pub fn write_pdf<W: Write>(
+    mut output: W,
+    print_pages: PrintPages,
+    no_filter: bool,
+    crop: bool,
+    tagged: bool,
+    pdfa: Option<PdfALevel>,
+) -> Result<(), Error> {
+    if !pdfa.is_some_and(|level| level.part == 1) {
+        return write_pdf_to(output, print_pages, no_filter, crop, tagged, pdfa);
+    }
+    // PDF/A-1 forbids transparency, which the writer meets at many places: every one of them notes
+    // what it met, and the file is not kept if there was any
+    PDFA1_VIOLATIONS.with(|violations| *violations.borrow_mut() = Some(Vec::new()));
+    let mut buffer = Vec::new();
+    let result = write_pdf_to(&mut buffer, print_pages, no_filter, crop, tagged, pdfa);
+    let violations = PDFA1_VIOLATIONS.with(|violations| violations.borrow_mut().take()).unwrap_or_default();
+    if !violations.is_empty() {
+        return Err(Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("the document cannot be written as PDF/A-1, which does not allow: {}", violations.join("; ")),
+        ));
+    }
+    result?;
+    output.write_all(&buffer)?;
+    output.flush()
+}
+
+fn write_pdf_to<W: Write>(
+    output: W,
     mut print_pages: PrintPages,
     no_filter: bool,
     crop: bool,
@@ -822,8 +1015,11 @@ pub fn write_pdf(
         // before the file is made, so that there is none if there is an error
         check_pdfa_images(&mut print_pages)?;
     }
-    let file = BufWriter::new(File::create(output_path)?);
-    let mut context = DocumentContext::with_writer(file, Version::Pdf1_7)?;
+    let mut context = DocumentContext::with_writer(BufWriter::new(output), Version::Pdf1_7)?;
+    if pdfa1_active() {
+        // PDF/A-1 (ISO 19005-1, 6.1.4) does not have cross-reference streams or object streams
+        context.object_streams = false;
+    }
 
     let structure = std::mem::take(&mut print_pages.structure);
     let outline = std::mem::take(&mut print_pages.outline);
@@ -842,7 +1038,7 @@ pub fn write_pdf(
     // the document information dictionary and the XMP packet say the same
     let metadata = &structure.metadata;
     let date = metadata.date.or_else(crate::metadata::Timestamp::from_environment);
-    let producer = format!("Helium {}", env!("CARGO_PKG_VERSION"));
+    let producer = format!("Umbruch {}", env!("CARGO_PKG_VERSION"));
     {
         let info = &mut context.document_info;
         let mut set = |key: &str, value: String| {
@@ -945,6 +1141,7 @@ pub fn write_pdf(
             None,
             page_filter,
             |form| {
+                set_device_defaults(form)?;
                 paint_items(
                     form,
                     &mut island.display_list,
@@ -1003,10 +1200,7 @@ pub fn write_pdf(
         page.add_content(&mut context, filter, |page_context| {
             // device colours (and images and shadings, which have only those) are sRGB, in every
             // viewer, instead of whatever the viewer takes the device to be
-            let srgb = page_context
-                .pdf_context
-                .icc_color_space("srgb", lemon_pdf::icc::srgb_profile, 3, Some(StreamFilter::Deflate))?;
-            page_context.set_default_color_space(lemon_pdf::color_space::DefaultColorSpace::Rgb, srgb);
+            set_device_defaults(page_context)?;
             paint_items(
                 page_context,
                 &mut print_page.display_list,
@@ -1298,7 +1492,7 @@ fn xmp_metadata(
         properties += &format!("   <xmp:CreateDate>{0}</xmp:CreateDate>\n   <xmp:ModifyDate>{0}</xmp:ModifyDate>\n", date.xmp());
     }
     properties += &format!(
-        "   <pdf:Producer>Helium {}</pdf:Producer>\n",
+        "   <pdf:Producer>Umbruch {}</pdf:Producer>\n",
         env!("CARGO_PKG_VERSION")
     );
     if tagged {

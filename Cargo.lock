@@ -261,7 +261,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote 1.0.47",
- "syn 2.0.119",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -550,65 +550,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "helium"
-version = "0.4.2"
-dependencies = [
- "assert_cmd",
- "cssparser",
- "cssparser-color",
- "derive_more",
- "env_logger 0.8.4",
- "flate2",
- "fontdb",
- "formel",
- "harfbuzz_rs",
- "helium_derive",
- "helium_paginate",
- "html5ever",
- "hyphenation",
- "icu_segmenter",
- "lemon_pdf",
- "lemon_pdf_derive",
- "log",
- "parking_lot 0.11.2",
- "png",
- "precomputed-hash",
- "predicates 1.0.8",
- "quickcheck",
- "quickcheck_macros",
- "selectors",
- "serde_json",
- "smallvec",
- "specs",
- "structopt",
- "taffy",
- "thiserror",
- "ttf-parser",
- "unicode-bidi",
- "unicode-properties",
- "unicode-script",
- "unicode-segmentation",
- "unicode-vo",
- "usvg",
- "xml5ever",
- "yeslogic-fontconfig-sys",
-]
-
-[[package]]
-name = "helium_derive"
-version = "0.1.0"
-dependencies = [
- "Inflector",
- "proc-macro2 1.0.107",
- "quote 1.0.47",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "helium_paginate"
-version = "0.1.0"
-
-[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -806,7 +747,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 [[package]]
 name = "lemon_pdf"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=master#bd0be45f23b5e32e37f583ec5d652657d46a22ee"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=claude%2Fcidset#0d6bafae1708e46c8b2c2a2d0bbf3dd97d489a0f"
 dependencies = [
  "Inflector",
  "bitflags 2.13.2",
@@ -824,7 +765,7 @@ dependencies = [
 [[package]]
 name = "lemon_pdf_derive"
 version = "0.1.0"
-source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=master#bd0be45f23b5e32e37f583ec5d652657d46a22ee"
+source = "git+https://github.com/manuel-rhdt/lemon_pdf.git?branch=claude%2Fcidset#0d6bafae1708e46c8b2c2a2d0bbf3dd97d489a0f"
 dependencies = [
  "Inflector",
  "proc-macro2 0.4.30",
@@ -1862,6 +1803,69 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd30d05e69d1478e13fe3e7a853409cfec82cebc2cf9b8d613b3c6b0081781ed"
 dependencies = [
  "nom",
+]
+
+[[package]]
+name = "umbruch"
+version = "0.5.3"
+dependencies = [
+ "assert_cmd",
+ "cssparser",
+ "cssparser-color",
+ "derive_more",
+ "env_logger 0.8.4",
+ "flate2",
+ "fontdb",
+ "formel",
+ "harfbuzz_rs",
+ "html5ever",
+ "hyphenation",
+ "icu_segmenter",
+ "lemon_pdf",
+ "lemon_pdf_derive",
+ "log",
+ "parking_lot 0.11.2",
+ "png",
+ "precomputed-hash",
+ "predicates 1.0.8",
+ "quickcheck",
+ "quickcheck_macros",
+ "rustc-hash",
+ "selectors",
+ "serde_json",
+ "smallvec",
+ "specs",
+ "structopt",
+ "taffy",
+ "thiserror",
+ "ttf-parser",
+ "umbruch_derive",
+ "umbruch_paginate",
+ "unicode-bidi",
+ "unicode-properties",
+ "unicode-script",
+ "unicode-segmentation",
+ "unicode-vo",
+ "usvg",
+ "xml5ever",
+ "yeslogic-fontconfig-sys",
+]
+
+[[package]]
+name = "umbruch_derive"
+version = "0.1.0"
+dependencies = [
+ "Inflector",
+ "proc-macro2 1.0.107",
+ "quote 1.0.47",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "umbruch_paginate"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash",
 ]
 
 [[package]]

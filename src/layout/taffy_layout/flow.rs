@@ -21,12 +21,12 @@
 //! content of the container are in the numbers of its flow), the extents and the paragraphs have
 //! one numbering for all of them.
 
-use super::tree::{Content, HeliumTree, node_is_out_of_flow};
+use super::tree::{Content, UmbruchTree, node_is_out_of_flow};
 use super::window::Span;
 use crate::style::properties::computed::Break;
 use crate::style::properties::specified::Display;
 use crate::style::properties::computed::{Float, FloatReference};
-use helium_paginate::{BoxRef, BreakKind, BreakLevel, FloatSide, Item, NodeRef, ParId};
+use umbruch_paginate::{BoxRef, BreakKind, BreakLevel, FloatSide, Item, NodeRef, ParId};
 use std::rc::Rc;
 use taffy::tree::NodeId;
 
@@ -77,7 +77,7 @@ pub(super) struct Flow {
     /// of the multi-column containers come behind them.
     pub page_extents: usize,
     /// The header rows of the tables, which the pages that go on inside of a table repeat.
-    pub repeats: Vec<helium_paginate::Repeat>,
+    pub repeats: Vec<umbruch_paginate::Repeat>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,8 +155,8 @@ impl Breaks {
 /// The boxes that are positioned in the initial containing block by their `top` or `bottom`
 /// are on the first page: they become children of the root, in front of its other children.
 /// (A box with a static position is on the page of the content in front of it.)
-fn pin_to_first_page(tree: &mut HeliumTree, root: NodeId) {
-    fn collect(tree: &HeliumTree, id: NodeId, positioned: bool, found: &mut Vec<(NodeId, NodeId)>) {
+fn pin_to_first_page(tree: &mut UmbruchTree, root: NodeId) {
+    fn collect(tree: &UmbruchTree, id: NodeId, positioned: bool, found: &mut Vec<(NodeId, NodeId)>) {
         for &child in &tree.node(id).children {
             let style = &tree.node(child).style;
             let is_positioned = style.position != taffy::Position::Static;
@@ -183,7 +183,14 @@ fn pin_to_first_page(tree: &mut HeliumTree, root: NodeId) {
 
 /// `single_page`: the document is one page whatever it says (a document that is cropped), so
 /// there are no forced page breaks.
-pub(super) fn extract(tree: &mut HeliumTree, root: NodeId, rtl: bool, paged: bool, single_page: bool) -> Flow {
+pub(super) fn extract(
+    tree: &mut UmbruchTree,
+    root: NodeId,
+    rtl: bool,
+    paged: bool,
+    single_page: bool,
+    page_size: (f32, f32),
+) -> Flow {
     pin_to_first_page(tree, root);
     let nodes = tree.nodes.len();
     let mut extractor = Extractor {
@@ -202,6 +209,7 @@ pub(super) fn extract(tree: &mut HeliumTree, root: NodeId, rtl: bool, paged: boo
         level: BreakLevel::Page,
         paged,
         single_page,
+        page_size,
         hoist: false,
         hoisted: vec![],
     };
@@ -230,7 +238,7 @@ pub(super) fn extract(tree: &mut HeliumTree, root: NodeId, rtl: bool, paged: boo
 }
 
 struct Extractor<'t, 'a, 'w> {
-    tree: &'t mut HeliumTree<'a, 'w>,
+    tree: &'t mut UmbruchTree<'a, 'w>,
     flow: Flow,
     /// What the pages are that the flow is made for: the pages of the document, or the columns
     /// of a multi-column container.
@@ -240,6 +248,9 @@ struct Extractor<'t, 'a, 'w> {
     paged: bool,
     /// Whether the document is one page, in which no page break is forced.
     single_page: bool,
+    /// The width and the height of the content area of the first page: what decides which table
+    /// rows may be taller than a page.
+    page_size: (f32, f32),
     /// Whether the floats of the content of the container that is made into a flow are placed on
     /// the page: the container is split over pages, so the page that it is on is known.
     hoist: bool,
@@ -353,6 +364,11 @@ impl Extractor<'_, '_, '_> {
             };
             return if self.paged && self.level == BreakLevel::Page && no_min_height { Kind::Container } else { Kind::Whole };
         }
+        // A grid or flex container is split over pages like a table row is: its items are cut between the
+        // rows of the grid, and inside of the ones that are taller than half a page.
+        if self.grid_may_split(id) {
+            return Kind::Container;
+        }
         match node.content {
             Content::Replaced => Kind::Whole,
             Content::Inline => {
@@ -383,6 +399,24 @@ impl Extractor<'_, '_, '_> {
                 }
             }
         }
+    }
+
+    /// Whether a grid container is split over pages: it is in the flow of a page and its height is
+    /// the one of its content.
+    fn grid_may_split(&self, id: NodeId) -> bool {
+        if !self.paged || self.level != BreakLevel::Page || self.single_page || id == self.flow.root {
+            return false;
+        }
+        let node = self.tree.node(id);
+        if node.content != Content::Blocks || !matches!(self.display(id), Some(Display::Grid | Display::Flex)) {
+            return false;
+        }
+        let min_height = node.style.min_size.height;
+        let no_min_height = min_height.is_auto() || {
+            let raw = min_height.into_raw();
+            raw.tag() == taffy::CompactLength::LENGTH_TAG && raw.value() == 0.0
+        };
+        no_min_height && !self.in_flow_children(id).is_empty()
     }
 
     /// The last (first) in-flow box in a box, which the `break-after` (`break-before`) of its
@@ -565,10 +599,24 @@ impl Extractor<'_, '_, '_> {
             if let Some(header) = self.tree.repeated_header(id) {
                 if let Some(header_end) = self.tree.node(header).span.as_ref().map(|span| span.end) {
                     let node = self.extent(Anchor::Top(header), Anchor::Bottom(header));
-                    self.flow.repeats.push(helium_paginate::Repeat {
+                    self.flow.repeats.push(umbruch_paginate::Repeat {
                         from: header_end as usize,
                         to: end as usize,
                         node,
+                        footer: false,
+                    });
+                }
+            }
+            // the footer rows of a table are repeated behind the last row of the pages in front
+            // of the one that has them
+            if let Some(footer) = self.tree.repeated_footer(id) {
+                if let Some(footer_start) = self.tree.node(footer).span.as_ref().map(|span| span.start) {
+                    let node = self.extent(Anchor::Top(footer), Anchor::Bottom(footer));
+                    self.flow.repeats.push(umbruch_paginate::Repeat {
+                        from: start as usize,
+                        to: footer_start as usize,
+                        node,
+                        footer: true,
                     });
                 }
             }
@@ -682,7 +730,11 @@ impl Extractor<'_, '_, '_> {
             }
             self.gap_item(*end, Anchor::Top(kid.node));
             if kid.kids.is_empty() {
-                self.emit_whole(kid.node, owner);
+                if self.row_may_split(table, kid, avoid) {
+                    self.emit_row(kid.node, owner, avoid);
+                } else {
+                    self.emit_whole(kid.node, owner);
+                }
             } else {
                 self.emit_group(table, kid, avoid);
             }
@@ -691,6 +743,77 @@ impl Extractor<'_, '_, '_> {
             last_rows = Some(kid.rows.clone());
             kids.push(kid.node);
         }
+    }
+
+    /// Whether a row of a table may be split over pages: it is in the flow of the page, no cell
+    /// spans over a break in front of it or behind it, and it may be taller than a page (the
+    /// estimate is made from the text in its cells: it is not taller than a page, if the row is a
+    /// container, the fragment that the layout service finds is the whole row).
+    fn row_may_split(&self, table: NodeId, kid: &super::table::TableKid, _avoid: Avoid) -> bool {
+        if !self.paged || self.level != BreakLevel::Page || self.single_page {
+            return false;
+        }
+        if self.display(kid.node) != Some(Display::TableRow) || kid.rows.is_empty() {
+            return false;
+        }
+        let spans = |row: usize| self.tree.table_row_blocked(table, row);
+        if kid.rows.start > 0 && spans(kid.rows.start - 1) || spans(kid.rows.end - 1) {
+            return false;
+        }
+        let node = self.tree.node(kid.node);
+        if node.orthogonal || node.flow.is_vertical() || !node.style.size.height.is_auto() {
+            return false;
+        }
+        let cells = node.children.len().max(1) as f32;
+        let (width, height) = self.page_size;
+        // (the cells share the width: a lower estimate of what the row needs)
+        let cell_width = (width / cells).max(1.0);
+        node.children.iter().any(|&cell| self.estimated_height(cell, cell_width) >= height * 0.25)
+    }
+
+    /// An estimate of the height of the text in a box that is `width` wide.
+    fn estimated_height(&self, id: NodeId, width: f32) -> f32 {
+        let node = self.tree.node(id);
+        match node.content {
+            Content::Inline => {
+                let Some(ifc) = self.tree.inline_ctxs.get(node.entity) else {
+                    return 0.0;
+                };
+                let advance = ifc.break_points.last().map_or(0.0, |point| point.advance_before.0);
+                let font_size = self
+                    .tree
+                    .computed_values
+                    .get(node.entity)
+                    .map_or(16.0, |style| style.font.font_size.0);
+                (advance / width.max(1.0)).ceil().max(1.0) * font_size * 1.2
+            }
+            Content::Blocks => node.children.iter().map(|&child| self.estimated_height(child, width)).sum(),
+            _ => 0.0,
+        }
+    }
+
+    /// A row that may be split over pages: a container item, which the layout service finds the
+    /// fragments of.
+    fn emit_row(&mut self, id: NodeId, parent: NodeId, avoid: Avoid) {
+        self.flow.parents[usize::from(id)] = Some(parent);
+        let start = self.flow.items.len() as u32;
+        let inside = self
+            .tree
+            .computed_values
+            .get(self.tree.node(id).entity)
+            .map(|style| style.page.break_inside);
+        let item = self.push(Item::Container {
+            node: BoxRef(usize::from(id) as u32),
+            avoid_inside: avoid.page || inside.is_some_and(|inside| inside.avoids_page()),
+        });
+        self.flow.leaves[item as usize] = Some(id);
+        self.tree.node_mut(id).span = Some(Span {
+            start,
+            end: start + 1,
+            kids: vec![],
+            split: false,
+            anchored: false,
+        });
     }
 
     /// A box of a table that is not split: a caption or a row.

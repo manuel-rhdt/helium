@@ -31,7 +31,7 @@ fn example_documents_render_to_pdf() {
         // make sure a stale file from an earlier run cannot make the test pass
         let _ = std::fs::remove_file(&output);
 
-        let result = common::helium()
+        let result = common::umbruch()
             .unwrap()
             .arg(input)
             .arg(&output)

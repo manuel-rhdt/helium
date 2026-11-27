@@ -20,7 +20,7 @@ fn layout(name: &str, html: &str) -> Value {
         ),
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-system-fonts", "--dump-layout"])

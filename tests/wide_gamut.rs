@@ -1,7 +1,9 @@
-//! Colours that sRGB cannot hold are not clipped to it: they are written in one ICC space with the
-//! primaries of Rec. 2020 and a gamma of 2.4 (the one that Display P3 and nearly all of CSS fit in, and
-//! that an iPhone shows as the profile says). Colours of sRGB stay device RGB, which `DefaultRGB`
-//! defines as sRGB. Only a colour that Rec. 2020 cannot hold is clipped, to Rec. 2020.
+//! A colour is written in the space that CSS wrote it in. `rgb()`, `hsl()`, hex codes, names (and an
+//! `oklab()` or `oklch()` that sRGB holds) are device RGB, which `DefaultRGB` defines as sRGB in the page and
+//! in every form. A colour of `color()` in a space with a profile (Display P3, Rec. 2020, ...) is in an ICC
+//! space of that profile. Everything else (`lab()`, `lch()`, `xyz`, an `oklab()` that sRGB cannot hold, a
+//! colour outside of the space it was written in) is CIELAB, and a colour with a* or b* beyond 128 (which an
+//! iPhone does not show right in Lab) is in the ICC space of Rec. 2020 if that holds it, else its chroma is reduced.
 
 mod common;
 
@@ -12,7 +14,7 @@ fn render(name: &str, html: &str) -> String {
     let input = dir.join(format!("wide_{name}.html"));
     let output = dir.join(format!("wide_{name}.pdf"));
     std::fs::write(&input, html).unwrap();
-    common::helium().unwrap().arg("--no-compression").arg("--no-system-fonts").arg(&input).arg(&output).assert().success();
+    common::umbruch().unwrap().arg("--no-compression").arg("--no-system-fonts").arg(&input).arg(&output).assert().success();
     String::from_utf8_lossy(&common::expand_object_streams(&std::fs::read(output).unwrap())).into_owned()
 }
 
@@ -31,7 +33,7 @@ fn space_colors(pdf: &str, fill: bool) -> Vec<(String, Vec<f64>)> {
 }
 
 fn rgb_count(pdf: &str) -> usize {
-    pdf.split_whitespace().filter(|token| *token == "rg").count()
+    pdf.split_whitespace().filter(|token| *token == "rg" || *token == "RG").count()
 }
 
 fn close(found: &[f64], expected: [f64; 3]) -> bool {
@@ -44,13 +46,13 @@ fn profiles(pdf: &str) -> usize {
 }
 
 #[test]
-fn a_color_of_display_p3_is_in_the_rec2020_profile() {
+fn a_color_of_display_p3_is_in_the_profile_of_display_p3() {
     let pdf = render("p3", "<p style=\"background: color(display-p3 1 0 0)\">x</p>");
     // the black of the text is in the sRGB space too: it is the colour that is not 0 0 0
     let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).take(1).collect();
     assert!(!fills.is_empty(), "{fills:?}");
-    // Display P3 red in Rec. 2020: the linear coordinates to the power of 1 / 2.4
-    assert!(close(&fills[0].1, [0.88892, 0.27657, 0.0]), "{:?}", fills[0]);
+    // the components are the ones that CSS wrote
+    assert!(close(&fills[0].1, [1.0, 0.0, 0.0]), "{:?}", fills[0]);
     assert!(pdf.contains("/ICCBased"), "{pdf}");
     // the profile of the colours and the sRGB profile of DefaultRGB
     assert_eq!(profiles(&pdf), 2);
@@ -67,12 +69,63 @@ fn rec2020_green_is_its_own_primary() {
 }
 
 #[test]
-fn a_color_that_rec2020_cannot_hold_is_clipped_to_it() {
+fn a_color_of_prophoto_is_in_its_own_profile_and_not_clipped() {
     let pdf = render("prophoto", "<p style=\"background: color(prophoto-rgb 0 1 0)\">x</p>");
     // the black of the text is in the sRGB space too: it is the colour that is not 0 0 0
     let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).take(1).collect();
     assert!(!fills.is_empty(), "{fills:?}");
-    assert!(fills[0].1.iter().all(|v| (0.0..=1.0).contains(v)), "{:?}", fills[0]);
+    assert!(close(&fills[0].1, [0.0, 1.0, 0.0]), "{:?}", fills[0]);
+    assert!(pdf.contains("/ICCBased") && !pdf.contains("/CalRGB") && !pdf.contains("/Lab"));
+    assert_eq!(profiles(&pdf), 2, "the profile of ProPhoto and the sRGB one");
+}
+
+/// The values of the fills in a colour space of the kind `name` (`/Lab`, `/CalRGB`): the page resources have
+/// `/CSn [ /Lab ...`, and the content says `/CSn cs a b c sc`.
+fn fills_in(pdf: &str, name: &str) -> Vec<Vec<f64>> {
+    let spaces: Vec<String> = pdf
+        .split("/CS")
+        .skip(1)
+        .filter(|rest| rest.trim_start_matches(|c: char| c.is_ascii_digit()).trim_start().starts_with(&format!("[ {name}")))
+        .map(|rest| format!("/CS{}", rest.chars().take_while(|c| c.is_ascii_digit()).collect::<String>()))
+        .collect();
+    space_colors(pdf, true).into_iter().filter(|(space, _)| spaces.contains(space)).map(|(_, c)| c).collect()
+}
+
+#[test]
+fn a_color_outside_of_its_space_is_cielab_and_not_clipped() {
+    let pdf = render("outside", "<p style=\"background: color(display-p3 1.2 0 0)\">x</p>");
+    let labs = fills_in(&pdf, "/Lab");
+    assert!(!labs.is_empty(), "{pdf}");
+    assert!(labs[0][0] > 0.0 && labs[0][0] < 100.0 && labs[0][1].abs() <= 128.0 && labs[0][2].abs() <= 128.0, "{labs:?}");
+    assert!(!pdf.contains("/CalRGB"));
+}
+
+#[test]
+fn lab_is_written_as_the_lab_that_it_is() {
+    let pdf = render("lab", "<p style=\"background: lab(50 20 30)\">x</p>");
+    let labs = fills_in(&pdf, "/Lab");
+    assert!(labs.iter().any(|c| close(c, [50.0, 20.0, 30.0])), "{labs:?}");
+    // the white point is the D50 one of CSS, and the range is the one that is right on iOS
+    assert!(pdf.contains("/WhitePoint") && pdf.contains("/Range"), "{pdf}");
+}
+
+#[test]
+fn lch_and_an_oklch_that_srgb_cannot_hold_are_cielab() {
+    let pdf = render("lch", "<p style=\"background: lch(60 40 100); border: 2px solid oklch(0.7 0.3 150)\">x</p>");
+    assert!(fills_in(&pdf, "/Lab").iter().any(|c| close(c, [60.0, -6.9459, 39.3923])), "{:?}", fills_in(&pdf, "/Lab"));
+}
+
+#[test]
+fn a_color_beyond_128_in_a_or_b_is_in_the_rec2020_profile_if_it_fits() {
+    // Rec. 2020 green: a* is about -190
+    let pdf = render("beyond", "<p style=\"background: color(rec2020 0 1 0)\">x</p>");
+    assert!(fills_in(&pdf, "/Lab").is_empty(), "{pdf}");
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
+    assert!(close(&fills[0].1, [0.0, 1.0, 0.0]), "{fills:?}");
+    // a colour that Rec. 2020 does not hold either has its chroma reduced, the lightness and the hue stay
+    let pdf = render("beyond_far", "<p style=\"background: lab(60 300 100)\">x</p>");
+    let labs = fills_in(&pdf, "/Lab");
+    assert!(labs.iter().any(|c| close(c, [60.0, 128.0, 42.6667])), "{labs:?}");
     assert!(!pdf.contains("/CalRGB"));
 }
 
@@ -99,18 +152,23 @@ fn the_profile_is_written_once_for_the_whole_document() {
 }
 
 #[test]
-fn a_color_inside_of_srgb_is_in_the_srgb_profile() {
+fn the_syntaxes_of_srgb_are_device_colors_that_the_page_defines_as_srgb() {
     let pdf = render(
         "inside",
-        "<p style=\"color: color(display-p3 0.5 0.5 0.5); background: lab(50 20 30); border: 2px solid oklch(0.6 0.1 200)\">x</p>",
+        "<p style=\"color: hsl(200 50% 40%); background: #369; border: 2px solid oklch(0.6 0.1 200)\">x</p>",
     );
-    // the colours are in the sRGB profile (one for the document), the same one that DefaultRGB uses
-    assert!(space_colors(&pdf, true).len() >= 2, "{:?}", space_colors(&pdf, true));
-    assert!(!space_colors(&pdf, true).iter().chain(space_colors(&pdf, false).iter()).any(|(_, c)| c.iter().any(|v| !(0.0..=1.0).contains(v))));
-    assert_eq!(rgb_count(&pdf), 0, "no device RGB colour in the content");
-    assert!(!pdf.contains("/CalRGB"));
-    assert_eq!(profiles(&pdf), 1, "only the sRGB profile");
+    assert!(rgb_count(&pdf) >= 3, "device RGB for the text, the background and the border: {pdf}");
+    assert!(space_colors(&pdf, true).is_empty() && space_colors(&pdf, false).is_empty());
+    assert!(!pdf.contains("/CalRGB") && !pdf.contains("/Lab"));
+    assert_eq!(profiles(&pdf), 1, "only the sRGB profile of DefaultRGB");
     assert!(pdf.contains("/DefaultRGB"));
+}
+
+#[test]
+fn a_form_defines_the_device_colors_too() {
+    // an opacity group is a form with resources of its own, which the ones of the page do not reach
+    let pdf = render("form", "<p style=\"opacity: 0.5; background: red\">x</p>");
+    assert!(pdf.matches("/DefaultRGB").count() >= 2, "{pdf}");
 }
 
 #[test]
@@ -118,7 +176,7 @@ fn opacity_and_alpha_keep_the_wide_color() {
     // the alpha of a colour is set apart from its colour space
     let pdf = render("alpha", "<p style=\"background: color(display-p3 0 1 0 / 40%); opacity: 0.8\">x</p>");
     assert!(!space_colors(&pdf, true).is_empty(), "{:?}", space_colors(&pdf, true));
-    assert_eq!(profiles(&pdf), 2, "the sRGB profile and the wide one");
+    assert_eq!(profiles(&pdf), 2, "the sRGB profile and the one of Display P3");
     assert!(pdf.contains("/ca 0.4") || pdf.contains("/ca .4"), "{pdf}");
 }
 
@@ -149,9 +207,8 @@ fn a_gradient_inside_of_srgb_keeps_its_device_colors() {
 #[test]
 fn a_mix_of_wide_colors_is_still_wide() {
     let pdf = render("mix_wide", "<p style=\"background: color-mix(in oklab, color(display-p3 1 0 0), color(display-p3 0 1 0))\">x</p>");
-    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
-    assert!(!fills.is_empty(), "{pdf}");
-    assert_eq!(profiles(&pdf), 2, "the wide profile, not clipped to the sRGB one");
+    // the result is in the space of the mix, which nothing was written in: CIELAB, not clipped to sRGB
+    assert!(!fills_in(&pdf, "/Lab").is_empty(), "{pdf}");
 }
 
 #[test]
@@ -170,8 +227,123 @@ fn the_layout_dump_names_the_space_of_a_wide_color() {
          <div style=\"background: color(rec2020 0 1 0); width: 10px; height: 10px\"></div>",
     )
     .unwrap();
-    let output = common::helium().unwrap().arg("--dump-layout").arg("-").arg(&input).arg(dir.join("wide_dump.pdf")).output().unwrap();
+    let output = common::umbruch().unwrap().arg("--dump-layout").arg("-").arg(&input).arg(dir.join("wide_dump.pdf")).output().unwrap();
     let dump = String::from_utf8_lossy(&output.stdout);
     assert!(dump.contains("\"display-p3\""), "{dump}");
-    assert!(dump.contains("\"rec2020\"") || dump.contains("\"xyz\""), "{dump}");
+    assert!(dump.contains("\"rec2020\""), "{dump}");
+}
+
+// SVG: the colours of an SVG are the ones of CSS, and they are written like the ones of the page.
+
+fn svg(body: &str) -> String {
+    format!("<svg width=\"200\" height=\"100\">{body}</svg>")
+}
+
+#[test]
+fn an_svg_fill_of_display_p3_is_in_the_profile_of_display_p3() {
+    let pdf = render("svg_p3", &svg("<rect width=\"50\" height=\"50\" fill=\"color(display-p3 1 0 0)\"/>"));
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).take(1).collect();
+    assert!(!fills.is_empty(), "{pdf}");
+    assert!(close(&fills[0].1, [1.0, 0.0, 0.0]), "{:?}", fills[0]);
+    assert!(pdf.contains("/ICCBased"), "{pdf}");
+    assert_eq!(profiles(&pdf), 2, "the profile of Display P3 and the sRGB one");
+}
+
+#[test]
+fn an_svg_stroke_and_a_style_declaration_keep_the_wide_color() {
+    let pdf = render(
+        "svg_stroke",
+        &svg("<rect width=\"50\" height=\"50\" fill=\"none\" stroke=\"color(rec2020 0 1 0)\" style=\"stroke-width: 2\"/>\
+              <rect x=\"60\" width=\"50\" height=\"50\" style=\"fill: color(prophoto-rgb 0 1 0)\"/>"),
+    );
+    let strokes: Vec<_> = space_colors(&pdf, false).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
+    assert!(strokes.iter().any(|(_, c)| close(c, [0.0, 1.0, 0.0])), "{pdf}");
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
+    assert!(fills.iter().any(|(_, c)| close(c, [0.0, 1.0, 0.0])), "{pdf}");
+    assert_eq!(profiles(&pdf), 3, "Rec. 2020, ProPhoto and sRGB");
+    assert!(!pdf.contains("/CalRGB"));
+}
+
+#[test]
+fn svg_lab_and_oklch_are_cielab_like_on_the_page() {
+    let pdf = render("svg_lab", &svg("<rect width=\"50\" height=\"50\" fill=\"lab(50 40 30)\"/><rect x=\"60\" width=\"50\" height=\"50\" fill=\"oklch(0.7 0.3 150)\"/>"));
+    let labs = fills_in(&pdf, "/Lab");
+    assert_eq!(labs.len(), 2, "{pdf}");
+    assert!(close_lab(&labs[0], [50.0, 40.0, 30.0]), "{labs:?}");
+}
+
+fn close_lab(found: &[f64], expected: [f64; 3]) -> bool {
+    found.iter().zip(expected).all(|(found, expected)| (found - expected).abs() < 0.6)
+}
+
+#[test]
+fn the_current_color_of_an_svg_can_be_wide() {
+    let pdf = render(
+        "svg_current",
+        &format!("<div style=\"color: color(display-p3 0 1 0)\">{}</div>", svg("<rect width=\"50\" height=\"50\" fill=\"currentColor\"/>")),
+    );
+    assert!(pdf.contains("/ICCBased"), "{pdf}");
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
+    assert!(fills.iter().all(|(_, c)| close(c, [0.0, 1.0, 0.0])), "{fills:?}");
+    // the `color` attribute of the SVG itself
+    let pdf = render("svg_color_attribute", "<svg width=\"50\" height=\"50\" color=\"color(display-p3 1 0 0)\"><rect width=\"50\" height=\"50\" fill=\"currentColor\"/></svg>");
+    assert!(pdf.contains("/ICCBased"), "{pdf}");
+}
+
+#[test]
+fn a_wide_color_is_the_fallback_of_a_missing_paint_server() {
+    let pdf = render("svg_fallback", &svg("<rect width=\"50\" height=\"50\" fill=\"url(#none) color(display-p3 0 0 1)\"/>"));
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
+    assert!(fills.iter().any(|(_, c)| close(c, [0.0, 0.0, 1.0])), "{pdf}");
+    assert!(pdf.contains("/ICCBased"), "{pdf}");
+}
+
+#[test]
+fn an_svg_gradient_with_wide_stops_is_in_the_wide_profile() {
+    let pdf = render(
+        "svg_gradient",
+        &svg("<defs><linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"color(display-p3 1 0 0)\"/><stop offset=\"1\" stop-color=\"blue\"/></linearGradient>\
+              <radialGradient id=\"r\"><stop offset=\"0\" stop-color=\"color(rec2020 0 1 0)\"/><stop offset=\"1\" stop-color=\"white\"/></radialGradient></defs>\
+              <rect width=\"50\" height=\"50\" fill=\"url(#g)\"/><rect x=\"60\" width=\"50\" height=\"50\" fill=\"url(#r)\"/>"),
+    );
+    assert!(pdf.contains("/ShadingType 2") && pdf.contains("/ShadingType 3"), "{pdf}");
+    assert!(pdf.contains("/ColorSpace [ /ICCBased"), "{pdf}");
+    assert!(!pdf.contains("/ColorSpace /DeviceRGB"), "{pdf}");
+}
+
+#[test]
+fn an_svg_gradient_inside_of_srgb_keeps_its_device_colors() {
+    let pdf = render(
+        "svg_gradient_srgb",
+        &svg("<defs><linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"red\"/><stop offset=\"1\" stop-color=\"blue\"/></linearGradient></defs>\
+              <rect width=\"50\" height=\"50\" fill=\"url(#g)\"/>"),
+    );
+    assert!(pdf.contains("/ColorSpace /DeviceRGB"), "{pdf}");
+    assert_eq!(profiles(&pdf), 1, "only the sRGB profile");
+}
+
+#[test]
+fn svg_text_with_a_wide_fill_is_in_the_profile() {
+    let pdf = render("svg_text", &svg("<text x=\"5\" y=\"50\" font-size=\"20\" fill=\"color(display-p3 1 0 0)\">Hi</text>"));
+    let fills: Vec<_> = space_colors(&pdf, true).into_iter().filter(|(_, c)| c.iter().any(|v| *v != 0.0)).collect();
+    assert!(fills.iter().any(|(_, c)| close(c, [1.0, 0.0, 0.0])), "{pdf}");
+}
+
+#[test]
+fn an_svg_image_keeps_its_wide_colors_too() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    std::fs::write(
+        dir.join("wide_image.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"50\" height=\"50\"><rect width=\"50\" height=\"50\" fill=\"color(display-p3 1 0 0)\"/></svg>",
+    )
+    .unwrap();
+    let pdf = render("svg_img", "<img src=\"wide_image.svg\" width=\"50\" height=\"50\">");
+    assert!(pdf.contains("/ICCBased"), "{pdf}");
+    assert_eq!(profiles(&pdf), 2, "the profile of Display P3 and the sRGB one");
+}
+
+#[test]
+fn an_unreadable_svg_color_is_black_as_before() {
+    let pdf = render("svg_bad", &svg("<rect width=\"50\" height=\"50\" fill=\"color(nonsense 1 0 0)\"/>"));
+    assert!(!pdf.contains("/ICCBased /N") && profiles(&pdf) == 1, "{pdf}");
 }

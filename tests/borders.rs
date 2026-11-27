@@ -22,7 +22,7 @@ fn render(name: &str, css: &str) -> Rendered {
         format!("<style>@page{{size:600px 300px;margin:10px}} div{{width:40px;height:20px;{}}}</style><div></div>", css),
     )
     .unwrap();
-    let out = common::helium()
+    let out = common::umbruch()
         .unwrap()
         .env("RUST_LOG", "warn")
         .args(["--no-compression", "--no-system-fonts", "--dump-layout"])
@@ -51,13 +51,13 @@ fn count(text: &str, needle: &str) -> usize {
     text.matches(needle).count()
 }
 
-/// The colours (the operands of `sc`, in the sRGB space of the document) of the fills, in stream order.
+/// The colours (the operands of `rg`) of the fills, in stream order.
 fn fill_colors(content: &str) -> Vec<String> {
     let words: Vec<&str> = content.split_whitespace().collect();
     words
         .iter()
         .enumerate()
-        .filter(|(_, word)| **word == "sc")
+        .filter(|(_, word)| **word == "rg")
         .map(|(at, _)| words[at - 3..at].join(" "))
         .collect()
 }
@@ -95,7 +95,7 @@ fn the_styles_that_show_nothing_take_no_space() {
     for style in ["none", "hidden"] {
         let r = render(&format!("nothing_{style}"), &format!("border:6px {style} red"));
         assert_eq!(r.width, 40.0, "{style}");
-        assert!(!r.content.contains(" sc") && !r.content.contains(" SC"), "{style}: {}", r.content);
+        assert!(!r.content.contains(" rg") && !r.content.contains(" RG"), "{style}: {}", r.content);
     }
     for style in ["solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset"] {
         let r = render(&format!("space_{style}"), &format!("border:6px {style} red"));

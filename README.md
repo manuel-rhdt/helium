@@ -1,10 +1,9 @@
-# Helium
+# Umbruch
 
-Helium turns an HTML document with CSS (and MathML) into a paginated, tagged PDF. It is a print
-renderer: it lays out pages, not a scrollable screen, and it runs no scripts.
+Umbruch turns an HTML document with CSS (and MathML) into a PDF. 
 
 ```
-helium [options] input.html output.pdf
+umbruch [options] input.html output.pdf
 ```
 
 ## Install
@@ -19,20 +18,20 @@ configured. There is no macOS binary yet.
 The binary is built with the MSVC toolchain and links the C runtime statically, so it needs no
 redistributable and no other file. It is not signed, so SmartScreen asks once when it is started
 from a download: *More info* → *Run anyway*. There is no installer and no file association: unpack
-`helium-vX.Y.Z-x86_64-pc-windows-msvc.zip` where you want it and put that directory on `PATH`, in
+`umbruch-vX.Y.Z-x86_64-pc-windows-msvc.zip` where you want it and put that directory on `PATH`, in
 PowerShell:
 
 ```powershell
-$dir = "$env:LOCALAPPDATA\Programs\helium"
+$dir = "$env:LOCALAPPDATA\Programs\umbruch"
 New-Item -ItemType Directory -Force $dir | Out-Null
-Copy-Item .\helium.exe $dir
+Copy-Item .\umbruch.exe $dir
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike "*$dir*") {
   [Environment]::SetEnvironmentVariable('Path', "$userPath;$dir", 'User')
 }
 ```
 
-A new terminal then has `helium --version` and `helium document.html document.pdf`. The fonts are
+A new terminal then has `umbruch --version` and `umbruch document.html document.pdf`. The fonts are
 read from `%SYSTEMROOT%\Fonts` and the two per-user font directories (those of `%USERPROFILE%`);
 `--font-dir DIR` adds another one, and `--no-system-fonts` leaves only the built-in families
 (DejaVu, TeX Gyre, STIX Two Math, Latin Modern Math), so that the output does not depend on the
@@ -40,15 +39,43 @@ machine. Pass on `LICENSE-DejaVu.txt`, which the zip and the tarball carry, with
 
 ### Linux
 
-Unpack `helium-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz` (statically linked against musl, so it
-needs no shared library, not even fontconfig) and put `helium` on `PATH`:
+Unpack `umbruch-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz` (statically linked against musl, so it
+needs no shared library, not even fontconfig) and put `umbruch` on `PATH`:
 
 ```
-tar xzf helium-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz
-install -m 755 helium-vX.Y.Z-x86_64-unknown-linux-musl/helium ~/.local/bin/
+tar xzf umbruch-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz
+install -m 755 umbruch-vX.Y.Z-x86_64-unknown-linux-musl/umbruch ~/.local/bin/
 ```
 
 The installed fonts are found by scanning the font directories.
+
+## Python
+
+`pip install umbruch` installs the executable and a small Python API on top of it:
+
+```python
+import umbruch
+
+umbruch.HTML("<h1>Hello</h1>").write_pdf("hello.pdf")      # to a path or a binary file object
+pdf = umbruch.HTML(filename="report.html").write_pdf()     # bytes
+rendered = umbruch.HTML(html_string).render(pdfa="2b")     # rendered.pdf, .pages, .page_size_pt, .warnings
+```
+
+The documents are rendered by one long-lived `umbruch --serve` process that starts with the first
+request, is started again if it dies, and is stopped at exit, so there is no process per document.
+Make a `umbruch.Server(system_fonts=False, font_dirs=[...], resource_root=...)` for other settings
+and pass it as `HTML(..., server=server)`; use one server per worker to render in parallel (a server
+answers one request at a time). `HTML.render` takes `crop`, `pdfa`, `tags` and `compress`; the page
+size comes from the `@page` rules of the document. `HTML.layout(ids)` returns the boxes of elements,
+and `Server.measure(probes)` measures text. Errors are `umbruch.Error`, with the `code` of the protocol.
+A relative image path is taken from `base_dir` (the directory of the file, or the current directory
+for a string). `$UMBRUCH` overrides the executable.
+
+`Server.set_stylesheet(css)` sends a style sheet once (`@font-face` rules, say) that the server remembers: it
+applies to every later `render`, `layout` and `measure`, before the style sheets of the document (which win
+ties), until another call replaces it (`""` removes it). Replacing it also drops the cached measurements. A
+restarted process is sent the style sheet again. Over `--serve` this is the op `set_stylesheet` (`{css,
+base_dir?}`), announced by the capability `stylesheet`.
 
 ## Options
 
@@ -58,7 +85,7 @@ The installed fonts are found by scanning the font directories.
 | `--no-compression` | write uncompressed content streams (for inspecting the PDF) |
 | `--crop` | one page that is as large as the content, instead of A4 pages: no page breaks (also not forced ones), page margins, `@page` rules or margin boxes. The page is as wide as the content needs (what shrink-to-fit comes to with no limit, so text is not broken into lines: give the `body` a `width` to set one) and as high as the content, up to 100 000 pixels, after which it has another page |
 | `--no-tags` | write an untagged PDF |
-| `--pdfa <level>` | write a PDF/A file: level `2a`, `2b`, `2u`, `3a`, `3b` or `3u`. Adds the identification to the XMP packet and an output intent with an sRGB profile (made in code, so there is no file and no licence to care about), which is what makes the device colours that the pages use conformant. The level `a` needs the structure tree (not with `--no-tags`). A CMYK image is an error (the colours are sRGB). Not checked: the other things that PDF/A forbids, like fonts that may not be embedded |
+| `--pdfa <level>` | write a PDF/A file: level `1b`, `2a`, `2b`, `2u`, `3a`, `3b` or `3u`. Adds the identification to the XMP packet and an output intent with an sRGB profile (made in code, so there is no file and no licence to care about), which is what makes the device colours that the pages use conformant. The level `a` needs the structure tree (not with `--no-tags`). A CMYK image is an error (the colours are sRGB). `1b` (ISO 19005-1) is written without object streams and with the `CIDSet` of the fonts, and everything that PDF/A-1 does not allow is an error that lists what was found and writes no file: transparency (colours with an alpha channel, `opacity`, gradients with transparent colours, `background-blend-mode`, images with an alpha channel, SVG with opacity, masks or blend modes), colour glyphs, and an image with an ICC profile of version 4. The ICC spaces of `color()` are CIELAB in `1b` (the profiles are version 4), and a gradient with wide colours is clipped to sRGB (with a warning). The levels `1a` and `1u` are not supported. Not checked: the other things that PDF/A forbids, like fonts that may not be embedded |
 | `--no-system-fonts` | use only the built-in fonts, so that the output does not depend on the machine |
 | `--dump-layout <file>` | write the computed layout as JSON (`-` for stdout) |
 | `--check-layout` | evaluate the `data-expected-*` attributes of the document against the layout |
@@ -97,16 +124,44 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   MathML: its content is laid out like a small page of the size of the element, with the style
   sheets and the fonts of the page (selectors can reach from the page into it), and drawn with
   the transformations, clip paths and masks of the SVG around it, so diagram labels can be
-  formulas; it can contain `<svg>` again. Not supported: filters (ignored), the opacity of
-  gradient stops, GIF and WebP inside of SVG, `!important` in the `style` attribute of SVG
+  formulas; it can contain `<svg>` again. Gradient stops with `stop-opacity` are painted like those of CSS (a soft mask). Not supported: filters (ignored), GIF and WebP inside of SVG, `!important` in the `style` attribute of SVG
   elements (it does not win over one in a style sheet), a
   `foreignObject` in an SVG file (`<img src="x.svg">`: the content needs the document),
   hyperlinks and tags (accessibility structure) inside of a `foreignObject`.
+- **Gouraud triangle meshes in SVG** (an umbruch extension: standard SVG has none, `<meshgradient>`
+  was never shipped, and no other renderer draws this): a `<g data-umbruch-mesh="gouraud">` is
+  painted as PDF shadings of type 4 (free-form Gouraud triangle mesh) instead of one path per
+  triangle, so there are no antialiasing seams between neighbours and the file is small. Two ways
+  to write the triangles:
+  - *compact*, for programs: the attributes `data-vertices` (six numbers per vertex: x, y, then red,
+    green, blue and alpha as sRGB components in 0..1) and `data-triangles` (three indices into the
+    vertices per triangle), separated by white space or commas, and no children. Triangles share
+    their vertices, so a mesh of a grid is a fraction of the size of the other form and is read
+    about ten times faster (20000 triangles: 0.05 s). Anything malformed (a count that is not a
+    multiple of 6 or 3, an index out of range, a number that is not finite) is a warning and
+    nothing is drawn.
+  - *per triangle*, for people (and as a fallback that other renderers show): the children are
+    `<path d="M x0 y0 L x1 y1 L x2 y2 Z" data-colors="r0,g0,b0,a0;r1,g1,b1,a1;r2,g2,b2,a2"/>`
+    (a `transform` on a path applies, and so does the one of the group); `fill` is what a renderer
+    without the extension shows, so the mean colour is a good value. A group with a child that is
+    not a valid triangle (not a three-vertex straight path, a missing or malformed `data-colors`,
+    a non-finite coordinate) is painted like any other group, with its children.
+
+  The colours are interpolated linearly in sRGB (as Matplotlib does) and written as `DeviceRGB`
+  like every other colour, so equal vertex colours give the same pixels as a flat fill. A type 4
+  shading has no alpha per vertex: if it is the same everywhere it is the opacity of the mesh,
+  painted as a transparency group (poppler ignores the alpha constant of a gradient shading; pdfium,
+  mupdf and poppler agree on a group). Otherwise the per-triangle form is drawn with its flat
+  triangles and a warning, and the compact form has no flat triangles to fall back to and draws
+  nothing. Zero-area triangles are dropped; more than 32768 triangles are split into several
+  shadings; the extension is ignored inside of `clipPath`. Over `--serve`, the capability `mesh_gouraud` of `hello` says that
+  it is understood; the command line has no such exchange and reads the same markup. PDF/A: an
+  opaque mesh is allowed in every level; a translucent one is not in `1b`, like any transparency.
 - **SVG and XHTML as the input:** a file with the extension `.svg`, `.xhtml`, `.xht` or `.xml` is
   read as XML (`xml5ever`): namespaces and prefixes are resolved (`<s:svg>`, `<x:div>`, `<m:math>`),
   empty elements (`<div/>`) are empty, and a file that is not well-formed is an error instead of
   being repaired. Entities of an internal DTD are not expanded. The root is an XHTML `html`
-  element, laid out as an HTML document, or an `svg` element: `helium drawing.svg out.pdf` makes one
+  element, laid out as an HTML document, or an `svg` element: `umbruch drawing.svg out.pdf` makes one
   page of the size of the drawing (`width` and `height`, else the `viewBox`, else 300 by 150
   pixels; no margin), with `<foreignObject>` content (HTML, MathML) and `<style>` elements as in
   an inline `<svg>`. Lengths mean the same in the SVG and in the HTML in it (a user unit is a CSS
@@ -119,6 +174,13 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
 - **Tables across pages:** a table is split between its rows, and the header rows (the first
   `thead`) are repeated at the top of every page that goes on inside of the table. Footers are
   not repeated.
+- **Grids and flex containers across pages:** a flex container is split like a grid is: between its lines (or items, in a column), and inside items taller than half a page. A grid container whose height is the one of its content is split
+  between its rows, where no item spans over the break; the gap between two rows is not at the top
+  of the next page. An item that is taller than half a page is cut where its own lines end, and goes
+  on at the top of the next page with the border, padding and background of each part, as a table
+  row does. `break-before` and `break-after` of the items, and of the boxes in them, force a break;
+  `break-inside` and `avoid` values of those boxes are ignored. A grid or flex container with a `height` or `min-height`, an `inline-grid` or `inline-flex`, one inside of a flex or grid
+  container, a table cell or a container with columns, and a grid that is the root element are one box.
 - **Stylesheets:** `<style>` and `<link rel="stylesheet">` with a path relative to the document.
 
 ## CSS
@@ -191,13 +253,14 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   for boxes that are not split over pages (a fragment of a split box has none). `inset` shadows
   are not drawn, and `text-shadow` is not supported.
 - **Colors:** named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
-  `color()` (a colour that sRGB cannot hold, like `color(display-p3 1 0 0)`, is not clipped, in fills,
-  strokes, text, backgrounds and borders: it is written in one ICC space with the primaries of Rec. 2020 and a gamma of 2.4 (written once;
-  it holds Display P3 and nearly all that CSS can write, and an iPhone shows it as it says), and only a colour that
-  Rec. 2020 cannot hold is clipped, to it. The other colours are in an ICC space of sRGB (written once), and device RGB, which images and
-  shadings still use, is defined as sRGB for every page (`DefaultRGB`). Gradients (axial and radial; a conic one is a mesh in sRGB) and `color-mix()` keep a wide colour too: a gradient with
-  one is a shading in the same ICC space and is cut into steps, interpolated in the space of the gradient. SVG images and the layers of
-  colour glyphs are still sRGB, and a wide colour is clipped there), with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
+  `color()`. A colour is written in the space that CSS wrote it in: `rgb()`, `hsl()`, `hwb()`, hex codes,
+  names, `color(srgb …)` and an `oklab()` or `oklch()` that sRGB holds are device RGB, which every page and form defines as sRGB
+  (`DefaultRGB`); a `color()` in Display P3, Adobe RGB (`a98-rgb`), ProPhoto RGB, Rec. 2020 (gamma 2.4, as CSS says) or a
+  linear space is in an ICC space of that profile (written once); `lab()`, `lch()`, `color(xyz …)`, an `oklab()` or `oklch()` that sRGB cannot
+  hold, and a colour outside of the space it was written in are CIELAB (D50; the PDF has no Oklab, so those are converted), or, with a\* or b\*
+  beyond ±128 (an iPhone does not show Lab right there), in the ICC space of Rec. 2020 if that holds the colour, else with its chroma reduced. Gradients (axial and radial; a conic one is a mesh in sRGB) and `color-mix()` keep a wide colour too: a gradient with
+  one is a shading in an ICC space with the primaries of Rec. 2020 and a gamma of 2.4 and is cut into steps, interpolated in the space of the gradient. SVG (inline, as a file or as an image) reads the same colours in `fill`, `stroke`, `stop-color`, `color` and the `style` attribute and style sheets, with the code of the style sheets, and writes them the same way (the stops of a gradient with a wide colour are in the ICC space of the wide colours, in `1b` they are clipped to sRGB with a warning); the layers of
+  colour glyphs are still sRGB, and a wide colour is clipped there; so is a wide colour in a filter of SVG, which is ignored anyway), with an alpha channel (`rgb(0 0 0 / 50%)`, `#rrggbbaa`, `transparent`) that is
   painted for backgrounds, borders, text, text decorations and gradients. `color-mix()` mixes
   two colours (also nested, and with `var()`) in `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`,
   `lch`, `oklab`, `oklch`, `xyz`, `xyz-d50` and `xyz-d65`, with percentages, alpha premultiplied
@@ -239,13 +302,53 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   `<menu>` start and `<ol start>` and `<li value>` set; the number of the marker is the value of
   that counter, so `counter-increment: list-item` and the like change it. Not supported: `content`
   on elements (e.g. `content: url()` on an `<a>`), `::first-line` and `::first-letter`,
-  `target-counter()`, and `list-style-image`. Counters in `@page` margin boxes are only `page`
+  and `list-style-image`. Counters in `@page` margin boxes are only `page`
   and `pages`. A counter value stays within a 32 bit integer (an increment that would leave the
   range is not made), and a name that is repeated in one `counter-*` property counts every time.
   The behaviour is the one of the published CSS Lists 3 (a counter of the previous sibling is only
   inherited when the parent has none of that name); `counter-reset: reversed()` and `<ol
   reversed>`, which are only in the editor's draft, are not supported.
+  Cross-references (CSS GCPM 3): `target-counter(target, name, style)`, `target-counters(target,
+  name, separator, style)` and `target-text(target)` read the counter and the text content of the
+  element that a link points at, which may come after the reference (a table of contents). The
+  `target` is `attr(href)` (or another attribute, with or without the `url` type) or a `url()` or
+  string; only the fragment (`#id`) is followed. The counter `page` is the page number (the value
+  of the `page` counter on the page where the element starts, in the given style). `target-text()`
+  has no second argument but `content`; its text leaves out generated content and elements that are
+  not displayed, and white space is collapsed. A target that does not exist (or has no page)
+  gives nothing. The page of a target is known after pagination, so a document that reads any of
+  these is laid out again with what the previous layout found, until the page numbers stop
+  changing, but at most five times (the last layout is the result, with a warning, if they do
+  not settle). A document without them is laid out once. Not supported: `target-text()` with
+  `before`, `after` and `first-letter`.
+  `leader(type)` (CSS Generated Content 3, 2.5, a Working Draft that calls itself a very rough
+  draft): `dotted` (the string `.`), `solid` (`_`), `space` (a space) or a string, which is repeated
+  over what is left of the line, so that `a::after { content: leader('.') target-counter(attr(href),
+  page) }` makes the entry of a table of contents. The line that has a leader is as wide as the
+  paragraph whatever its `text-align` (a justified line gives the room to the leader, not to its
+  spaces), the text after the leader is at the end of the line, and the string is drawn at the places
+  of a grid that starts at the start of the line, so that the leaders of lines that follow each other
+  line up (with a `text-indent`, the first line has its grid moved by it). Only whole copies of the
+  string are drawn. The leader has no width when the lines are broken: it takes what is left of the
+  line that the text before and after it ends up on, and if there are several on a line, they share
+  it. It is an artifact, not text of the document, and has the font and the colour of the element
+  that it is in. Not supported: a leader in vertical text (it takes the room, but draws nothing),
+  and moving the text after a leader to the next line when no whole copy of the string fits.
 - **Units:** `px`, `pt`, `pc`, `in`, `cm`, `mm`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vi`, `vb`, `vmin`, `vmax` (relative to the page area), `%`.
+- **Math functions** (CSS Values 4): `calc()`, `min()`, `max()`, `clamp()` (with `none`),
+  `round()` (`nearest`, `up`, `down`, `to-zero`), `mod()`, `rem()`, `sin()`, `cos()`, `tan()`,
+  `asin()`, `acos()`, `atan()`, `atan2()`, `pow()`, `sqrt()`, `hypot()`, `log()`, `exp()`,
+  `abs()`, `sign()` and the constants `e`, `pi`, `infinity`, `-infinity` and `NaN`, nested and
+  with `var()`, wherever a length, a length-percentage, a number, an integer or an angle is
+  accepted (sizes, margins, padding, insets, borders, radii, gaps, grid tracks, flex, fonts,
+  `line-height`, `vertical-align`, `text-indent`, spacing, shadows, transforms, gradients,
+  backgrounds, counters, `opacity` and media queries). They are type-checked as the
+  specification says, with typed arithmetic (`calc(1em * 1em / 1px)` is a length); a value that
+  is out of the range of its property is clamped (`padding: calc(50% - 10em)` is never
+  negative), `NaN` is 0 and infinity is the largest length. A percentage that is not just added
+  to a length (`min(100%, 40em)`) is kept until layout knows what it refers to. Not supported:
+  `<time>`, `<frequency>` and `<resolution>` values, and a number that divides relative lengths
+  (`calc(1em / 1px)`) except in media queries.
 - **Cascade:** selectors (`selectors` crate, with `:is()` and `:where()`), `inherit`, `initial`,
   `unset`.
 - **Nesting:** style rules and `@media` blocks inside style rules, with `&` or with relative
@@ -256,18 +359,35 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   and in other custom properties. Cycles make the properties invalid, and so does a `var()` with
   neither value nor fallback; the property that uses it is then `unset`. Custom properties are
   not available in `@page` rules and their margin boxes, nor in the style of inline SVG.
-- **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors, named
-  pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
+- **Pages (`@page`):** `size`, `margin`, the `:first`, `:left` and `:right` selectors (`:first` is
+  the first page of the document, also in `name:first`, which matches it only if it is a page
+  with that name: CSS Paged Media 3, 4.2.2), `:nth(An+B)` and `:nth(An+B of name)` (CSS GCPM 3,
+  3.1 and 3.2, below), named pages (`page` property), the six margin boxes (`@top-left` ... `@bottom-right`) with `content`
   from strings and `counter(page)` / `counter(pages)`, in the styles `decimal`,
   `decimal-leading-zero`, `lower-` and `upper-roman`, `lower-` and `upper-alpha`/`latin`,
   `arabic-indic` and `persian`. The `page` counter is a real counter (CSS Paged Media 3, § 6.1):
   `counter-reset`, `counter-increment` and `counter-set` of `page` in an `@page` rule apply to the
   pages that it selects, in the order of CSS Lists: the page counter is reset, then incremented
-  (by 1 unless `counter-increment` says otherwise), then set. So `@page chapter:first {
-  counter-reset: page 0 }` makes the first page of a chapter page 1, and `@page {
+  (by 1 unless `counter-increment` says otherwise), then set. So `@page :first {
+  counter-reset: page 0 }` makes the first page of the document page 1, `@page :nth(1 of chapter) {
+  counter-reset: page 0 }` the first page of every chapter, and `@page {
   counter-increment: page 2 }` numbers the pages 2, 4, 6. Not supported: `counter-reset` of
   `page` on an element (the specification does not say what it does), and changing `pages`
   (which, as in the specification, has no effect).
+  **Page groups and `:nth()`** (CSS GCPM 3, a Working Draft): an element with a `page` name and a
+  forced break (`break-before` or `break-after` of `page`, `left`, `right`, `recto` or `verso`) makes
+  a *page group* of the pages that it has (`div.chapter { page: chapter; break-before: page }`: every
+  chapter is a group). `:nth(An+B)` selects pages of the document by their number from 1, and
+  `:nth(An+B of name)` the pages in the groups of that name, counted in the group: `@page :nth(1 of
+  chapter)` is the first page of every chapter, `:nth(odd of chapter)` its odd pages. A page can be
+  in several groups (a chapter in a part), and is counted in the innermost one of a name. An element
+  makes a group only if it has the name itself: one that inherits it from its parent does not (so a
+  chapter inside another element of the name `chapter` is not a group of its own). `:nth()` has the
+  specificity of `:first`. It works in every `@page` rule except for `size` and `margin`: the
+  pages are chosen before the number of a page in its group is known, so these follow `:nth(1 of
+  name)` (the first page of a group, which is known) and not other `:nth()` selectors, which have
+  no effect on them (the margin boxes, the `page` counter and `-umbruch-page-label` of the rule
+  apply). There is no `name:first` for a group: `:first` is the first page of the document.
 - **Fragmentation:** `break-before`/`-after`/`-inside` (`auto`, `avoid`, `avoid-page`,
   `avoid-column`, `page`, `column`, `left`, `right`, `recto`, `verso`), `page-break-*`, `orphans`,
   `widows`, and `looseness` (not in CSS: how many lines more or fewer than the best breaking a
@@ -319,7 +439,49 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 - **Shaping and scripts:** HarfBuzz shaping, the Unicode bidirectional algorithm (right-to-left
   scripts), script itemization, kerning and ligatures, per-character font fallback.
 - **Line breaking:** Unicode line breaking, hyphenation with built-in dictionaries (`hyphens:
-  auto` and soft hyphens), CJK line breaking, justification.
+  auto` and soft hyphens), CJK line breaking, justification. Paragraphs are broken as a whole, as
+  TeX does (Knuth and Plass): the badness of a line is 100 times the cube of how far its spaces
+  stretch or shrink, a line has a penalty, a line that is much looser or tighter than the one before
+  it has demerits, so does a hyphen after a hyphen and a hyphen at the end of the line before the
+  last of a paragraph, and a hyphen has its own penalty.
+  `hyphenate-limit-chars` (CSS Text 4: `[ auto | <integer> ]{1,3}`, the fewest characters of a word
+  that is hyphenated, before the hyphen and after it; a missing second number is `auto`, a missing
+  third the second; `auto` is 5, 2 and 2, which the specification suggests; TeX's English patterns
+  use 2 and 3) and `hyphenate-limit-last` (`none`, `always`, `column`, `page`, `spread`; inherited)
+  set the limits. The last line before a break should not end in a hyphen, says the specification,
+  which asks for it: `always` is about the last full line of the paragraph (the line before the last,
+  for which TeX has 5000 demerits, which `none` keeps, and `always` raises to 100 000, so that it is
+  avoided unless every other breaking is much worse) and about the last line of every page and
+  column; `column` about every page and column; `page` about every page (the last line of a column
+  is not); `spread` about the pages at the end of a spread (the right pages, and the first page; in a
+  document from right to left, the left pages). A page that ends in a hyphen where it should not costs
+  as much as 2.5 lines of room, so it ends a line early if there is no other way; the pages choose
+  among the ways to break a paragraph if it has a `looseness`, and then a way that does not end in a
+  hyphen costs less than a short page. This is TeX's `\brokenpenalty`, with a size that was chosen
+  on a novel: it avoids most of the hyphens at the end of a page for pages that end a line early
+  (see `CssObjective::HYPHEN_END_LINES`). Not supported: `hyphenate-limit-lines` (a limit on the
+  number of hyphens in a row, which TeX only counts demerits for, as here), `hyphenate-limit-zone`
+  and `hyphenate-character`.
+  `hanging-punctuation` (CSS Text 3, which marks it at risk; inherited): `first` lets an opening
+  bracket or quote (the categories Ps, Pf and Pi, the apostrophe, the quotation mark and the
+  ideographic space) at the start of the first line of a paragraph hang outside of the line,
+  `last` a closing bracket or quote (Pe, Pf and Pi, the apostrophe and the quotation mark) at the
+  end of the last line, `force-end` a stop or comma (the 13 of the specification) at the end of a
+  line, and `allow-end` such a stop or comma only on a line that does not fit without it. As the
+  specification lets a user agent include other characters, the hyphen of a hyphenated word and
+  U+002D and U+2010 at the end of a line hang with the end values too, as the hyphens of a
+  book do in TeX with microtype. What hangs is not part of the line for fit, alignment and
+  justification: the breaker (which is the same for all of them) measures the lines without it,
+  and the justified lines are stretched to the width of the line without it, so that the edge
+  of the text is straight and the punctuation stands in the margin. One character hangs at each
+  edge. It is the same measure as the breaker uses, so a line that has more room because of what
+  hangs can take another word. Not supported: hanging in right-to-left text and in vertical text
+  (it is ignored there), a margin that is not wide enough (what hangs overflows the box, as the
+  specification says), the intrinsic sizes (the width of a paragraph in shrink-to-fit still
+  counts what hangs), an opening quote at the start of a line that is not the first of its
+  paragraph (the specification's `first` is about the first line only), and the characters that
+  TeX's microtype lets protrude by part of their width (letters like T and V, and the quotes and
+  the hyphen by less than their width).
 - **`@font-face`:** the descriptors `font-family`, `src`, `font-weight` (also a range) and
   `font-style`. A source is `url()` of a file inside of the directory of the document (relative
   to its style sheet; or `--resource-root`) or of a `data:` URI, or `local()` (an installed font
@@ -343,17 +505,25 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
 ## PDF output
 
 PDF 1.7; Flate-compressed streams; tagged PDF with a structure tree derived from the HTML
-(headings, paragraphs, lists, tables, links, figures, formulas) and the PDF/UA identifier;
-document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels (the `-helium-page-label` of the `@page` rules, which is not in CSS: `auto` takes the style of the one `counter(page)` that the headers and footers of the page have between them, and the decimal number if there are none or several, `none` the decimal number, or `"A-" counter(page, upper-roman)` a prefix and the style of the number; the text around a counter in a header or footer is never a prefix); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
+(headings, paragraphs, lists, tables, links, figures, formulas, and tables of contents) and the PDF/UA identifier;
+document title and language; metadata from `<meta name>` (`author`, `description`, `keywords`, `generator`, `date`) in the document information dictionary and the XMP packet (there is a date only from `<meta name="date">` or `SOURCE_DATE_EPOCH`, so that the output does not depend on the time); the outline panel opens when there are bookmarks; page labels (the `-umbruch-page-label` of the `@page` rules, which is not in CSS: `auto` takes the style of the one `counter(page)` that the headers and footers of the page have between them, and the decimal number if there are none or several, `none` the decimal number, or `"A-" counter(page, upper-roman)` a prefix and the style of the number; the text around a counter in a header or footer is never a prefix); named destinations for the `id` attributes, so that `document.pdf#id` opens the PDF at that element; link annotations; a document outline (bookmarks)
 from the elements with a `bookmark-level` (UA default: `h1` to `h6` and `role=heading` with `aria-level`; entries nest by level, elements that are not displayed are left out), with `bookmark-label` (strings, `content()`, `attr()`) and `bookmark-state`; `ToUnicode` maps and
 `ActualText`, so that text can be extracted and copied; embedded font subsets; clipped and
 rounded boxes; axial, radial and mesh shadings for gradients; blended backgrounds; transparency
 groups for `opacity`.
 
+A table of contents is tagged as one (ISO 32000-1, 14.8.4.3) if it has the role `doc-toc` (DPUB-ARIA,
+`<nav role="doc-toc">`): it is a `TOC`, its `<li>` are `TOCI`, a list in an item is a `TOC` of its
+own after the item (its sub-entries), and a link in an item is a `Reference` that holds the `Link`.
+The number of an item is its `Lbl`. A list directly in the table is not a structure element, and
+block-level `<p>`, `<div>` and `<a>` in it are items, so a table of contents that is not a list
+works too. The `leader()` of an entry is an artifact. The page numbers (`target-counter()`) are
+text of the item.
+
 ### Conformance
 
 The gallery is validated with [veraPDF](https://verapdf.org) for PDF/UA-1 and for every level of
-`--pdfa` (`tests/conformance.rs`; the test is skipped unless `VERAPDF_LIB` is the directory with the
+`--pdfa` (the documents without transparency for `1b`; `tests/conformance.rs`; the test is skipped unless `VERAPDF_LIB` is the directory with the
 jars of veraPDF, which `tools/fetch_verapdf.sh DIR` downloads to `DIR/lib`). All documents conform
 but one: the sidebar of the `cv` has headings before the `h1`, which PDF/UA-1 does not allow. This
 says that veraPDF finds nothing wrong in the gallery, which is not a proof for every document: it
@@ -362,7 +532,7 @@ checks what a program can check, and not for example whether the reading order m
 ## Not supported
 
 Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`,
-`@supports`, `@import`, `calc()`, `overflow`, `float: left`/`right`, `position:
+`@supports`, `@import`, `overflow`, `float: left`/`right`, `position:
 fixed`/`sticky`, `z-index`, `text-shadow`, inset shadows,
 `outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form
