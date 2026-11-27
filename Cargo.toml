@@ -22,6 +22,8 @@ lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "cl
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
 harfrust = "0.16"
+# Subsets the fonts for embedding into PDFs (the fonts bundled by `build.rs` are still subset with harfbuzz).
+subsetter = { version = "0.2", default-features = false }
 read-fonts = "0.47"
 formel = "0.2"
 parking_lot = "0.11"

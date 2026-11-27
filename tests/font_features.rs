@@ -142,6 +142,8 @@ fn margin_text(name: &str, style: &str) -> String {
     margin_text_of(name, "Head", style)
 }
 
+/// (The codes in a document are the numbers of the glyphs that it uses, so the body has the glyphs
+/// of all the margin texts: then the same codes are the same glyphs in every document.)
 fn margin_text_of(name: &str, content: &str, style: &str) -> String {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let input = dir.join(format!("font_features__{}.html", name));
@@ -150,7 +152,8 @@ fn margin_text_of(name: &str, content: &str, style: &str) -> String {
         &input,
         format!(
             "<style>@page{{width:200pt;height:200pt;margin:40pt;\
-             @top-center{{content:\"{}\";font-family:'TeX Gyre Termes';{}}}}}</style><p>x</p>",
+             @top-center{{content:\"{}\";font-family:'TeX Gyre Termes';{}}}}}</style>\
+             <p style=\"font-family:'TeX Gyre Termes'\">Head HEAD</p>",
             content, style
         ),
     )
