@@ -18,6 +18,7 @@ selectors = "0.41"
 specs = { version = "0.20", features = ["shred-derive", "specs-derive"] }
 umbruch_derive = { path = "./umbruch_derive" }
 umbruch_paginate = { path = "./umbruch_paginate" }
+rustc-hash = "2"
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 harfrust = "0.16"

@@ -1898,6 +1898,7 @@ dependencies = [
  "quickcheck",
  "quickcheck_macros",
  "read-fonts",
+ "rustc-hash",
  "selectors",
  "serde_json",
  "skera",
@@ -1933,6 +1934,9 @@ dependencies = [
 [[package]]
 name = "umbruch_paginate"
 version = "0.1.0"
+dependencies = [
+ "rustc-hash",
+]
 
 [[package]]
 name = "unicode-bidi"
