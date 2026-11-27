@@ -323,7 +323,7 @@ impl Extractor<'_, '_, '_> {
             return None;
         }
         match self.tree.computed_values.get(node.entity)?.page.float {
-            Float::None => None,
+            Float::None | Float::Left | Float::Right => None,
             Float::Top => Some(FloatSide::Top),
             Float::Bottom => Some(FloatSide::Bottom),
         }

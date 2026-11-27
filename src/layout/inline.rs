@@ -108,6 +108,21 @@ pub struct InlineFormattingContext {
     /// font and line height. Every line box starts with it (CSS 2.1 §10.8.1), so an empty line
     /// is exactly one line of the block's font tall.
     pub strut: (Px, Px),
+    /// What the first lines of the paragraph give up to floats beside them: for every line, how
+    /// far it starts from the start edge of the paragraph and how much narrower than the
+    /// paragraph it is. The lines after these have the width of the paragraph. Set by the layout of
+    /// the paragraph, from the floats in front of it (see `UmbruchTree::float_shape`); it is
+    /// only for the lines from the start of the paragraph.
+    pub shape: Vec<LineShape>,
+}
+
+/// What a float beside a line takes of it: how far the line starts from the left edge of the
+/// paragraph, and how much narrower the line is than the paragraph (the floats at the left and
+/// the ones at the right).
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
+pub struct LineShape {
+    pub offset: f32,
+    pub reduction: f32,
 }
 
 /// A part of the content of a paragraph with the same bidi embedding level, inside of one
@@ -174,6 +189,7 @@ impl InlineFormattingContext {
             base_rtl: style.text.direction == Direction::Rtl,
             bidi_runs: vec![],
             strut,
+            shape: vec![],
         }
     }
 
@@ -542,8 +558,12 @@ impl InlineFormattingContext {
             };
             Some((f64::from(natural_width.0), glue))
         };
-        let width_of = |at: usize| {
-            f64::from((line_width - if at + from == 0 { indent } else { Px(0.0) }).0)
+        // (only the lines from the start of the paragraph have a shape: where a page cuts the
+        // paragraph the floats are on the page before)
+        let shape: &[LineShape] = if from == 0 { &self.shape } else { &[] };
+        let width_of = |line: usize, at: usize| {
+            let reduction = shape.get(line).map_or(0.0, |shape| shape.reduction);
+            (f64::from((line_width - if at + from == 0 { indent } else { Px(0.0) }).0) - f64::from(reduction)).max(0.0)
         };
         // the paragraph from the break point `from` on, which is the start of its first line; it
         // follows the line that ends there, which is hyphenated if the break is
@@ -553,10 +573,11 @@ impl InlineFormattingContext {
             LineStart { fitness, hyphen: breakpoints[from].hyphen }
         };
         let end = until.map_or(opportunities.len(), |to| to + 1);
-        let variants = umbruch_paginate::paragraph::compute_paragraph_variants(
+        let variants = umbruch_paginate::paragraph::compute_paragraph_variants_shaped(
             &opportunities[from..end],
             |start, end| metrics(from + start, from + end),
             width_of,
+            shape.len(),
             start,
             until.is_none(),
             extra,

@@ -181,6 +181,7 @@ impl TaffyBlockLayout {
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
         tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
+        tree.link_floats(root);
         tree.mark_columns(root);
         let out_of_flow: Vec<bool> = (0..tree.nodes.len())
             .map(|index| tree::node_is_out_of_flow(&tree, NodeId::from(index)))
@@ -1398,9 +1399,12 @@ impl<'a> Writer<'a, '_> {
         let cut = self.window.cut_of(id);
         // the indent is the one of the first line of the paragraph
         let indent = if cut.is_some_and(|(from, _)| from.is_some()) { 0.0 } else { indent };
+        // the shape that the lines were broken for (the paragraph may have been laid out since)
+        let shape = self.node(id).shape.clone();
         let Some(ifc) = self.inline_ctxs.get_mut(entity) else {
             return Ok(());
         };
+        ifc.shape = shape;
         let looseness = style.map_or(0, |style| style.page.looseness as u32);
         let way = self
             .column_variants
@@ -1471,6 +1475,8 @@ impl<'a> Writer<'a, '_> {
         // part of the row on the page, which are what the page has of the paragraph.
         let clip = if self.group_stack.is_empty() { self.clip } else { None };
         let mut kept_y: Vec<f32> = vec![];
+        // (the numbers of the lines that the page has, in the paragraph that it is the start of)
+        let mut kept_numbers: Vec<usize> = vec![];
         let mut first_line_kept = true;
         let mut offset = content_offset.1;
         let mut kept = vec![];
@@ -1483,6 +1489,7 @@ impl<'a> Writer<'a, '_> {
             }
             if visible {
                 kept_y.push(offset);
+                kept_numbers.push(index);
                 kept.push(line);
             }
             offset += line.height.0;
@@ -1505,11 +1512,18 @@ impl<'a> Writer<'a, '_> {
             .collect();
 
         let mut line_boxes: Vec<[f32; 4]> = vec![];
+        let from_start = !cut.is_some_and(|(from, _)| from.is_some());
+        let shape = if from_start { ifc.shape.clone() } else { vec![] };
         for (index, (line_entity, height, advance, has_leader)) in lines.into_iter().enumerate() {
             let (x0, w0) = if index == 0 && first_line_kept {
                 (content_offset.0 + indent_offset, width - indent)
             } else {
                 (content_offset.0, width)
+            };
+            // the floats beside the line
+            let (x0, w0) = match shape.get(kept_numbers[index]) {
+                Some(shape) => (x0 + shape.offset, (w0 - shape.reduction).max(0.0)),
+                None => (x0, w0),
             };
             let (x, w) = match align {
                 _ if has_leader => (x0, w0.max(advance)),

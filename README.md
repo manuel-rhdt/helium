@@ -401,8 +401,17 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   column, as wide as the column (floats that wait go on in the next column and over the page
   break), and `float-reference: page` makes it a float of the page, as wide as the page, which is
   placed at the top or bottom of the next page and takes room from the container that continues
-  there. Not supported: floats in paragraphs, in tables and in flex and grid containers, and
-  `float: left` and `right`.
+  there. Not supported: floats in paragraphs, and in tables and in flex and grid containers.
+- **Floats beside the text:** `float: left` and `right` on a block between the blocks of a block
+  container. Taffy places the float, and the lines of the paragraph that follows it (or follow
+  them, if floats at both sides) go around it, as long as the float reaches below the top of the
+  paragraph, and are as wide as the room between the floats; after that they have the full width
+  (the breaker takes the line number into account, like TeX's `\parshape`). The paragraph is as high
+  as the float, so what follows it is below the float. Not supported yet: `clear`, a paragraph
+  that is not the next sibling of the float (a float does not reach into the second paragraph after
+  it), a float that is not between the blocks of a block container, and pages: the lines of a
+  paragraph that a page break cuts are as wide as the paragraph after the break, and the paginator
+  does not know of the float (one that is taller than a page overflows it).
 - **Multi-column layout:** `column-count`, `column-width`, `columns`, `column-gap` (`normal` is
   `1em`; also `gap` and `row-gap` take `normal`, which is no gap in a grid and a flex container),
   `column-rule` with `-width`, `-style` and `-color`, `column-fill` (`balance`, `balance-all` and
@@ -536,7 +545,7 @@ checks what a program can check, and not for example whether the reading order m
 ## Not supported
 
 Other image formats (GIF, WebP, ...), `url()` anywhere but in `background`,
-`@supports`, `@import`, `overflow`, `float: left`/`right`, `position:
+`@supports`, `@import`, `overflow`, `clear`, `position:
 fixed`/`sticky`, `z-index`, `text-shadow`, inset shadows,
 `outline`, `word-break`/`overflow-wrap`,
 `counter-*` and `::before`/`::after`, `lh` and other units, scripting, and form

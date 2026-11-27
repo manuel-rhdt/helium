@@ -3991,6 +3991,9 @@ pub enum Float {
     None,
     Top,
     Bottom,
+    /// A float beside the text (CSS 2), laid out by Taffy: the boxes that follow it avoid it.
+    Left,
+    Right,
 }
 
 /// `float-reference`: `column` places a float in the column that it is called for in (outside of
