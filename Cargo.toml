@@ -52,6 +52,9 @@ default = ["fontconfig"]
 fontconfig = ["dep:yeslogic-fontconfig-sys"]
 
 [dev-dependencies]
+# For the differential tests of the harfbuzz port (`layout/text/shape_diff.rs`).
+harfrust = "0.16"
+read-fonts = "0.47"
 assert_cmd = "1"
 predicates = "1"
 quickcheck = "1"
