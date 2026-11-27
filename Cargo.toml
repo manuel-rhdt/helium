@@ -1,6 +1,6 @@
 [package]
 name = "umbruch"
-version = "0.5.2"
+version = "0.5.3"
 authors = ["Manuel Reinhardt"]
 edition = "2024"
 
