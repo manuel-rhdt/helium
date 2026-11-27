@@ -90,6 +90,10 @@ impl Cache {
         self.entries.insert(probe, (metrics, self.clock));
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
@@ -106,6 +110,13 @@ fn probe_element(index: usize, probe: &Probe) -> Result<String> {
         (None, Some(text)) => escape(text),
         _ => return Err(Error::BadRequest("a probe has exactly one of `markup` and `text`".into())),
     };
+    // (the rules of a style sheet are not measured: one in a probe applies to some of the probes only,
+    // and not to the ones that are cached, or in other batches)
+    if fragment.to_ascii_lowercase().contains("<style") {
+        return Err(Error::BadRequest(
+            "a probe has no `<style>`: send style sheets (`@font-face` rules) once with `set_stylesheet`".into(),
+        ));
+    }
     if fragment.contains(['\n', '\r', '\u{2028}', '\u{2029}']) || fragment.to_ascii_lowercase().contains("<br") {
         return Err(Error::BadRequest("a probe is one line: it has a line break".into()));
     }

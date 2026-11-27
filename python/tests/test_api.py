@@ -112,3 +112,21 @@ def test_a_missing_executable_is_an_error():
     with pytest.raises(umbruch.Error) as info:
         umbruch.Server("/nonexistent/umbruch").measure([])
     assert info.value.code == "server"
+
+
+def test_the_stylesheet_is_sent_once_and_survives_a_restart():
+    if "UMBRUCH" not in os.environ and umbruch.find_umbruch() is None:
+        pytest.skip("no umbruch executable: set $UMBRUCH")
+    probe = [{"text": "stylesheet"}]
+    with umbruch.Server(system_fonts=False) as server:
+        plain = server.measure(probe)[0]["width"]
+        assert server.set_stylesheet("div { font-family: DejaVu Sans; font-size: 40px }") == []
+        big = server.measure(probe)[0]["width"]
+        assert big > 2 * plain
+        server._proc.kill()
+        server._proc.wait()
+        assert server.measure(probe)[0]["width"] == big      # sent again to the new process
+        server.set_stylesheet("")
+        server._proc.kill()
+        server._proc.wait()
+        assert server.measure(probe)[0]["width"] == plain

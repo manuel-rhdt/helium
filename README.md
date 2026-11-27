@@ -71,6 +71,12 @@ and `Server.measure(probes)` measures text. Errors are `umbruch.Error`, with the
 A relative image path is taken from `base_dir` (the directory of the file, or the current directory
 for a string). `$UMBRUCH` overrides the executable.
 
+`Server.set_stylesheet(css)` sends a style sheet once (`@font-face` rules, say) that the server remembers: it
+applies to every later `render`, `layout` and `measure`, before the style sheets of the document (which win
+ties), until another call replaces it (`""` removes it). Replacing it also drops the cached measurements. A
+restarted process is sent the style sheet again. Over `--serve` this is the op `set_stylesheet` (`{css,
+base_dir?}`), announced by the capability `stylesheet`.
+
 ## Options
 
 | Option | Effect |

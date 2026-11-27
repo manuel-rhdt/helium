@@ -491,3 +491,135 @@ fn too_many_probes_are_too_large() {
     assert_eq!(response.json["error"]["code"], json!("too_large"));
     server.finish();
 }
+
+fn set_stylesheet(server: &mut Server, id: i64, css: &str) -> Response {
+    let response = server.call(id, "set_stylesheet", json!({"css": css}));
+    assert_eq!(response.json["ok"], json!(true), "{}", response.json);
+    response
+}
+
+#[test]
+fn hello_says_that_it_remembers_a_stylesheet() {
+    let mut server = Server::start();
+    let hello = server.call(1, "hello", json!({}));
+    assert!(hello.json["result"]["capabilities"].as_array().unwrap().contains(&json!("stylesheet")));
+    server.finish();
+}
+
+#[test]
+fn the_stylesheet_applies_to_later_measurements_and_can_be_replaced() {
+    let mut server = Server::start();
+    let probe = json!([{"text": "stylesheet", "css": ""}]);
+    let plain = f(&measure(&mut server, 1, probe.clone())[0]["width"]);
+
+    let reply = set_stylesheet(&mut server, 2, "div { font-family: DejaVu Sans; font-size: 40px }");
+    assert_eq!(reply.json["result"]["warnings"], json!([]));
+    let big = f(&measure(&mut server, 3, probe.clone())[0]["width"]);
+    assert!(big > 2.0 * plain, "{big} vs {plain}");
+    // the probe's own declarations win over the remembered sheet
+    let own = measure(&mut server, 4, json!([{"text": "stylesheet", "css": "font-size: 10px"}]));
+    assert!(f(&own[0]["width"]) < big / 2.0);
+
+    // replaced, not added to
+    set_stylesheet(&mut server, 5, "div { font-family: DejaVu Sans; font-size: 20px }");
+    let medium = f(&measure(&mut server, 6, probe.clone())[0]["width"]);
+    assert!((medium - big / 2.0).abs() < 0.01 * big, "{medium} vs {big}");
+
+    // and removed: back to what a fresh process says (the cache does not keep the old answer)
+    set_stylesheet(&mut server, 7, "");
+    assert_eq!(f(&measure(&mut server, 8, probe)[0]["width"]), plain);
+    server.finish();
+}
+
+#[test]
+fn the_stylesheet_applies_to_layouts_and_renders_and_the_document_wins_ties() {
+    let mut server = Server::start();
+    let page = |style: &str| {
+        json!({"source": format!("<style>{style}</style><div id=\"a\">x</div>"), "kind": "html"})
+    };
+    let height = |server: &mut Server, id: i64, doc: Value| {
+        let response = server.call(id, "layout", json!({"document": doc, "query": {"ids": ["a"]}}));
+        assert_eq!(response.json["ok"], json!(true), "{}", response.json);
+        f(&response.json["result"]["boxes"]["a"]["border_box"]["height"])
+    };
+    let before = height(&mut server, 1, page(""));
+    set_stylesheet(&mut server, 2, "#a { height: 123px; background: red }");
+    assert_eq!(height(&mut server, 3, page("")), 123.0);
+    assert_ne!(before, 123.0);
+    // same specificity: the sheet of the document comes later and wins
+    assert_eq!(height(&mut server, 4, page("#a { height: 7px }")), 7.0);
+    // render sees it too, and a request without the sheet is the same as before it was set
+    let with_sheet = server.call(5, "render", json!({"document": page("")})).attachment;
+    set_stylesheet(&mut server, 6, "");
+    assert_eq!(height(&mut server, 7, page("")), before);
+    let without = server.call(8, "render", json!({"document": page("")})).attachment;
+    assert!(with_sheet != without);
+    server.finish();
+}
+
+#[test]
+fn a_stylesheet_with_font_face_is_sent_once_for_many_requests() {
+    let mut server = Server::start();
+    let reply = set_stylesheet(
+        &mut server,
+        1,
+        "@font-face { font-family: 'mine'; src: local('DejaVu Sans') } div { font-family: 'mine', 'DejaVu Sans'; font-size: 10px }",
+    );
+    assert_eq!(reply.json["result"]["warnings"], json!([]));
+    for round in 0..3 {
+        let m = measure(&mut server, 10 + round, json!([{"text": "0.5", "css": ""}]));
+        assert!((f(&m[0]["ascent"]) - 10.45).abs() < 0.05, "{}", m[0]);
+    }
+    server.finish();
+}
+
+#[test]
+fn set_stylesheet_reports_parse_warnings_and_bad_requests() {
+    let mut server = Server::start();
+    let reply = set_stylesheet(&mut server, 1, "div { no-such-property: 1 }");
+    assert!(!reply.json["result"]["warnings"].as_array().unwrap().is_empty(), "{}", reply.json);
+    for params in [json!({}), json!({"css": 3}), json!({"css": "", "base_dir": 3})] {
+        let response = server.call(2, "set_stylesheet", params);
+        assert_eq!(response.json["error"]["code"], json!("bad_request"));
+    }
+    server.finish();
+}
+
+#[test]
+fn a_probe_cannot_carry_a_stylesheet() {
+    let mut server = Server::start();
+    let style = "<style>@font-face { font-family: 'zz'; src: local('DejaVu Sans') }</style>";
+    let probes = json!([{"markup": style, "css": ""}, {"markup": "<span>a<STYLE>x{}</STYLE></span>", "css": ""}, {"text": "ok", "css": DEJAVU_10}]);
+    // (twice: an error is not cached)
+    for id in [1, 2] {
+        let m = measure(&mut server, id, probes.clone());
+        for entry in &m[..2] {
+            assert_eq!(entry["error"]["code"], json!("bad_request"), "{entry}");
+            assert!(entry["error"]["message"].as_str().unwrap().contains("set_stylesheet"));
+        }
+        assert!(f(&m[2]["width"]) > 0.0);
+    }
+    server.finish();
+}
+
+#[test]
+fn a_stylesheet_applies_to_every_chunk_of_a_large_measure() {
+    let mut server = Server::start();
+    set_stylesheet(&mut server, 1, "@font-face { font-family: 'zz'; src: local('DejaVu Sans'); font-weight: 700 }");
+    let css = "font-family: zz; font-size: 10px; font-weight: 700";
+    // the same text before and after the end of the first batch of 200 probes
+    let mut probes: Vec<Value> = (0..450).map(|i| json!({"text": format!("hello{}", i % 10), "css": css})).collect();
+    let m = measure(&mut server, 2, json!(probes));
+    let widths: Vec<f64> = m.iter().map(|m| f(&m["width"])).collect();
+    assert!(widths.iter().all(|w| *w > 0.0));
+    // and it is the face of the style sheet, not the fallback
+    let direct = measure(&mut server, 3, json!([{"text": "hello0", "css": "font-family: DejaVu Sans; font-size: 10px; font-weight: 700"}]));
+    assert_eq!(widths[0], f(&direct[0]["width"]));
+    assert_eq!(widths[440], f(&direct[0]["width"]));
+    // identical texts have identical widths wherever they are in the request
+    for (i, p) in probes.iter().enumerate() {
+        let first = probes.iter().position(|q| q["text"] == p["text"]).unwrap();
+        assert_eq!(widths[i], widths[first], "probe {i}");
+    }
+    server.finish();
+}

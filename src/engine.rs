@@ -80,6 +80,9 @@ impl Default for EngineConfig {
     }
 }
 
+/// Where relative URLs point without a `base_dir`: a path that does not exist.
+const NO_BASE_DIR: &str = "/nonexistent/umbruch-no-base-dir";
+
 static CONFIG: Mutex<Option<EngineConfig>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +152,8 @@ pub struct Rendered {
 pub struct Engine {
     config: EngineConfig,
     pub(crate) measure_cache: Mutex<crate::measure::Cache>,
+    /// The style sheet that every layout of this engine starts with, see [`Engine::set_stylesheet`].
+    stylesheet: Mutex<Option<layout::SharedStylesheet>>,
 }
 
 impl Engine {
@@ -173,11 +178,40 @@ impl Engine {
                 *installed = Some(config.clone());
             }
         }
-        Ok(Engine { config, measure_cache: Mutex::default() })
+        Ok(Engine { config, measure_cache: Mutex::default(), stylesheet: Mutex::new(None) })
     }
 
     pub fn config(&self) -> &EngineConfig {
         &self.config
+    }
+
+    /// Replaces the style sheet that applies to everything that this engine lays out or measures
+    /// from now on, in addition to the style sheets of each document (which win ties of
+    /// specificity). Empty `css` removes it. Relative URLs in it (`@font-face` sources) are
+    /// relative to `base_dir`; without one, only `data:` URIs load.
+    ///
+    /// Returns what parsing it warned about, so that a mistake is found when it is set, not in
+    /// every later document.
+    pub fn set_stylesheet(&self, css: &str, base_dir: Option<&Path>) -> Vec<String> {
+        let shared = (!css.trim().is_empty()).then(|| layout::SharedStylesheet {
+            css: css.into(),
+            base_dir: base_dir.map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(NO_BASE_DIR)),
+        });
+        let (warnings, ()) = capture_warnings(|| {
+            if let Some(shared) = &shared {
+                let mut styles = crate::style::parse::Styles::empty();
+                crate::style::url_context::with(&shared.base_dir, &shared.base_dir, || {
+                    styles.parse_css_in(&shared.css, &shared.base_dir)
+                });
+            }
+        });
+        let mut slot = self.stylesheet.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *slot != shared {
+            // what was measured with the old style sheet is not what the new one gives
+            self.measure_cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
+            *slot = shared;
+        }
+        warnings
     }
 
     /// Lays the document out.
@@ -203,8 +237,9 @@ impl Engine {
                 DocumentKind::Html => Ok(parser::generate_render_tree(&document.source)),
             }
         };
+        let shared = self.stylesheet.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
         let started = std::time::Instant::now();
-        let (dom, context) = layout::layout_resolved(&parse, device, options.crop, &base_dir).map_err(|message| {
+        let (dom, context) = layout::layout_resolved(&parse, device, options.crop, &base_dir, shared.as_ref()).map_err(|message| {
             // the only error before the layout proper is the parse of an XML document
             if document.kind == DocumentKind::Xml { Error::Parse(message) } else { Error::Layout(message) }
         })?;
@@ -234,7 +269,7 @@ impl Engine {
         // (the directory need not be inside of the resource root: it is the files that are checked)
         match &document.base_dir {
             Some(dir) => Ok(dir.clone()),
-            None => Ok(Path::new("/nonexistent/umbruch-no-base-dir").to_path_buf()),
+            None => Ok(Path::new(NO_BASE_DIR).to_path_buf()),
         }
     }
 }

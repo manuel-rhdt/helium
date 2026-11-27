@@ -906,6 +906,13 @@ impl FlowConstructor {
         self.entity_constructor.world
     }
 
+    /// Reads the style sheet that applies to all documents (before the ones of the document).
+    pub fn read_shared_stylesheet(&mut self, shared: &super::SharedStylesheet) {
+        crate::style::url_context::with(&shared.base_dir, &shared.base_dir, || {
+            self.styles.parse_css_in(&shared.css, &shared.base_dir)
+        })
+    }
+
     fn read_stylesheet(&mut self, node: &DomRef) {
         if let ParsedData::Element(ElementData {
             name, attributes, ..
