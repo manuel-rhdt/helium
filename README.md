@@ -49,6 +49,28 @@ install -m 755 umbruch-vX.Y.Z-x86_64-unknown-linux-musl/umbruch ~/.local/bin/
 
 The installed fonts are found by scanning the font directories.
 
+## Python
+
+`pip install umbruch` installs the executable and a small Python API on top of it:
+
+```python
+import umbruch
+
+umbruch.HTML("<h1>Hello</h1>").write_pdf("hello.pdf")      # to a path or a binary file object
+pdf = umbruch.HTML(filename="report.html").write_pdf()     # bytes
+rendered = umbruch.HTML(html_string).render(pdfa="2b")     # rendered.pdf, .pages, .page_size_pt, .warnings
+```
+
+The documents are rendered by one long-lived `umbruch --serve` process that starts with the first
+request, is started again if it dies, and is stopped at exit, so there is no process per document.
+Make a `umbruch.Server(system_fonts=False, font_dirs=[...], resource_root=...)` for other settings
+and pass it as `HTML(..., server=server)`; use one server per worker to render in parallel (a server
+answers one request at a time). `HTML.render` takes `crop`, `pdfa`, `tags` and `compress`; the page
+size comes from the `@page` rules of the document. `HTML.layout(ids)` returns the boxes of elements,
+and `Server.measure(probes)` measures text. Errors are `umbruch.Error`, with the `code` of the protocol.
+A relative image path is taken from `base_dir` (the directory of the file, or the current directory
+for a string). `$UMBRUCH` overrides the executable.
+
 ## Options
 
 | Option | Effect |
