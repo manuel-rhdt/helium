@@ -1137,6 +1137,32 @@ impl Node {
 /// The preprocessor will remove all groups that don't impact rendering.
 /// Those that left is just an indicator that a new canvas should be created.
 ///
+/// A triangle with a color at each vertex, which is interpolated across it.
+///
+/// The points are in the coordinate system inside of the group (after its `transform`), the
+/// colors are sRGB with the components, and the alpha, in `0..=1`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GouraudTriangle {
+    /// The vertices, in the order of the path.
+    pub points: [tiny_skia_path::Point; 3],
+    /// The colors at the vertices (red, green, blue, alpha).
+    pub colors: [[f32; 4]; 3],
+}
+
+/// The triangles of a `<g data-umbruch-mesh="gouraud">` group.
+///
+/// This is an addition of this fork: an extension of SVG that Matplotlib's Gouraud-shaded
+/// triangles use. Every child of the group has to be a `path` with the outline `M x y L x y L x y
+/// Z` and the three vertex colors in `data-colors="r,g,b,a;r,g,b,a;r,g,b,a"` (components in
+/// `0..=1`, the alpha may be left out); the `transform` of a child is applied to its points. A
+/// group that has anything else is not a mesh and has no `GouraudMesh`. The `fill` of the
+/// triangles is the color to show if the extension is not known.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GouraudMesh {
+    /// The triangles, in the order of painting; none is degenerate.
+    pub triangles: Vec<GouraudTriangle>,
+}
+
 /// `g` element in SVG.
 #[derive(Clone, Debug)]
 pub struct Group {
@@ -1151,6 +1177,7 @@ pub struct Group {
     pub(crate) is_context_element: bool,
     pub(crate) mask: Option<Arc<Mask>>,
     pub(crate) filters: Vec<Arc<filter::Filter>>,
+    pub(crate) gouraud: Option<Arc<GouraudMesh>>,
     // Calculated from `children` on first access and cached, so they must
     // only be accessed once the group is complete.
     pub(crate) bounding_boxes: OnceLock<Box<GroupBoundingBoxes>>,
@@ -1180,6 +1207,7 @@ impl Group {
             clip_path: None,
             mask: None,
             filters: Vec::new(),
+            gouraud: None,
             is_context_element: false,
             bounding_boxes: OnceLock::new(),
             children: Vec::new(),
@@ -1193,6 +1221,15 @@ impl Group {
     /// Can be empty.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The Gouraud mesh of a `<g data-umbruch-mesh="gouraud">` whose children are valid
+    /// triangles (see [`GouraudMesh`]). The children are the flat version of the same mesh: a
+    /// caller that cannot paint the mesh draws them.
+    ///
+    /// This is an addition of this fork.
+    pub fn gouraud(&self) -> Option<&Arc<GouraudMesh>> {
+        self.gouraud.as_ref()
     }
 
     /// Element's transform.

@@ -333,7 +333,7 @@ fn hello(engine: &Engine) -> Reply {
     Reply::plain(json!({
         "protocol": PROTOCOL,
         "umbruch": env!("CARGO_PKG_VERSION"),
-        "capabilities": ["measure", "layout", "render", "warnings", "attachments"],
+        "capabilities": ["measure", "layout", "render", "warnings", "attachments", "mesh_gouraud"],
         "fonts": {
             "system_fonts": config.system_fonts,
             "font_dirs": config.font_dirs,
