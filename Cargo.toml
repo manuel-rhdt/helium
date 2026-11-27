@@ -48,11 +48,16 @@ unicode-properties = { version = "0.1.5", default-features = false, features = [
 yeslogic-fontconfig-sys = { version = "6", optional = true }
 
 [features]
-default = ["fontconfig"]
+default = ["fontconfig", "embedded-fonts"]
 # Ask fontconfig for the default generic families and for fallback fonts on Linux/BSD. Disable
 # for fully static (musl) builds, which can't link the system's fontconfig; installed fonts are
 # then found by scanning the font directories only.
 fontconfig = ["dep:yeslogic-fontconfig-sys"]
+# Build in the Noto fonts for the scripts that DejaVu Sans lacks (Arabic, Indic, South-East Asian,
+# ...), symbols, colour emoji and CJK: about 18 MB of the binary, mostly CJK. Without it the TeX
+# Gyre and math fonts and DejaVu Sans are still built in; text in the other scripts then needs
+# fonts that are installed or that the document brings with `@font-face`.
+embedded-fonts = []
 
 [dev-dependencies]
 skera = "0.10"

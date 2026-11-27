@@ -19,4 +19,5 @@ python-source = "python"
 module-name = "umbruch"
 # Fonts are embedded in the binary and fontconfig cannot be linked into a portable wheel.
 no-default-features = true
+features = ["embedded-fonts"]
 strip = true

@@ -16,6 +16,12 @@ log = "0.4"
 # parking_lot 0.11 (a dependency of umbruch) reads the clock through `instant`, which needs this to find one in the browser
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 
+[features]
+# The fallback fonts for CJK, emoji and the other scripts: 18 MB of the module (see ../Cargo.toml).
+# `--no-default-features` leaves them out.
+default = ["embedded-fonts"]
+embedded-fonts = ["umbruch/embedded-fonts"]
+
 [profile.release]
 opt-level = "s"
 lto = true

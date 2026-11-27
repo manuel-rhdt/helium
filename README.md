@@ -501,6 +501,10 @@ a `Formula` with alternative text from `alttext` or a TeX annotation.
   Heros, Termes and Cursor (the sans, serif and monospace defaults), DejaVu Sans (fallback), STIX
   Two Math and Latin Modern Math. The generic families `serif`, `sans-serif`, `monospace` and
   `system-ui` are mapped to them.
+  The Noto fonts for the other scripts, symbols, colour emoji and CJK (about 18 MB of the
+  binary) are built in by the cargo feature `embedded-fonts`, which is on by default;
+  `--no-default-features` (add `--features fontconfig` on Linux if you want it) leaves them out and
+  characters of those scripts are then only drawn from installed fonts or `@font-face`.
 
 ## PDF output
 

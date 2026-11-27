@@ -589,6 +589,7 @@ mod tests {
         Setup { font, fonts }
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn spaces_between_emoji_are_set_in_the_font_of_the_text() {
         // the space of the colour emoji font is as wide as an emoji
@@ -699,6 +700,7 @@ mod tests {
         assert_ne!(joined[0].1.codepoint, alone[0].1.codepoint);
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn scripts_are_shaped_separately_with_their_own_properties() {
         let text = "abc שלום 123";
@@ -943,6 +945,7 @@ mod tests {
 
     /// A word that ends in a character of a fallback font gets the hyphen from that font, not
     /// from the font of the text that comes after the word.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn the_hyphen_is_drawn_with_the_font_of_the_last_letter() {
         let text = "a日 b";

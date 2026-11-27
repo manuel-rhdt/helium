@@ -29,11 +29,11 @@ jobs:
       uses: Swatinem/rust-cache@v2
     # zig serves as the C/C++ cross compiler: harfbuzz is compiled from its bundled source and
     # needs a C++ toolchain targeting musl. fontconfig can't be linked statically, so it is
-    # turned off with --no-default-features.
+    # turned off with --no-default-features (the fonts are kept with --features embedded-fonts).
     - name: Install zig and cargo-zigbuild
       run: pip install ziglang==0.17.1 cargo-zigbuild==0.24.1
     - name: Build
-      run: cargo zigbuild --release --locked --no-default-features --target "$TARGET"
+      run: cargo zigbuild --release --locked --no-default-features --features embedded-fonts --target "$TARGET"
     - name: Check that the binary is static
       run: |
         file "target/$TARGET/release/umbruch"
@@ -87,7 +87,7 @@ jobs:
     # harfbuzz is compiled from its bundled source and needs the MSVC C++ toolchain. Windows
     # finds its fonts through fontdb's directory scan, so fontconfig stays off.
     - name: Build
-      run: cargo build --release --locked --no-default-features --target "$env:TARGET"
+      run: cargo build --release --locked --no-default-features --features embedded-fonts --target "$env:TARGET"
     - name: Check that the binary needs no C runtime DLL
       run: |
         $deps = dumpbin /dependents "target/$env:TARGET/release/umbruch.exe"

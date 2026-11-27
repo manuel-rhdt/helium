@@ -121,6 +121,7 @@ fn the_gallery_documents_without_transparency_conform_to_pdfa1() {
     check(&lib, "1b", files);
 }
 
+#[cfg(feature = "embedded-fonts")]
 #[test]
 fn a_document_with_transparency_is_not_written_as_pdfa1() {
     for document in ["invoice", "cv", "math-notes", "slides", "emoji"] {

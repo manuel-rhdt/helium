@@ -923,6 +923,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn embedded_fonts_cover_the_major_scripts() {
         let fonts: Vec<Font> = super::BUNDLED_FONTS
@@ -934,6 +935,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn the_embedded_emoji_font_paints_colour_glyphs() {
         let font = super::color_emoji_font().expect("an emoji font is built in");

@@ -3265,6 +3265,7 @@ mod tests {
 
     /// The i-matra of "कि" comes first in the glyphs and is drawn before the consonant. Only
     /// that cluster is marked; the space between the clusters is not.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn reordered_clusters_are_wrapped_in_actual_text() {
         let (ops, _, _) = pieces("Noto Sans Devanagari", "कि पि", false, Px(0.0));
@@ -3283,6 +3284,7 @@ mod tests {
 
     /// The marking of a piece does not depend on the text that comes before it in the document:
     /// the same text gets the same marked content whether or not the fonts have seen it.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn marking_does_not_depend_on_earlier_text() {
         let font = font_named("Noto Sans Devanagari");
@@ -3305,6 +3307,7 @@ mod tests {
 
     /// Right-to-left text, whose glyphs are in visual order, is marked with its text in logical
     /// order as a whole, marks and spaces included.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn right_to_left_pieces_get_their_logical_text() {
         for text in ["בְּרֵאשִׁית בָּרָא", "אב"] {
@@ -3316,6 +3319,7 @@ mod tests {
 
     /// A glyph cluster of several grapheme clusters (a Kannada conjunct with its vowel sign, a
     /// Sinhala yansaya with its vowel sign) is marked with the text of all of them.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn actual_text_covers_the_whole_glyph_cluster() {
         let (ops, _, _) = pieces("Noto Sans Kannada", "ಎಲ್ಲಾ", false, Px(0.0));
@@ -3327,6 +3331,7 @@ mod tests {
         assert_balanced(&marked(&ops));
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn two_part_vowel_signs_are_marked() {
         let (ops, _, _) = pieces("Noto Sans Bengali", "কো", false, Px(0.0));
@@ -3336,6 +3341,7 @@ mod tests {
 
     /// The glyphs are written left to right whichever direction the text has, and the kerns put
     /// the pen at the end of the piece.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn pen_ends_at_the_end_of_the_piece() {
         for (family, text, rtl, spacing) in [
@@ -3354,6 +3360,7 @@ mod tests {
     }
 
     /// Right-to-left text is stored in visual order: the first glyph is the last letter.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn right_to_left_glyphs_are_in_visual_order() {
         let font = font_named("Noto Sans Hebrew");
@@ -3499,6 +3506,7 @@ mod tests {
     }
 
     /// In right-to-left text the hyphen is drawn first, on the left; its piece comes first too.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn the_hyphen_of_right_to_left_text_is_on_the_left() {
         let (ops, _, _) = hyphenated("Noto Sans Hebrew", "אב", true);
