@@ -1,7 +1,7 @@
 use crate::flow::{BoxRef, BreakKind, FloatSide, Item, PageKind, PageSpec, Problem};
 use crate::service::{ContainerFloat, LayoutService};
 use crate::token::{BreakToken, ContainerCut, Cut, Interner, Position};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 
 /// A page that starts at a place of the flow.
@@ -338,12 +338,12 @@ impl<'a> Kernel<'a> {
             first,
             first_carry: FloatList::NONE,
             hoisted: vec![],
-            hoisted_of: HashMap::new(),
+            hoisted_of: HashMap::default(),
             force_end: None,
             choices: vec![Rc::from(vec![])],
-            choice_ids: HashMap::from([(vec![], ChoiceId::NONE)]),
+            choice_ids: HashMap::from_iter([(vec![], ChoiceId::NONE)]),
             float_lists: vec![Rc::from(vec![])],
-            float_list_ids: HashMap::from([(vec![], FloatList::NONE)]),
+            float_list_ids: HashMap::from_iter([(vec![], FloatList::NONE)]),
         };
         kernel.first_carry = kernel.float_list(&first_waiting);
         kernel

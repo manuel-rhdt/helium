@@ -6,7 +6,7 @@
 
 use crate::style::properties::calc::Calc;
 use specs::{Entity, ReadStorage, WriteStorage};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 use taffy::geometry::{Line, Point, Size};
 use taffy::style::{AvailableSpace, Position};

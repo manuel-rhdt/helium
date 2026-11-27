@@ -22,7 +22,7 @@ mod table;
 mod tree;
 mod window;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 
 use specs::{Entities, Entity, ReadStorage, World, WorldExt, WriteStorage};
@@ -168,15 +168,15 @@ impl TaffyBlockLayout {
             measuring_max_content: false,
             window: None,
             windowed: vec![],
-            lines: HashMap::new(),
+            lines: HashMap::default(),
             flow: None,
             icb_height: 0.0,
             plain_root: None,
-            page_fragments: HashMap::new(),
+            page_fragments: HashMap::default(),
             paragraph_variants: 0,
             variants_config: umbruch_paginate::Variants::default(),
             earlier_fragments: 3,
-            page_variants: HashMap::new(),
+            page_variants: HashMap::default(),
         };
         let root = tree.build_box(self.root_entity, &block_ctxs);
         tree.mark_orthogonal(root, crate::layout::writing_mode::Flow::HorizontalTb);
@@ -347,7 +347,7 @@ impl TaffyBlockLayout {
         let before = std::time::Instant::now();
 
         let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
-        let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::new();
+        let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::default();
         let mut repeated: std::collections::HashSet<Entity> = std::collections::HashSet::new();
         let mut rules: Vec<Rule> = vec![];
         let mut line_stats = LineStats::default();

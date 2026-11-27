@@ -1830,6 +1830,7 @@ dependencies = [
  "predicates 1.0.8",
  "quickcheck",
  "quickcheck_macros",
+ "rustc-hash",
  "selectors",
  "serde_json",
  "smallvec",
@@ -1863,6 +1864,9 @@ dependencies = [
 [[package]]
 name = "umbruch_paginate"
 version = "0.1.0"
+dependencies = [
+ "rustc-hash",
+]
 
 [[package]]
 name = "unicode-bidi"
