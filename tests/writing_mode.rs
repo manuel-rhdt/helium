@@ -165,6 +165,7 @@ fn an_inline_block_can_be_vertical() {
     assert!(text_matrices(&dump).iter().any(|line| line[..4] == [0.0, -1.0, 1.0, 0.0]));
 }
 
+#[cfg(feature = "embedded-fonts")]
 #[test]
 fn cjk_characters_stand_upright_and_latin_ones_are_turned() {
     let dump = dump(

@@ -204,6 +204,7 @@ fn an_svg_without_a_size_or_a_view_box_is_300_by_150() {
     assert_close(r.svgs[0][3], 112.5);
 }
 
+#[cfg(feature = "embedded-fonts")]
 #[test]
 fn text_is_shaped_with_the_fonts_of_the_document() {
     // Arabic: right-to-left, joined letters that need the glyphs of the bundled Noto font
@@ -226,6 +227,7 @@ fn text_is_shaped_with_the_fonts_of_the_document() {
     assert!(!r.log.contains("SVG:"), "{}", r.log);
 }
 
+#[cfg(feature = "embedded-fonts")]
 #[test]
 fn svg_text_gets_the_fallback_font_of_its_design_like_the_text_of_the_page() {
     // a serif text gets the serif font for Arabic, in the page and in an SVG

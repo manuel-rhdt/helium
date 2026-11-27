@@ -1170,6 +1170,7 @@ mod tests {
         assert_eq!(meta(2, 11, 3, 1), Some(Class::Sans));
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn corrections_replace_wrong_metadata() {
         let load = |name: &str| {
@@ -1248,6 +1249,7 @@ mod tests {
         assert!(report.contains("font: DejaVuSans"), "{report}");
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn missing_characters_get_a_fallback_font_or_are_reported() {
         let mut font_map = FontMap::new();
@@ -1270,6 +1272,7 @@ mod tests {
 
     /// Text in a serif font gets the embedded sans-serif fonts for scripts that no serif font
     /// covers, rather than an empty box: without installed fonts, they are all there is.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn serif_text_falls_back_to_the_embedded_sans_serif_fonts() {
         let mut font_map = FontMap::new();
@@ -1288,6 +1291,7 @@ mod tests {
     /// The fallback fonts of a description do not depend on which other descriptions with the
     /// same primary font were resolved before: a family that the element lists itself wins over
     /// the fallback of another element.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn fallback_does_not_depend_on_other_elements() {
         let text = "道可道 ქართული";
@@ -1351,6 +1355,7 @@ mod tests {
         assert_eq!((fonts.runs()[0].start, fonts.runs()[0].end), (0, text.len()));
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn scripts_get_their_own_fonts() {
         let text = "abc بسم 漢字";
@@ -1489,6 +1494,7 @@ mod tests {
         assert!(report.contains("them"), "{report}");
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn text_with_and_without_fonts_is_resolved_together() {
         let mut font_map = FontMap::new();
@@ -1551,6 +1557,7 @@ mod tests {
 
     // -- the font description decides
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn every_font_description_has_its_own_fallback_fonts() {
         let mut font_map = FontMap::new();
@@ -1591,6 +1598,7 @@ mod tests {
         assert_eq!(hash(&key), hash(&key.clone()));
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn weight_selects_the_fallback_font_weight() {
         let mut font_map = FontMap::new();
@@ -1612,6 +1620,7 @@ mod tests {
         fallback_names(&font, &fonts.key)
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn generic_families_give_the_design_for_the_script() {
         let termes = || named("TeX Gyre Termes");
@@ -1629,6 +1638,7 @@ mod tests {
         assert_eq!(hebrew_font(vec![named("TeX Gyre Cursor")]), ["NotoSansHebrew-Regular"]);
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn a_family_of_the_list_wins_over_the_design_of_the_text() {
         assert_eq!(
@@ -1662,6 +1672,7 @@ mod tests {
         crate::layout::text::segment::Cluster { start, text, script }
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn the_font_covering_most_of_a_run_is_used_for_all_of_it() {
         let mut font_map = FontMap::new();
@@ -1705,6 +1716,7 @@ mod tests {
         assert!(script_run_fonts(&font, &set, &[]).is_empty());
     }
 
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn adding_a_fallback_twice_changes_nothing() {
         let mut font_map = FontMap::new();
@@ -1879,6 +1891,7 @@ mod tests {
     /// Every bundled face must be reachable as a fallback font: text in the right script,
     /// weight and style gets it. Adding a font to the bundle without a way to select it fails
     /// here (the embedded fonts would never be used).
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn every_bundled_font_is_selected_as_a_fallback_in_some_circumstance() {
         use std::collections::BTreeSet;
@@ -1955,6 +1968,7 @@ mod tests {
 
     /// An emoji gets the colour emoji font even if the text font has a glyph for its base
     /// character, and a character in text presentation does not.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn emoji_are_set_in_the_colour_emoji_font() {
         let families = vec![named("TeX Gyre Termes"), FontFamily::Serif];
@@ -2127,6 +2141,7 @@ mod tests {
 
     /// With only the bundled fonts, all the Chinese, Japanese and Korean text is set in the one
     /// bundled CJK font, in every design, language and weight, and nothing is missing.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn cjk_text_is_set_in_the_bundled_cjk_font_in_every_circumstance() {
         let text = "漢字 かな カナ 한글 、。「」！ ㄅㄆ";
@@ -2163,6 +2178,7 @@ mod tests {
 
     /// The bundled font has the regional forms of Han characters, selected by the language of
     /// the text, so the language reaches the shaper.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn the_language_selects_the_regional_forms_of_han_characters() {
         let glyph_ids = |lang: &str| -> Vec<u32> {

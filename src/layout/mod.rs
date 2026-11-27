@@ -34,7 +34,7 @@ use components::{EdgeValues, TextList};
 use relative_positioning::RelativePositioningSystem;
 use specs::{RunNow, World, WorldExt};
 use std::path::Path;
-use std::time::Instant;
+use crate::time::Instant;
 
 use log::info;
 

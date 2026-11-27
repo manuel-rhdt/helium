@@ -56,6 +56,7 @@ fn inline_block_text_does_not_cross_the_right_edge() {
 
 /// Thai has no spaces between words. The line breaker finds the words with a dictionary, so a
 /// sentence wraps inside its box instead of forming one line that sticks out of it.
+#[cfg(feature = "embedded-fonts")]
 #[test]
 fn thai_text_wraps_inside_its_box() {
     check_layout(

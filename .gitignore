@@ -5,3 +5,5 @@ testbook_site/
 /umbruch_paginate/target
 __pycache__/
 /svg/target
+/umbruch_wasm/target
+/umbruch_wasm/pkg

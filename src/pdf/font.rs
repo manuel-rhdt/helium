@@ -462,6 +462,7 @@ mod tests {
     /// number, whatever the CIDs of the original were. The bundled CJK font is a CID-keyed CFF
     /// whose glyphs were renumbered by the subsetting in `build.rs`, so there the CIDs differ
     /// from the glyph indices.
+    #[cfg(feature = "embedded-fonts")]
     #[test]
     fn cid_keyed_cff_fonts_are_embedded_with_cids_equal_to_glyph_numbers() {
         let font = load("Noto Sans CJK JP");

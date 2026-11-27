@@ -42,6 +42,14 @@ struct Spec {
     keep: Keep,
 }
 
+/// The fonts that are always built in: TeX Gyre (the generic families and the standard font
+/// names), the math fonts (MathML) and DejaVu Sans (the fallback that guarantees there is a font to
+/// embed). Everything else, the Noto fonts for other scripts, symbols, emoji and CJK, is only
+/// built in with the `embedded-fonts` feature.
+fn is_core(spec: &Spec) -> bool {
+    ["texgyre", "latinmodern", "STIXTwo", "DejaVu"].iter().any(|prefix| spec.source.starts_with(prefix))
+}
+
 const fn all(source: &'static str) -> Spec {
     Spec { source, constant: None, face: 0, keep: Keep::All }
 }
@@ -169,9 +177,12 @@ fn main() {
 
     let charset: Vec<char> = fs::read_to_string(&charset_path).unwrap().chars().filter(|c| !c.is_whitespace()).collect();
 
+    let embedded_fonts = env::var_os("CARGO_FEATURE_EMBEDDED_FONTS").is_some();
+    let selected: Vec<&Spec> = FONTS.iter().filter(|spec| embedded_fonts || is_core(spec)).collect();
+
     let mut list = String::from("pub(crate) static BUNDLED_FONTS: [EmbeddedFont; FONTS] = [\n");
     let mut constants = String::new();
-    for (i, spec) in FONTS.iter().enumerate() {
+    for (i, spec) in selected.iter().copied().enumerate() {
         let stem = Path::new(spec.source).file_stem().unwrap().to_str().unwrap();
         let target = out.join(format!("{stem}-{}.z", spec.face));
         let path = [fonts.join(spec.source), fonts.join("src").join(spec.source)]
@@ -200,7 +211,7 @@ fn main() {
         }
     }
     list.push_str("];\n");
-    writeln!(list, "const FONTS: usize = {};", FONTS.len()).unwrap();
+    writeln!(list, "const FONTS: usize = {};", selected.len()).unwrap();
     list.push_str(&constants);
     fs::write(out.join("bundled_fonts.rs"), list).unwrap();
 }
