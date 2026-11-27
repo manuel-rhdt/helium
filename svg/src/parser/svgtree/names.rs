@@ -191,10 +191,12 @@ pub enum AId {
     Cx,
     Cy,
     D,
-    /// `data-colors` and `data-umbruch-mesh`: the Gouraud mesh extension of this fork. They are
+    /// `data-colors`, `data-vertices`, `data-triangles` and `data-umbruch-mesh`: the Gouraud mesh extension of this fork. They are
     /// not in the table below, which is generated.
     DataColors,
+    DataTriangles,
     DataUmbruchMesh,
+    DataVertices,
     DiffuseConstant,
     Direction,
     Display,
@@ -654,7 +656,9 @@ impl AId {
     pub(crate) fn from_str(text: &str) -> Option<AId> {
         match text {
             "data-colors" => Some(AId::DataColors),
+            "data-triangles" => Some(AId::DataTriangles),
             "data-umbruch-mesh" => Some(AId::DataUmbruchMesh),
+            "data-vertices" => Some(AId::DataVertices),
             _ => ATTRIBUTES.get(text).cloned(),
         }
     }
@@ -664,7 +668,9 @@ impl AId {
     pub fn to_str(self) -> &'static str {
         match self {
             AId::DataColors => return "data-colors",
+            AId::DataTriangles => return "data-triangles",
             AId::DataUmbruchMesh => return "data-umbruch-mesh",
+            AId::DataVertices => return "data-vertices",
             _ => {}
         }
         ATTRIBUTES.key(&self)

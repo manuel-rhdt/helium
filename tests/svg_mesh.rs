@@ -239,3 +239,91 @@ fn a_big_mesh_is_split_into_several_shadings() {
     assert_eq!(shading_types(&r.pdf), [4, 4], "{}", r.log);
     assert!(r.raw.len() > 0);
 }
+
+// -- the compact form: one element with the vertices and the triangles as indices --
+
+/// The vertices (x y r g b a) and the triangles of the three triangles of `three_triangles`, as the
+/// compact form writes them.
+fn compact(vertices: &str, triangles: &str) -> String {
+    mesh(&format!("{GOURAUD} data-vertices=\"{vertices}\" data-triangles=\"{triangles}\""), "")
+}
+
+const COMPACT_VERTICES: &str = "10 10 1 0 0 1, 50 10 0 1 0 1, 10 50 0 0 1 1, 60 10 0 1 0 1, 90 10 0 0 1 1, 60 40 1 0 0 1";
+
+#[test]
+fn the_compact_form_is_one_shading_and_looks_like_the_triangle_paths() {
+    let r = render("compact", &compact(COMPACT_VERTICES, "0 1 2 3 4 5"));
+    assert_eq!(shading_types(&r.pdf), [4], "{}", r.log);
+    assert_eq!(count(&r.pdf, "sh"), 1);
+    assert_eq!(count(&r.pdf, "f"), 0);
+    if !has_pdftoppm() {
+        return;
+    }
+    let paths = tri([(10.0, 10.0), (50.0, 10.0), (10.0, 50.0)], [RED, GREEN, BLUE], "#555")
+        + &tri([(60.0, 10.0), (90.0, 10.0), (60.0, 40.0)], [GREEN, BLUE, RED], "#555");
+    let reference = render("compact_reference", &mesh(GOURAUD, &paths));
+    for (x, y) in [(8, 8), (15, 15), (20, 12), (50, 15), (52, 22)] {
+        assert_eq!(pixel(&r.path, x, y), pixel(&reference.path, x, y), "({x}, {y})");
+    }
+}
+
+#[test]
+fn triangles_share_their_vertices() {
+    // a square of two triangles that share the diagonal: four vertices, six indices
+    let r = render(
+        "compact_shared",
+        &compact("10 10 1 0 0 1, 90 10 0 1 0 1, 90 90 0 0 1 1, 10 90 1 1 0 1", "0 1 2 0 2 3"),
+    );
+    assert_eq!(shading_types(&r.pdf), [4], "{}", r.log);
+}
+
+#[test]
+fn a_compact_mesh_that_is_malformed_is_not_drawn_and_does_not_fail() {
+    let cases = [
+        ("index_out_of_range", COMPACT_VERTICES, "0 1 9"),
+        ("not_a_multiple_of_3", COMPACT_VERTICES, "0 1"),
+        ("negative_index", COMPACT_VERTICES, "0 1 -1"),
+        ("vertex_numbers_missing", "10 10 1 0 0, 50 10 0 1 0 1, 10 50 0 0 1 1", "0 1 2"),
+        ("not_a_number", "10 10 1 0 0 x, 50 10 0 1 0 1, 10 50 0 0 1 1", "0 1 2"),
+        ("nan", "NaN 10 1 0 0 1, 50 10 0 1 0 1, 10 50 0 0 1 1", "0 1 2"),
+        ("no_triangles", COMPACT_VERTICES, ""),
+        ("degenerate", COMPACT_VERTICES, "0 0 1"),
+    ];
+    for (name, vertices, triangles) in cases {
+        let r = render(&format!("compact_{name}"), &compact(vertices, triangles));
+        assert!(shading_types(&r.pdf).is_empty(), "{name}: {}", r.pdf);
+    }
+    let r = render("compact_warns", &compact(COMPACT_VERTICES, "0 1 9"));
+    assert!(r.log.contains("malformed"), "{}", r.log);
+}
+
+#[test]
+fn a_compact_mesh_with_alpha_uses_the_constant_opacity() {
+    let r = render("compact_alpha", &compact("10 10 1 0 0 0.5, 90 10 0 1 0 0.5, 10 90 0 0 1 0.5", "0 1 2"));
+    assert_eq!(shading_types(&r.pdf), [4]);
+    assert!(r.pdf.contains("/ca 0.5"), "{}", r.pdf);
+    let r = render("compact_alpha_varies", &compact("10 10 1 0 0 1, 90 10 0 1 0 0.5, 10 90 0 0 1 1", "0 1 2"));
+    // no flat triangles to fall back to: nothing is drawn, with a warning
+    assert!(shading_types(&r.pdf).is_empty());
+    assert!(r.log.contains("alpha"), "{}", r.log);
+}
+
+#[test]
+fn a_translucent_gradient_mesh_is_lightened_in_poppler() {
+    // poppler ignores the alpha constant of a gradient shading, so the mesh has to be painted as a
+    // transparency group: near the red vertex, 50% red over white is pink, not red
+    if !has_pdftoppm() {
+        eprintln!("skipped: pdftoppm is not installed");
+        return;
+    }
+    let svg = format!(
+        "<svg {NS} width=\"100\" height=\"100\"><rect width=\"100\" height=\"100\" fill=\"#fff\"/>{}</svg>",
+        format!(
+            "<g {GOURAUD} data-vertices=\"10 10 1 0 0 0.5, 90 10 0 1 0 0.5, 10 90 0 0 1 0.5\" data-triangles=\"0 1 2\"/>"
+        )
+    );
+    let r = render("translucent", &svg);
+    assert_eq!(shading_types(&r.pdf), [4], "{}", r.log);
+    let near = pixel(&r.path, 8, 8).unwrap();
+    assert!(near[0] > 225 && near[1] > 100 && near[2] > 100, "{:?}", near);
+}

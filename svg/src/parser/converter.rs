@@ -830,6 +830,16 @@ fn gouraud_mesh(node: SvgNode, state: &State) -> Option<Arc<GouraudMesh>> {
     {
         return None;
     }
+    if node.has_attribute(AId::DataVertices) || node.has_attribute(AId::DataTriangles) {
+        // the compact form: the mesh is in the attributes of the group and has no children
+        return match compact_gouraud_mesh(node) {
+            Some(mesh) => Some(Arc::new(mesh)),
+            None => {
+                log::warn!("a `data-umbruch-mesh` group has malformed `data-vertices` or `data-triangles`: it is not drawn as a mesh");
+                None
+            }
+        };
+    }
     let mut triangles = Vec::new();
     for child in node.children() {
         if !child.is_element() {
@@ -853,6 +863,47 @@ fn gouraud_mesh(node: SvgNode, state: &State) -> Option<Arc<GouraudMesh>> {
         return None;
     }
     Some(Arc::new(GouraudMesh { triangles }))
+}
+
+/// The compact form of a mesh: `data-vertices` has six numbers per vertex (x, y, then red, green,
+/// blue and alpha in 0..=1) and `data-triangles` three indices into the vertices per triangle;
+/// numbers are separated by white space and commas. The vertices are shared by the triangles that
+/// meet in them, so this is much smaller than a path per triangle for a mesh of a grid, and it is
+/// much faster to read. A triangle with no area is left out; `None` if anything is malformed.
+fn compact_gouraud_mesh(node: SvgNode) -> Option<GouraudMesh> {
+    fn numbers<T: FromStr>(text: &str) -> Option<Vec<T>> {
+        text.split(|c: char| c.is_ascii_whitespace() || c == ',')
+            .filter(|part| !part.is_empty())
+            .map(|part| part.parse().ok())
+            .collect()
+    }
+    let values: Vec<f32> = numbers(node.attribute::<&str>(AId::DataVertices)?)?;
+    let indices: Vec<u32> = numbers(node.attribute::<&str>(AId::DataTriangles)?)?;
+    if values.len() % 6 != 0 || indices.len() % 3 != 0 || !values.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let count = values.len() / 6;
+    let vertex = |index: u32| -> Option<(tiny_skia_path::Point, [f32; 4])> {
+        let v = values.get(index as usize * 6..index as usize * 6 + 6)?;
+        let color = [v[2], v[3], v[4], v[5]].map(|c| c.clamp(0.0, 1.0));
+        Some((tiny_skia_path::Point::from_xy(v[0], v[1]), color))
+    };
+    let mut triangles = Vec::with_capacity(indices.len() / 3);
+    for corner in indices.chunks_exact(3) {
+        if corner.iter().any(|&i| i as usize >= count) {
+            return None;
+        }
+        let (a, b, c) = (vertex(corner[0])?, vertex(corner[1])?, vertex(corner[2])?);
+        let area = (b.0.x - a.0.x) * (c.0.y - a.0.y) - (c.0.x - a.0.x) * (b.0.y - a.0.y);
+        if area == 0.0 || !area.is_finite() {
+            continue;
+        }
+        triangles.push(GouraudTriangle { points: [a.0, b.0, c.0], colors: [a.1, b.1, c.1] });
+    }
+    if triangles.is_empty() {
+        return None;
+    }
+    Some(GouraudMesh { triangles })
 }
 
 /// `Some(Some(_))` for a valid triangle, `Some(None)` for a valid one without an area, `None` if

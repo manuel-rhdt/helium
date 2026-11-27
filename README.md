@@ -101,23 +101,35 @@ issues track the known gaps. Unsupported declarations are logged (`RUST_LOG=warn
   elements (it does not win over one in a style sheet), a
   `foreignObject` in an SVG file (`<img src="x.svg">`: the content needs the document),
   hyperlinks and tags (accessibility structure) inside of a `foreignObject`.
-- **Gouraud triangle meshes in SVG** (an extension; standard SVG has none, and `<meshgradient>` was
-  never shipped): a `<g data-umbruch-mesh="gouraud">` whose children are all triangles is painted as
-  one PDF shading of type 4 (free-form Gouraud triangle mesh) instead of one path per triangle, so
-  there are no antialiasing seams between neighbours and the file is small. A triangle is a
-  `<path d="M x0 y0 L x1 y1 L x2 y2 Z" data-colors="r0,g0,b0,a0;r1,g1,b1,a1;r2,g2,b2,a2"/>` (a
-  `transform` on it applies): the colours of the vertices in the order of the path are sRGB
-  components in 0..1 (the alpha may be left out and is then 1), interpolated linearly in sRGB (as
-  Matplotlib does), and `fill` and `fill-opacity` of the path are what a renderer that does not know
-  the extension shows, so the mean colour is a good value. A type 4 shading has no alpha per vertex: if the
-  alpha is the same everywhere it is the opacity of the shading (`ca`; poppler, pdfium and mupdf
-  apply it to `sh`), otherwise the group is drawn with its flat triangles and a warning is logged.
-  A group that is not a valid mesh (a child that is not a three-vertex straight path, a missing or
-  malformed `data-colors`, a non-finite coordinate) is painted like any other group, with the
-  flat triangles; zero-area triangles are dropped. More than 32768 triangles are split into several shadings. The
-  extension is ignored inside of `clipPath`. Over `--serve`, the capability `mesh_gouraud` of `hello` says that it is
-  understood; the command line has no such exchange and reads the same markup, so a program that
-  writes it for both has to know which one it talks to (it works there too: the markup is plain SVG).
+- **Gouraud triangle meshes in SVG** (an umbruch extension: standard SVG has none, `<meshgradient>`
+  was never shipped, and no other renderer draws this): a `<g data-umbruch-mesh="gouraud">` is
+  painted as PDF shadings of type 4 (free-form Gouraud triangle mesh) instead of one path per
+  triangle, so there are no antialiasing seams between neighbours and the file is small. Two ways
+  to write the triangles:
+  - *compact*, for programs: the attributes `data-vertices` (six numbers per vertex: x, y, then red,
+    green, blue and alpha as sRGB components in 0..1) and `data-triangles` (three indices into the
+    vertices per triangle), separated by white space or commas, and no children. Triangles share
+    their vertices, so a mesh of a grid is a fraction of the size of the other form and is read
+    about ten times faster (20000 triangles: 0.05 s). Anything malformed (a count that is not a
+    multiple of 6 or 3, an index out of range, a number that is not finite) is a warning and
+    nothing is drawn.
+  - *per triangle*, for people (and as a fallback that other renderers show): the children are
+    `<path d="M x0 y0 L x1 y1 L x2 y2 Z" data-colors="r0,g0,b0,a0;r1,g1,b1,a1;r2,g2,b2,a2"/>`
+    (a `transform` on a path applies, and so does the one of the group); `fill` is what a renderer
+    without the extension shows, so the mean colour is a good value. A group with a child that is
+    not a valid triangle (not a three-vertex straight path, a missing or malformed `data-colors`,
+    a non-finite coordinate) is painted like any other group, with its children.
+
+  The colours are interpolated linearly in sRGB (as Matplotlib does) and written as `DeviceRGB`
+  like every other colour, so equal vertex colours give the same pixels as a flat fill. A type 4
+  shading has no alpha per vertex: if it is the same everywhere it is the opacity of the mesh,
+  painted as a transparency group (poppler ignores the alpha constant of a gradient shading; pdfium,
+  mupdf and poppler agree on a group). Otherwise the per-triangle form is drawn with its flat
+  triangles and a warning, and the compact form has no flat triangles to fall back to and draws
+  nothing. Zero-area triangles are dropped; more than 32768 triangles are split into several
+  shadings; the extension is ignored inside of `clipPath`. Over `--serve`, the capability `mesh_gouraud` of `hello` says that
+  it is understood; the command line has no such exchange and reads the same markup. PDF/A: an
+  opaque mesh is allowed in every level; a translucent one is not in `1b`, like any transparency.
 - **SVG and XHTML as the input:** a file with the extension `.svg`, `.xhtml`, `.xht` or `.xml` is
   read as XML (`xml5ever`): namespaces and prefixes are resolved (`<s:svg>`, `<x:div>`, `<m:math>`),
   empty elements (`<div/>`) are empty, and a file that is not well-formed is an error instead of
