@@ -445,17 +445,17 @@ impl<'a> Kernel<'a> {
 
     /// What else a search has to tell apart about a page: its number, if the number of pages is
     /// limited (the pages that are left depend on it), else nothing.
-    pub fn slot(&self, start: &PageStart) -> usize {
+    pub fn slot(&self, start: &PageStart) -> u64 {
         let number = if self.problem.max_pages.is_some() { start.index } else { 0 };
         // (the floats that wait are what the pages that follow depend on)
-        (number << 32) | start.carry.0 as usize
+        ((number as u64) << 32) | start.carry.0 as u64
     }
 
     /// The number of floats that wait at the start of a page, from its [`slot`](Self::slot): the
     /// pages of floats that follow each other at one place have fewer of them each, which makes a
     /// search go in one direction.
-    pub fn waiting_in(&self, slot: usize) -> usize {
-        self.float_lists[slot & 0xffff_ffff].len()
+    pub fn waiting_in(&self, slot: u64) -> usize {
+        self.float_lists[(slot & 0xffff_ffff) as usize].len()
     }
 
     /// The floats of a list: the numbers of their items in the flow.

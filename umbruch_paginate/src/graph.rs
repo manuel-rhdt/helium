@@ -215,13 +215,13 @@ impl<'k, 'a> PageGraph<'k, 'a> {
 /// The place where a page starts, its kind, and its number if the number of pages is limited:
 /// the geometry of a page, and with it everything that follows, depends on nothing else about
 /// the path that led to it.
-pub type PageKey = (BreakToken, PageKind, usize);
+pub type PageKey = (BreakToken, PageKind, u64);
 
 impl Graph for PageGraph<'_, '_> {
     type Node = PageStart;
     type Edge = PageEdge;
     type Key = PageKey;
-    type Rank = ((usize, u64), usize, u8, usize, u32);
+    type Rank = ((usize, u64), usize, u8, u64, u32);
 
     fn start(&mut self) -> PageStart {
         self.kernel.first_page()
