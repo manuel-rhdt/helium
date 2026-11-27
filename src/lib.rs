@@ -31,6 +31,7 @@ pub mod pdf;
 pub mod server;
 pub mod simple_dom;
 pub mod style;
+mod time;
 mod svg;
 pub mod svg_dom;
 mod svg_input;

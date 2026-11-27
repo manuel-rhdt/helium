@@ -238,7 +238,7 @@ impl Engine {
             }
         };
         let shared = self.stylesheet.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
-        let started = std::time::Instant::now();
+        let started = crate::time::Instant::now();
         let (dom, context) = layout::layout_resolved(&parse, device, options.crop, &base_dir, shared.as_ref()).map_err(|message| {
             // the only error before the layout proper is the parse of an XML document
             if document.kind == DocumentKind::Xml { Error::Parse(message) } else { Error::Layout(message) }

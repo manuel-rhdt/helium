@@ -33,3 +33,8 @@ jobs:
       env:
         # tests/conformance.rs validates the gallery for PDF/A and PDF/UA-1 with veraPDF
         VERAPDF_LIB: ${{ runner.temp }}/verapdf/lib
+    # the engine must keep building for the browser (umbruch_wasm); no wasm-bindgen CLI needed to check
+    - name: Check the WebAssembly build
+      run: |
+        rustup target add wasm32-unknown-unknown
+        cargo check --locked --target wasm32-unknown-unknown --manifest-path umbruch_wasm/Cargo.toml

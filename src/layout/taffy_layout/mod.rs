@@ -274,7 +274,7 @@ impl TaffyBlockLayout {
             })
             .collect();
         // choose the pages
-        let before = std::time::Instant::now();
+        let before = crate::time::Instant::now();
         let mut service = service::TreeService::new(&mut tree, &flow, first_spec.block_size);
         #[cfg(test)]
         probe::call(&probe::BEFORE, &mut service);
@@ -344,7 +344,7 @@ impl TaffyBlockLayout {
         probe::call(&probe::AFTER, &mut service);
         log::info!("TIMED: paginate {:?}", before.elapsed());
         log::debug!("{} pages, laid out for {} widths", planned.len(), service.galleys());
-        let before = std::time::Instant::now();
+        let before = crate::time::Instant::now();
 
         let mut page_contexts: Vec<crate::layout::pages::PageContext> = vec![];
         let mut fragments: HashMap<Entity, Vec<Fragment>> = HashMap::default();

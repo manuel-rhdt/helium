@@ -1,0 +1,23 @@
+[package]
+name = "umbruch_wasm"
+version = "0.1.0"
+authors = ["Manuel Reinhardt"]
+edition = "2024"
+description = "Umbruch in the browser: renders an HTML document to a PDF, WebAssembly build of the engine"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+umbruch = { path = "..", default-features = false }
+wasm-bindgen = "=0.2.100"
+log = "0.4"
+# parking_lot 0.11 (a dependency of umbruch) reads the clock through `instant`, which needs this to find one in the browser
+instant = { version = "0.1", features = ["wasm-bindgen"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
