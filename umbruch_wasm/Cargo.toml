@@ -17,9 +17,9 @@ log = "0.4"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 
 [features]
-# The fallback fonts for CJK, emoji and the other scripts: 18 MB of the module (see ../Cargo.toml).
-# `--no-default-features` leaves them out.
-default = ["embedded-fonts"]
+# Off by default: the Noto fallback fonts for CJK, emoji and the other scripts are 18 MB of the
+# module's 32 (see ../Cargo.toml). `--features embedded-fonts` builds them in.
+default = []
 embedded-fonts = ["umbruch/embedded-fonts"]
 
 [profile.release]

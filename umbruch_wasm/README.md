@@ -18,11 +18,11 @@ What differs from the `umbruch` executable: there is no file system and no syste
 built-in fonts are used and only `data:` URIs load (images, `@font-face`). The engine runs on the
 calling thread and a render blocks it, so call it from a Web Worker to keep a page responsive.
 
-The module is about 32 MB (19 MB with Brotli), mostly the Noto fallback fonts for CJK, emoji and the other
-scripts, so that text in any script renders. The cargo feature `embedded-fonts` (on by default) controls
-them: `umbruch_wasm/build.sh --no-default-features` leaves them out and gives 16 MB (6 MB with Brotli) that
-still has TeX Gyre, the math fonts and DejaVu Sans. Text in the other scripts is then not drawn (the log
-lists the missing characters) unless the document brings a font with `@font-face` and a `data:` URI.
+The module is about 16 MB (6 MB with Brotli): the engine with TeX Gyre, the math fonts and DejaVu Sans.
+The Noto fallback fonts for CJK, emoji and the other scripts are not built in, because they are 18 MB of what
+would be a 32 MB module (19 MB with Brotli). Text in those scripts is not drawn (the log lists the missing
+characters) unless the document brings a font with `@font-face` and a `data:` URI. Build with
+`umbruch_wasm/build.sh --features embedded-fonts` (the cargo feature of the same name) to include them.
 
 ## Building
 

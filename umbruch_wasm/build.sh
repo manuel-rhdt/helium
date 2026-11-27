@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the WebAssembly package into umbruch_wasm/pkg: umbruch_wasm.js (an ES module), the .wasm
-# and the TypeScript declarations. Arguments go to `cargo build`: `--no-default-features` leaves out
-# the Noto fallback fonts (CJK, emoji and the other scripts) for a module of 16 MB instead of 32 MB.
+# and the TypeScript declarations. Arguments go to `cargo build`: the module is 16 MB without the Noto
+# fallback fonts (CJK, emoji and the other scripts), which are the default for the umbruch
+# executable; `--features embedded-fonts` builds them in for a module of 32 MB.
 # Needs the wasm32 target and a wasm-bindgen CLI of the version that Cargo.toml pins:
 #
 #   rustup target add wasm32-unknown-unknown
