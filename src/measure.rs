@@ -328,16 +328,44 @@ impl Bounds {
 
 /// The parsed fonts, by the name that the paragraphs use.
 #[derive(Default)]
-struct Faces<'a>(HashMap<String, Option<ttf_parser::Face<'a>>>);
+struct Faces<'a>(HashMap<String, FaceBounds<'a>>);
+
+/// The outlines of a font and the box of its glyphs, in font units.
+struct FaceBounds<'a> {
+    outlines: read_fonts::model::glyph::outline::OutlineGlyphs<'a>,
+    /// x_min, y_min, x_max, y_max of the `head` table.
+    global: [f32; 4],
+    upem: f32,
+}
+
+impl FaceBounds<'_> {
+    /// The box of the outline of a glyph as x_min, y_min, x_max, y_max, if it has an outline.
+    fn glyph_bounding_box(&self, glyph: u32) -> Option<[f32; 4]> {
+        let extents = self.outlines.get(read_fonts::types::GlyphId::new(glyph))?.extents().ok()?;
+        // an empty glyph (a space) has no box
+        if extents.width == 0.0 && extents.height == 0.0 {
+            return None;
+        }
+        let top = extents.y_bearing;
+        Some([extents.x_bearing, top - extents.height, extents.x_bearing + extents.width, top])
+    }
+}
 
 impl<'a> Faces<'a> {
-    fn get(&mut self, name: &str, fonts: &'a FontMap) -> Option<(&ttf_parser::Face<'a>, f32)> {
+    fn get(&mut self, name: &str, fonts: &'a FontMap) -> Option<&FaceBounds<'a>> {
         if !self.0.contains_key(name) {
-            let face = fonts.get(name).and_then(|font| ttf_parser::Face::parse(&font.data, font.index).ok());
-            self.0.insert(name.to_owned(), face);
+            let font = fonts.get(name)?;
+            let bounds = font.face.metrics().bounds;
+            self.0.insert(
+                name.to_owned(),
+                FaceBounds {
+                    outlines: font.face.outline_glyphs(),
+                    global: [bounds.x_min, bounds.y_min, bounds.x_max, bounds.y_max].map(|v| v.to_f32()),
+                    upem: font.upem as f32,
+                },
+            );
         }
-        let upem = fonts.get(name)?.upem as f32;
-        self.0.get(name)?.as_ref().map(|face| (face, upem))
+        self.0.get(name)
     }
 }
 
@@ -392,8 +420,8 @@ fn paragraph_pieces<'a>(paragraph: &Paragraph, fonts: &'a FontMap, faces: &mut F
             }
             TextOperator::KernedGlyphs(range) => {
                 let Some((name, size)) = font else { continue };
-                let Some((face, upem)) = faces.get(name, fonts) else { continue };
-                let scale = size / upem;
+                let Some(face) = faces.get(name, fonts) else { continue };
+                let scale = size / face.upem;
                 let advance_scale = size / 1000.0;
                 let font_data = &fonts[name];
                 let [a, b, c, d, e, f] = matrix;
@@ -404,14 +432,9 @@ fn paragraph_pieces<'a>(paragraph: &Paragraph, fonts: &'a FontMap, faces: &mut F
                     if glyph.kern != 0 {
                         pen -= glyph.kern as f32 / 10.0 * advance_scale;
                     }
-                    if let Some(bbox) = u16::try_from(glyph.glyph.0).ok().and_then(|id| face.glyph_bounding_box(ttf_parser::GlyphId(id))) {
-                        for (gx, gy) in [
-                            (bbox.x_min, bbox.y_min),
-                            (bbox.x_max, bbox.y_min),
-                            (bbox.x_min, bbox.y_max),
-                            (bbox.x_max, bbox.y_max),
-                        ] {
-                            let (x, y) = place(pen + gx as f32 * scale, rise + gy as f32 * scale);
+                    if let Some([x_min, y_min, x_max, y_max]) = face.glyph_bounding_box(glyph.glyph.0) {
+                        for (gx, gy) in [(x_min, y_min), (x_max, y_min), (x_min, y_max), (x_max, y_max)] {
+                            let (x, y) = place(pen + gx * scale, rise + gy * scale);
                             piece.bounds.add(x, y);
                         }
                     }
@@ -430,12 +453,12 @@ fn paragraph_pieces<'a>(paragraph: &Paragraph, fonts: &'a FontMap, faces: &mut F
     }
     // the colour glyphs are empty in the text; their box is the one of the font
     for placed in &paragraph.color_glyphs {
-        if let Some((face, upem)) = faces.get(&placed.font, fonts) {
-            let bbox = face.global_bounding_box();
-            let scale = placed.size.0 / upem;
+        if let Some(face) = faces.get(&placed.font, fonts) {
+            let [x_min, y_min, x_max, y_max] = face.global;
+            let scale = placed.size.0 / face.upem;
             let mut bounds = Bounds::default();
-            for (gx, gy) in [(bbox.x_min, bbox.y_min), (bbox.x_max, bbox.y_max)] {
-                bounds.add(placed.x.0 + gx as f32 * scale, placed.baseline.0 - gy as f32 * scale);
+            for (gx, gy) in [(x_min, y_min), (x_max, y_max)] {
+                bounds.add(placed.x.0 + gx * scale, placed.baseline.0 - gy * scale);
             }
             out.push(Piece { at: (placed.x.0, placed.baseline.0), bounds, missing: vec![] });
         }

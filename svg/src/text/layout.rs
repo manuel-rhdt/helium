@@ -1215,6 +1215,28 @@ fn form_glyph_clusters(glyphs: &[Glyph], text: &str, font_size: f32) -> GlyphClu
     }
 }
 
+/// An ascender or a descender: from the typographic metrics if the font asks for them, else from
+/// `hhea`, and from the typographic and then the Windows metrics where `hhea` has zero.
+fn line_metric(
+    metrics: &read_fonts::model::metrics::Metrics,
+    of_line: fn(&read_fonts::model::metrics::LineBox) -> i32,
+    of_win: fn(&read_fonts::model::metrics::LineExtents<read_fonts::types::F48Dot16>) -> i32,
+) -> f32 {
+    if metrics.use_typo_metrics {
+        if let Some(typo) = &metrics.typo_line {
+            return of_line(typo) as f32;
+        }
+    }
+    let mut value = metrics.hhea_line.as_ref().map_or(0, of_line);
+    if value == 0 {
+        value = metrics.typo_line.as_ref().map_or(0, of_line);
+        if value == 0 {
+            value = metrics.win_line.as_ref().map_or(0, of_win);
+        }
+    }
+    value as f32
+}
+
 #[inline(never)]
 pub(crate) fn resolve_font(
     id: ID,
@@ -1222,20 +1244,22 @@ pub(crate) fn resolve_font(
     fonts: &mut FontCache,
 ) -> Option<ResolvedFont> {
     let loaded = fonts.load(id)?;
-    let face = loaded.face()?;
+    let face = &loaded.face;
+    let metrics = face.metrics();
 
-    // Reject fonts with an out-of-range unitsPerEm, like `ttf-parser` did.
-    let raw_units_per_em = face.units_per_em();
+    // Reject fonts with an out-of-range unitsPerEm.
+    let raw_units_per_em = metrics.raw_units_per_em;
     if !(16..=16384).contains(&raw_units_per_em) {
         return None;
     }
     let units_per_em = NonZeroU16::new(raw_units_per_em)?;
 
-    let ascent = f32::from(face.ascender());
-    let descent = f32::from(face.descender());
+    let ascent = line_metric(metrics, |line| line.ascender.to_i32(), |win| win.ascender.to_i32());
+    let descent = line_metric(metrics, |line| line.descender.to_i32(), |win| win.descender.to_i32());
 
-    let x_height = face
-        .x_height()
+    let x_height = metrics
+        .x_height
+        .map(|x| x.to_i32())
         .filter(|x| *x > 0)
         .and_then(|x| u16::try_from(x).ok())
         .and_then(NonZeroU16::new);
@@ -1250,19 +1274,20 @@ pub(crate) fn resolve_font(
         }
     };
 
-    let line_through_position = match face.strikeout_metrics() {
-        Some(metrics) => metrics.position,
+    let style = face.style_metrics();
+    let line_through_position = match style.strike_through {
+        Some(metrics) => metrics.position.to_i32() as i16,
         None => x_height.get() as i16 / 2,
     };
 
-    let (underline_position, underline_thickness) = match face.underline_metrics() {
+    let (underline_position, underline_thickness) = match style.underline {
         Some(metrics) => {
-            let thickness = u16::try_from(metrics.thickness)
+            let thickness = u16::try_from(metrics.thickness.to_i32())
                 .ok()
                 .and_then(NonZeroU16::new)
                 .unwrap_or_else(|| NonZeroU16::new(units_per_em.get() / 12).unwrap());
 
-            (metrics.position, thickness)
+            (metrics.position.to_i32() as i16, thickness)
         }
         None => (
             -(units_per_em.get() as i16) / 9,
@@ -1271,12 +1296,12 @@ pub(crate) fn resolve_font(
     };
 
     // 0.2 and 0.4 are generic offsets used by some applications (Inkscape/librsvg).
-    let subscript_offset = match face.subscript_metrics() {
-        Some(metrics) => metrics.y_offset,
+    let subscript_offset = match style.subscript {
+        Some(metrics) => metrics.y_offset.to_i32() as i16,
         None => (units_per_em.get() as f32 / 0.2).round() as i16,
     };
-    let superscript_offset = match face.superscript_metrics() {
-        Some(metrics) => metrics.y_offset,
+    let superscript_offset = match style.superscript {
+        Some(metrics) => metrics.y_offset.to_i32() as i16,
         None => (units_per_em.get() as f32 / 0.4).round() as i16,
     };
 

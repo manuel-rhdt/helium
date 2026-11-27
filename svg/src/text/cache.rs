@@ -4,7 +4,7 @@
 //! The fonts that a conversion uses: their data, and the outlines of their glyphs.
 //!
 //! Upstream reads fonts with `skrifa` and also supports color glyphs (COLR, SVG, bitmaps) and
-//! variable fonts. This fork reads the outlines and the metrics with `ttf-parser`, and shaping
+//! variable fonts. This fork reads the outlines and the metrics with `read-fonts`, and shaping
 //! is up to the caller ([`TextShaper`](super::TextShaper)). Glyphs have only their outline.
 
 use std::collections::HashMap;
@@ -32,21 +32,19 @@ pub(crate) struct FontCache {
 pub(crate) struct LoadedFont {
     pub(crate) data: Arc<Vec<u8>>,
     pub(crate) index: u32,
+    pub(crate) face: read_fonts::model::Font,
 }
 
 impl LoadedFont {
     fn new(id: ID, fontdb: &Database) -> Option<Self> {
         let (data, index) = fontdb.with_face_data(id, |data, index| (data.to_vec(), index))?;
+        let data = Arc::new(data);
         // check that the face can be read
-        ttf_parser::Face::parse(&data, index).ok()?;
-        Some(LoadedFont {
-            data: Arc::new(data),
+        let face = read_fonts::model::Font::new(
+            data.clone() as Arc<dyn AsRef<[u8]> + Send + Sync>,
             index,
-        })
-    }
-
-    pub(crate) fn face(&self) -> Option<ttf_parser::Face<'_>> {
-        ttf_parser::Face::parse(&self.data, self.index).ok()
+        )?;
+        Some(LoadedFont { data, index, face })
     }
 }
 
@@ -92,7 +90,7 @@ impl FontCache {
         }
         let outline = self
             .load(id)
-            .and_then(|font| outline(&font.face()?, glyph));
+            .and_then(|font| outline(&font.face, glyph));
         self.outlines.insert((id, glyph), outline.clone());
         outline
     }
@@ -114,7 +112,7 @@ pub(crate) fn with_optical_sizing(
 
 struct Builder(tiny_skia_path::PathBuilder);
 
-impl ttf_parser::OutlineBuilder for Builder {
+impl read_fonts::model::glyph::outline::PathSink for Builder {
     fn move_to(&mut self, x: f32, y: f32) {
         self.0.move_to(x, y);
     }
@@ -136,8 +134,12 @@ impl ttf_parser::OutlineBuilder for Builder {
     }
 }
 
-fn outline(face: &ttf_parser::Face, glyph: GlyphId) -> Option<tiny_skia_path::Path> {
+fn outline(face: &read_fonts::model::Font, glyph: GlyphId) -> Option<tiny_skia_path::Path> {
+    use read_fonts::model::glyph::outline::{DrawMemory, DrawOptions};
     let mut builder = Builder(tiny_skia_path::PathBuilder::new());
-    face.outline_glyph(ttf_parser::GlyphId(u16::try_from(glyph.0).ok()?), &mut builder)?;
+    face.outline_glyphs()
+        .get(read_fonts::types::GlyphId::new(glyph.0))?
+        .draw(&DrawOptions::new(), DrawMemory::Scratch, &mut builder)
+        .ok()?;
     builder.0.finish()
 }

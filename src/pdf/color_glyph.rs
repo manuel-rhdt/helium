@@ -1,7 +1,7 @@
 //! Paints colour glyphs (emoji) from the `COLR` table of a font as vector graphics.
 //!
-//! The paint graph of a glyph (OpenType COLR v0 and v1) is read through the `Painter` of
-//! `ttf-parser` into a tree, which is written as a form XObject, once for every glyph; the form
+//! The paint graph of a glyph (OpenType COLR v0 and v1) is read through the `PaintSink` of
+//! `read-fonts` into a tree, which is written as a form XObject, once for every glyph; the form
 //! is drawn at every place where the glyph is used. A form is an isolated transparency group, so
 //! that the blend modes of its layers act on the glyph and not on the page behind it.
 //!
@@ -31,8 +31,9 @@ use lemon_pdf::shading::{
     AxialShading, Circle, Color, ColorStop, Gradient, Gray, Point, RadialShading, Rgb, Shading,
 };
 use lemon_pdf::stream::StreamFilter;
-use ttf_parser::colr::{ClipBox, CompositeMode, GradientExtend, Paint, Painter};
-use ttf_parser::{GlyphId, OutlineBuilder, RgbaColor};
+use read_fonts::model::glyph::color::{Brush, ColorStop as StopRecord, CompositeMode, Extend, PaintSink};
+use read_fonts::model::glyph::outline::{DrawMemory, DrawOptions, PathSink};
+use read_fonts::types::{BoundingBox, GlyphId, Matrix};
 
 use crate::layout::text::font::{Font, GlyphIndex};
 use crate::style::properties::computed::{PaintColor, SrgbColor};
@@ -119,12 +120,19 @@ fn write_glyph(
     color: SrgbColor,
     filter: Option<StreamFilter>,
 ) -> Result<Option<FormReference>, Error> {
-    let Ok(face) = ttf_parser::Face::parse(&font.data, font.index) else {
+    let face = &font.face;
+    let Some(color_glyph) = face.color_glyphs().get(GlyphId::new(glyph.0)) else {
         return Ok(None);
     };
-    let mut collector = Collector::new(&face);
-    let foreground = RgbaColor::new(color.red, color.green, color.blue, color.alpha);
-    if face.paint_color_glyph(GlyphId(glyph.0 as u16), 0, foreground, &mut collector).is_none() {
+    let palette = face.palettes().get(0).map_or(&[][..], |palette| palette.colors());
+    let foreground = [
+        f32::from(color.red) / 255.0,
+        f32::from(color.green) / 255.0,
+        f32::from(color.blue) / 255.0,
+        f32::from(color.alpha) / 255.0,
+    ];
+    let mut collector = Collector::new(face, palette, foreground);
+    if color_glyph.paint(&mut collector).is_err() {
         return Ok(None);
     }
     let Some(root) = collector.finish() else { return Ok(None) };
@@ -159,7 +167,7 @@ enum Segment {
 #[derive(Default)]
 struct Outline(Vec<Segment>);
 
-impl OutlineBuilder for Outline {
+impl PathSink for Outline {
     fn move_to(&mut self, x: f32, y: f32) {
         self.0.push(Segment::Move(x, y));
     }
@@ -207,15 +215,22 @@ enum Frame {
 }
 
 /// Reads the paint graph into a tree.
-struct Collector<'f, 'a> {
-    face: &'f ttf_parser::Face<'a>,
-    outline: Vec<Segment>,
+struct Collector<'f> {
+    face: &'f read_fonts::model::Font,
+    /// The colours of the first palette of the font.
+    palette: &'f [read_fonts::model::glyph::color::Color],
+    /// The text colour, for the palette index 0xFFFF.
+    foreground: Rgba,
     stack: Vec<(Frame, Vec<Node>)>,
 }
 
-impl<'f, 'a> Collector<'f, 'a> {
-    fn new(face: &'f ttf_parser::Face<'a>) -> Self {
-        Collector { face, outline: Vec::new(), stack: vec![(Frame::Root, Vec::new())] }
+impl<'f> Collector<'f> {
+    fn new(
+        face: &'f read_fonts::model::Font,
+        palette: &'f [read_fonts::model::glyph::color::Color],
+        foreground: Rgba,
+    ) -> Self {
+        Collector { face, palette, foreground, stack: vec![(Frame::Root, Vec::new())] }
     }
 
     fn finish(mut self) -> Option<Vec<Node>> {
@@ -244,76 +259,86 @@ impl<'f, 'a> Collector<'f, 'a> {
         };
         self.stack.last_mut().unwrap().1.push(node);
     }
-}
 
-fn rgba(color: RgbaColor) -> Rgba {
-    [
-        f32::from(color.red) / 255.0,
-        f32::from(color.green) / 255.0,
-        f32::from(color.blue) / 255.0,
-        f32::from(color.alpha) / 255.0,
-    ]
-}
-
-impl<'a> Painter<'a> for Collector<'_, 'a> {
-    fn outline_glyph(&mut self, glyph_id: GlyphId) {
-        let mut outline = Outline::default();
-        self.face.outline_glyph(glyph_id, &mut outline);
-        self.outline = outline.0;
-    }
-
-    fn paint(&mut self, paint: Paint<'a>) {
-        let fill = match paint {
-            Paint::Solid(color) => Fill::Solid(rgba(color)),
-            Paint::LinearGradient(gradient) => {
-                if gradient.extend != GradientExtend::Pad {
-                    log::warn!("A repeating COLR gradient is painted with its edge colours.");
-                }
-                let stops = gradient.stops(0, &[]).map(|s| (s.stop_offset, rgba(s.color))).collect();
-                // The gradient line runs from p0 along the projection of p1 on the line
-                // through p0 that is perpendicular to the rotation vector p0p2.
-                let (x0, y0) = (gradient.x0, gradient.y0);
-                let (dx1, dy1) = (gradient.x1 - x0, gradient.y1 - y0);
-                let (dx2, dy2) = (gradient.x2 - x0, gradient.y2 - y0);
-                let (nx, ny) = (-dy2, dx2);
-                let length = nx * nx + ny * ny;
-                if length == 0.0 {
-                    return;
-                }
-                let t = (dx1 * nx + dy1 * ny) / length;
-                Fill::Linear { from: (x0, y0), to: (x0 + nx * t, y0 + ny * t), stops }
+    /// The colour of a palette entry (0xFFFF is the text colour) with `alpha` applied.
+    fn color(&self, palette_index: u16, alpha: f32) -> Rgba {
+        let [r, g, b, a] = if palette_index == 0xFFFF {
+            self.foreground
+        } else {
+            match self.palette.get(usize::from(palette_index)) {
+                Some(color) => [
+                    f32::from(color.red) / 255.0,
+                    f32::from(color.green) / 255.0,
+                    f32::from(color.blue) / 255.0,
+                    f32::from(color.alpha) / 255.0,
+                ],
+                // a missing entry is transparent, which paints nothing
+                None => [0.0; 4],
             }
-            Paint::RadialGradient(gradient) => {
-                if gradient.extend != GradientExtend::Pad {
-                    log::warn!("A repeating COLR gradient is painted with its edge colours.");
-                }
-                Fill::Radial {
-                    start: (gradient.x0, gradient.y0, gradient.r0),
-                    end: (gradient.x1, gradient.y1, gradient.r1),
-                    stops: gradient.stops(0, &[]).map(|s| (s.stop_offset, rgba(s.color))).collect(),
-                }
-            }
-            Paint::SweepGradient(gradient) => Fill::Sweep {
-                center: (gradient.center_x, gradient.center_y),
-                start: gradient.start_angle,
-                end: gradient.end_angle,
-                stops: gradient.stops(0, &[]).map(|s| (s.stop_offset, rgba(s.color))).collect(),
-            },
         };
-        self.stack.last_mut().unwrap().1.push(Node::Fill(fill));
+        [r, g, b, a * alpha]
     }
 
-    fn push_clip(&mut self) {
-        let outline = self.outline.clone();
-        self.push(Frame::Clip(outline));
+    fn stops(&self, stops: &[StopRecord]) -> Vec<(f32, Rgba)> {
+        stops.iter().map(|stop| (stop.offset, self.color(stop.palette_index, stop.alpha))).collect()
+    }
+}
+
+fn warn_if_repeating(extend: Extend) {
+    if extend != Extend::Pad {
+        log::warn!("A repeating COLR gradient is painted with its edge colours.");
+    }
+}
+
+impl PaintSink for Collector<'_> {
+    fn push_transform(&mut self, t: Matrix<f32>) {
+        self.push(Frame::Transform([t.xx, t.yx, t.xy, t.yy, t.dx, t.dy]));
     }
 
-    fn push_clip_box(&mut self, clipbox: ClipBox) {
-        self.push(Frame::ClipBox([clipbox.x_min, clipbox.y_min, clipbox.x_max, clipbox.y_max]));
+    fn pop_transform(&mut self) {
+        self.pop();
+    }
+
+    fn push_clip_glyph(&mut self, glyph: GlyphId) {
+        let mut outline = Outline::default();
+        if let Some(glyph) = self.face.outline_glyphs().get(glyph) {
+            // a glyph that cannot be drawn clips everything away, like one without an outline
+            let _ = glyph.draw(&DrawOptions::new(), DrawMemory::Scratch, &mut outline);
+        }
+        self.push(Frame::Clip(outline.0));
+    }
+
+    fn push_clip_box(&mut self, clip_box: BoundingBox<f32>) {
+        self.push(Frame::ClipBox([clip_box.x_min, clip_box.y_min, clip_box.x_max, clip_box.y_max]));
     }
 
     fn pop_clip(&mut self) {
         self.pop();
+    }
+
+    fn fill(&mut self, brush: Brush<'_>) {
+        let fill = match brush {
+            Brush::Solid { palette_index, alpha } => Fill::Solid(self.color(palette_index, alpha)),
+            Brush::LinearGradient { p0, p1, color_stops, extend } => {
+                warn_if_repeating(extend);
+                Fill::Linear { from: (p0.x, p0.y), to: (p1.x, p1.y), stops: self.stops(color_stops) }
+            }
+            Brush::RadialGradient { c0, r0, c1, r1, color_stops, extend } => {
+                warn_if_repeating(extend);
+                Fill::Radial { start: (c0.x, c0.y, r0), end: (c1.x, c1.y, r1), stops: self.stops(color_stops) }
+            }
+            Brush::SweepGradient { c0, start_angle, end_angle, color_stops, extend } => {
+                warn_if_repeating(extend);
+                // read-fonts counts the angles clockwise, the glyph is painted with y up
+                Fill::Sweep {
+                    center: (c0.x, c0.y),
+                    start: -start_angle,
+                    end: -end_angle,
+                    stops: self.stops(color_stops),
+                }
+            }
+        };
+        self.stack.last_mut().unwrap().1.push(Node::Fill(fill));
     }
 
     fn push_layer(&mut self, mode: CompositeMode) {
@@ -321,14 +346,6 @@ impl<'a> Painter<'a> for Collector<'_, 'a> {
     }
 
     fn pop_layer(&mut self) {
-        self.pop();
-    }
-
-    fn push_transform(&mut self, t: ttf_parser::Transform) {
-        self.push(Frame::Transform([t.a, t.b, t.c, t.d, t.e, t.f]));
-    }
-
-    fn pop_transform(&mut self) {
         self.pop();
     }
 }
@@ -460,18 +477,18 @@ fn composite(ctx: &mut PageContext<'_, '_, '_>, children: &[Node], reach: &Reach
         ctx.restore_graphics_state()
     };
     match mode {
-        CompositeMode::SourceOver => {
+        CompositeMode::SrcOver => {
             emit_all(ctx, backdrop, reach)?;
             emit_all(ctx, source, reach)
         }
-        CompositeMode::Source => emit_all(ctx, source, reach),
-        CompositeMode::Destination => emit_all(ctx, backdrop, reach),
+        CompositeMode::Src => emit_all(ctx, source, reach),
+        CompositeMode::Dest => emit_all(ctx, backdrop, reach),
         CompositeMode::Clear => Ok(()),
-        CompositeMode::DestinationOver => {
+        CompositeMode::DestOver => {
             emit_all(ctx, source, reach)?;
             emit_all(ctx, backdrop, reach)
         }
-        CompositeMode::SourceIn => {
+        CompositeMode::SrcIn => {
             // the source where the backdrop is opaque; the backdrop itself is not painted
             let mask = group(ctx, backdrop)?;
             let source = group(ctx, source)?;
@@ -505,10 +522,10 @@ fn blend_mode(mode: CompositeMode) -> Option<BlendMode> {
         CompositeMode::Difference => BlendMode::Difference,
         CompositeMode::Exclusion => BlendMode::Exclusion,
         CompositeMode::Multiply => BlendMode::Multiply,
-        CompositeMode::Hue => BlendMode::Hue,
-        CompositeMode::Saturation => BlendMode::Saturation,
-        CompositeMode::Color => BlendMode::Color,
-        CompositeMode::Luminosity => BlendMode::Luminosity,
+        CompositeMode::HslHue => BlendMode::Hue,
+        CompositeMode::HslSaturation => BlendMode::Saturation,
+        CompositeMode::HslColor => BlendMode::Color,
+        CompositeMode::HslLuminosity => BlendMode::Luminosity,
         _ => return None,
     })
 }
