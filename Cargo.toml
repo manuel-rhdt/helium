@@ -55,8 +55,6 @@ default = ["fontconfig"]
 fontconfig = ["dep:yeslogic-fontconfig-sys"]
 
 [dev-dependencies]
-# The reference of the differential tests of the font stack (`layout/text/shape_diff.rs`).
-harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
 skera = "0.10"
 assert_cmd = "1"
 predicates = "1"

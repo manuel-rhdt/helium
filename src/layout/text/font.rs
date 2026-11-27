@@ -400,26 +400,6 @@ pub(crate) fn name_of(face: &Face, id: NameId) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// A string from the `name` table of a font as harfbuzz reads it (`id` is a `HB_OT_NAME_ID_*`).
-/// The reference for `name_of` in the differential tests.
-#[cfg(test)]
-pub(crate) fn hb_name_of(face: &harfbuzz_rs::Face<'_>, id: u32) -> Option<String> {
-    use harfbuzz_rs::{HarfbuzzObject, sys};
-    let raw = face.as_raw();
-    let mut size = 0;
-    // SAFETY: with a null buffer harfbuzz only reports the length of the name.
-    let length = unsafe { sys::hb_ot_name_get_utf8(raw, id, std::ptr::null(), &mut size, std::ptr::null_mut()) };
-    if length == 0 {
-        return None;
-    }
-    let mut buffer = vec![0u8; length as usize + 1];
-    let mut size = buffer.len() as u32;
-    // SAFETY: `buffer` has room for `size` bytes.
-    unsafe { sys::hb_ot_name_get_utf8(raw, id, std::ptr::null(), &mut size, buffer.as_mut_ptr().cast()) };
-    buffer.truncate(size as usize);
-    String::from_utf8(buffer).ok()
-}
-
 /// Whether the fonts installed on the system are used; if not, only the fonts built into Umbruch
 /// are. Unit tests use only the built-in fonts by default, so
 /// that their results do not depend on the machine.

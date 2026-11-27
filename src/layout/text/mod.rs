@@ -5,8 +5,6 @@ mod fallback_data;
 pub mod font;
 pub mod segment;
 mod shape;
-#[cfg(test)]
-mod shape_diff;
 pub mod transform;
 pub mod whitespace;
 
