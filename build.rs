@@ -1,7 +1,7 @@
 //! Builds the fonts that are embedded into the binary.
 //!
 //! The full Noto fonts in `resources/fonts/src` are far too large to ship (the CJK fonts alone
-//! are tens of megabytes), so they are subset here with harfbuzz: the CJK fonts to the characters
+//! are tens of megabytes), so they are subset here with skera (a port of harfbuzz's subsetter): the CJK fonts to the characters
 //! of the legacy national standards (GB 2312, Big5 level 1, JIS X 0208, KS X 1001; see
 //! `resources/fonts/cjk-charset.txt`) plus kana and punctuation, all other fonts only lose their
 //! hinting. The same goes for the Latin, Greek, Cyrillic and math fonts of `resources/fonts`.
@@ -11,9 +11,11 @@
 //! so that registering the fonts at start-up does not have to inflate any of them. The file is
 //! included by `src/layout/text/font.rs`, which inflates a font when it is first used.
 
-use harfbuzz_rs::subset::{SubsetFlags, SubsetInput};
-use harfbuzz_rs::Face;
 use flate2::write::DeflateEncoder;
+use read_fonts::collections::IntSet;
+use read_fonts::types::{GlyphId, NameId, Tag};
+use read_fonts::FontRef;
+use skera::{Plan, SubsetFlags, subset_font};
 use flate2::Compression;
 use std::env;
 use std::fmt::Write as _;
@@ -225,30 +227,55 @@ fn face_info(data: &[u8]) -> Option<String> {
     ))
 }
 
+/// The layout features that the CJK fonts keep: the ones that harfbuzz's subsetter keeps by
+/// default, as far as the fonts have them. The glyph closure of a feature adds glyphs, so
+/// keeping all features makes the fonts bigger and numbers their glyphs differently.
+const CJK_FEATURES: &[&[u8; 4]] = &[
+    b"calt", b"ccmp", b"halt", b"kern", b"liga", b"ljmo", b"locl", b"mark", b"palt", b"tjmo", b"vert", b"vhal",
+    b"vjmo", b"vkrn", b"vpal", b"vrt2",
+];
+
 fn subset(data: &[u8], spec: &Spec, charset: &[char]) -> Option<Vec<u8>> {
-    let face = Face::from_bytes(data, spec.face);
-    let mut input = SubsetInput::new().ok()?;
+    let font = FontRef::from_index(data, spec.face).ok()?;
+    // skera does not instantiate variable fonts: their variation tables would be kept, and the
+    // font would be bigger and still variable. The bundled fonts are static; a variable one
+    // has to be pinned to its default instance first.
+    assert!(
+        font.table_data(Tag::new(b"fvar")).is_none(),
+        "{} is a variable font; it has to be instantiated before it is bundled",
+        spec.source
+    );
+    let mut gids = IntSet::<GlyphId>::empty();
+    let mut unicodes = IntSet::<u32>::empty();
+    let mut features = IntSet::<Tag>::all();
+    let mut names = IntSet::<NameId>::empty();
+    let mut languages = IntSet::<u16>::empty();
+    // Hinting is removed, and the layout features are kept: they shape the scripts and select the
+    // regional glyph variants.
+    let mut flags = SubsetFlags::SUBSET_FLAGS_NO_HINTING | SubsetFlags::SUBSET_FLAGS_NOTDEF_OUTLINE;
     match spec.keep {
-        Keep::All => input.keep_everything(),
+        Keep::All => {
+            gids = IntSet::all();
+            unicodes = IntSet::all();
+            names = IntSet::all();
+            languages = IntSet::all();
+            flags |= SubsetFlags::SUBSET_FLAGS_PASSTHROUGH_UNRECOGNIZED;
+        }
         Keep::Cjk => {
-            let mut unicodes = input.unicode_set_mut();
             for &(first, last) in CJK_BLOCKS {
-                unicodes.insert_range(char::from_u32(first).unwrap()..=char::from_u32(last).unwrap());
+                unicodes.insert_range(first..=last);
             }
             for &c in charset {
-                unicodes.insert(c);
+                unicodes.insert(c as u32);
             }
+            features = CJK_FEATURES.iter().map(|tag| Tag::new(tag)).collect();
+            // the copyright, family, subfamily, unique, full and PostScript names, in English
+            for id in 0..=6 {
+                names.insert(NameId::new(id));
+            }
+            languages.insert(0x0409);
         }
     }
-    // Keep the layout features: they shape the scripts and select the regional glyph variants.
-    let mut flags = SubsetFlags::NO_HINTING | SubsetFlags::NOTDEF_OUTLINE;
-    if matches!(spec.keep, Keep::All) {
-        flags |= SubsetFlags::PASSTHROUGH_UNRECOGNIZED;
-    }
-    input.set_flags(flags);
-    if face.table_with_tag(b"fvar").is_some() {
-        input.pin_all_axes_to_default(&face).ok()?;
-    }
-    let subset = face.subset(&input).ok()?;
-    Some(subset.face_data().as_ref().to_vec())
+    let plan = Plan::new(&gids, &unicodes, &font, flags, &IntSet::empty(), &IntSet::all(), &features, &names, &languages);
+    subset_font(&font, &plan).ok()
 }

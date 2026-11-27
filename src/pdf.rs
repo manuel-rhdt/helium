@@ -680,7 +680,7 @@ fn paint_item(
                 let marked_ops = text::with_actual_text(&par.ops, usage);
                 let ops: &[TextOperator] = marked_ops.as_deref().unwrap_or(&par.ops);
                 // the encoding of the font that is selected: the text starts by selecting one
-                let mut encoding = encoding::GlyphEncoding::Identity;
+                let mut encoding = &encoding::IDENTITY;
                 for op in ops {
                     match op {
                         TextOperator::SetFont(font_name, size) => {
@@ -690,7 +690,7 @@ fn paint_item(
                             if let Some(font) = font_map.get(font_name) {
                                 let key = page_context.add_font(font.reference);
                                 page_context.set_font(&key, (*size).into())?;
-                                encoding = font.encoding;
+                                encoding = &font.encoding;
                             }
                         }
                         &TextOperator::SetColor(color) => {
@@ -1125,7 +1125,7 @@ fn write_pdf_to<W: Write>(
         font_map
             .iter()
             .filter_map(|(name, font)| {
-                Some((name.clone(), (font.reference, print_pages.font_map.get(name)?.upem, font.encoding)))
+                Some((name.clone(), (font.reference, print_pages.font_map.get(name)?.upem, font.encoding.clone())))
             })
             .collect(),
     );

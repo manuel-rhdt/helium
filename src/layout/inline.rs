@@ -3150,7 +3150,7 @@ mod tests {
             &FontStyle::Normal,
         )
         .unwrap();
-        let glyph = |ch: char| GlyphIndex(font.hb_font.get_nominal_glyph(ch).unwrap());
+        let glyph = |ch: char| GlyphIndex(font.nominal_glyph(ch).unwrap());
         // "a" one glyph; "b" drawn with the glyph of "a"; "c" with two glyphs; "d" one glyph
         let mut ops = TextOps::from_ops(vec![TextOperator::SetFont(font.postscript_name(), Px(16.0))]);
         let first = ops.glyphs.len();
@@ -3367,7 +3367,7 @@ mod tests {
             .flatten()
             .map(|g| g.glyph)
             .collect();
-        let expected = [font.hb_font.get_nominal_glyph('ב').unwrap(), font.hb_font.get_nominal_glyph('א').unwrap()];
+        let expected = [font.nominal_glyph('ב').unwrap(), font.nominal_glyph('א').unwrap()];
         assert_eq!(glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected);
     }
 
@@ -3482,7 +3482,7 @@ mod tests {
         let clusters: Vec<u32> = ops.glyphs.iter().map(|glyph| glyph.cluster).collect();
         assert_eq!(clusters, [0, 1, 0]);
         // the glyph is the one of U+2010
-        let hyphen = font.hb_font.get_nominal_glyph('\u{2010}').unwrap();
+        let hyphen = font.nominal_glyph('\u{2010}').unwrap();
         assert_eq!(ops.glyphs[2].glyph, GlyphIndex(hyphen));
         assert_eq!(actual_texts(&ops), [SOFT_HYPHEN]);
         assert_balanced(&marked(&ops));
@@ -3532,7 +3532,7 @@ mod tests {
         usage.record_text(&inserted);
         usage.record_text(&typed);
         let glyphs = usage.font(&font.postscript_name()).unwrap();
-        let hyphen = GlyphIndex(font.hb_font.get_nominal_glyph('\u{2010}').unwrap());
+        let hyphen = GlyphIndex(font.nominal_glyph('\u{2010}').unwrap());
         assert_eq!(glyphs.text(hyphen), Some("\u{2010}"));
         assert!(crate::pdf::text::with_actual_text(&typed, &usage).is_none());
         // the inserted one still says that it is a soft hyphen

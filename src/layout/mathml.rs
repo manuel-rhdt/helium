@@ -15,7 +15,7 @@ use super::{
 };
 use formel::{
     host::{
-        Direction, Edges, ForeignMetrics, Fragment, LayoutCollector, MathComputedStyle,
+        Direction, Edges, FontFeatures, ForeignMetrics, Fragment, LayoutCollector, MathComputedStyle,
         MathLayoutHost, MathShift, MathTree, NodeKind, NodeLayout, OperatorOverrides, Rect,
         TokenSegment, axis_height, default_operator_overrides, layout_math,
     },
@@ -39,7 +39,7 @@ struct EcsMathTree<'a, 'world> {
     styles: &'a ReadStorage<'world, ComputedValues>,
     images: &'a ReadStorage<'world, ImageBox>,
     /// One shaper per font face, by font name.
-    fonts: Rc<HashMap<String, Rc<Shaper<'a>>>>,
+    fonts: Rc<HashMap<String, Rc<Shaper>>>,
 }
 
 impl<'a, 'world> EcsMathTree<'a, 'world> {
@@ -47,7 +47,7 @@ impl<'a, 'world> EcsMathTree<'a, 'world> {
         nodes: &'a ReadStorage<'world, MathNode>,
         styles: &'a ReadStorage<'world, ComputedValues>,
         images: &'a ReadStorage<'world, ImageBox>,
-        fonts: Rc<HashMap<String, Rc<Shaper<'a>>>>,
+        fonts: Rc<HashMap<String, Rc<Shaper>>>,
     ) -> Self {
         EcsMathTree {
             nodes,
@@ -66,7 +66,7 @@ impl<'a, 'world> EcsMathTree<'a, 'world> {
 
 impl<'a> MathTree for EcsMathTree<'a, '_> {
     type NodeId = Entity;
-    type Font = Rc<Shaper<'a>>;
+    type Font = Rc<Shaper>;
 
     fn kind(&self, node: Entity) -> NodeKind {
         self.node(node).kind
@@ -132,10 +132,10 @@ impl<'a> MathTree for EcsMathTree<'a, '_> {
     }
 }
 
-fn build_math_fonts<'a>(
+fn build_math_fonts(
     nodes: &ReadStorage<'_, MathNode>,
-    font_map: &'a FontMap,
-) -> Rc<HashMap<String, Rc<Shaper<'a>>>> {
+    font_map: &FontMap,
+) -> Rc<HashMap<String, Rc<Shaper>>> {
     let mut fonts = HashMap::new();
     for node in nodes.join() {
         fonts.entry(node.font_name.clone()).or_insert_with(|| {
@@ -206,7 +206,7 @@ struct EcsMathHost<'a, 'world> {
 
 impl<'a> MathTree for EcsMathHost<'a, '_> {
     type NodeId = Entity;
-    type Font = Rc<Shaper<'a>>;
+    type Font = Rc<Shaper>;
 
     fn kind(&self, node: Entity) -> NodeKind {
         self.collector.kind(node)
@@ -257,8 +257,14 @@ fn math_computed_style(style: &ComputedValues) -> MathComputedStyle {
         left: e.left.0,
     };
     let position = &style.position;
+    // formel keeps at most `FontFeatures::CAPACITY` settings; a later setting of a tag wins.
+    let mut font_features = FontFeatures::new();
+    for &(tag, value) in &style.font.font_feature_settings.0 {
+        font_features.set(tag, value);
+    }
     MathComputedStyle {
         font_size: style.font.font_size.0,
+        font_features,
         math_depth: style.math.depth(),
         math_style: match style.math.math_style {
             MathStyle::Normal => formel::host::MathStyle::Normal,

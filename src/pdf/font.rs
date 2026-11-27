@@ -46,60 +46,28 @@ fn stream<D>(dict: D, bytes: &[u8], compress: bool) -> std::io::Result<Stream<D>
     }
 }
 
-/// Subsets the font to the glyphs that were used in the document and
-/// returns the bytes of the resulting sfnt font file.
+/// Subsets the font to the glyphs of `remapper` (the glyphs that were used in the document)
+/// and returns the bytes of the resulting sfnt font file.
 ///
-/// Glyph ids are retained, because the content streams refer to glyphs by
-/// their original id (`Identity-H` encoding). Variable fonts are pinned to
-/// their default instance since PDF has no notion of variations and the
-/// shaper never applies any.
-fn subset_font_bytes(font: &Font, usage: &GlyphUsage) -> std::result::Result<Vec<u8>, harfbuzz_rs::subset::SubsetError> {
-    use harfbuzz_rs::subset::{SubsetFlags, SubsetInput};
-
-    let face = font.hb_font.face();
-    let mut input = SubsetInput::new()?;
-    {
-        let mut glyphs = input.glyph_set_mut();
-        for glyph in usage.glyphs() {
-            glyphs.insert(glyph.0);
-        }
-    }
-    // `Identity-H` text selects glyphs by CID, and a PDF viewer finds the glyph of a CID in a
-    // CID-keyed CFF font (the Noto CJK fonts) through the charset of the font. The shaper
-    // returns glyph indices, which are the same as the CIDs only if the charset is the
-    // identity. A subset of the font (like the one bundled with Umbruch, whose glyphs are
-    // numbered anew) keeps the CIDs of the original, so the charset is renumbered:
-    // together with the retained glyph indices CID = glyph index. This has no effect on
-    // other fonts.
-    input.set_flags(
-        SubsetFlags::RETAIN_GIDS
-            | SubsetFlags::CFF_IDENTITY_CHARSET
-            | SubsetFlags::NO_LAYOUT_CLOSURE
-            | SubsetFlags::NOTDEF_OUTLINE,
-    );
-    {
-        // Layout tables are not needed in a PDF.
-        let mut drop = input.drop_table_set_mut();
-        for tag in [b"GSUB", b"GPOS", b"GDEF", b"MATH", b"COLR", b"CPAL", b"SVG "] {
-            drop.insert(harfbuzz_rs::Tag::from(tag));
-        }
-    }
-    if face.table_with_tag(b"fvar").is_some() {
-        input.pin_all_axes_to_default(&face)?;
-    }
-    let subset = face.subset(&input)?;
-    let bytes = subset.face_data().as_ref().to_vec();
-    Ok(bytes)
+/// The glyphs are numbered as `remapper` says, which `GlyphEncoding` writes into the content
+/// streams as CIDs. The subsetter writes a font for PDF: no `cmap`, no layout tables and no
+/// variation tables, so a variable font is its default instance, which is what the shaper
+/// measures. A CFF font becomes CID-keyed with the identity as its charset, so that the CID of
+/// a glyph is its index whatever the CIDs of the original were (the Noto CJK fonts are CID-keyed
+/// and the bundled subset of them has renumbered glyphs). A font with CFF2 outlines cannot be
+/// subset.
+fn subset_font_bytes(font: &Font, remapper: &subsetter::GlyphRemapper) -> std::result::Result<Vec<u8>, subsetter::Error> {
+    subsetter::subset(&font.data, font.index, remapper)
 }
 
 /// The font file to embed: the subset of the font to the glyphs that are used.
 ///
-/// Failing to subset is an error rather than a reason to embed the complete font. The
-/// complete font would work for most fonts, but not for a CID-keyed CFF font whose charset is
-/// not the identity (the glyph indices in the text would select the wrong glyphs, see
-/// `subset_font_bytes`), and a font that cannot be subsetted is not in a state to trust.
-fn embedded_font_bytes(font: &Font, usage: &GlyphUsage) -> Result<Vec<u8>> {
-    subset_font_bytes(font, usage).map_err(|err| {
+/// Failing to subset is an error rather than a reason to embed the complete font: with the
+/// complete font the glyph numbers in the text would not be the ones of the font file, and a
+/// font that cannot be subsetted is not in a state to trust.
+fn embedded_font_bytes(font: &Font, encoding: &GlyphEncoding) -> Result<Vec<u8>> {
+    let remapper = encoding.remapper().expect("an embedded font is a subset");
+    subset_font_bytes(font, remapper).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("could not subset font {} for embedding: {}", font.postscript_name, err),
@@ -137,9 +105,11 @@ fn pdf_font_stream(font: &Font, font_file: &[u8], compress: bool) -> Result<Font
         Ok(FontProgram::TrueType(stream(dict, font_file, compress)?))
     } else {
         // FontFile3 / CIDFontType0C: the bare CFF table.
-        let face = harfbuzz_rs::Face::from_bytes(font_file, 0);
-        let cff_data = face.table_with_tag(b"CFF ").ok_or_else(|| {
-            let reason = if face.table_with_tag(b"CFF2").is_some() {
+        let face = read_fonts::FontRef::new(font_file).map_err(|err| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("font {}: {err}", font.postscript_name))
+        })?;
+        let cff_data = face.table_data(read_fonts::types::Tag::new(b"CFF ")).ok_or_else(|| {
+            let reason = if face.table_data(read_fonts::types::Tag::new(b"CFF2")).is_some() {
                 "uses CFF2 outlines, which PDF cannot embed"
             } else {
                 "has neither a glyf nor a CFF table"
@@ -152,7 +122,7 @@ fn pdf_font_stream(font: &Font, font_file: &[u8], compress: bool) -> Result<Font
         let dict = FontFile3Dict {
             subtype: FontFile3Subtype::CIDFontType0C,
         };
-        Ok(FontProgram::Cff(stream(dict, &cff_data, compress)?))
+        Ok(FontProgram::Cff(stream(dict, cff_data.as_bytes(), compress)?))
     }
 }
 
@@ -161,30 +131,28 @@ fn to_font_unit(font: &Font, val: f32) -> FontUnit {
 }
 
 fn pdf_font_descriptor(font: &Font, name: Name, font_data: FontProgramRef) -> Result<FontDescriptor> {
-    let face = font.hb_font.face();
     let invalid = |reason: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, reason.to_owned());
     // xMin, yMin, xMax, yMax of the `head` table
-    let head = face.table_with_tag(b"head").ok_or_else(|| invalid("font has no head table"))?;
-    let head: &[u8] = head.as_ref();
+    let head = font.table_data(b"head").ok_or_else(|| invalid("font has no head table"))?;
     if head.len() < 44 {
         return Err(invalid("the head table is truncated"));
     }
     let bbox = [36, 38, 40, 42].map(|offset| {
         to_font_unit(font, i16::from_be_bytes([head[offset], head[offset + 1]]) as f32)
     });
-    let extents = font.hb_font.get_font_h_extents().unwrap_or_default();
+    let (ascender, descender) = font.line_extents();
 
     let mut font_descriptor = FontDescriptor {
         font_family: Some(ByteString::from(
-            crate::layout::text::font::name_of(&face, harfbuzz_rs::sys::HB_OT_NAME_ID_FONT_FAMILY)
+            crate::layout::text::font::name_of(&font.face, read_fonts::types::NameId::FAMILY_NAME)
                 .unwrap_or_else(|| font.postscript_name.clone())
                 .into_bytes(),
         )),
         font_b_box: bbox,
-        cap_height: to_font_unit(font, font.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_CAP_HEIGHT).unwrap_or(0) as f32),
-        x_height: to_font_unit(font, font.ot_metric(harfbuzz_rs::sys::HB_OT_METRICS_TAG_X_HEIGHT).unwrap_or(0) as f32),
-        ascent: to_font_unit(font, extents.ascender as f32),
-        descent: to_font_unit(font, extents.descender as f32),
+        cap_height: to_font_unit(font, font.cap_height().unwrap_or(0) as f32),
+        x_height: to_font_unit(font, font.x_height().unwrap_or(0) as f32),
+        ascent: to_font_unit(font, ascender as f32),
+        descent: to_font_unit(font, descender as f32),
         ..FontDescriptor::new(name)
     };
 
@@ -245,7 +213,7 @@ pub(crate) fn embed_into_pdf(
     compress: bool,
 ) -> Result<EmbeddedFont> {
     let encoding = GlyphEncoding::choose(font, usage);
-    let font_file = embedded_font_bytes(font, usage)?;
+    let font_file = embedded_font_bytes(font, &encoding)?;
     let name = format!("{}+{}", subset_tag(font, usage), font.postscript_name());
     let font_data = match pdf_font_stream(font, &font_file, compress)? {
         FontProgram::TrueType(stream) => FontProgramRef::TrueType(pdf_context.write_object(stream)?),
@@ -265,6 +233,8 @@ pub(crate) fn embed_into_pdf(
     let mut unfinished_entry: Option<MetricsEntry> = None;
     for glyph in usage.glyphs() {
         let advance = font.advance(glyph);
+        // the codes of the glyphs, which are CIDs, increase with the glyph indices
+        let code = u32::from(encoding.code(glyph));
         unfinished_entry = match unfinished_entry.take() {
             Some(MetricsEntry::Range {
                 from,
@@ -274,7 +244,7 @@ pub(crate) fn embed_into_pdf(
                 if advance == previous_advance {
                     Some(MetricsEntry::Range {
                         from,
-                        to: glyph.0,
+                        to: code,
                         advance,
                     })
                 } else {
@@ -284,7 +254,7 @@ pub(crate) fn embed_into_pdf(
                         advance: previous_advance,
                     });
                     Some(MetricsEntry::Consecutive {
-                        start: glyph.0,
+                        start: code,
                         advances: vec![advance],
                     })
                 }
@@ -294,10 +264,10 @@ pub(crate) fn embed_into_pdf(
                 mut advances,
             }) => {
                 // the glyph indices are not consecutive anymore
-                if start as usize + advances.len() != glyph.0 as usize {
+                if start as usize + advances.len() != code as usize {
                     metrics_h.push(MetricsEntry::Consecutive { start, advances });
                     Some(MetricsEntry::Consecutive {
-                        start: glyph.0,
+                        start: code,
                         advances: vec![advance],
                     })
                 } else {
@@ -308,13 +278,13 @@ pub(crate) fn embed_into_pdf(
                             metrics_h.push(MetricsEntry::Consecutive { start, advances })
                         }
                         // The run described here is the two dropped entries plus the
-                        // current glyph, so it starts at `glyph.0 - 2`. Starting at
-                        // `glyph.0 - 3` swallowed the glyph before the run, whose
+                        // current glyph, so it starts at `code - 2`. Starting at
+                        // `code - 3` swallowed the glyph before the run, whose
                         // advance is already in the entry pushed above: the range wins,
                         // and every glyph after it is drawn at the wrong x.
                         Some(MetricsEntry::Range {
-                            from: glyph.0 - 2,
-                            to: glyph.0,
+                            from: code - 2,
+                            to: code,
                             advance,
                         })
                     } else {
@@ -324,7 +294,7 @@ pub(crate) fn embed_into_pdf(
                 }
             }
             None => Some(MetricsEntry::Consecutive {
-                start: glyph.0,
+                start: code,
                 advances: vec![advance],
             }),
         }
@@ -430,7 +400,7 @@ mod tests {
         let glyphs = text
             .chars()
             .map(|ch| {
-                let glyph = font.hb_font.get_nominal_glyph(ch).expect("the font has the glyph");
+                let glyph = font.nominal_glyph(ch).expect("the font has the glyph");
                 usage.record_glyph(&font.postscript_name, GlyphIndex(glyph), &ch.to_string());
                 glyph as u16
             })
@@ -444,36 +414,71 @@ mod tests {
         glyphs.iter().map(|g| cff.glyph_cid(ttf_parser::GlyphId(*g))).collect()
     }
 
-    /// The text of the PDF contains glyph indices, so in the embedded font, whose glyphs are
-    /// found by CID, the CID of every glyph must be its glyph index. The bundled CJK font is a
-    /// CID-keyed CFF whose glyphs were renumbered by the subsetting in `build.rs`, so
-    /// the CIDs differ from the glyph indices in the font that is embedded.
-    #[test]
-    fn cid_keyed_cff_fonts_are_embedded_with_cids_equal_to_glyph_indices() {
-        let font = load("Noto Sans CJK JP");
-        let (usage, glyphs) = use_glyphs(&font, "道可名非常");
-        // the premise: the CIDs of the bundled font are not its glyph indices
-        let original = cids(&font.data, &glyphs);
-        assert!(
-            original.iter().zip(&glyphs).any(|(cid, glyph)| *cid != Some(*glyph)),
-            "{original:?} {glyphs:?}"
-        );
-        // the embedded font has identity CIDs
-        let embedded = subset_font_bytes(&font, usage.font(&font.postscript_name).unwrap()).unwrap();
-        let expected: Vec<_> = glyphs.iter().map(|g| Some(*g)).collect();
-        assert_eq!(cids(&embedded, &glyphs), expected);
+    /// The codes of the glyphs of `text` and the embedded font program of `font` for them.
+    fn embed(font: &Font, text: &str) -> (Vec<(u16, u16)>, Vec<u8>) {
+        let (usage, glyphs) = use_glyphs(font, text);
+        let usage = usage.font(&font.postscript_name).unwrap();
+        let encoding = GlyphEncoding::choose(font, usage);
+        let bytes = embedded_font_bytes(font, &encoding).unwrap();
+        let codes = glyphs.into_iter().map(|glyph| (glyph, encoding.code(GlyphIndex(glyph as u32)))).collect();
+        (codes, bytes)
     }
 
-    /// Fonts that are not CID-keyed are not changed in how they are numbered.
+    /// The advances that the embedded font has for `codes`, in font units.
+    fn embedded_advances(bytes: &[u8], codes: &[u16]) -> Vec<f32> {
+        let face = read_fonts::model::Font::new(std::sync::Arc::new(bytes.to_vec()) as std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>, 0).unwrap();
+        let metrics = face.glyph_metrics();
+        codes.iter().map(|&code| metrics.h_advance(read_fonts::types::GlyphId::new(code as u32))).collect()
+    }
+
+    /// The glyphs of the embedded font are numbered anew (notdef first, then the used glyphs in
+    /// the order of their indices), and the code of a glyph is its number in the embedded font:
+    /// the glyph with that number has the advance of the original glyph.
     #[test]
-    fn other_fonts_keep_their_glyph_indices() {
-        let font = load("TeX Gyre Termes");
-        let (usage, glyphs) = use_glyphs(&font, "abc");
-        let embedded = subset_font_bytes(&font, usage.font(&font.postscript_name).unwrap()).unwrap();
-        let face = harfbuzz_rs::Face::from_bytes(&embedded, 0);
-        let font = harfbuzz_rs::Font::new(face);
-        for (ch, glyph) in "abc".chars().zip(glyphs) {
-            assert_eq!(font.get_nominal_glyph(ch), Some(glyph as u32));
+    fn the_codes_of_glyphs_are_their_numbers_in_the_embedded_font() {
+        for (family, text) in [("TeX Gyre Termes", "Hello, subsetting!"), ("DejaVu Sans", "Ã©é Åland fi")] {
+            let font = load(family);
+            let (codes, bytes) = embed(&font, text);
+            let numbers: Vec<u16> = codes.iter().map(|&(_, code)| code).collect();
+            let advances = embedded_advances(&bytes, &numbers);
+            for (&(glyph, code), advance) in codes.iter().zip(advances) {
+                assert!(code > 0, "{family}: glyph {glyph} is notdef");
+                assert_eq!(advance, font.advance(GlyphIndex(glyph as u32)).0 as f32 * font.upem as f32 / 1000.0, "{family} glyph {glyph} as {code}");
+            }
+            // only the used glyphs and the notdef glyph (and the components of composite glyphs)
+            let distinct = codes.iter().map(|&(glyph, _)| glyph).collect::<std::collections::BTreeSet<_>>().len();
+            let face = read_fonts::model::Font::new(std::sync::Arc::new(bytes.clone()) as std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>, 0).unwrap();
+            assert!(face.num_glyphs() as usize >= distinct + 1, "{family}");
+            assert!((face.num_glyphs() as usize) < distinct + 8, "{family}: {} glyphs", face.num_glyphs());
         }
+    }
+
+    /// The glyphs are numbered in the order of the original indices, so the numbers increase
+    /// with them (the `W` array relies on it).
+    #[test]
+    fn the_codes_increase_with_the_glyph_indices() {
+        let font = load("TeX Gyre Termes");
+        let (mut codes, _) = embed(&font, "The quick brown fox jumps over the lazy dog");
+        codes.sort();
+        codes.dedup();
+        assert!(codes.windows(2).all(|pair| pair[0].1 + 1 == pair[1].1), "{codes:?}");
+    }
+
+    /// A CID-keyed CFF font (Noto CJK) is embedded with the CID of every glyph equal to its
+    /// number, whatever the CIDs of the original were. The bundled CJK font is a CID-keyed CFF
+    /// whose glyphs were renumbered by the subsetting in `build.rs`, so there the CIDs differ
+    /// from the glyph indices.
+    #[test]
+    fn cid_keyed_cff_fonts_are_embedded_with_cids_equal_to_glyph_numbers() {
+        let font = load("Noto Sans CJK JP");
+        let (codes, bytes) = embed(&font, "道可名非常");
+        // the premise: the CIDs of the bundled font are not its glyph indices
+        let glyphs: Vec<u16> = codes.iter().map(|&(glyph, _)| glyph).collect();
+        let original = cids(&font.data, &glyphs);
+        assert!(original.iter().zip(&glyphs).any(|(cid, glyph)| *cid != Some(*glyph)), "{original:?} {glyphs:?}");
+        // in the embedded font the CID of a code is the code
+        let numbers: Vec<u16> = codes.iter().map(|&(_, code)| code).collect();
+        let expected: Vec<_> = numbers.iter().map(|&code| Some(code)).collect();
+        assert_eq!(cids(&bytes, &numbers), expected);
     }
 }

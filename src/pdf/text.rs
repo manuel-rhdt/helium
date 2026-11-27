@@ -16,7 +16,7 @@ use crate::layout::text::font::GlyphIndex;
 /// almost every word.
 fn write_glyph_string(
     f: &mut lemon_pdf::object::Formatter,
-    encoding: GlyphEncoding,
+    encoding: &GlyphEncoding,
     glyphs: impl Iterator<Item = GlyphIndex>,
 ) -> std::io::Result<()> {
     use std::io::Write;
@@ -67,17 +67,17 @@ fn write_glyph_string(
 pub struct KernedArray<'a> {
     range: GlyphRange,
     glyphs: &'a [KernedGlyph],
-    encoding: GlyphEncoding,
+    encoding: &'a GlyphEncoding,
 }
 
 impl<'a> KernedArray<'a> {
-    pub fn new(range: GlyphRange, glyphs: &'a [KernedGlyph], encoding: GlyphEncoding) -> Self {
+    pub fn new(range: GlyphRange, glyphs: &'a [KernedGlyph], encoding: &'a GlyphEncoding) -> Self {
         KernedArray { range, glyphs, encoding }
     }
 }
 
 #[derive(Debug)]
-struct GlyphString<'a>(&'a [KernedGlyph], GlyphEncoding);
+struct GlyphString<'a>(&'a [KernedGlyph], &'a GlyphEncoding);
 
 impl lemon_pdf::PdfFormat for GlyphString<'_> {
     fn write(&self, f: &mut lemon_pdf::object::Formatter) -> std::io::Result<()> {

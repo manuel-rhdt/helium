@@ -21,8 +21,11 @@ umbruch_paginate = { path = "./umbruch_paginate" }
 rustc-hash = "2"
 lemon_pdf = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
 lemon_pdf_derive = { git = "https://github.com/manuel-rhdt/lemon_pdf.git", branch = "claude/cidset" }
-harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
-formel = "0.1.0"
+harfrust = "0.16"
+# Subsets the fonts for embedding into PDFs (`build.rs` subsets the bundled fonts with skera).
+subsetter = { version = "0.2", default-features = false }
+read-fonts = "0.47"
+formel = "0.2"
 parking_lot = "0.11"
 thiserror = "^1"
 env_logger = "0.8"
@@ -53,6 +56,7 @@ default = ["fontconfig"]
 fontconfig = ["dep:yeslogic-fontconfig-sys"]
 
 [dev-dependencies]
+skera = "0.10"
 assert_cmd = "1"
 predicates = "1"
 quickcheck = "1"
@@ -61,16 +65,10 @@ quickcheck_macros = "1"
 [build-dependencies]
 fontdb = { version = "0.24", default-features = false, features = ["std"] }
 flate2 = "1"
-harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main", features = ["sys"] }
+read-fonts = "0.47"
+skera = "0.10"
 
-# Make every crate in the graph (e.g. formel) use the same harfbuzz_rs,
-# since only one package may link to native harfbuzz.
-[patch.crates-io]
-harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs.git", branch = "main" }
-# `MathTree::token_content`, for foreign content (an image) inside `<mtext>`. Drop this once it is released.
-formel = { git = "https://github.com/manuel-rhdt/formel.git", branch = "master" }
-
-# The build script subsets the bundled fonts; do not run harfbuzz unoptimized.
+# The build script subsets the bundled fonts; do not run the subsetter unoptimized.
 [profile.dev.build-override]
 opt-level = 3
 

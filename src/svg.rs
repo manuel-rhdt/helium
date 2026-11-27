@@ -947,7 +947,8 @@ impl SvgWriter {
             let mut current: Option<&str> = None;
             for glyph in &span.positioned_glyphs {
                 let name = &self.font_names[&glyph.font];
-                let (font, upem, encoding) = self.fonts[name];
+                let (font, upem, encoding) = &self.fonts[name];
+                let (font, upem) = (*font, *upem);
                 if current != Some(name.as_str()) {
                     let key = c.add_font(font);
                     c.set_font(&key, Pt(font_size))?;

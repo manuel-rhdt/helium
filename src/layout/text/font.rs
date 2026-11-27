@@ -1,4 +1,3 @@
-pub use super::HarfbuzzFont;
 pub use lemon_pdf::font::FontUnit;
 
 use crate::style::font_face::{FontFaceRule, FontSource};
@@ -6,13 +5,16 @@ use crate::style::properties::computed::{
     ComputedValues, FontFamily, FontStyle, FontWeight, PixelLength,
 };
 
-use harfbuzz_rs::{Blob, Face as HbFace, Font as HbFont, HarfbuzzObject, sys};
+use harfrust::{Buffer, Feature, ShapePlan, ShapePlanKey};
+use read_fonts::TableProvider;
+use read_fonts::model::Font as Face;
+use read_fonts::types::{GlyphId, NameId, Tag};
 use parking_lot::{Mutex, RwLock};
 use super::fallback::FallbackKey;
 use super::segment::needs_font;
 use std::collections::{BTreeMap, HashMap};
 use unicode_script::Script;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 
 fn scale_ext(upem: u32, metric: i32) -> FontUnit {
@@ -64,10 +66,17 @@ impl FallbackSet {
 
 /// A font file (a system font or one of the fonts built into Umbruch). Every font that is used
 /// is embedded into the PDF.
-#[derive(Debug)]
 pub struct Font {
     pub(crate) upem: u32,
-    pub(crate) hb_font: HarfbuzzFont,
+    /// The parsed font; shaping and the font queries go through it. Cloning is cheap.
+    pub(crate) face: Face,
+    /// The plans that shaping has built for this font, which it reuses for text with the same
+    /// script, direction, language and features (like harfbuzz's plan cache). Clones share them.
+    plans: Arc<Mutex<Vec<Arc<ShapePlan>>>>,
+    /// Whether the font has a glyph for each character of the Basic Multilingual Plane, as far
+    /// as `covers` has found out (0: not known, 1: no, 2: yes). The lookup in the `cmap` is
+    /// slow compared to how often fonts are asked.
+    bmp_coverage: Arc<BmpCoverage>,
     pub(crate) postscript_name: String,
     /// The bytes of the font file and the index of the face in it.
     pub(crate) data: Arc<Vec<u8>>,
@@ -86,6 +95,21 @@ pub struct Font {
     pub(crate) fallbacks: RwLock<BTreeMap<FallbackKey, Arc<FallbackSet>>>,
 }
 
+/// See `Font::bmp_coverage`.
+#[derive(Default)]
+pub(crate) struct BmpCoverage(OnceLock<Box<[AtomicU8]>>);
+
+impl std::fmt::Debug for Font {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Font")
+            .field("postscript_name", &self.postscript_name)
+            .field("index", &self.index)
+            .field("upem", &self.upem)
+            .field("color", &self.color)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Clone for Font {
     fn clone(&self) -> Self {
         Font {
@@ -93,7 +117,9 @@ impl Clone for Font {
             data: self.data.clone(),
             index: self.index,
             color: self.color,
-            hb_font: self.hb_font.clone(),
+            face: self.face.clone(),
+            plans: self.plans.clone(),
+            bmp_coverage: self.bmp_coverage.clone(),
             postscript_name: self.postscript_name.clone(),
             fallbacks: RwLock::new(self.fallbacks.read().clone()),
         }
@@ -127,21 +153,21 @@ const BUNDLED_ALIASES: &[(&str, &str)] = &[
 impl Font {
     /// Loads face `index` of a font file, or returns `None` if it cannot be parsed.
     pub(crate) fn load(data: Arc<Vec<u8>>, index: u32) -> Option<Self> {
-        let blob = Blob::with_bytes_owned(data.clone(), |b| &**b);
-        let hb_face = HbFace::new(blob, index);
-        if hb_face.glyph_count() == 0 || hb_face.table_with_tag(b"head").is_none() {
+        let face = Face::new(data.clone() as Arc<dyn AsRef<[u8]> + Send + Sync>, index)?;
+        if face.num_glyphs() == 0 || face.tables().head().is_err() {
             return None;
         }
-        let upem = hb_face.upem();
-        let name = name_of(&hb_face, sys::HB_OT_NAME_ID_POSTSCRIPT_NAME)
-            .or_else(|| name_of(&hb_face, sys::HB_OT_NAME_ID_FULL_NAME))
-            .or_else(|| name_of(&hb_face, sys::HB_OT_NAME_ID_FONT_FAMILY))?;
-        let hb_font = HbFont::new(hb_face).into();
+        let upem = face.units_per_em() as u32;
+        let name = name_of(&face, NameId::POSTSCRIPT_NAME)
+            .or_else(|| name_of(&face, NameId::FULL_NAME))
+            .or_else(|| name_of(&face, NameId::FAMILY_NAME))?;
         let color = ttf_parser::Face::parse(&data, index).is_ok_and(|face| face.tables().colr.is_some());
         Some(Font {
             color,
             upem,
-            hb_font,
+            face,
+            plans: Default::default(),
+            bmp_coverage: Default::default(),
             postscript_name: name,
             data,
             index,
@@ -149,13 +175,76 @@ impl Font {
         })
     }
 
-    /// A metric of the OpenType `OS/2` or `MVAR` tables in font units, if the font has it.
-    pub(crate) fn ot_metric(&self, tag: sys::hb_ot_metrics_tag_t) -> Option<i32> {
-        let mut position = 0;
-        // SAFETY: the font is alive and `position` is a valid out pointer.
-        let found =
-            unsafe { sys::hb_ot_metrics_get_position(self.hb_font.as_raw(), tag, &mut position) };
-        (found != 0).then_some(position)
+    /// The x-height of the `OS/2` table (with `MVAR` applied) in font units, if the font has it.
+    /// A zero (which fonts without an x-height have) counts as absent.
+    pub(crate) fn x_height(&self) -> Option<i32> {
+        self.face.metrics().x_height.map(|v| v.to_i32()).filter(|&v| v != 0)
+    }
+
+    /// The cap height of the `OS/2` table (with `MVAR` applied) in font units, if the font has
+    /// it. A zero counts as absent.
+    pub(crate) fn cap_height(&self) -> Option<i32> {
+        self.face.metrics().cap_height.map(|v| v.to_i32()).filter(|&v| v != 0)
+    }
+
+    /// The shaping plan for text with the segment properties of `buffer` and the `features`.
+    pub(crate) fn shape_plan(&self, buffer: &Buffer, features: &[Feature]) -> Arc<ShapePlan> {
+        /// A document hardly has more combinations than this per font.
+        const MAX_PLANS: usize = 64;
+        let key = ShapePlanKey::new(&self.face, buffer.script(), buffer.direction())
+            .language(buffer.language())
+            .features(features);
+        let mut plans = self.plans.lock();
+        if let Some(plan) = plans.iter().find(|plan| key.matches(plan)) {
+            return plan.clone();
+        }
+        let plan = Arc::new(ShapePlan::new(
+            &self.face,
+            buffer.direction(),
+            buffer.script(),
+            buffer.language(),
+            features,
+        ));
+        if plans.len() >= MAX_PLANS {
+            plans.clear();
+        }
+        plans.push(plan.clone());
+        plan
+    }
+
+    /// The glyph that the `cmap` of the font has for `ch`.
+    pub(crate) fn nominal_glyph(&self, ch: char) -> Option<u32> {
+        self.face.charmap().map_unicode(ch as u32).map(|glyph| glyph.to_u32())
+    }
+
+    /// The bytes of the table `tag` of the font.
+    pub(crate) fn table_data(&self, tag: &[u8; 4]) -> Option<&[u8]> {
+        // (`Face::tables` does not give out the raw bytes of a table)
+        read_fonts::FontRef::from_index(&self.data, self.index)
+            .ok()?
+            .table_data(Tag::new(tag))
+            .map(|data| data.as_bytes())
+    }
+
+    /// The ascender and the descender (negative) in font units, chosen like harfbuzz does: the
+    /// typographic metrics of `OS/2` if the font asks for them, else those of `hhea`, else
+    /// the typographic ones, else the Windows ones.
+    pub(crate) fn line_extents(&self) -> (i32, i32) {
+        let metrics = self.face.metrics();
+        let line = if metrics.use_typo_metrics {
+            metrics.typo_line.or(metrics.hhea_line)
+        } else {
+            metrics.hhea_line
+        };
+        let line = line
+            .filter(|l| l.ascender.to_i32() != 0 || l.descender.to_i32() != 0)
+            .or(metrics.typo_line);
+        match line {
+            Some(l) => (l.ascender.to_i32(), l.descender.to_i32()),
+            None => metrics
+                .win_line
+                .map_or((0, 0), |w| (w.ascender.to_i32(), w.descender.to_i32())),
+        }
     }
 
     /// The font built into Umbruch (DejaVu Sans) in the given weight.
@@ -185,7 +274,21 @@ impl Font {
 
     /// Whether this font has a glyph for `ch`.
     pub fn covers(&self, ch: char) -> bool {
-        self.hb_font.get_nominal_glyph(ch).is_some()
+        match u16::try_from(ch as u32) {
+            Ok(index) => {
+                let cache = self.bmp_coverage.0.get_or_init(|| (0..0x1_0000).map(|_| AtomicU8::new(0)).collect());
+                let entry = &cache[index as usize];
+                match entry.load(Ordering::Relaxed) {
+                    0 => {
+                        let covered = self.nominal_glyph(ch).is_some();
+                        entry.store(if covered { 2 } else { 1 }, Ordering::Relaxed);
+                        covered
+                    }
+                    known => known == 2,
+                }
+            }
+            Err(_) => self.nominal_glyph(ch).is_some(),
+        }
     }
 
     /// Whether this font has glyphs for all characters of the grapheme cluster that need one.
@@ -250,39 +353,26 @@ impl Font {
     }
 
     pub fn ascent(&self) -> FontUnit {
-        scale_ext(
-            self.upem,
-            self.hb_font
-                .get_font_h_extents()
-                .map(|f| f.ascender)
-                .unwrap_or_default(),
-        )
+        scale_ext(self.upem, self.line_extents().0)
     }
 
     pub fn descent(&self) -> FontUnit {
-        scale_ext(
-            self.upem,
-            self.hb_font
-                .get_font_h_extents()
-                .map(|f| f.descender)
-                .unwrap_or_default(),
-        )
+        scale_ext(self.upem, self.line_extents().1)
     }
 
     /// Whether the outlines of the font are in a `glyf` table (TrueType) and not in a CFF table.
     pub fn is_truetype(&self) -> bool {
-        self.hb_font.face().table_with_tag(b"glyf").is_some()
+        self.face.tables().glyf().is_ok()
     }
 
     /// The horizontal advance of `glyph`.
     pub fn advance(&self, glyph: GlyphIndex) -> FontUnit {
-        scale_ext(self.upem, self.hb_font.get_glyph_h_advance(glyph.0))
+        scale_ext(self.upem, self.face.glyph_metrics().h_advance(GlyphId::new(glyph.0)).round() as i32)
     }
 
     /// Whether the font has an OpenType `MATH` table.
     pub fn has_math_table(&self) -> bool {
-        // SAFETY: the font is alive; `hb_font_get_face` returns its face.
-        unsafe { sys::hb_ot_math_has_data(sys::hb_font_get_face(self.hb_font.as_raw())) != 0 }
+        self.face.tables().math().is_ok()
     }
 
     pub fn scale_to_px(&self, val: FontUnit, font_size: PixelLength) -> PixelLength {
@@ -291,7 +381,7 @@ impl Font {
 
     /// The x-height at the font size: half of the size if the font does not have it.
     pub fn x_height_px(&self, font_size: PixelLength) -> PixelLength {
-        match self.ot_metric(sys::HB_OT_METRICS_TAG_X_HEIGHT) {
+        match self.x_height() {
             Some(height) if height > 0 => {
                 PixelLength(height as f32 * font_size.0 / self.upem as f32)
             }
@@ -304,24 +394,10 @@ impl Font {
     }
 }
 
-/// A string from the `name` table of a font (`id` is a `HB_OT_NAME_ID_*`).
-pub(crate) fn name_of(face: &HbFace, id: u32) -> Option<String> {
-    let raw = face.as_raw();
-    let language = std::ptr::null();
-    let mut size = 0;
-    // SAFETY: with a null buffer harfbuzz only reports the length of the name.
-    let length =
-        unsafe { sys::hb_ot_name_get_utf8(raw, id, language, &mut size, std::ptr::null_mut()) };
-    if length == 0 {
-        return None;
-    }
-    // room for the terminating NUL that harfbuzz appends
-    let mut buffer = vec![0u8; length as usize + 1];
-    let mut size = buffer.len() as u32;
-    // SAFETY: `buffer` has room for `size` bytes.
-    unsafe { sys::hb_ot_name_get_utf8(raw, id, language, &mut size, buffer.as_mut_ptr().cast()) };
-    buffer.truncate(size as usize);
-    String::from_utf8(buffer).ok()
+/// A string from the `name` table of a font: the English one, or else the first.
+pub(crate) fn name_of(face: &Face, id: NameId) -> Option<String> {
+    let name = face.names().get(id)?.english_or_first()?.name().chars().collect::<String>();
+    (!name.is_empty()).then_some(name)
 }
 
 /// Whether the fonts installed on the system are used; if not, only the fonts built into Umbruch
@@ -865,7 +941,7 @@ mod tests {
         for emoji in ["😀", "🎉", "🇩🇪", "👨\u{200D}👩\u{200D}👧", "👍🏽"] {
             assert!(font.covers_cluster(emoji), "{emoji}");
         }
-        let glyph = font.hb_font.get_nominal_glyph('😀').unwrap();
+        let glyph = font.nominal_glyph('😀').unwrap();
         assert!(font.is_color_glyph(super::GlyphIndex(glyph)));
     }
 
@@ -994,8 +1070,7 @@ pub(crate) fn unit_metrics(font: &crate::style::properties::computed::Font) -> (
             let matched = match_font(&style);
             let one = PixelLength(1.0);
             let ch = matched
-                .hb_font
-                .get_nominal_glyph('0')
+                .nominal_glyph('0')
                 .map_or(0.5, |glyph| matched.scale_to_px(matched.advance(GlyphIndex(glyph)), one).0);
             (matched.x_height_px(one).0, ch)
         })
