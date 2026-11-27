@@ -117,6 +117,7 @@ fn hello_and_shutdown() {
     assert_eq!(hello.json["result"]["fonts"]["system_fonts"], json!(false));
     let caps = hello.json["result"]["capabilities"].as_array().unwrap();
     assert!(caps.contains(&json!("render")) && caps.contains(&json!("layout")));
+    assert!(caps.contains(&json!("mesh_gouraud")));
     server.call(2, "shutdown", json!({}));
     assert!(server.receive().is_none());
     assert_eq!(server.finish(), 0);

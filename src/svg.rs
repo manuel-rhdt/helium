@@ -25,6 +25,7 @@ use lemon_pdf::object::IndirectReference;
 use lemon_pdf::shading::{
     AxialShading, Circle, ColorStop, Gradient, Point, RadialShading, Rgb, Shading, ShadingPattern,
 };
+use lemon_pdf::mesh::{FreeFormMesh, Vertex};
 use lemon_pdf::stream::StreamFilter;
 use lemon_pdf::content::PageContext;
 use lemon_pdf::{DocumentContext, Matrix, Pt};
@@ -40,6 +41,10 @@ const MAX_PERIODS: i64 = 256;
 /// The most children of a group with opacity that are checked for overlapping (see
 /// `SvgWriter::is_flat`).
 const MAX_FLAT_CHILDREN: usize = 128;
+
+/// The most triangles that one shading of a Gouraud mesh holds (an `sh` stream of this many
+/// triangles is a few hundred kilobytes before compression).
+const MESH_TRIANGLES: usize = 32768;
 
 /// A color of the graphics state, as far as the writer knows it.
 #[derive(Clone, PartialEq)]
@@ -561,9 +566,7 @@ impl SvgWriter {
             }
             let outer = self.alpha;
             self.alpha *= opacity;
-            for child in group.children() {
-                self.draw_node(c, child, ctm)?;
-            }
+            self.draw_children(c, group, ctm)?;
             self.alpha = outer;
         } else if effects {
             // the group is composited as a whole: opacity, mask and blend mode apply to the
@@ -581,12 +584,7 @@ impl SvgWriter {
                     filter,
                     |form| {
                         crate::pdf::set_device_defaults(form)?;
-                        self.in_stream(|this| {
-                            for child in group.children() {
-                                this.draw_node(form, child, Transform::identity())?;
-                            }
-                            Ok(())
-                        })
+                        self.in_stream(|this| this.draw_children(form, group, Transform::identity()))
                     },
                 )?;
                 let mut state = ExtGState::new();
@@ -608,12 +606,102 @@ impl SvgWriter {
                 c.draw_xobject(&key)?;
             }
         } else {
-            for child in group.children() {
-                self.draw_node(c, child, ctm)?;
-            }
+            self.draw_children(c, group, ctm)?;
         }
         if scoped {
             self.restore(c)?;
+        }
+        Ok(())
+    }
+
+    /// Draws the content of a group: the children, or, for a group with a Gouraud mesh that can
+    /// be painted as one shading, the mesh.
+    fn draw_children(
+        &mut self,
+        c: &mut PageContext<'_, '_, '_>,
+        group: &usvg::Group,
+        ctm: Transform,
+    ) -> Result<()> {
+        if let Some(mesh) = group.gouraud() {
+            if self.draw_mesh(c, mesh)? {
+                return Ok(());
+            }
+        }
+        for child in group.children() {
+            self.draw_node(c, child, ctm)?;
+        }
+        Ok(())
+    }
+
+    /// Paints the triangles of a Gouraud mesh (`<g data-umbruch-mesh="gouraud">`) as type 4
+    /// shadings, `MESH_TRIANGLES` triangles to a shading. Returns `false`, having painted
+    /// nothing, if the mesh cannot be painted this way and the flat triangles of the children
+    /// have to be drawn: a shading has no alpha per vertex, so the vertices must have one alpha.
+    ///
+    /// The coordinates of the triangles are the ones inside of the group, which is the current
+    /// user space. The colors are device RGB like the ones of the fills (the form has the sRGB
+    /// space as the default for it), and are interpolated as such, like Matplotlib does.
+    fn draw_mesh(&mut self, c: &mut PageContext<'_, '_, '_>, mesh: &usvg::GouraudMesh) -> Result<bool> {
+        let alpha = mesh.triangles[0].colors[0][3];
+        let same_alpha = mesh
+            .triangles
+            .iter()
+            .all(|triangle| triangle.colors.iter().all(|color| (color[3] - alpha).abs() <= 1.0 / 512.0));
+        if !same_alpha {
+            self.warn("a Gouraud mesh with an alpha that changes between the vertices is drawn with flat triangles");
+            return Ok(false);
+        }
+        let opacity = self.alpha * f64::from(alpha);
+        if opacity <= 0.0 {
+            return Ok(true);
+        }
+        if opacity >= 1.0 {
+            self.paint_mesh_shadings(c, mesh)?;
+            return Ok(true);
+        }
+        // A shading is not reliably drawn with the alpha constant of the graphics state: poppler
+        // ignores it for a gradient (it only applies it to a shading of one color), pdfium and
+        // mupdf apply it. A transparency group that is painted with the opacity is the same in all
+        // of them.
+        crate::pdf::pdfa1_forbid("an SVG with opacity")?;
+        let (mut min, mut max) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+        for point in mesh.triangles.iter().flat_map(|triangle| triangle.points) {
+            min = (min.0.min(point.x), min.1.min(point.y));
+            max = (max.0.max(point.x), max.1.max(point.y));
+        }
+        let bbox = [Pt(f64::from(min.0)), Pt(f64::from(min.1)), Pt(f64::from(max.0)), Pt(f64::from(max.1))];
+        let filter = self.filter;
+        let form = c.pdf_context.write_form(bbox, Some(TransparencyGroup::new(ColorSpace::DeviceRGB)), filter, |form| {
+            crate::pdf::set_device_defaults(form)?;
+            self.in_stream(|this| this.paint_mesh_shadings(form, mesh))
+        })?;
+        self.save(c)?;
+        c.apply_ext_gstate(ExtGState::new().with_fill_alpha(opacity).with_stroke_alpha(opacity))?;
+        let key = c.add_xobject(form);
+        c.draw_xobject(&key)?;
+        self.restore(c)?;
+        Ok(true)
+    }
+
+    /// Paints the triangles of a mesh with an opaque shading per `MESH_TRIANGLES` triangles.
+    fn paint_mesh_shadings(&mut self, c: &mut PageContext<'_, '_, '_>, mesh: &usvg::GouraudMesh) -> Result<()> {
+        let vertex = |triangle: &usvg::GouraudTriangle, i: usize| {
+            let [r, g, b, _] = triangle.colors[i];
+            Vertex::new(
+                f64::from(triangle.points[i].x),
+                f64::from(triangle.points[i].y),
+                Rgb(f64::from(r), f64::from(g), f64::from(b)),
+            )
+        };
+        let vertices = |triangle: &usvg::GouraudTriangle| [vertex(triangle, 0), vertex(triangle, 1), vertex(triangle, 2)];
+        for chunk in mesh.triangles.chunks(MESH_TRIANGLES) {
+            let mut stream = FreeFormMesh::new(vertices(&chunk[0]));
+            for triangle in &chunk[1..] {
+                stream = stream.triangle(vertices(triangle));
+            }
+            let shading = c.pdf_context.write_mesh_shading(&stream).map_err(std::io::Error::other)?;
+            let key = c.add_shading(shading);
+            c.paint_shading(&key)?;
         }
         Ok(())
     }

@@ -13,7 +13,8 @@
 //! **Ops.** `hello`, `measure`, `layout`, `render`, `shutdown`. `measure` takes `probes`, a list of
 //! `{markup | text, css}`, and returns `metrics`: one entry per probe, either `{width, ascent, descent,
 //! height, ink, missing_glyphs}` or `{error: {code, message}}`. See the specification for their parameters;
-//! `hello` reports the `capabilities` that a client can rely on.
+//! `hello` reports the `capabilities` that a client can rely on: among them `mesh_gouraud`, which
+//! says that SVG with `<g data-umbruch-mesh="gouraud">` groups is drawn as shadings (see the README).
 //!
 //! **Exit status.** 0 for `shutdown` or EOF between frames, 65 if the stream can no longer be
 //! framed, 70 after a panic (the server may be in an unknown state), 71 after a timeout.
@@ -333,7 +334,7 @@ fn hello(engine: &Engine) -> Reply {
     Reply::plain(json!({
         "protocol": PROTOCOL,
         "umbruch": env!("CARGO_PKG_VERSION"),
-        "capabilities": ["measure", "layout", "render", "warnings", "attachments"],
+        "capabilities": ["measure", "layout", "render", "warnings", "attachments", "mesh_gouraud"],
         "fonts": {
             "system_fonts": config.system_fonts,
             "font_dirs": config.font_dirs,
