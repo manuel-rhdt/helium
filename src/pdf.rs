@@ -826,6 +826,21 @@ fn with_icc_profile(context: &mut DocumentContext<'_>, raster: &crate::image::Ra
     }
 }
 
+/// Writes a JPEG or PNG image into the PDF with the colour space of its file (see [`with_icc_profile`]).
+/// Both `<img>` and the `<image>` elements of SVG images embed their rasters with it, so that they
+/// have the same colour handling.
+pub(crate) fn write_raster(
+    context: &mut DocumentContext<'_>,
+    raster: &crate::image::RasterImage,
+) -> Result<lemon_pdf::object::IndirectReference<lemon_pdf::image::ImageXObject>, String> {
+    let pdf_image = raster.to_pdf_image()?;
+    if pdf_image.has_alpha() {
+        let _ = pdfa1_forbid("an image with an alpha channel (it is a soft mask)");
+    }
+    let pdf_image = with_icc_profile(context, raster, pdf_image);
+    context.write_image(pdf_image).map_err(|error| error.to_string())
+}
+
 /// Embeds the images of the items of a display list that are not embedded yet.
 fn embed_images(
     context: &mut DocumentContext<'_>,
@@ -842,16 +857,7 @@ fn embed_images(
             continue;
         }
         let embedded = match &**image {
-            crate::image::LoadedImage::Raster(raster) => raster
-                .to_pdf_image()
-                .and_then(|pdf_image| {
-                    if pdf_image.has_alpha() {
-                        let _ = pdfa1_forbid("an image with an alpha channel (it is a soft mask)");
-                    }
-                    let pdf_image = with_icc_profile(context, raster, pdf_image);
-                    context.write_image(pdf_image).map_err(|error| error.to_string())
-                })
-                .map(Embedded::Raster),
+            crate::image::LoadedImage::Raster(raster) => write_raster(context, raster).map(Embedded::Raster),
             crate::image::LoadedImage::Svg(svg) => svg_writer
                 .write(context, &svg.tree, svg.unscaled)
                 .map(|form| Embedded::Svg(form, svg.tree.size().width(), svg.tree.size().height(), svg.unscaled))
@@ -948,7 +954,11 @@ fn check_pdfa_images(print_pages: &mut PrintPages) -> Result<(), Error> {
     for list in lists {
         for item in list.items() {
             if let DisplayItem::Image { image, .. } = item {
-                if matches!(&**image, crate::image::LoadedImage::Raster(raster) if raster.is_cmyk()) {
+                let cmyk = match &**image {
+                    crate::image::LoadedImage::Raster(raster) => raster.is_cmyk(),
+                    crate::image::LoadedImage::Svg(svg) => crate::svg::has_cmyk_image(&svg.tree),
+                };
+                if cmyk {
                     return Err(Error::new(
                         std::io::ErrorKind::InvalidInput,
                         "the document has a CMYK image, which PDF/A does not allow (the colours are sRGB): convert it to RGB",

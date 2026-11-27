@@ -190,7 +190,7 @@ impl RasterImage {
     /// Whether the image has CMYK colours: a JPEG file with four components (only JPEG files
     /// can).
     pub fn is_cmyk(&self) -> bool {
-        jpeg_components(&self.data) == Some(4)
+        is_cmyk_jpeg(&self.data)
     }
 
     pub fn to_pdf_image(&self) -> Result<Image, String> {
@@ -199,6 +199,11 @@ impl RasterImage {
             None => to_pdf_image(&self.data).map(|(image, _)| image),
         }
     }
+}
+
+/// Whether `data` is a JPEG file with four components (CMYK).
+pub fn is_cmyk_jpeg(data: &[u8]) -> bool {
+    data.starts_with(&[0xFF, 0xD8]) && jpeg_components(data) == Some(4)
 }
 
 /// The ICC profile of a JPEG file: the data of the APP2 segments that start with `ICC_PROFILE\0`, the

@@ -1365,12 +1365,9 @@ impl SvgWriter {
         let reference = match known {
             Some(reference) => reference,
             None => {
+                // like the image of an `<img>`: with its ICC profile as the colour space
                 let embedded = RasterImage::from_bytes(data.as_ref().clone())
-                    .and_then(|raster| raster.to_pdf_image())
-                    .map_err(|error| error.to_string())
-                    .and_then(|pdf_image| {
-                        c.pdf_context.write_image(pdf_image).map_err(|error| error.to_string())
-                    });
+                    .and_then(|raster| crate::pdf::write_raster(c.pdf_context, &raster));
                 let reference = match embedded {
                     Ok(reference) => Some(reference),
                     Err(error) => {
@@ -1393,6 +1390,36 @@ impl SvgWriter {
         c.draw_xobject(&name)?;
         self.restore(c)
     }
+}
+
+/// Whether the tree has a CMYK JPEG image, also in a nested SVG image, a pattern or a mask.
+pub fn has_cmyk_image(tree: &usvg::Tree) -> bool {
+    fn paint(paint: Option<&usvg::Paint>) -> bool {
+        match paint {
+            Some(usvg::Paint::Pattern(pattern)) => group(pattern.root()),
+            _ => false,
+        }
+    }
+    fn mask(mask: Option<&usvg::Mask>) -> bool {
+        mask.is_some_and(|m| group(m.root()) || mask_ref(m.mask()))
+    }
+    fn mask_ref(m: Option<&usvg::Mask>) -> bool {
+        mask(m)
+    }
+    fn group(g: &usvg::Group) -> bool {
+        mask(g.mask())
+            || g.children().iter().any(|node| match node {
+                Node::Group(inner) => group(inner),
+                Node::Path(path) => paint(path.fill().map(|f| f.paint())) || paint(path.stroke().map(|s| s.paint())),
+                Node::Image(image) => match image.kind() {
+                    usvg::ImageKind::JPEG(data) => crate::image::is_cmyk_jpeg(data),
+                    usvg::ImageKind::SVG(tree) => has_cmyk_image(tree),
+                    _ => false,
+                },
+                Node::Text(_) | Node::Foreign(_) => false,
+            })
+    }
+    group(tree.root())
 }
 
 /// Reads the colours of SVG that `svgtypes` rejects (`color()`, `lab()`, `oklch()`, `color-mix()`, …)
