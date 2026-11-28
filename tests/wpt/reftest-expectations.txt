@@ -36,11 +36,6 @@ css/css-lists/foo-counter-reversed-008b.html
 # needs counter-reset: reversed() (only in the editor's draft of CSS Lists 3); it passed while ::marker was ignored
 css/css-lists/foo-counter-reversed-009b.html
 
-# An inline-table without a width does not shrink-wrap to the width of its block child. It passed
-# while .xht files were read by the HTML parser, which left `&gt;` in the style sheet (an invalid
-# selector) and so ignored every rule; as XML the rules apply.
-css/CSS2/normal-flow/inline-table-width-002a.xht
-
 # Their references paint the background of an inline box (now painted); the tests need a column group background, opacity groups and attr()
 css/CSS2/box-display/display-012.xht
 

@@ -74,6 +74,8 @@ pub(super) struct Node {
     /// which `item_style` has to be given again when it is made.
     pub resolved_self: (Option<crate::style::properties::specified::SelfAlignment>, Option<crate::style::properties::specified::SelfAlignment>),
     pub content: Content,
+    /// Whether an anonymous cell’s row height is indefinite for percentage resolution.
+    pub table_cell_height_is_indefinite: bool,
     /// The children of the node in document order, including the out-of-flow ones. A node with
     /// inline content only has out-of-flow children.
     pub children: Vec<NodeId>,
@@ -321,6 +323,7 @@ impl<'a, 'w> UmbruchTree<'a, 'w> {
             item_style: None,
             resolved_self: (None, None),
             content,
+            table_cell_height_is_indefinite: false,
             children: vec![],
             atoms: vec![],
             atoms_done: false,
@@ -1541,11 +1544,14 @@ impl UmbruchTree<'_, '_> {
     fn compute_node_layout(
         &mut self,
         id: NodeId,
-        inputs: LayoutInput,
+        mut inputs: LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
         if self.node(id).style.display == taffy::Display::None {
             return compute_hidden_layout(self, id);
+        }
+        if self.node(id).table_cell_height_is_indefinite {
+            inputs.known_dimensions_are_definite.height = false;
         }
         compute_cached_layout(self, id, inputs, |tree, id, inputs| {
             // A container with columns is a leaf, as wide as a block and as high as its columns

@@ -2063,6 +2063,14 @@ impl EntityConstructor {
         }
     }
 
+    fn is_table_internal(computed_values: &WriteStorage<ComputedValues>, entity: Entity) -> bool {
+        computed_values.get(entity).is_some_and(|style| {
+            let display = style.box_.display;
+            display.is_table_row_group()
+                || matches!(display, Display::TableRow | Display::TableCell | Display::TableCaption)
+        })
+    }
+
     /// Puts every run of consecutive table-internal boxes (row groups, rows, cells and captions)
     /// among the flat `elements` of a block formatting context into an anonymous table box.
     fn wrap_in_anonymous_tables(
@@ -2071,16 +2079,6 @@ impl EntityConstructor {
         computed_values: &mut WriteStorage<ComputedValues>,
         style: &ComputedValues,
     ) {
-        let is_internal = |computed_values: &WriteStorage<ComputedValues>, entity: Entity| {
-            computed_values.get(entity).is_some_and(|style| {
-                let display = style.box_.display;
-                display.is_table_row_group()
-                    || matches!(
-                        display,
-                        Display::TableRow | Display::TableCell | Display::TableCaption
-                    )
-            })
-        };
         let mut result = Vec::with_capacity(elements.len());
         let mut depth = 0usize;
         let mut in_table = false;
@@ -2089,7 +2087,7 @@ impl EntityConstructor {
             match element {
                 BlockLevelElement::ContainerStart(entity) => {
                     if depth == 0 {
-                        if is_internal(computed_values, entity) {
+                        if Self::is_table_internal(computed_values, entity) {
                             if !in_table {
                                 in_table = true;
                                 let mut table_style = style.anonymous_block();
@@ -2122,6 +2120,48 @@ impl EntityConstructor {
         }
         if in_table {
             result.push(BlockLevelElement::ContainerEnd(table_start.take().unwrap()));
+        }
+        *elements = result;
+    }
+
+    /// Groups consecutive ordinary boxes inside an inline table into an anonymous cell. The table
+    /// layout supplies a row for loose cells. The original boxes keep their own widths.
+    fn wrap_in_anonymous_cells(
+        elements: &mut Vec<BlockLevelElement>,
+        entities: &Entities,
+        computed_values: &mut WriteStorage<ComputedValues>,
+        style: &ComputedValues,
+    ) {
+        let mut result = Vec::with_capacity(elements.len());
+        let mut depth = 0;
+        let mut cell = None;
+        for &element in elements.iter() {
+            match element {
+                BlockLevelElement::ContainerStart(entity) => {
+                    if depth == 0 {
+                        if Self::is_table_internal(computed_values, entity) {
+                            if let Some(cell) = cell.take() {
+                                result.push(BlockLevelElement::ContainerEnd(cell));
+                            }
+                        } else if cell.is_none() {
+                            let mut cell_style = style.anonymous_block();
+                            let box_style = Arc::make_mut(&mut cell_style.box_);
+                            box_style.display = Display::TableCell;
+                            box_style.anonymous_table_cell = true;
+                            let entity = entities.build_entity().with(cell_style, computed_values).build();
+                            cell = Some(entity);
+                            result.push(BlockLevelElement::ContainerStart(entity));
+                        }
+                    }
+                    depth += 1;
+                }
+                BlockLevelElement::ContainerEnd(_) => depth -= 1,
+                _ => {}
+            }
+            result.push(element);
+        }
+        if let Some(cell) = cell {
+            result.push(BlockLevelElement::ContainerEnd(cell));
         }
         *elements = result;
     }
@@ -2239,6 +2279,15 @@ impl EntityConstructor {
                 BlockLevelElement::Leaf(entity),
                 BlockLevelElement::ContainerEnd(entity),
             ]);
+        }
+
+        if style.box_.display == Display::InlineTable {
+            Self::wrap_in_anonymous_cells(
+                &mut block_level_elements,
+                &entities,
+                &mut computed_values,
+                &style,
+            );
         }
 
         block_level_elements.insert(0, BlockLevelElement::ContainerStart(entity));

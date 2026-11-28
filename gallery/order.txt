@@ -1,6 +1,7 @@
 invoice
 letter
 report
+tables
 math-notes
 book
 poetry

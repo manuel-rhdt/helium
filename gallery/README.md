@@ -8,6 +8,7 @@ renders them on every push and, on `master`, publishes them with thumbnails to G
 | `invoice/` | gradient header card with an SVG logo, flexbox and grid columns, a line-item table, badges |
 | `letter/` | letterhead, a different first page, running headers, hyphenated justified text |
 | `report/` | a cover card, linked contents, a JPEG figure, data table, a flexbox bar chart, code |
+| `tables/` | a fictional harbour office field return with ruled summary tables, spanning station labels, a paginated register with repeated headers and footers, and an inspection record split across pages |
 | `math-notes/` | MathML: integrals, sums, matrices, theorem boxes, numbered equations, an SVG plot |
 | `book/` | a whole novel as a trade paperback in three volumes: all 61 chapters of Pride and Prejudice (372 pages), facing pages and running heads, a tagged table of contents with dot leaders (`leader()`) and page numbers that `target-counter()` looks up, page groups (`:nth(1 of volume)`, `:nth(1 of chapter)`) for the volume title pages and the chapter openings, roman folios for the front matter and a new count for the body, a list of scenes with chapter numbers in roman numerals, an outline of volumes and chapters, hyphenation limits as TeX has them for English (`hyphenate-limit-chars`) and no hyphen at the end of a right-hand page (`hyphenate-limit-last: spread`), hanging punctuation (`hanging-punctuation`: quotes, full stops, commas and hyphens stand in the margin), small capitals and old-style folios |
 | `poetry/` | verse on small pages |
