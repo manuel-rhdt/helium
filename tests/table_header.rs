@@ -82,3 +82,17 @@ fn a_table_that_fits_on_a_page_does_not_repeat_its_header() {
     let doc = dump("fits", &format!("<table><thead><tr><th>h</th></tr></thead><tbody>{}</tbody></table>", rows(5)));
     assert_eq!(tops(&doc, RED), vec![(0, 0.0)]);
 }
+
+#[test]
+fn the_header_is_not_left_alone_at_the_end_of_a_page() {
+    // the header ends at 190px and a row would end at 210px: the table starts on the next page
+    let doc = dump(
+        "orphan_header",
+        &format!(
+            "<div style=\"height: 170px\">before</div><table><thead><tr><th>h</th></tr></thead><tbody>{}</tbody></table>",
+            rows(2)
+        ),
+    );
+    assert_eq!(tops(&doc, RED), vec![(1, 0.0)]);
+    assert!(tops(&doc, BLUE).iter().all(|&(page, _)| page == 1));
+}

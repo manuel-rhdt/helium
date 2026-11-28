@@ -10,6 +10,11 @@ use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 use taffy::geometry::{Line, Point, Size};
 use taffy::style::{AvailableSpace, Position};
+
+/// How far short of the width of its longest line a box may be (in pixels) and still not break it:
+/// the widths that Taffy adds up for the tracks of a grid differ from the measured ones by
+/// rounding errors.
+const MAX_CONTENT_SLACK: f32 = 0.01;
 use taffy::tree::{
     AxisStaticEdge, AxisStaticPosition, Baselines, Cache, Layout, LayoutInput, LayoutOutput,
     NodeId, OofCandidate, OofPositioningArea, RequestedAxis, RunMode, SizingMode,
@@ -1003,11 +1008,15 @@ impl UmbruchTree<'_, '_> {
                 (None, _) => PixelLength(0.0),
             };
             let (min, max) = ifc.intrinsic_widths(indent);
+            // (a box that Taffy made as wide as its longest line, which is the `max` measured
+            // before, may be short of it by the rounding of the sums on the way: that must not
+            // break the line)
+            let snap = |width: f32| if width < max.0 && width + MAX_CONTENT_SLACK >= max.0 { max.0 } else { width };
             // The width the lines are broken for. When Taffy lays out the box for real, the
             // definite available space is the width of its content box.
-            let line_width = known.width.unwrap_or(match available.width {
-                AvailableSpace::Definite(width) if run_mode == RunMode::PerformLayout => width,
-                AvailableSpace::Definite(width) => shrink_to_fit(min.0, max.0, width),
+            let line_width = known.width.map(snap).unwrap_or(match available.width {
+                AvailableSpace::Definite(width) if run_mode == RunMode::PerformLayout => snap(width),
+                AvailableSpace::Definite(width) => shrink_to_fit(min.0, max.0, snap(width)),
                 AvailableSpace::MinContent => min.0,
                 AvailableSpace::MaxContent => max.0,
             });
