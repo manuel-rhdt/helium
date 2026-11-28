@@ -23,7 +23,7 @@
 //!
 //! https://www.w3.org/TR/CSS22/tables.html
 
-use taffy::{LayoutPartialTree, compute_grid_layout};
+use taffy::{LayoutPartialTree, MaybeResolve, compute_grid_layout};
 use taffy::geometry::{Line, Point, Size};
 use taffy::style::{
     AvailableSpace, Dimension, GridTemplateComponent, LengthPercentageAuto, MaxTrackSizingFunction,
@@ -37,7 +37,7 @@ use crate::layout::absolute::shrink_to_fit;
 use crate::style::properties::computed::{GenericSize, LengthPercentage};
 use crate::style::properties::specified::Display;
 
-use super::tree::{Content, UmbruchTree};
+use super::tree::{Content, UmbruchTree, calc};
 
 /// How the boxes of a table are arranged in its grid.
 #[derive(Debug, Default)]
@@ -58,6 +58,8 @@ pub(super) struct TableStructure {
     /// The cells with the box they are placed relative to (their row, their row group, or the
     /// table).
     cells: Vec<(NodeId, Option<NodeId>)>,
+    /// The generated cells whose percentage height basis follows the table.
+    anonymous_cells: Vec<NodeId>,
     /// For every table row, whether a cell spans the row and the one after it: a page break
     /// between the two rows would cut the cell.
     blocked_after: Vec<bool>,
@@ -323,6 +325,13 @@ impl UmbruchTree<'_, '_> {
                     let parent = row.node.or(group.node);
                     structure.loose_cells |= row.node.is_none();
                     structure.cells.push((cell, parent));
+                    if self
+                        .computed_values
+                        .get(self.node(cell).entity)
+                        .is_some_and(|style| style.box_.anonymous_table_cell)
+                    {
+                        structure.anonymous_cells.push(cell);
+                    }
                     column += columns;
                 }
                 if let Some(node) = row.node {
@@ -637,6 +646,27 @@ impl UmbruchTree<'_, '_> {
     /// than the available space (and no narrower than its narrowest layout).
     /// https://www.w3.org/TR/CSS22/tables.html#auto-table-layout
     pub(super) fn compute_table_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        if let Some(table) = self
+            .node(id)
+            .table
+            .as_ref()
+            .filter(|table| !table.anonymous_cells.is_empty())
+        {
+            // Grid stretch supplies a used row height even when the table has no definite height.
+            // In that case the anonymous cell must still treat percentage heights as indefinite.
+            let has_definite_height = (inputs.known_dimensions.height.is_some()
+                && inputs.known_dimensions_are_definite.height)
+                || (inputs.sizing_mode == SizingMode::InherentSize
+                    && self
+                        .active_style(id)
+                        .size
+                        .height
+                        .maybe_resolve(inputs.parent_size.height, calc)
+                        .is_some());
+            for cell in table.anonymous_cells.clone() {
+                self.node_mut(cell).table_cell_height_is_indefinite = !has_definite_height;
+            }
+        }
         let mut inputs = inputs;
         if self.is_fixed_layout(id) {
             let output = self.compute_fixed_table_layout(id, inputs);

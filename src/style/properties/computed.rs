@@ -1146,6 +1146,8 @@ pub struct Box {
     pub aspect_ratio: specified::AspectRatio,
     pub box_sizing: BoxSizing,
     pub table_layout: TableLayout,
+    /// Whether layout generated this cell around ordinary table children.
+    pub anonymous_table_cell: bool,
 
     /// What replaces the content of a `::before` or `::after` pseudo-element.
     pub content: super::generated::Content,
@@ -1210,6 +1212,7 @@ impl Default for Box {
             aspect_ratio: Default::default(),
             box_sizing: Default::default(),
             table_layout: Default::default(),
+            anonymous_table_cell: false,
             content: Default::default(),
             counter_reset: Default::default(),
             counter_increment: Default::default(),

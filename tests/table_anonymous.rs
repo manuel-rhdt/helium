@@ -49,3 +49,60 @@ fn block_table_keeps_its_cells_in_a_grid() {
     assert_eq!(xy(&block, "a").1, xy(&block, "b").1);
     assert!(xy(&block, "b").0 > xy(&block, "a").0);
 }
+
+fn check_layout(name: &str, html: &str) {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join(format!("table_anonymous_{name}.html"));
+    std::fs::write(&input, html).unwrap();
+    let output = common::umbruch()
+        .unwrap()
+        .arg("--check-layout")
+        .arg(&input)
+        .arg(dir.join(format!("table_anonymous_{name}.pdf")))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn inline_table_keeps_block_children_at_their_own_widths() {
+    check_layout(
+        "inline_width",
+        r#"<!doctype html>
+<style>
+  .container { width: 160px }
+  .table { display: inline-table; border-spacing: 0 }
+  .wide { width: 320px; height: 20px }
+  .narrow { width: 200px; height: 30px }
+</style>
+<div class="container">
+  <div class="table" data-expected-width="320" data-expected-height="50">
+    <div class="wide" data-expected-width="320"></div>
+    <div class="narrow" data-expected-width="200"></div>
+  </div>
+</div>"#,
+    );
+}
+
+#[test]
+fn inline_table_percent_height_requires_a_definite_basis() {
+    check_layout(
+        "inline_height",
+        r#"<!doctype html>
+<style>
+  .table { display: inline-table; border-spacing: 0; width: 100px }
+  .child { height: 50% }
+  .content { height: 100px }
+</style>
+<div>
+  <div class="table" style="height: 100%" data-expected-height="100">
+    <div class="child" data-expected-height="100"><div class="content"></div></div>
+  </div>
+</div>
+<div>
+  <div class="table" style="height: 160px" data-expected-height="160">
+    <div class="child" data-expected-height="80"><div class="content"></div></div>
+  </div>
+</div>"#,
+    );
+}
