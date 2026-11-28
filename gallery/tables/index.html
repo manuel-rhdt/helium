@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spring coastal survey</title>
+<meta name="description" content="A fictional harbour office field return with water-level summaries, maintenance actions, and a survey register that continues across pages.">
+<meta name="keywords" content="Tables, Pagination, Borders, Row and column spans">
+<style>
+  @page {
+    size: 180mm 235mm;
+    margin: 15mm 14mm 16mm;
+    @top-left {
+      content: "NORTH ESTUARY HARBOUR OFFICE";
+      font: 8pt sans-serif;
+      letter-spacing: 1pt;
+      color: #31505b;
+    }
+    @bottom-left {
+      content: "FIELD RETURN NEST-26-07";
+      font: 8pt sans-serif;
+      color: #31505b;
+    }
+    @bottom-right {
+      content: counter(page);
+      font: 8pt sans-serif;
+      color: #31505b;
+    }
+  }
+
+  body { margin: 0; color: #1c3038; font: 10pt/1.4 sans-serif; }
+  h1, h2 { color: #153b46; font-family: serif; font-weight: normal; }
+  h1 { font-size: 34pt; line-height: 1; margin: 0 0 10pt; }
+  h2 { font-size: 22pt; line-height: 1.1; margin: 14pt 0 6pt; }
+  p { margin: 0 0 9pt; }
+  .lede { max-width: 120mm; font-size: 11pt; }
+  .lede { color: #31505b; }
+  table { width: 100%; border-spacing: 0; font-variant-numeric: tabular-nums; }
+  th, td { padding: 5pt 8pt; vertical-align: top; }
+  th { text-align: left; }
+  caption { color: #31505b; font-size: 9pt; text-align: left; padding-bottom: 4pt; }
+
+  .document-id {
+    color: #31505b;
+    font-size: 9pt;
+    margin: 0 0 16pt;
+    padding: 0 0 8pt;
+    border-bottom: 1pt solid #427d87;
+  }
+  .overview { margin-bottom: 18pt; }
+  .summary { border-collapse: collapse; table-layout: fixed; }
+  .summary .sector { width: 36%; }
+  .summary .metric { width: 16%; }
+  .summary thead th { background: #153b46; color: white; }
+  .summary tbody tr > * { border-bottom: 0.75pt dotted #7ea8ab; }
+  .summary tfoot tr > * { border-top: 3pt double #427d87; background: #e2eeee; }
+  .number { text-align: right; }
+
+  .actions { border-collapse: separate; border-spacing: 0 3pt; table-layout: fixed; }
+  .actions .site { width: 23%; }
+  .actions .follow-up { width: 57%; }
+  .actions .due { width: 20%; }
+  .actions thead th { background: #e2eeee; }
+  .actions tbody tr > * { background: #f0f5f5; }
+  .actions tbody th { border-left: 3pt solid #427d87; }
+  .actions .priority > * { border-bottom: 1pt dashed #ad521f; }
+  .filing {
+    margin-top: 16pt;
+    padding-top: 9pt;
+    border-top: 1pt solid #427d87;
+    color: #31505b;
+    font-size: 9pt;
+  }
+
+  .register { break-before: page; }
+  .register h2 { margin-top: 0; font-size: 28pt; }
+  .ledger { border-collapse: collapse; table-layout: fixed; }
+  .ledger .station { width: 21%; }
+  .ledger .record { width: 18%; }
+  .ledger .reading { width: 16%; }
+  .ledger .notes { width: 45%; }
+  .ledger .station-band { border-right: 2pt solid #7ea8ab; }
+  .ledger thead { background: #153b46; color: white; }
+  .ledger thead th { border-bottom: 2pt solid #427d87; }
+  .ledger tbody :is(th, td) { border-bottom: 0.75pt solid #d5e3e3; }
+  .ledger tbody th, .ledger tbody .location { background: #f0f5f5; }
+  .ledger tbody .location { font-weight: bold; }
+  .ledger tfoot td {
+    padding: 5pt 8pt;
+    background: #e2eeee;
+    color: #214651;
+    border-top: 2pt solid #427d87;
+    font-size: 9pt;
+  }
+  .ledger .log { background: #f7f9f9; }
+  .ledger .log p { margin: 0 0 7pt; }
+</style>
+</head>
+<body>
+<main>
+  <p class="document-id">Survey &amp; Moorings &nbsp;·&nbsp; Field return NEST-26-07 &nbsp;·&nbsp; 24 April 2026</p>
+  <h1>Spring coastal survey</h1>
+  <p class="lede overview">Twenty-one gauge readings from eleven stations, with a separate condition inspection at Long Pier. Readings were taken from the fixed observation points along the North Estuary.</p>
+
+  <section>
+    <h2>Water-level summary</h2>
+    <table class="summary">
+      <col class="sector"><col class="metric" span="4">
+      <thead>
+        <tr><th scope="col">Survey sector</th><th scope="col" class="number">Stations</th><th scope="col" class="number">Readings</th><th scope="col" class="number">Low (m)</th><th scope="col" class="number">High (m)</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">North shore</th><td class="number">4</td><td class="number">8</td><td class="number">0.61</td><td class="number">1.31</td></tr>
+        <tr><th scope="row">Harbour reach</th><td class="number">4</td><td class="number">8</td><td class="number">0.67</td><td class="number">1.43</td></tr>
+        <tr><th scope="row">Outer estuary</th><td class="number">3</td><td class="number">5</td><td class="number">0.74</td><td class="number">1.34</td></tr>
+      </tbody>
+      <tfoot>
+        <tr><th scope="row">Whole survey</th><td class="number">11</td><td class="number">21</td><td class="number">0.61</td><td class="number">1.43</td></tr>
+      </tfoot>
+    </table>
+  </section>
+
+  <section>
+    <h2>Outstanding field actions</h2>
+    <table class="actions">
+      <col class="site"><col class="follow-up"><col class="due">
+      <thead><tr><th scope="col">Station</th><th scope="col">Action</th><th scope="col">Due</th></tr></thead>
+      <tbody>
+        <tr class="priority"><th scope="row">Long Pier</th><td>Recheck the lower bracket and verify the brass reference mark. Continue readings from the upper landing.</td><td>Next high tide</td></tr>
+        <tr><th scope="row">Dune Cut</th><td>Check the foot of the gauge for fresh sand after the next swell.</td><td>Next visit</td></tr>
+        <tr><th scope="row">Old Slip</th><td>Update the access sketch to record the shifted shingle.</td><td>Next visit</td></tr>
+      </tbody>
+    </table>
+    <p class="filing"><strong>Filed for Harbour Operations.</strong> Keep this return with the station sketches and the Long Pier inspection photographs.</p>
+  </section>
+
+  <section class="register">
+    <h2>Station register</h2>
+    <p class="lede">Paired observations were recorded during the falling tide. The Long Pier inspection is filed as S-21, with the routine return reading at S-22.</p>
+
+    <table class="ledger">
+      <caption>Field records S-01 to S-22</caption>
+      <colgroup class="station-band"><col class="station"></colgroup>
+      <colgroup><col class="record"><col class="reading"><col class="notes"></colgroup>
+      <thead>
+        <tr><th scope="col">Station</th><th scope="col">Record</th><th scope="col" class="number">Level</th><th scope="col">Field note</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="location" rowspan="2">North Jetty</td><th scope="row">S-01</th><td class="number">1.24</td><td>Marker clear at the outer steps.</td></tr>
+        <tr><th scope="row">S-02</th><td class="number">0.78</td><td>Gauge face rinsed after the ebb.</td></tr>
+        <tr><td class="location" rowspan="2">Harbour Gate</td><th scope="row">S-03</th><td class="number">1.31</td><td>Slack water at the inner wall.</td></tr>
+        <tr><th scope="row">S-04</th><td class="number">0.83</td><td>Two readings agreed to 0.01 m.</td></tr>
+        <tr><td class="location" rowspan="2">Mussel Bank</td><th scope="row">S-05</th><td class="number">1.18</td><td>Minor drift along the eastern edge.</td></tr>
+        <tr><th scope="row">S-06</th><td class="number">0.72</td><td>Second reading taken from the path.</td></tr>
+        <tr><td class="location" rowspan="2">Salt Meadow</td><th scope="row">S-07</th><td class="number">1.09</td><td>Water level below the footbridge.</td></tr>
+        <tr><th scope="row">S-08</th><td class="number">0.61</td><td>Lower scale visible in the creek.</td></tr>
+        <tr><td class="location" rowspan="2">West Channel</td><th scope="row">S-09</th><td class="number">1.43</td><td>Wake settled before recording.</td></tr>
+        <tr><th scope="row">S-10</th><td class="number">0.89</td><td>Reading taken from the fixed ladder.</td></tr>
+        <tr><td class="location" rowspan="2">Ferry Steps</td><th scope="row">S-11</th><td class="number">1.37</td><td>Upper landing remained dry.</td></tr>
+        <tr><th scope="row">S-12</th><td class="number">0.85</td><td>South bolt used as a check mark.</td></tr>
+        <tr><td class="location" rowspan="2">Dune Cut</td><th scope="row">S-13</th><td class="number">1.11</td><td>Sand cleared from the foot of the gauge.</td></tr>
+        <tr><th scope="row">S-14</th><td class="number">0.67</td><td>Creek flowing out across the beach.</td></tr>
+        <tr><td class="location" rowspan="2">Old Slip</td><th scope="row">S-15</th><td class="number">1.26</td><td>Scale readable from the slipway.</td></tr>
+        <tr><th scope="row">S-16</th><td class="number">0.79</td><td>Shingle moved since the last visit.</td></tr>
+        <tr><td class="location" rowspan="2">East Point</td><th scope="row">S-17</th><td class="number">1.34</td><td>Reading averaged over three swells.</td></tr>
+        <tr><th scope="row">S-18</th><td class="number">0.81</td><td>Reference notch remains sharp.</td></tr>
+        <tr><td class="location" rowspan="2">Beacon Cove</td><th scope="row">S-19</th><td class="number">1.29</td><td>Light chop at the gauge.</td></tr>
+        <tr><th scope="row">S-20</th><td class="number">0.77</td><td>Reading repeated from the landing.</td></tr>
+      </tbody>
+      <tbody>
+        <tr>
+          <th scope="row">S-21<br>Long Pier</th>
+          <td class="log" colspan="3">
+            <p><strong>Inspection log.</strong> The survey team returned to the pier after a spring tide to check the gauge and its reference marks.</p>
+            <p><strong>Access.</strong> The shore approach was open at the start of the inspection. The lower ramp stayed slippery even after the water cleared, so observations were made from the upper landing.</p>
+            <p><strong>Reference mark.</strong> The brass plate on the landward post was visible and firmly fixed. Its stamped reference line matched the mark on the copy of the site sketch.</p>
+            <p><strong>Gauge face.</strong> A band of salt crystals covered part of the lower scale. The team cleaned the surface with fresh water and a soft cloth, then photographed the exposed numbers.</p>
+            <p><strong>Mounting.</strong> No movement was detected at the top fixing. The lower bracket showed a narrow gap on its seaward side. The gap was measured at both ends before the team marked its limits.</p>
+            <p><strong>Still-water check.</strong> Three readings were taken with the gauge in sight from the landing. The water surface rose gently through the series, with only a small scatter from the remaining swell.</p>
+            <p><strong>Independent check.</strong> A staff reading was taken from the landward side of the pier. The staff was steadied against the handrail, and the observation was recorded against the brass reference mark.</p>
+            <p><strong>Waterline.</strong> A thin line of wrack on the landward post marked the previous high water. Its height was logged separately from the gauge readings and included in the site sketch.</p>
+            <p><strong>Debris.</strong> Loose rope was removed from the ladder in front of the gauge. The inspection did not disturb material lodged beyond the end of the lower landing.</p>
+            <p><strong>Photographs.</strong> The team took a wide view of the pier, a straight-on view of the gauge and a close view of the lower bracket. The reference plate is in the gauge photograph for scale.</p>
+            <p><strong>Second visit.</strong> The lower bracket and the landward reference plate should be checked after the next high tide. Readings can continue from the upper landing until then.</p>
+            <p><strong>Closeout.</strong> The last reading was entered in the station book before departure. The team left the access gate latched and returned the staff to the survey store.</p>
+          </td>
+        </tr>
+        <tr><td class="location">Long Pier</td><th scope="row">S-22</th><td class="number">0.74</td><td>Routine reading after the inspection.</td></tr>
+      </tbody>
+      <tfoot>
+        <tr><td colspan="4">Levels in metres above the local survey datum.</td></tr>
+      </tfoot>
+    </table>
+  </section>
+</main>
+</body>
+</html>
