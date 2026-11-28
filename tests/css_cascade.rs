@@ -327,7 +327,14 @@ fn black_png(name: &str) {
 #[test]
 fn the_padding_of_an_image_on_one_side_does_not_change_its_other_side() {
     black_png("css_cascade__black2.png");
-    for css in ["padding-right:5px", "border-left:5px solid", "padding-right:5px;width:50px", "padding-bottom:5px;height:50px"] {
+    for (css, expected) in [
+        ("padding-right:5px", (101.0, 96.0)),
+        ("border-left:5px solid", (101.0, 96.0)),
+        ("padding-right:5px;width:50px", (55.0, 96.0)),
+        ("padding-bottom:5px;height:50px", (96.0, 55.0)),
+        ("padding-right:5px;width:50px;height:auto", (55.0, 50.0)),
+        ("padding-bottom:5px;width:auto;height:50px", (50.0, 55.0)),
+    ] {
         let b = boxes(
             "image_padding",
             &format!(
@@ -335,14 +342,9 @@ fn the_padding_of_an_image_on_one_side_does_not_change_its_other_side() {
                  <div><img src=\"css_cascade__black2.png\" width=\"96\" height=\"96\"></div>"
             ),
         );
-        let (width, height) = b[0];
-        // the box of the div is the one of the image, with its padding and border
-        let (expected_width, expected_height) = match css {
-            "padding-right:5px" | "border-left:5px solid" => (101.0, 96.0),
-            "padding-right:5px;width:50px" => (55.0, 50.0),
-            _ => (50.0, 55.0),
-        };
-        assert_eq!((width, height), (expected_width, expected_height), "{css}");
+        // The wrapper has the image's border-box size. An attribute still sets a dimension
+        // unless CSS overrides it with a length or auto.
+        assert_eq!(b[0], expected, "{css}");
     }
 }
 

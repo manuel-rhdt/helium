@@ -110,6 +110,32 @@ fn white_space_is_still_collapsed() {
 }
 
 #[test]
+fn leading_space_inside_an_inline_continues_the_surrounding_text() {
+    let width_of = |name, content| {
+        let dump = dump(
+            name,
+            &format!(
+                r#"<div style="display:inline-block; white-space:nowrap; background:#ff0000">{content}</div>"#
+            ),
+        );
+        rects_with(&dump, [255, 0, 0])[0]["width"].as_f64().unwrap()
+    };
+    let expected = width_of("space_before_span", "one <span>two</span>");
+    assert_eq!(
+        width_of("space_inside_span", "<span> one</span><span><span> two</span></span>"),
+        expected
+    );
+    assert_eq!(
+        width_of("space_on_both_sides", "one <span> two</span>"),
+        expected
+    );
+    assert_eq!(
+        width_of("space_after_nbsp_inside_span", "one\u{a0}<span> two</span>"),
+        width_of("space_after_nbsp_before_span", "one\u{a0} <span>two</span>")
+    );
+}
+
+#[test]
 fn line_breaks_are_still_honored() {
     let dump = dump(
         "br",

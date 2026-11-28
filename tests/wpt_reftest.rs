@@ -129,7 +129,10 @@ fn find_reference(test: &Path) -> Option<PathBuf> {
         rest = &rest[tag_end..];
         if tag.contains("rel=\"match\"") {
             let href = tag.split("href=\"").nth(1)?.split('"').next()?;
-            return Some(test.parent()?.join(href));
+            return Some(match href.strip_prefix('/') {
+                Some(path) => wpt_root().join(path),
+                None => test.parent()?.join(href),
+            });
         }
     }
     None

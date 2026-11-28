@@ -442,11 +442,9 @@ impl UmbruchTree<'_, '_> {
         // wide as the column element that covers it; its cells can still make it wider.
         let table_columns = self
             .table_columns
-            .get(self.node(table).entity)
-            .cloned()
-            .unwrap_or_default();
+            .get(self.node(table).entity);
         let mut index = 0;
-        for column in table_columns.columns {
+        for column in table_columns.into_iter().flat_map(|tracks| &tracks.columns) {
             let span = usize::from(column.span.max(1));
             for position in index..(index + span).min(fixed_lengths.len()) {
                 match column.width {

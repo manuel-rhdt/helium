@@ -133,6 +133,25 @@ fn css_inline_and_block_images() {
 }
 
 #[test]
+fn author_css_can_override_image_dimension_hints() {
+    let r = render(
+        "override_dimensions",
+        &format!(
+            "{PAGE}<img src=\"red.jpg\" width=\"60\" height=\"60\" style=\"width:30px;height:auto\">\
+             <img src=\"red.jpg\" width=\"80\" style=\"width:auto\">\
+             <img src=\"red.jpg\" width=\"80\" height=\"80\" style=\"display:block;max-width:30px;height:auto\">"
+        ),
+    );
+    let sizes: Vec<_> = r.images.iter().map(|b| (b[2], b[3])).collect();
+    let expected = [(22.5, 11.25), (30.0, 15.0), (22.5, 11.25)];
+    assert_eq!(sizes.len(), expected.len(), "{sizes:?}");
+    for (actual, expected) in sizes.iter().zip(expected) {
+        assert_close(actual.0, expected.0);
+        assert_close(actual.1, expected.1);
+    }
+}
+
+#[test]
 fn an_image_sits_on_the_baseline() {
     let r = render("baseline", &format!("{PAGE}<p>text<img src=\"red.jpg\">text</p>"));
     // the bottom of the image is the baseline of the line, so the paragraph is taller than the

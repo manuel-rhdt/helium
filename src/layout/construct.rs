@@ -286,6 +286,9 @@ impl FlowConstructor {
                     .as_ref()
                     .is_some_and(|style| style.box_.display.is_flex_or_grid());
                 let mut style_builder = StyleBuilder::new(parent_style.unwrap_or_default());
+                if element_ref.name.ns == ns!(html) && element_ref.name.local == local_name!("th") {
+                    style_builder.table_header_alignment();
+                }
                 // the root element is the one without a parent element (its parent is the document)
                 let is_root = element_ref
                     .as_node()
@@ -1039,7 +1042,7 @@ impl Traversal<DomRef> for FlowConstructor {
         // A table's columns do not generate boxes, so their widths are recorded here, where the
         // table's entity exists and its `<col>` children have their styles.
         let is_table = NodeData::style(&node)
-            .map(|style| style.box_.display == Display::Table)
+            .map(|style| style.box_.display.is_table())
             .unwrap_or(false);
         let Some(LayoutEntity(entity)) = node.layout_entity() else {
             return;
@@ -1171,48 +1174,50 @@ fn table_columns(table: &DomRef) -> components::TableColumns {
             .clamp(1, 1000) as u16
     }
 
-    /// The `width` of a column element; `auto` and percentages of unknown size are skipped.
-    fn width(style: Option<ComputedValues>) -> Option<GenericSize> {
-        match style?.position.width {
-            GenericSize::Auto => None,
-            width => Some(width),
-        }
-    }
-
     fn collect(
         children: impl Iterator<Item = DomRef>,
-        group_width: Option<GenericSize>,
-        columns: &mut Vec<components::TableColumn>,
+        group: Option<(usize, Option<GenericSize>)>,
+        tracks: &mut components::TableColumns,
     ) {
         for child in children {
-            let Some(style) = NodeData::style(&child) else {
-                continue;
-            };
+            let Some(style) = NodeData::style(&child) else { continue };
             let display = style.box_.display;
             if !display.is_table_column() {
                 continue;
             }
-            let ParsedData::Element(element_data) = child.html_data() else {
-                continue;
-            };
+            let ParsedData::Element(element_data) = child.html_data() else { continue };
             let span = span(element_data);
-            let width = width(Some(style)).or(group_width);
+            let width = match style.position.width {
+                GenericSize::Auto => group.and_then(|(_, width)| width),
+                width => Some(width),
+            };
             if display == Display::TableColumnGroup {
-                // a group without `<col>` children covers its own columns
-                let count = columns.len();
-                collect(TreeLinked::children(&child), width, columns);
-                if columns.len() == count {
-                    columns.push(components::TableColumn { span, width });
+                let group = tracks.groups.len();
+                tracks.groups.push(style);
+                let first = tracks.columns.len();
+                collect(TreeLinked::children(&child), Some((group, width)), tracks);
+                if tracks.columns.len() == first {
+                    tracks.columns.push(components::TableColumn {
+                        span,
+                        width,
+                        style: None,
+                        group: Some(group),
+                    });
                 }
             } else {
-                columns.push(components::TableColumn { span, width });
+                tracks.columns.push(components::TableColumn {
+                    span,
+                    width,
+                    style: Some(style),
+                    group: group.map(|(index, _)| index),
+                });
             }
         }
     }
 
-    let mut columns = vec![];
-    collect(TreeLinked::children(table), None, &mut columns);
-    components::TableColumns { columns }
+    let mut tracks = components::TableColumns::default();
+    collect(TreeLinked::children(table), None, &mut tracks);
+    tracks
 }
 
 pub trait AssignLayoutEntity {
@@ -1697,11 +1702,9 @@ impl EntityConstructor {
                                     | Display::InlineFlex
                                     | Display::InlineGrid
                             ) => {}
-                        // the text of an inline pseudo-element continues the line of the text
-                        // before it: the state of the white space stays as it is
+                        // Text at the start of an inline element continues the surrounding line.
                         None if node.parent_node().is_some_and(|parent| {
-                            matches!(parent.style().box_.display, Display::Inline)
-                                && matches!(parent.html_data(), ParsedData::Element(data) if data.pseudo_element().is_some())
+                            matches!(parent.style().box_.display, Display::Inline | Display::Contents)
                         }) => {}
                         _ => self.trim_next_inline_whitespace = true,
                     };
@@ -1719,14 +1722,9 @@ impl EntityConstructor {
                         );
                     }
 
-                    // (white space that collapsed away leaves the state as it was: the line
-                    // still has no content)
-                    if text.is_empty() {
-                    } else if &*text != text.trim_end() {
-                        // this text node ends with whitespace
-                        self.trim_next_inline_whitespace = true
-                    } else {
-                        self.trim_next_inline_whitespace = false
+                    // A text node that collapsed away leaves the whitespace state unchanged.
+                    if !text.is_empty() {
+                        self.trim_next_inline_whitespace = text.ends_with([' ', '\n']);
                     }
                 }
 
@@ -1793,19 +1791,7 @@ impl EntityConstructor {
                 }
             })
             .clone()?;
-        // the `width` and `height` attributes are pixels (a percentage or a unit is not valid)
-        let dimension = |name| {
-            attribute(name)
-                .and_then(|value| value.trim().parse::<f32>().ok())
-                .filter(|value| value.is_finite() && *value >= 0.0)
-        };
-        let (natural_width, natural_height) = image.size();
-        let (width, height) = match (dimension(local_name!("width")), dimension(local_name!("height"))) {
-            (Some(width), Some(height)) => (width, height),
-            (Some(width), None) => (width, width * natural_height / natural_width),
-            (None, Some(height)) => (height * natural_width / natural_height, height),
-            (None, None) => (natural_width, natural_height),
-        };
+        let (width, height) = image.size();
         Some(components::ImageBox {
             image,
             width,
@@ -1940,12 +1926,13 @@ impl EntityConstructor {
         computed_values: &mut WriteStorage<ComputedValues>,
         elements: &[Entity],
         style: &ComputedValues,
+        strut: (Px, Px),
     ) -> Entity {
         // build anonymous block element
         entities
             .build_entity()
             .with(
-                InlineFormattingContext::new(elements.to_owned(), vec![], style, (Px(0.0), Px(0.0))),
+                InlineFormattingContext::new(elements.to_owned(), vec![], style, strut),
                 inline_formatting_contexts,
             )
             .with(style.anonymous_block(), computed_values)
@@ -1957,6 +1944,7 @@ impl EntityConstructor {
         inline_level_elements: &mut Vec<Entity>,
         block_level_elements: &mut Vec<BlockLevelElement>,
         style: &ComputedValues,
+        strut: (Px, Px),
         entities: &Entities,
         computed_values: &mut WriteStorage<ComputedValues>,
         inline_formatting_contexts: &mut WriteStorage<InlineFormattingContext>,
@@ -2025,6 +2013,7 @@ impl EntityConstructor {
                             computed_values,
                             inline_level_elements,
                             style,
+                            strut,
                         ),
                         block_formatting_contexts,
                         inline_formatting_contexts,
@@ -2054,6 +2043,7 @@ impl EntityConstructor {
                         inline_level_elements,
                         block_level_elements,
                         style,
+                        strut,
                         entities,
                         computed_values,
                         inline_formatting_contexts,
@@ -2172,6 +2162,7 @@ impl EntityConstructor {
             &mut inline_level_elements,
             &mut block_level_elements,
             &style,
+            strut,
             &entities,
             &mut computed_values,
             &mut inline_formatting_contexts,
@@ -2241,6 +2232,7 @@ impl EntityConstructor {
                 &mut computed_values,
                 &inline_level_elements,
                 &style,
+                strut,
             );
             block_level_elements.extend_from_slice(&[
                 BlockLevelElement::ContainerStart(entity),
@@ -2777,11 +2769,20 @@ impl<'a> InlineShifts<'a> {
     }
 }
 
+fn html_dimension(value: &str) -> Option<(f32, &'static str)> {
+    let value = value.trim_start();
+    let end = value.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(value.len());
+    let number: f32 = value[..end].parse().ok()?;
+    let unit = if value[end..].starts_with('%') { "%" } else { "px" };
+    number.is_finite().then_some((number, unit))
+}
+
 /// The presentational hint of the `width` and `height` attributes of an `<img>` or `<iframe>`: a number of
 /// pixels or a percentage (HTML 2.4.4.4 "rules for parsing dimension values": what follows the
 /// number, apart from a `%`, is ignored).
 fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
-    if element.name.local != local_name!("img") && element.name.local != local_name!("iframe") {
+    let is_image = element.name.local == local_name!("img");
+    if element.name.ns != ns!(html) || (!is_image && element.name.local != local_name!("iframe")) {
         return None;
     }
     let attributes = element.attributes.borrow();
@@ -2791,22 +2792,16 @@ fn image_size_hint(element: &ElementData) -> Option<PropertyDeclarationBlock> {
         let Some(attribute) = attributes.get(&QualName::new(None, ns!(), name.clone())) else {
             continue;
         };
-        let value = attribute.value.trim_start();
-        let end = value
-            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
-            .unwrap_or(value.len());
-        let Ok(number) = value[..end].parse::<f32>() else {
+        let Some((number, unit)) = html_dimension(&attribute.value) else {
             continue;
         };
-        if !number.is_finite() {
-            continue;
-        }
-        let unit = if value[end..].starts_with('%') { "%" } else { "px" };
         has_percentage |= unit == "%";
         css.push_str(&format!("{}: {}{};", &*name, number, unit));
     }
-    // pixels are the size of the image box itself (see `image_of`)
-    has_percentage.then(|| PropertyDeclarationBlock::parse_inline(&css))
+    // Pixel hints on an image also go through the cascade so author CSS can override them
+    // without changing the natural dimensions or aspect ratio of the image.
+    (has_percentage || (is_image && !css.is_empty()))
+        .then(|| PropertyDeclarationBlock::parse_inline(&css))
 }
 
 /// The presentational hints of the `displaystyle`, `scriptlevel` and `mathsize` attributes of a
@@ -2988,22 +2983,39 @@ fn table_hint(node: &DomRef, element: &ElementData) -> Option<PropertyDeclaratio
         let end = value.find(|c: char| !c.is_ascii_digit()).unwrap_or(value.len());
         value[..end].parse().ok()
     };
-    let local = &element.name.local;
-    if *local == local_name!("table") {
-        let spacing = number(element, local_name!("cellspacing"))?;
-        return Some(PropertyDeclarationBlock::parse_inline(&format!("border-spacing: {}px", spacing)));
+    if element.name.ns != ns!(html) {
+        return None;
     }
-    if *local == local_name!("td") || *local == local_name!("th") {
+    let local = &element.name.local;
+    let cell = *local == local_name!("td") || *local == local_name!("th");
+    let table = *local == local_name!("table");
+    let mut css = String::new();
+    if table || cell || *local == local_name!("col") || *local == local_name!("colgroup") {
+        let attributes = element.attributes.borrow();
+        if let Some((width, unit)) = attributes
+            .get(&QualName::new(None, ns!(), local_name!("width")))
+            .and_then(|attribute| html_dimension(&attribute.value))
+        {
+            css.push_str(&format!("width: {width}{unit};"));
+        }
+    }
+    if table && let Some(spacing) = number(element, local_name!("cellspacing")) {
+        css.push_str(&format!("border-spacing: {spacing}px;"));
+    }
+    if cell {
         let mut ancestor = node.parent();
         while let Some(parent) = ancestor {
-            if let Some(parent_element) = parent.clone().into_element_ref() {
-                if parent_element.name.local == local_name!("table") {
-                    let padding = number(&parent_element, local_name!("cellpadding"))?;
-                    return Some(PropertyDeclarationBlock::parse_inline(&format!("padding: {}px", padding)));
+            if let Some(parent_element) = parent.clone().into_element_ref()
+                && parent_element.name.ns == ns!(html)
+                && parent_element.name.local == local_name!("table")
+            {
+                if let Some(padding) = number(&parent_element, local_name!("cellpadding")) {
+                    css.push_str(&format!("padding: {padding}px;"));
                 }
+                break;
             }
             ancestor = parent.parent();
         }
     }
-    None
+    (!css.is_empty()).then(|| PropertyDeclarationBlock::parse_inline(&css))
 }

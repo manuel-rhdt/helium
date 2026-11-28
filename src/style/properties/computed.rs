@@ -961,6 +961,13 @@ impl StyleBuilder {
         }
     }
 
+    /// HTML header cells center by default when their inherited alignment is `start`.
+    pub(crate) fn table_header_alignment(&mut self) {
+        if self.parent.text.text_align == specified::TextAlign::Start {
+            Arc::make_mut(&mut self.new_values.text).text_align = specified::TextAlign::Center;
+        }
+    }
+
     /// The style of the root element of the document: its font size is the one of `rem`, for
     /// the element itself too (a `font-size` in `rem` of the root refers to the initial one).
     pub fn root(mut self) -> Self {

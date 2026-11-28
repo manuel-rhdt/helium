@@ -15,7 +15,7 @@ use taffy::tree::{
     NodeId, OofCandidate, OofPositioningArea, RequestedAxis, RunMode, SizingMode,
 };
 use taffy::{
-    CacheTree, LayoutBlockContainer, LayoutContainingBlock, LayoutFlexboxContainer,
+    BlockContext, CacheTree, LayoutBlockContainer, LayoutContainingBlock, LayoutFlexboxContainer,
     LayoutGridContainer, LayoutPartialTree, MaybeResolve, ResolveOrZero, TraversePartialTree, TraverseTree,
     compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
     compute_hidden_layout, compute_leaf_layout, compute_oof_layout,
@@ -1524,6 +1524,17 @@ impl LayoutPartialTree for UmbruchTree<'_, '_> {
     }
 
     fn compute_child_layout(&mut self, id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        self.compute_node_layout(id, inputs, None)
+    }
+}
+
+impl UmbruchTree<'_, '_> {
+    fn compute_node_layout(
+        &mut self,
+        id: NodeId,
+        inputs: LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> LayoutOutput {
         if self.node(id).style.display == taffy::Display::None {
             return compute_hidden_layout(self, id);
         }
@@ -1556,6 +1567,9 @@ impl LayoutPartialTree for UmbruchTree<'_, '_> {
                                 }
                             }
                             output
+                        }
+                        taffy::Display::Block if !orthogonal => {
+                            compute_block_layout(tree, id, inputs, block_ctx)
                         }
                         _ => compute_block_layout(tree, id, inputs, None),
                     };
@@ -1681,6 +1695,16 @@ impl LayoutBlockContainer for UmbruchTree<'_, '_> {
 
     fn get_block_child_style(&self, id: NodeId) -> Self::BlockItemStyle<'_> {
         self.item_style(id)
+    }
+
+    fn compute_block_child_layout(
+        &mut self,
+        id: NodeId,
+        inputs: LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> LayoutOutput {
+        // A block in the parent's formatting context can collapse margins through its children.
+        self.compute_node_layout(id, inputs, block_ctx)
     }
 }
 
